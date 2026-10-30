@@ -116,7 +116,8 @@ fun TransferContent(state: TransferUiState, onBack: () -> Unit) {
             ?: if (incoming) "An outside wallet" else "An outside wallet"
         val fiat = state.fiat?.takeIf { MinorUnits.isDollar(transfer.amount.asset) }?.let { f -> usdcToFiat(transfer.amount.amountMinor, f.rate)?.let { formatFiat(f.currency, it) } }
         // The server's own decimal for the coin: 6 for USDC, 8 for cirBTC, 18 for ETH.
-        val coinNumber = transfer.amount.amount.ifEmpty { MinorUnits.toDisplay(transfer.amount.amountMinor, MinorUnits.decimalsOf(transfer.amount.asset)) }
+        // Always from minor units with the coin's decimals, so dollar coins read as money ("15.50", not the server's "15.5").
+        val coinNumber = MinorUnits.toDisplay(transfer.amount.amountMinor, MinorUnits.decimalsOf(transfer.amount.asset))
         val usdc = coinNumber + " " + transfer.amount.asset
         val dollar = MinorUnits.isDollar(transfer.amount.asset)
         val when_ = formatLocalTime(transfer.createdAt, LocalTimeStyle.ShortDate) + ", " + formatLocalTime(transfer.createdAt, LocalTimeStyle.Clock)
