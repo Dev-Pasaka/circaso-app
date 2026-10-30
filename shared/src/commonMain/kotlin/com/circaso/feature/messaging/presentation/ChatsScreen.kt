@@ -104,8 +104,12 @@ fun ChatsContent(state: ChatsUiState, bottomPadding: PaddingValues, onQuery: (St
             val unread = state.chats.count { it.unread > 0 }
             Row(Modifier.padding(horizontal = CircasoSpacing.s4, vertical = CircasoSpacing.s1), horizontalArrangement = Arrangement.spacedBy(CircasoSpacing.s2)) {
                 ChatFilter.entries.forEach { f ->
-                    val label = if (f == ChatFilter.Unread && unread > 0) "${f.label} $unread" else f.label
-                    com.circaso.designsystem.components.SuggestionChip(label, { onFilter(f) }, selected = f == state.filter)
+                    com.circaso.designsystem.components.SuggestionChip(
+                        f.label, { onFilter(f) },
+                        modifier = Modifier.semantics { if (f == ChatFilter.Unread && unread > 0) contentDescription = "Unread, $unread chats" },
+                        selected = f == state.filter,
+                        badge = if (f == ChatFilter.Unread) unread else 0,
+                    )
                 }
             }
         }

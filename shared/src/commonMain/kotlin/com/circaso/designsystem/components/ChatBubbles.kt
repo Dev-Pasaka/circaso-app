@@ -300,7 +300,14 @@ fun TextBadge(text: String, modifier: Modifier = Modifier, warning: Boolean = fa
 
 /** `.chip`: a suggestion the person can tap to ask (Asha), pill on `fill`, 15 pt. */
 @Composable
-fun SuggestionChip(text: String, onClick: () -> Unit, modifier: Modifier = Modifier, selected: Boolean? = null) {
+fun SuggestionChip(
+    text: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    selected: Boolean? = null,
+    /** A count in a small circle after the text (Unread 3); hidden at zero, and it pops as it changes. */
+    badge: Int = 0,
+) {
     val c = CircasoTheme.colors
     val t = CircasoTheme.typography
     // A chip can also be one of a set of choices (who to pay, the chat filters): then it is a radio button, and the
@@ -313,7 +320,26 @@ fun SuggestionChip(text: String, onClick: () -> Unit, modifier: Modifier = Modif
             .then(if (selected != null) Modifier.semantics { this.selected = on } else Modifier)
             .padding(horizontal = 14.dp, vertical = 6.dp),
         contentAlignment = Alignment.Center,
-    ) { BasicText(text, style = t.subhead.copy(color = if (on) c.bg else c.ink, fontWeight = if (on) FontWeight.SemiBold else FontWeight.Normal), maxLines = 1, overflow = TextOverflow.Ellipsis) }
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            BasicText(text, style = t.subhead.copy(color = if (on) c.bg else c.ink, fontWeight = if (on) FontWeight.SemiBold else FontWeight.Normal), maxLines = 1, overflow = TextOverflow.Ellipsis)
+            androidx.compose.animation.AnimatedVisibility(
+                badge > 0,
+                enter = androidx.compose.animation.fadeIn() + androidx.compose.animation.scaleIn(),
+                exit = androidx.compose.animation.fadeOut() + androidx.compose.animation.scaleOut(),
+            ) {
+                // Inverted against the chip, so it reads on the filled (picked) chip as well as the plain one.
+                Box(
+                    Modifier.heightIn(min = 20.dp).widthIn(min = 20.dp).clip(CircasoShapes.pill).background(if (on) c.bg else c.ink).padding(horizontal = 6.dp),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    androidx.compose.animation.AnimatedContent(badge, label = "count") { n ->
+                        BasicText(n.toString(), style = t.caption1.copy(color = if (on) c.ink else c.bg, fontWeight = FontWeight.SemiBold))
+                    }
+                }
+            }
+        }
+    }
 }
 
 /**
