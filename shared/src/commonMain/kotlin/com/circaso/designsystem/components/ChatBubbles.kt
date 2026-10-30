@@ -303,16 +303,17 @@ fun TextBadge(text: String, modifier: Modifier = Modifier, warning: Boolean = fa
 fun SuggestionChip(text: String, onClick: () -> Unit, modifier: Modifier = Modifier, selected: Boolean? = null) {
     val c = CircasoTheme.colors
     val t = CircasoTheme.typography
-    // A chip can also be one of a set of choices (who to pay): then it is a radio button and shows which one is picked.
+    // A chip can also be one of a set of choices (who to pay, the chat filters): then it is a radio button, and the
+    // picked one is filled in ink so it reads as chosen at a glance (the user, 2026-10-31).
     val on = selected == true
     // 34 dp to look at, 44 dp to hit (the minimum touch target).
     Box(
-        modifier.minimumInteractiveComponentSize().heightIn(min = 34.dp).clip(CircasoShapes.pill).background(if (on) c.fillSelected else c.fill)
+        modifier.minimumInteractiveComponentSize().heightIn(min = 34.dp).clip(CircasoShapes.pill).background(if (on) c.ink else c.fill)
             .pressable(role = if (selected != null) Role.RadioButton else Role.Button, onClick = onClick)
             .then(if (selected != null) Modifier.semantics { this.selected = on } else Modifier)
             .padding(horizontal = 14.dp, vertical = 6.dp),
         contentAlignment = Alignment.Center,
-    ) { BasicText(text, style = t.subhead.copy(color = c.ink, fontWeight = if (on) FontWeight.SemiBold else FontWeight.Normal), maxLines = 1, overflow = TextOverflow.Ellipsis) }
+    ) { BasicText(text, style = t.subhead.copy(color = if (on) c.bg else c.ink, fontWeight = if (on) FontWeight.SemiBold else FontWeight.Normal), maxLines = 1, overflow = TextOverflow.Ellipsis) }
 }
 
 /**
