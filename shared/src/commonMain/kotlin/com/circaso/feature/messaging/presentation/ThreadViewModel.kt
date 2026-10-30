@@ -1,0 +1,357 @@
+package com.circaso.feature.messaging.presentation
+
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.viewModelScope
+import com.circaso.core.common.AppResult
+import com.circaso.core.common.ErrorMessages
+import com.circaso.core.platform.ChatNotifications
+import com.circaso.core.platform.ConnectionStatus
+import com.circaso.core.sync.ConnectionState
+import com.circaso.core.sync.nowMillis
+import com.circaso.feature.messaging.domain.Chat
+import com.circaso.feature.messaging.domain.ChatKind
+import com.circaso.feature.messaging.domain.DeleteForEveryoneUseCase
+import com.circaso.feature.messaging.domain.DiscardMessageUseCase
+import com.circaso.feature.messaging.domain.MarkReadUseCase
+import com.circaso.feature.messaging.domain.Message
+import com.circaso.feature.messaging.domain.ObserveChatUseCase
+import com.circaso.feature.messaging.domain.ObserveThreadUseCase
+import com.circaso.feature.messaging.domain.ObserveTypingUseCase
+import com.circaso.feature.messaging.domain.RetryMessageUseCase
+import com.circaso.feature.messaging.domain.SendMessageUseCase
+import com.circaso.feature.messaging.domain.SetTypingUseCase
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import com.circaso.feature.chama.domain.Chama
+import com.circaso.feature.chama.domain.ChamaRequest
+import com.circaso.feature.chama.presentation.ThreadChama
+import com.circaso.feature.wallet.domain.FiatValue
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.launch
+
+/** Designs C2 (direct) and D2 (group), with the offline states of G2/G3. */
+data class ThreadUiState(
+    val chat: Chat? = null,
+    val messages: List<Message> = emptyList(),
+    val typing: List<String> = emptyList(),
+    val draft: String = "",
+    val online: Boolean = true,
+    val selected: Message.Text? = null,
+    val message: String? = null,
+    /** The group's chama, when it has a goal (designs D2–D6); null in direct chats and groups without one. */
+    val chama: Chama? = null,
+    val fiat: FiatValue? = null,
+    val showIntro: Boolean = false,
+    val myUserId: String? = null,
+    val chamaBusy: Boolean = false,
+    /** SP05: the person said that's all; ask whether it was sorted. */
+    val supportEnding: Boolean = false,
+    /** A voice note is being recorded (the mic is held). */
+    /** The attach sheet's recent photos and videos (WhatsApp-style), and which are ticked, in tick order. */
+    val gallery: List<com.circaso.core.platform.GalleryItem> = emptyList(),
+    val gallerySelected: List<String> = emptyList(),
+    val galleryLoading: Boolean = false,
+    /** A video being fetched to play (its bubble shows a spinner), and the file now playing full screen. */
+    val videoLoading: Long? = null,
+    val videoPath: String? = null,
+    val recording: Boolean = false,
+    /** When this recording started (for the live counter), epoch millis. */
+    val recordingSince: Long? = null,
+    /** "Getting your location…" then the place to confirm before it's shared. */
+    val locating: Boolean = false,
+    val pendingLocation: com.circaso.core.platform.GeoPoint? = null,
+    /** A picked photo shown for a caption before it's sent (WhatsApp-style). */
+    val pendingPhoto: com.circaso.core.platform.PickedImage? = null,
+    val photoCaption: String = "",
+    /** The voice note playing now, by local id. */
+    val playing: Long? = null,
+    /** When that note's sound started, epoch millis (null while it loads): drives the progress and the count-up. */
+    val playingSince: Long? = null,
+) {
+    /** A chat with Circaso's support account (designs SP02–SP05). */
+    val isSupport get() = com.circaso.feature.support.Support.isSupportChat(chat, myUserId)
+    val isGroup get() = chat?.kind == ChatKind.Group
+    /** The open requests (D5) sit under the messages; the treasurer can't contribute to themselves. */
+    val openRequests get() = chama?.openRequests.orEmpty()
+    val canContribute get() = chama != null && chama.goal.treasurerUserId != myUserId
+    fun memberName(userId: String) = chat?.members?.firstOrNull { it.userId == userId }?.displayName ?: "Someone"
+    val canSend get() = draft.isNotBlank() && chat != null
+    /** The header's second line: typing first, then the connection, then the member count (design C2/D2 and G3). */
+    val subtitle: String
+        get() = when {
+            typing.size == 1 -> "${typing.first()} is typing…"
+            typing.size > 1 -> "${typing.size} people are typing…"
+            !online -> "Waiting for network"
+            isSupport -> "Verified Circaso team"
+            isGroup -> "${chat?.members?.size ?: 0} members"
+            else -> "Online"
+        }
+    /** Delete for everyone: my own, sent, within 48 hours (guide, M14). The control is hidden otherwise, never failed after. */
+    fun canDeleteForEveryone(m: Message, now: Long): Boolean {
+        val (outgoing, messageId) = when (m) { is Message.Text -> m.outgoing to m.messageId; is Message.Media -> m.outgoing to m.messageId; else -> return false }
+        return outgoing && messageId != null && now - m.orderAt < 48L * 60 * 60 * 1000
+    }
+}
+
+class ThreadViewModel(
+    private val chatId: String,
+    observeChat: ObserveChatUseCase,
+    observeThread: ObserveThreadUseCase,
+    observeTyping: ObserveTypingUseCase,
+    private val sendMessage: SendMessageUseCase,
+    private val retryMessage: RetryMessageUseCase,
+    private val discardMessage: DiscardMessageUseCase,
+    private val deleteForEveryone: DeleteForEveryoneUseCase,
+    private val markRead: MarkReadUseCase,
+    private val setTyping: SetTypingUseCase,
+    connection: ConnectionState,
+    private val notifications: ChatNotifications,
+    private val chama: ThreadChama? = null,
+    val media: ThreadMedia? = null,
+) : ViewModel() {
+    private val _state = MutableStateFlow(ThreadUiState())
+    val state: StateFlow<ThreadUiState> = _state.asStateFlow()
+    private var typingSentAt = 0L
+    private var typingStop: Job? = null
+    private var chamaRefreshed = false
+
+    init {
+        notifications.activeChatId = chatId
+        notifications.clear(chatId)
+        viewModelScope.launch {
+            observeChat(chatId).collect { chat ->
+                _state.update { it.copy(chat = chat) }
+                // The phone's copy shows at once; the server's view (CH1) refreshes behind it, once per open.
+                if (chat?.kind == ChatKind.Group && chama != null && !chamaRefreshed) { chamaRefreshed = true; launch { chama.refresh(chatId) } }
+            }
+        }
+        if (chama != null) viewModelScope.launch { chama.observe(chatId).collect { s -> _state.update { it.copy(chama = s.chama, fiat = s.fiat, showIntro = s.showIntro, myUserId = s.myUserId) } } }
+        viewModelScope.launch {
+            observeThread(chatId).collect { list ->
+                _state.update { it.copy(messages = list) }
+                markRead(chatId) // the thread is on screen: everything in it has been seen
+            }
+        }
+        viewModelScope.launch { observeTyping(chatId).collect { names -> _state.update { it.copy(typing = names) } } }
+        viewModelScope.launch { connection.status.collect { s -> _state.update { it.copy(online = s == ConnectionStatus.Online) } } }
+    }
+
+    /** Typing goes out at most every few seconds and stops a moment after the last keystroke (guide, section 8). */
+    fun onDraft(text: String) {
+        _state.update { it.copy(draft = text) }
+        if (text.isEmpty()) { stopTyping(); return }
+        val now = nowMillis()
+        if (now - typingSentAt > TypingEveryMillis) { typingSentAt = now; viewModelScope.launch { setTyping(chatId, true) } }
+        typingStop?.cancel()
+        typingStop = viewModelScope.launch { delay(TypingStopAfterMillis); stopTyping() }
+    }
+
+    private fun stopTyping() {
+        typingStop?.cancel()
+        if (typingSentAt == 0L) return
+        typingSentAt = 0L
+        viewModelScope.launch { setTyping(chatId, false) }
+    }
+
+    fun onSend() {
+        val s = _state.value
+        if (!s.canSend) return
+        val text = s.draft.trim()
+        _state.update { it.copy(draft = "") }
+        stopTyping()
+        viewModelScope.launch { sendMessage(chatId, text) }
+    }
+
+    /** A chip under a money card (design C6): sent as a message of its own. */
+    fun onQuickReply(text: String) {
+        if (_state.value.chat == null) return
+        viewModelScope.launch { sendMessage(chatId, text) }
+    }
+
+    fun onSelect(m: Message.Text?) = _state.update { it.copy(selected = m, message = null) }
+
+    fun onRetry(m: Message) { onSelect(null); viewModelScope.launch { retryMessage(m.localId) } }
+    fun onDiscard(m: Message) { onSelect(null); viewModelScope.launch { discardMessage(m.localId) } }
+
+    fun onDeleteForEveryone(m: Message) {
+        onSelect(null)
+        viewModelScope.launch {
+            val r = deleteForEveryone(m.localId)
+            if (r is AppResult.Failure) _state.update { it.copy(message = ErrorMessages.forError(r.error)) }
+        }
+    }
+
+    fun onMessageShown() = _state.update { it.copy(message = null) }
+
+    /** CH5, from a request card in the thread (design D5). The card updates when the server's frame lands. */
+    fun onDecide(request: ChamaRequest, approve: Boolean) {
+        val chama = chama ?: return
+        if (_state.value.chamaBusy) return
+        _state.update { it.copy(chamaBusy = true) }
+        viewModelScope.launch {
+            val r = chama.decide(request, approve)
+            _state.update { it.copy(chamaBusy = false, message = (r as? AppResult.Failure)?.let { f -> ErrorMessages.forError(f.error) }) }
+        }
+    }
+
+    /** Media (WhatsApp-style): photo from the picker, current location, hold-to-record voice notes, playback. */
+    /** The attach sheet opened: load the recent grid (the first time, Android asks for library access). */
+    fun onGalleryOpen() {
+        val m = media ?: return
+        if (!m.hasGallery || _state.value.galleryLoading) return
+        _state.update { it.copy(galleryLoading = true, gallerySelected = emptyList()) }
+        viewModelScope.launch {
+            val items = m.recentMedia()
+            _state.update { it.copy(gallery = items, galleryLoading = false) }
+        }
+    }
+
+    fun onGalleryToggle(item: com.circaso.core.platform.GalleryItem) = _state.update { s ->
+        val picked = s.gallerySelected
+        when {
+            item.id in picked -> s.copy(gallerySelected = picked - item.id)
+            picked.size >= MaxGalleryPick -> s.copy(message = "You can send up to $MaxGalleryPick at once.")
+            else -> s.copy(gallerySelected = picked + item.id)
+        }
+    }
+
+    fun onGallerySend(caption: String?) {
+        val m = media ?: return
+        val items = _state.value.gallerySelected.mapNotNull { id -> _state.value.gallery.firstOrNull { it.id == id } }
+        if (items.isEmpty()) return
+        _state.update { it.copy(gallerySelected = emptyList()) }
+        if (items.any { it.video }) _state.update { it.copy(message = "Preparing video…") }
+        viewModelScope.launch { m.sendGalleryMedia(chatId, items, caption)?.let { e -> _state.update { it.copy(message = e) } } }
+    }
+
+    fun onSendPhoto() { val m = media ?: return; viewModelScope.launch { m.pickPhoto()?.let { p -> _state.update { it.copy(pendingPhoto = p, photoCaption = "") } } } }
+    fun onPhotoCaption(text: String) = _state.update { it.copy(photoCaption = text.take(1000)) }
+    fun onCancelPhoto() = _state.update { it.copy(pendingPhoto = null, photoCaption = "") }
+    fun onConfirmPhoto() {
+        val m = media ?: return
+        val photo = _state.value.pendingPhoto ?: return
+        val caption = _state.value.photoCaption.trim().takeIf { it.isNotEmpty() }
+        _state.update { it.copy(pendingPhoto = null, photoCaption = "") }
+        viewModelScope.launch { m.sendPhoto(chatId, photo, caption)?.let { e -> _state.update { it.copy(message = e) } } }
+    }
+    /** Step one of sharing a location: find it, then show it for the person to confirm (nothing is sent yet). */
+    fun onSendLocation() {
+        val m = media ?: return
+        if (_state.value.locating) return
+        _state.update { it.copy(locating = true, pendingLocation = null) }
+        viewModelScope.launch {
+            val here = m.locate()
+            _state.update {
+                if (!it.locating) it // cancelled while it was looking
+                else if (here == null) it.copy(locating = false, message = "Circaso couldn't get your location. Check that location is on and allowed for Circaso.")
+                else it.copy(pendingLocation = here)
+            }
+        }
+    }
+    fun onConfirmLocation() {
+        val m = media ?: return
+        val point = _state.value.pendingLocation ?: return
+        _state.update { it.copy(locating = false, pendingLocation = null) }
+        viewModelScope.launch { m.sendLocation(chatId, point) }
+    }
+    fun onCancelLocation() = _state.update { it.copy(locating = false, pendingLocation = null) }
+
+    /** WhatsApp's live location from the same sheet: the confirmed place, then updates for [durationMs]. */
+    fun onShareLive(durationMs: Long) {
+        val m = media ?: return
+        val point = _state.value.pendingLocation ?: return
+        _state.update { it.copy(locating = false, pendingLocation = null) }
+        viewModelScope.launch { m.shareLive(chatId, point, durationMs)?.let { e -> _state.update { it.copy(message = e) } } }
+    }
+
+    fun onStopLive(message: Message.Media) {
+        val m = media ?: return
+        viewModelScope.launch { m.stopLive(message.localId) }
+    }
+
+    private val voice = media?.let { m ->
+        VoiceHold(viewModelScope, m::startVoice, { m.finishVoice(chatId) }, m::cancelVoice) { recording, message ->
+            _state.update {
+                it.copy(recording = recording, recordingSince = if (recording) nowMillis() else null, message = message ?: it.message)
+            }
+        }
+    }
+    fun onVoiceStart() { voice?.press() }
+    fun onVoiceEnd(send: Boolean) { voice?.release(send) }
+    fun onPlay(message: Message.Media) {
+        val m = media ?: return
+        if (_state.value.playing == message.localId) { m.stopPlaying(); _state.update { it.copy(playing = null, playingSince = null) }; return }
+        m.stopPlaying()
+        _state.update { it.copy(playing = message.localId, playingSince = null) }
+        viewModelScope.launch {
+            val result = m.play(message.details) { _state.update { s -> if (s.playing == message.localId) s.copy(playingSince = nowMillis()) else s } }
+            _state.update { s ->
+                val done = if (s.playing == message.localId) s.copy(playing = null, playingSince = null) else s
+                when (result) {
+                    is com.circaso.feature.messaging.data.repository.MediaLoad.Loaded -> done
+                    com.circaso.feature.messaging.data.repository.MediaLoad.Offline -> done.copy(message = "This voice message plays when you're back online.")
+                    com.circaso.feature.messaging.data.repository.MediaLoad.Gone -> done.copy(message = "This voice message is no longer available.")
+                    com.circaso.feature.messaging.data.repository.MediaLoad.Damaged -> done.copy(message = "This voice message couldn't be opened safely.")
+                    com.circaso.feature.messaging.data.repository.MediaLoad.Failed -> done.copy(message = "This voice message couldn't load. Try again.")
+                }
+            }
+        }
+    }
+    /** Opens a video full screen: its file is fetched and decrypted first (a spinner on the bubble meanwhile). */
+    fun onPlayVideo(message: Message.Media) {
+        val m = media ?: return
+        _state.update { it.copy(videoLoading = message.localId) }
+        viewModelScope.launch {
+            val (path, result) = m.videoFile(message.details)
+            _state.update { s ->
+                val done = s.copy(videoLoading = null)
+                when {
+                    path != null -> done.copy(videoPath = path)
+                    result == com.circaso.feature.messaging.data.repository.MediaLoad.Offline -> done.copy(message = "This video plays when you're back online.")
+                    result == com.circaso.feature.messaging.data.repository.MediaLoad.Gone -> done.copy(message = "This video is no longer available.")
+                    result == com.circaso.feature.messaging.data.repository.MediaLoad.Damaged -> done.copy(message = "This video couldn't be opened safely.")
+                    else -> done.copy(message = "This video couldn't load. Try again.")
+                }
+            }
+        }
+    }
+
+    fun onCloseVideo() = _state.update { it.copy(videoPath = null) }
+
+    fun onRetryMedia(message: Message.Media) { val m = media ?: return; viewModelScope.launch { m.retry(message.localId) } }
+
+    /** SP02's "That's all": it goes as a message, then SP05 asks how it went. */
+    fun onSupportDone() {
+        onQuickReply("That's all, thank you.")
+        _state.update { it.copy(supportEnding = true) }
+    }
+
+    /** SP05's answer goes to support as a message too, so the team sees it in the same conversation. */
+    fun onSupportVerdict(sorted: Boolean?) {
+        if (sorted != null) onQuickReply(if (sorted) "Yes, it's sorted. Thanks!" else "Not really, it isn't sorted yet.")
+        _state.update { it.copy(supportEnding = false) }
+    }
+
+    /** D6 was read; it doesn't come back for this group. */
+    fun onIntroSeen() {
+        val chama = chama ?: return
+        _state.update { it.copy(showIntro = false) }
+        viewModelScope.launch { chama.introSeen(chatId) }
+    }
+
+    override fun onCleared() {
+        stopTyping()
+        if (notifications.activeChatId == chatId) notifications.activeChatId = null
+    }
+
+    private companion object {
+        const val TypingEveryMillis = 4_000L
+        const val TypingStopAfterMillis = 5_000L
+    }
+}
+
+/** WhatsApp's limit for one send from the gallery. */
+private const val MaxGalleryPick = 30

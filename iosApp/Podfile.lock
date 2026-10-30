@@ -1,0 +1,140 @@
+PODS:
+  - Alamofire (5.9.0)
+  - AppAuth (3.0.0):
+    - AppAuth/Core (= 3.0.0)
+    - AppAuth/ExternalUserAgent (= 3.0.0)
+  - AppAuth/Core (3.0.0)
+  - AppAuth/ExternalUserAgent (3.0.0):
+    - AppAuth/Core
+  - AppCheckCore (11.3.2):
+    - GoogleUtilities/Environment (~> 8.0)
+    - GoogleUtilities/UserDefaults (~> 8.0)
+    - PromisesObjC (~> 2.4)
+    - PromisesSwift (~> 2.4)
+    - RecaptchaInterop (~> 101.0)
+  - BigInt (5.2.0)
+  - CircleProgrammableWalletSDK (1.4.5):
+    - Alamofire (= 5.9.0)
+    - BigInt (= 5.2.0)
+    - DeviceKit (= 5.2.0)
+    - FBSDKLoginKit (< 19.0, >= 17.0.2)
+    - GoogleSignIn (= 7.1.0)
+    - IQKeyboardManagerSwift/Core (= 7.2.0)
+    - IQKeyboardManagerSwift/Resign (= 7.2.0)
+    - SDWebImage (= 5.18.10)
+    - SnapKit (= 5.7.1)
+  - DeviceKit (5.2.0)
+  - FBAEMKit (18.1.1):
+    - FBSDKCoreKit_Basics (= 18.1.1)
+  - FBSDKCoreKit (18.1.1):
+    - FBAEMKit (= 18.1.1)
+    - FBSDKCoreKit_Basics (= 18.1.1)
+  - FBSDKCoreKit_Basics (18.1.1)
+  - FBSDKLoginKit (18.1.1):
+    - FBSDKCoreKit (= 18.1.1)
+  - GoogleMaps (9.4.0):
+    - GoogleMaps/Maps (= 9.4.0)
+  - GoogleMaps/Maps (9.4.0)
+  - GoogleSignIn (7.1.0):
+    - AppAuth (~> 3.0)
+    - AppCheckCore (< 13.0, >= 11.0)
+    - GTMAppAuth (~> 6.0)
+    - GTMSessionFetcher/Core (< 6.0, >= 3.3)
+  - GoogleUtilities/Environment (8.1.5):
+    - GoogleUtilities/Privacy
+  - GoogleUtilities/Logger (8.1.5):
+    - GoogleUtilities/Environment
+    - GoogleUtilities/Privacy
+  - GoogleUtilities/Privacy (8.1.5)
+  - GoogleUtilities/UserDefaults (8.1.5):
+    - GoogleUtilities/Logger
+    - GoogleUtilities/Privacy
+  - GTMAppAuth (6.0.0):
+    - AppAuth/Core (~> 3.0)
+    - GTMSessionFetcher/Core (< 6.0, >= 3.3)
+  - GTMSessionFetcher/Core (5.3.1)
+  - IQKeyboardCore (1.0.5)
+  - IQKeyboardManagerSwift/Core (7.2.0):
+    - IQKeyboardNotification (= 1.0.3)
+    - IQTextInputViewNotification (= 1.0.5)
+  - IQKeyboardManagerSwift/Resign (7.2.0):
+    - IQKeyboardManagerSwift/Core
+    - IQKeyboardNotification (= 1.0.3)
+    - IQTextInputViewNotification (= 1.0.5)
+  - IQKeyboardNotification (1.0.3)
+  - IQTextInputViewNotification (1.0.5):
+    - IQKeyboardCore (= 1.0.5)
+  - PromisesObjC (2.4.1)
+  - PromisesSwift (2.4.1):
+    - PromisesObjC (= 2.4.1)
+  - RecaptchaInterop (101.0.0)
+  - SDWebImage (5.18.10):
+    - SDWebImage/Core (= 5.18.10)
+  - SDWebImage/Core (5.18.10)
+  - SnapKit (5.7.1)
+
+DEPENDENCIES:
+  - CircleProgrammableWalletSDK (= 1.4.5)
+  - GoogleMaps (= 9.4.0)
+  - GoogleSignIn (from `LocalPods/GoogleSignIn/GoogleSignIn.podspec.json`)
+
+SPEC REPOS:
+  https://github.com/circlefin/w3s-ios-sdk.git:
+    - CircleProgrammableWalletSDK
+  trunk:
+    - Alamofire
+    - AppAuth
+    - AppCheckCore
+    - BigInt
+    - DeviceKit
+    - FBAEMKit
+    - FBSDKCoreKit
+    - FBSDKCoreKit_Basics
+    - FBSDKLoginKit
+    - GoogleMaps
+    - GoogleUtilities
+    - GTMAppAuth
+    - GTMSessionFetcher
+    - IQKeyboardCore
+    - IQKeyboardManagerSwift
+    - IQKeyboardNotification
+    - IQTextInputViewNotification
+    - PromisesObjC
+    - PromisesSwift
+    - RecaptchaInterop
+    - SDWebImage
+    - SnapKit
+
+EXTERNAL SOURCES:
+  GoogleSignIn:
+    :podspec: LocalPods/GoogleSignIn/GoogleSignIn.podspec.json
+
+SPEC CHECKSUMS:
+  Alamofire: 02b772c9910e8eba1a079227c32fbd9e46c90a24
+  AppAuth: 5dec4b6a833eb0342b26bacbc5f3af694f71274a
+  AppCheckCore: be8fce5469f68d7f6a29aa94b25f097409ff7fdc
+  BigInt: f668a80089607f521586bbe29513d708491ef2f7
+  CircleProgrammableWalletSDK: 5b28fd005ebaca934bae47a3d6d4ef3011386e9d
+  DeviceKit: 4167e8ffbfaff06e346f113e0142ac18fc1b16ff
+  FBAEMKit: fbb0a50e13109400d0615e7630a0db26ec6b8206
+  FBSDKCoreKit: 0063014b3b1f7e975e70b60232b0cf8003839746
+  FBSDKCoreKit_Basics: f4a1e0f38769eb71abaf6395b85e015318fcda49
+  FBSDKLoginKit: 0e6d0df30ae0a5b33f33d9050ca10ca21e0da234
+  GoogleMaps: 0608099d4870cac8754bdba9b6953db543432438
+  GoogleSignIn: 9514bc45cc13d4432fb1ee9014058045513ea26e
+  GoogleUtilities: 7dc09b3fa9ecb5c2298b952313d14628b61b9da3
+  GTMAppAuth: 66e839a30bb63acb109b8986a0c3f642d56d48fd
+  GTMSessionFetcher: a6d2b2aa203485893d4511ff64642dc811f7c09f
+  IQKeyboardCore: 28c8bf3bcd8ba5aa1570b318cbc4da94b861711e
+  IQKeyboardManagerSwift: 12d6ae3632ef744ccd033c048b566af13cc10d49
+  IQKeyboardNotification: d7382c4466c5a5adef92c7452ebf861b36050088
+  IQTextInputViewNotification: 4381fb828881983205fbee38f17da8a9fe2e835c
+  PromisesObjC: 752c3227f599e3467650e47ea36f433eeb10c273
+  PromisesSwift: 217dea0fd5d2ad65222a109c48698add13cc1c5b
+  RecaptchaInterop: 11e0b637842dfb48308d242afc3f448062325aba
+  SDWebImage: fc8f2d48bbfd72ef39d70e981bd24a3f3be53fec
+  SnapKit: d612e99e678a2d3b95bf60b0705ed0a35c03484a
+
+PODFILE CHECKSUM: e192024dcdd7811b3036d9dbca9070076fd0a13d
+
+COCOAPODS: 1.17.0

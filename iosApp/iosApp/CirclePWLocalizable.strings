@@ -1,0 +1,18 @@
+/* Circaso's words inside Circle's PIN and security-question screens. */
+"circlepw_new_pincode_headline" = "Choose your wallet PIN";
+"circlepw_new_pincode_subhead" = "6 digits. Only you know it; Circaso never can.";
+"circlepw_confirm_pincode_headline" = "Enter it once more";
+"circlepw_confirm_pincode_subhead" = "So we know you have it right.";
+"circlepw_enter_pincode_headline" = "Enter your wallet PIN";
+"circlepw_enter_pincode_subhead" = "To continue.";
+"circlepw_enter_pincode_forgot_pin" = "Forgot your PIN?";
+"circlepw_security_intros_headline" = "Three security questions";
+"circlepw_security_intros_description" = "If you ever forget your PIN, your answers are the only way back into your wallet. Nobody at Circaso can see them or reset your PIN.";
+"circlepw_security_questions_title" = "Security questions";
+"circlepw_security_summary_title" = "Check your answers";
+"circlepw_security_confirm_title" = "Keep them safe";
+"circlepw_pin_biometrics_allow_title" = "Unlock with Face ID";
+"circlepw_pin_biometrics_allow_subtitle" = "Use it instead of typing your PIN next time.";
+"circlepw_transaction_request_title" = "Confirm payment";
+"circlepw_transaction_request_subtitle" = "Enter your PIN to send this payment.";
+"circlepw_transaction_request_network_fee_label" = "Network fee (paid by Circaso)";

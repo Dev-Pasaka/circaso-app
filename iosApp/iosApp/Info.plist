@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>BGTaskSchedulerPermittedIdentifiers</key>
+	<array>
+		<string>com.circaso.app.outbox</string>
+	</array>
+	<key>CADisableMinimumFrameDurationOnPhone</key>
+	<true/>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>com.googleusercontent.apps.177338416308-tr90ol3iijl7ipe9e5rovs9ms70n8r95</string>
+			</array>
+		</dict>
+	</array>
+	<key>FacebookAdvertiserIDCollectionEnabled</key>
+	<false/>
+	<key>FacebookAutoInitEnabled</key>
+	<false/>
+	<key>FacebookAutoLogAppEventsEnabled</key>
+	<false/>
+	<key>GIDClientID</key>
+	<string>177338416308-tr90ol3iijl7ipe9e5rovs9ms70n8r95.apps.googleusercontent.com</string>
+	<key>GIDServerClientID</key>
+	<string>177338416308-v1adcpuoj7cn8ofid7rj89gr7a9dqp97.apps.googleusercontent.com</string>
+	<key>NSCameraUsageDescription</key>
+	<string>Circaso uses the camera for video calls you start or answer, and to scan a QR code you point it at.</string>
+	<key>NSContactsUsageDescription</key>
+	<string>Circaso checks your contacts' phone numbers to show who is already on Circaso. Only numbers are sent, never names.</string>
+	<key>NSFaceIDUsageDescription</key>
+	<string>Circaso uses Face ID to approve your payments instead of your PIN, when you turn it on.</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>Circaso uses your location only when you choose to share it in a chat.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Circaso uses the microphone during calls you start or answer, and while you talk to Asha. Voice to Asha is turned into text and not kept.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>Circaso shows your recent photos and videos when you attach them to a chat. Nothing leaves your phone until you send it.</string>
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>audio</string>
+		<string>location</string>
+		<string>processing</string>
+	</array>
+</dict>
+</plist>

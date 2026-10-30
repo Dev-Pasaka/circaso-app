@@ -1,0 +1,75 @@
+package com.circaso.core.calls
+
+import androidx.compose.runtime.Composable
+import androidx.compose.ui.Modifier
+import kotlinx.coroutines.flow.StateFlow
+
+/** A STUN or TURN server for the peer connection, as the backend hands them out (guide CL1). */
+data class IceServerSpec(val urls: List<String>, val username: String? = null, val credential: String? = null)
+
+/** One track this phone sends: its transceiver `mid` after the offer, and the name the SFU knows it by. */
+data class LocalTrackSpec(val mid: String, val trackName: String, val kind: String)
+
+data class LocalOffer(val sdp: String, val tracks: List<LocalTrackSpec>)
+
+/** Why the engine couldn't start: no microphone permission, no camera, or the platform has no WebRTC. */
+class CallEngineException(val reason: String) : Exception(reason)
+
+/**
+ * WebRTC on the phone (designs H1–H5): one peer connection to Cloudflare's SFU per call. The backend brokers every SDP
+ * (guide CL3–CL5); this side only makes and answers offers, sends the microphone and camera, and plays what it pulls.
+ *
+ * Audio and video are both pushed from the start; the camera only runs while it is on, so a voice call can turn into
+ * video (design H2's Video button) without renegotiating.
+ */
+interface CallEngine {
+    val available: Boolean
+
+    /** Opens the connection with the microphone (and the camera when [video]); the offer to push (CL3). */
+    suspend fun start(iceServers: List<IceServerSpec>, video: Boolean, userId: String): LocalOffer
+
+    /** The SFU's answer to [start]'s offer. */
+    suspend fun acceptAnswer(sdp: String)
+
+    /** The SFU offers the tracks this phone pulled (CL4); the answer goes back with CL5. */
+    suspend fun answerOffer(sdp: String): String
+
+    /** Remote video tracks by transceiver mid, so a tile can show whoever owns that mid. */
+    val remoteVideoMids: StateFlow<Set<String>>
+
+    /** The media connection to the SFU: true while up, false when it dropped or failed, null before it starts. */
+    val connected: StateFlow<Boolean?>
+
+    fun setMicrophone(on: Boolean)
+    /** Turns the camera on (asking for permission) or off; false when it couldn't be turned on. */
+    suspend fun setCamera(on: Boolean): Boolean
+    fun flipCamera()
+    fun setSpeaker(on: Boolean)
+
+    /** Ends everything: tracks, camera, connection, audio route. Safe to call twice. */
+    fun close()
+}
+
+object NoCallEngine : CallEngine {
+    override val available = false
+    override suspend fun start(iceServers: List<IceServerSpec>, video: Boolean, userId: String): LocalOffer = throw CallEngineException("unavailable")
+    override suspend fun acceptAnswer(sdp: String) = Unit
+    override suspend fun answerOffer(sdp: String): String = throw CallEngineException("unavailable")
+    override val remoteVideoMids: StateFlow<Set<String>> = kotlinx.coroutines.flow.MutableStateFlow(emptySet())
+    override val connected: StateFlow<Boolean?> = kotlinx.coroutines.flow.MutableStateFlow(null)
+    override fun setMicrophone(on: Boolean) = Unit
+    override suspend fun setCamera(on: Boolean) = !on
+    override fun flipCamera() = Unit
+    override fun setSpeaker(on: Boolean) = Unit
+    override fun close() = Unit
+}
+
+/** Where a video tile gets its picture: this phone's camera, or a pulled track by its mid. */
+sealed interface VideoSource {
+    data object Local : VideoSource
+    data class Remote(val mid: String) : VideoSource
+}
+
+/** A live video tile (the platform's renderer). [mirror] for the front camera; [fill] crops instead of letterboxing. */
+@Composable
+expect fun CallVideo(source: VideoSource, modifier: Modifier = Modifier, mirror: Boolean = false, fill: Boolean = true)

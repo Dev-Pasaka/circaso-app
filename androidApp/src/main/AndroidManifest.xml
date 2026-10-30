@@ -1,0 +1,74 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <!-- Only asked for when the person taps "Find Friends from Your Contacts"; only phone numbers are read. -->
+    <uses-permission android:name="android.permission.READ_CONTACTS" />
+    <!-- Only asked for when the person taps the microphone in the Asha chat. -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <!-- Calls (designs H1–H5): the camera for video, Bluetooth headsets for audio, and an ongoing-call notification. -->
+    <uses-permission android:name="android.permission.CAMERA" />
+    <!-- "Share location" in a chat: asked only when the person taps it. -->
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <!-- The chat's attach sheet shows recent photos and videos, WhatsApp-style (Pasaka, 2026-10-30). Android 14+
+         lets the person allow only a selection. -->
+    <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
+    <uses-permission android:name="android.permission.READ_MEDIA_VIDEO" />
+    <uses-permission android:name="android.permission.READ_MEDIA_VISUAL_USER_SELECTED" />
+    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
+    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+    <uses-feature android:name="android.hardware.camera" android:required="false" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- A call keeps going when Circaso is in the background: a foreground service holding the microphone and camera. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CAMERA" />
+    <!-- Live location keeps updating while Circaso is in the background, with an ongoing notification (Stop sharing). -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
+
+    <application
+        android:name=".CircasoApplication"
+        android:allowBackup="false"
+        android:icon="@mipmap/ic_launcher"
+        android:label="@string/app_name"
+        android:roundIcon="@mipmap/ic_launcher_round"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.Circaso.Starting">
+        <activity
+            android:exported="true"
+            android:name=".MainActivity"
+            android:windowSoftInputMode="adjustNothing">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+        <!-- Keeps a call alive while Circaso is in the background (designs H2–H4). -->
+        <service
+            android:name="com.circaso.core.calls.CallService"
+            android:exported="false"
+            android:foregroundServiceType="microphone|camera" />
+        <!-- Google Maps for live location; from local.properties `maps.android.key` (restricted to this app). -->
+        <meta-data
+            android:name="com.google.android.geo.API_KEY"
+            android:value="${mapsApiKey}" />
+        <!-- Live location while Circaso is in the background (WhatsApp-style), only while a share is on. -->
+        <service
+            android:name="com.circaso.core.platform.LiveLocationService"
+            android:exported="false"
+            android:foregroundServiceType="location" />
+        <!-- Receives a new push token from Firebase and hands it to the app. -->
+        <service
+            android:name="com.circaso.core.platform.CircasoMessagingService"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="com.google.firebase.MESSAGING_EVENT" />
+            </intent-filter>
+        </service>
+    </application>
+
+</manifest>

@@ -1,0 +1,56 @@
+package com.circaso.feature.wallet.presentation
+
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.text.BasicText
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.Role
+import com.circaso.core.sync.nowMillis
+import com.circaso.designsystem.chrome.Banner
+import com.circaso.designsystem.chrome.BannerTone
+import com.circaso.designsystem.chrome.CircasoSheet
+import com.circaso.designsystem.components.ButtonSize
+import com.circaso.designsystem.components.ButtonStyle
+import com.circaso.designsystem.components.CircasoButton
+import com.circaso.designsystem.components.CircasoIcon
+import com.circaso.designsystem.motion.pressable
+import com.circaso.designsystem.theme.CircasoSpacing
+import com.circaso.designsystem.theme.CircasoTheme
+import kotlin.time.Instant
+
+/** Hours until an ISO instant, rounded up; null when it has passed or does not parse. */
+fun hoursUntil(iso: String?, now: Long = nowMillis()): Long? {
+    val at = try { Instant.parse(iso ?: return null).toEpochMilliseconds() } catch (e: Exception) { return null }
+    val left = at - now
+    return if (left <= 0) null else (left + 3_599_999) / 3_600_000
+}
+
+/** Design ID-23: the hold banner on the Chats tab after a recovery, with its sheet; tap "Details" or the banner. */
+@Composable
+fun HoldBanner(holdUntil: String?, onNotMe: () -> Unit) {
+    val hours = hoursUntil(holdUntil) ?: return
+    var sheet by remember { mutableStateOf(false) }
+    Box(Modifier.fillMaxWidth().padding(horizontal = CircasoSpacing.s4, vertical = CircasoSpacing.s2).pressable(role = Role.Button, onClick = { sheet = true })) {
+        Banner("Payments resume in $hours h. Your account was recovered, so sending is paused. Details", CircasoIcon.Clock, tone = BannerTone.Warning)
+    }
+    // The sheet lives in whatever Box the banner sits in; the scaffold's banner slot is one.
+    androidx.compose.foundation.layout.Box { HoldSheet(sheet, hours, { sheet = false }, onNotMe) }
+}
+
+@Composable
+fun androidx.compose.foundation.layout.BoxScope.HoldSheet(visible: Boolean, hours: Long, onDismiss: () -> Unit, onNotMe: () -> Unit) {
+    val c = CircasoTheme.colors
+    val t = CircasoTheme.typography
+    CircasoSheet(visible, onDismiss, label = "Sending is paused") {
+        BasicText("Sending resumes in $hours h", style = t.title2.copy(color = c.ink))
+        BasicText("Your account was recovered on this phone, so sending is paused for 48 hours to keep your money safe. You can still chat and receive money.", style = t.body.copy(color = c.inkSecondary))
+        CircasoButton("OK", onDismiss, size = ButtonSize.Large, block = true)
+        CircasoButton("This Wasn't Me", { onDismiss(); onNotMe() }, style = ButtonStyle.Plain, size = ButtonSize.Large, block = true)
+    }
+}

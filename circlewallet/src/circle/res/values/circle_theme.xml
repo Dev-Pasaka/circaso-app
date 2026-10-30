@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Circle's wallet screens extend AppCompatActivity and need an AppCompat theme; without one they inherit Circaso's
+  launch theme and crash on open (seen on the Redmi, 2026-10-30). Circaso's ink and surfaces, no action bar.
+-->
+<resources>
+    <style name="Theme.Circaso.CircleWallet" parent="Theme.AppCompat.DayNight.NoActionBar">
+        <item name="colorPrimary">#0B0B0C</item>
+        <item name="colorAccent">#0B0B0C</item>
+        <item name="android:windowBackground">@android:color/white</item>
+        <item name="android:statusBarColor">@android:color/white</item>
+        <item name="android:windowLightStatusBar">true</item>
+        <item name="android:navigationBarColor">@android:color/white</item>
+    </style>
+</resources>

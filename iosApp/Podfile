@@ -1,0 +1,42 @@
+# Circle's user-controlled wallets SDK ships through CocoaPods only (a prebuilt XCFramework with eight pod
+# dependencies), so it is the main pod in this project (Google Maps is the other); everything else is Swift Package Manager.
+#
+#   brew install cocoapods
+#   cd iosApp && pod install      (specs come from Circle's w3s-ios-sdk repo and the CocoaPods CDN)
+#   open iosApp.xcworkspace   (not the .xcodeproj, from then on)
+#
+# Without `pod install` the app still builds: CircleWalletImpl.swift compiles its stub and signing answers
+# "not available in this build".
+source 'https://cdn.cocoapods.org/'
+source 'https://github.com/circlefin/w3s-ios-sdk.git'
+
+platform :ios, '18.2'
+use_frameworks!
+
+target 'iosApp' do
+  pod 'CircleProgrammableWalletSDK', '1.4.5'
+  # Circle pins GoogleSignIn 7.1.0, but Circaso's Google sign-in needs 10.x (the backend checks the ID token's nonce,
+  # which 7.1.0 can't pass). Two copies in one app collide at runtime, so this local podspec builds 10.1.0 under the
+  # 7.1.0 name and it is the only GoogleSignIn in the app (the Swift package was removed). Circle's own Google login,
+  # the only code built against 7.1.0, is not used: Circaso signs people in itself.
+  pod 'GoogleSignIn', :podspec => 'LocalPods/GoogleSignIn/GoogleSignIn.podspec.json'
+  # Live location's map (decision 2026-10-30): Google Maps, styled to Circaso. Its key comes from local.properties
+  # (`maps.ios.key`, restricted to the bundle id) through the shared framework; see MapImpl.swift.
+  pod 'GoogleMaps', '9.4.0'
+  # Circle's social login (Google, Facebook) is not used. Its binary links both frameworks, so they must ship or the app
+  # can't start; Facebook's is switched off in Info.plist (no app id, no auto-init, no event logging, no ad id).
+end
+
+# Circle ships the SDK prebuilt for iOS 15.1, and it imports its dependencies (Alamofire and the rest): they must not
+# be built for a newer iOS than the SDK, so only pods below 15.1 are raised (Xcode no longer builds for older ones).
+post_install do |installer|
+  installer.pods_project.targets.each do |t|
+    t.build_configurations.each do |c|
+      current = c.build_settings['IPHONEOS_DEPLOYMENT_TARGET'].to_f
+      c.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = '15.1' if current < 15.1
+      # The SDK binary calls its dependencies through library-evolution thunks, so they must be built that way too
+      # (without it the app stops at launch with "Symbol not found" in Alamofire).
+      c.build_settings['BUILD_LIBRARY_FOR_DISTRIBUTION'] = 'YES'
+    end
+  end
+end

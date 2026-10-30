@@ -1,0 +1,33 @@
+*.iml
+.kotlin
+.gradle
+**/build/
+xcuserdata
+!src/**/build/
+local.properties
+.idea
+.DS_Store
+captures
+.externalNativeBuild
+.cxx
+*.xcodeproj/*
+!*.xcodeproj/project.pbxproj
+!*.xcodeproj/xcshareddata/
+!*.xcodeproj/project.xcworkspace/
+!*.xcworkspace/contents.xcworkspacedata
+**/xcshareddata/WorkspaceSettings.xcsettings
+node_modules/
+
+# Secrets and per-machine config: never committed
+*.jks
+*.keystore
+*.p12
+*.pem
+*.mobileprovision
+.env
+*.env
+androidApp/google-services.json
+**/GoogleService-Info.plist
+
+# CocoaPods installs these (pod install)
+iosApp/Pods/

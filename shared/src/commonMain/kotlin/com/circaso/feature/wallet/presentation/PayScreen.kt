@@ -1,0 +1,304 @@
+package com.circaso.feature.wallet.presentation
+
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.defaultMinSize
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.BasicText
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import com.circaso.designsystem.chrome.CircasoNavBar
+import com.circaso.designsystem.chrome.CircasoScaffold
+import com.circaso.designsystem.chrome.ToastHost
+import com.circaso.designsystem.chrome.rememberToastState
+import com.circaso.designsystem.components.AshaMark
+import com.circaso.designsystem.components.Avatar
+import com.circaso.designsystem.components.ButtonSize
+import com.circaso.designsystem.components.ButtonStyle
+import com.circaso.designsystem.components.CircasoButton
+import com.circaso.designsystem.components.CircasoIcon
+import com.circaso.designsystem.components.CircasoIconButton
+import com.circaso.designsystem.components.CircasoIconImage
+import com.circaso.designsystem.components.CircasoTextField
+import com.circaso.designsystem.components.DetailRow
+import com.circaso.designsystem.components.GoalProgress
+import com.circaso.feature.chama.presentation.amountNumber
+import com.circaso.feature.chama.presentation.amountText
+import com.circaso.designsystem.components.ListRow
+import com.circaso.designsystem.components.MoneyCard
+import com.circaso.designsystem.components.RowDivider
+import com.circaso.designsystem.components.SegmentedControl
+import com.circaso.designsystem.components.SuggestionChip
+import com.circaso.designsystem.theme.CircasoShapes
+import com.circaso.designsystem.theme.CircasoSizes
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.ui.draw.clip
+import com.circaso.designsystem.theme.CircasoSpacing
+import com.circaso.designsystem.theme.CircasoTheme
+import com.circaso.feature.wallet.domain.MinorUnits
+import com.circaso.feature.wallet.domain.RemindOutcome
+import com.circaso.feature.wallet.domain.chainName
+
+/**
+ * Paying a person: pick them (from the wallet), the amount and note (design C4), the Circle SDK's PIN (C5), then the
+ * moment (C6). The card lands in the chat with them on the way out.
+ */
+@Composable
+fun PayScreen(viewModel: PayViewModel, onBack: () -> Unit, onOpenTransfer: (String) -> Unit, onOpenChat: ((String) -> Unit)?) {
+    val state by viewModel.state.collectAsState()
+    PayContent(state, onBack, viewModel::onQuery, viewModel::onPick, { if (!viewModel.onBackToPick()) onBack() }, viewModel::onAmount, viewModel::onToggleUnit, viewModel::onNote, viewModel::onChain, viewModel::onRemind, viewModel::onPay, viewModel::onErrorShown, onOpenTransfer, onOpenChat, onAttachAgain = viewModel::onAttachAgain, onScan = if (viewModel.canScan) viewModel::onScan else null)
+}
+
+@Composable
+fun PayContent(
+    state: PayUiState,
+    onBack: () -> Unit,
+    onQuery: (String) -> Unit,
+    onPick: (com.circaso.feature.contacts.domain.Person) -> Unit,
+    onBackToPick: () -> Unit,
+    onAmount: (String) -> Unit,
+    onToggleUnit: () -> Unit,
+    onNote: (String) -> Unit,
+    onChain: (String) -> Unit,
+    onRemind: () -> Unit,
+    onPay: () -> Unit,
+    onErrorShown: () -> Unit,
+    onOpenTransfer: (String) -> Unit,
+    onOpenChat: ((String) -> Unit)?,
+    onAttachAgain: () -> Unit = {},
+    /** Scan someone's Circaso code (design E4) to pay them; null when the phone can't scan. */
+    onScan: (() -> Unit)? = null,
+) {
+    val c = CircasoTheme.colors
+    val t = CircasoTheme.typography
+    val toast = rememberToastState()
+    LaunchedEffect(state.error) { state.error?.let { toast.show(it); onErrorShown() } }
+    val title = when {
+        state.contribution -> if (state.step == PayStep.Done) "Added" else "Add to ${state.goalName}"
+        state.payout -> when { state.step != PayStep.Done -> "Pay from the Group"; state.linked -> "Paid"; else -> "Sent" }
+        state.step == PayStep.Pick -> "Send"
+        state.step == PayStep.Done -> "Sent"
+        else -> state.payee?.let { "Send to ${it.displayName.substringBefore(' ')}" } ?: "Send"
+    }
+    CircasoScaffold(
+        topBar = {
+            CircasoNavBar(
+                title = title,
+                // Back from the amount returns to the picker when the payment started there, otherwise leaves Pay.
+                onBack = when (state.step) { PayStep.Signing -> null; PayStep.Amount -> onBackToPick; else -> onBack },
+                trailing = { if (state.step == PayStep.Pick && onScan != null) CircasoIconButton(CircasoIcon.Scan, "Scan a Circaso code", onScan) },
+            )
+        },
+        toast = { ToastHost(toast, Modifier.align(Alignment.TopCenter).padding(top = 8.dp)) },
+    ) { padding ->
+        when (state.step) {
+            PayStep.Pick -> PickPerson(state, padding, onQuery, onPick)
+            PayStep.Amount, PayStep.Signing -> AmountStep(state, padding, onAmount, onToggleUnit, onNote, onChain, onRemind, onPay)
+            PayStep.Done -> DoneStep(state, padding, onBack, onOpenTransfer, onOpenChat, onAttachAgain)
+        }
+    }
+}
+
+@Composable
+private fun PickPerson(state: PayUiState, padding: PaddingValues, onQuery: (String) -> Unit, onPick: (com.circaso.feature.contacts.domain.Person) -> Unit) {
+    val c = CircasoTheme.colors
+    val t = CircasoTheme.typography
+    LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = padding.calculateBottomPadding() + CircasoSpacing.s4)) {
+        item {
+            CircasoTextField(state.query, onQuery, label = "To", placeholder = "Name or @handle", modifier = Modifier.padding(horizontal = CircasoSpacing.s4, vertical = CircasoSpacing.s2))
+        }
+        val people = state.filteredContacts
+        if (people.isEmpty()) item { BasicText(if (state.contacts.isEmpty()) "Connect with people from the You tab to pay them." else "Nobody matches.", style = t.footnote.copy(color = c.inkSecondary), modifier = Modifier.padding(CircasoSpacing.s4)) }
+        items(people, key = { it.userId }) { person ->
+            ListRow(person.displayName, sub = person.handle?.let { "@$it" }, leading = { Avatar(person.displayName, size = CircasoSizes.avatarMd, imageUrl = person.avatarUrl) }, onClick = { onPick(person) })
+            RowDivider(Modifier.padding(start = 72.dp))
+        }
+    }
+}
+
+/** Design C4: the person, the amount big, a note, from/fee/receives, then the button. The SDK takes over for C5. */
+@Composable
+private fun AmountStep(state: PayUiState, padding: PaddingValues, onAmount: (String) -> Unit, onToggleUnit: () -> Unit, onNote: (String) -> Unit, onChain: (String) -> Unit, onRemind: () -> Unit, onPay: () -> Unit) {
+    val c = CircasoTheme.colors
+    val t = CircasoTheme.typography
+    val payee = state.payee
+    val focus = androidx.compose.runtime.remember { FocusRequester() }
+    LaunchedEffect(Unit) { if (state.step == PayStep.Amount) runCatching { focus.requestFocus() } }
+    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).imePadding().padding(horizontal = CircasoSpacing.s4).padding(bottom = padding.calculateBottomPadding() + CircasoSpacing.s4), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(CircasoSpacing.s4)) {
+        if (payee != null) {
+            Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(CircasoSpacing.s2), modifier = Modifier.padding(top = CircasoSpacing.s2)) {
+                Avatar(payee.displayName, size = CircasoSizes.avatarLg, imageUrl = payee.avatarUrl)
+                BasicText(payee.displayName, style = t.headline.copy(color = c.ink))
+                // Design D3: a contribution goes to the treasurer's wallet; design D5: a payout leaves it.
+                if (state.contribution) BasicText("holds the money for ${state.goalName}", style = t.footnote.copy(color = c.inkSecondary))
+                if (state.payout) BasicText("approved by the group's admins", style = t.footnote.copy(color = c.inkSecondary))
+            }
+        }
+        // The amount as typed, with the other unit under it.
+        val unit = if (state.inFiat) state.currency ?: "USDC" else "USDC"
+        Row(verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            BasicText(unit, style = t.title2.copy(fontWeight = FontWeight.SemiBold, color = c.inkSecondary), modifier = Modifier.padding(bottom = CircasoSpacing.s2))
+            Box {
+                if (state.amountText.isEmpty()) BasicText("0", style = t.amountHero.copy(color = c.inkTertiary))
+                BasicTextField(
+                    value = state.amountText, onValueChange = onAmount, singleLine = true, enabled = state.step == PayStep.Amount && !state.payout,
+                    textStyle = t.amountHero.copy(color = c.ink),
+                    cursorBrush = SolidColor(c.ink), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                    // As wide as its digits at any text size, so the number stays centred with its currency.
+                    modifier = Modifier.focusRequester(focus).width(androidx.compose.foundation.layout.IntrinsicSize.Min).defaultMinSize(minWidth = 32.dp),
+                )
+            }
+        }
+        val other = if (state.inFiat) state.usdcText else state.fiatText
+        if (state.payout) BasicText(listOfNotNull(state.fiatText?.let { "≈ $it" }, "The amount the admins approved").joinToString(" · "), style = t.footnote.copy(color = c.inkSecondary, textAlign = TextAlign.Center))
+        else if (state.canUseFiat) SuggestionChip(other?.let { "≈ $it · switch" } ?: "Type in ${if (state.inFiat) "USDC" else state.currency}", onToggleUnit)
+        if (state.overBalance) BasicText("You have ${MinorUnits.toDisplay(state.balanceMinor, 6)} USDC on ${chainName(state.blockchain.orEmpty())}.", style = t.footnote.copy(color = c.critical))
+
+        CircasoTextField(state.note, onNote, label = "Note", placeholder = "What's it for?", enabled = state.step == PayStep.Amount)
+
+        when (val p = state.problem) {
+            PayeeProblem.NoWallet -> Problem(
+                "${payee?.displayName?.substringBefore(' ') ?: "They"} hasn't set up a wallet yet.",
+                when (state.reminded) { RemindOutcome.Sent -> "Reminder sent."; RemindOutcome.AlreadySent -> "You reminded them today already."; RemindOutcome.HasWallet -> "They have one now: try again."; null -> null },
+                action = if (state.reminded == null) "Remind them" to onRemind else null,
+            )
+            is PayeeProblem.NotOnChain -> {
+                val mine = state.wallet?.chainsReceiving?.map { it.blockchain }.orEmpty()
+                val shared = p.theirChains.filter { it in mine }
+                Problem(
+                    "They can't receive on ${chainName(state.blockchain.orEmpty())}.",
+                    if (shared.isEmpty()) "Add one of their networks under Wallet → Networks: ${p.theirChains.joinToString { chainName(it) }}." else "Pay them on another network:",
+                    chains = shared, onChain = onChain,
+                )
+            }
+            is PayeeProblem.Other -> Problem(p.message, null)
+            null -> Unit
+        }
+
+        // Design `.cx-details`: a raised card with hairlines between the rows.
+        Column(Modifier.fillMaxWidth().clip(CircasoShapes.md).background(c.surfaceRaised).border(1.dp, c.separator, CircasoShapes.md)) {
+            DetailRow("From", "USDC on ${chainName(state.blockchain.orEmpty())}")
+            state.chama?.let { RowDivider(); DetailRow("Visible to", "All ${it.memberCount} members") }
+            RowDivider()
+            DetailRow("Fee", "No fee")
+            RowDivider()
+            DetailRow("${payee?.displayName?.substringBefore(' ') ?: "They"} receive${if (payee == null) "" else "s"}", state.usdcText ?: "—")
+        }
+        // Design D3: the goal as it will stand once this lands.
+        val chama = state.chama
+        val after = state.progressAfter
+        if (chama != null && after != null) {
+            val got = (chama.contributedMinor.toLongOrNull() ?: 0L) + (state.amountMinor?.toLongOrNull() ?: 0L)
+            Column(Modifier.fillMaxWidth().padding(horizontal = CircasoSpacing.s1)) {
+                GoalProgress(
+                    raised = amountText(got.toString(), state.wallet?.fiat), of = amountNumber(chama.goal.targetMinor, state.wallet?.fiat), progress = after,
+                    meta = if (state.amountMinor?.let { MinorUnits.isZero(it) } == false) "After your contribution" else "Today", label = "${chama.goal.name} after this progress",
+                )
+            }
+        }
+        Spacer(Modifier.height(CircasoSpacing.s2))
+        val amount = if (state.inFiat && state.fiatText != null) state.fiatText else state.usdcText
+        CircasoButton(
+            text = when {
+                state.step == PayStep.Signing -> "Waiting for your PIN…"
+                state.contribution && amount != null -> "Add $amount to ${state.goalName}"
+                state.contribution -> "Add to ${state.goalName}"
+                state.payout && amount != null -> "Pay $amount"
+                state.payout -> "Pay"
+                amount != null -> "Send $amount"
+                else -> "Send"
+            },
+            onClick = onPay, size = ButtonSize.Large, block = true, enabled = state.canPay, busy = state.step == PayStep.Signing,
+        )
+        state.rate?.let { BasicText("1 USDC = ${state.currency} ${formatRate(it)}", style = t.caption1.copy(color = c.inkTertiary)) }
+        if (!state.online) BasicText("You need a connection to send money.", style = t.footnote.copy(color = c.inkSecondary))
+        if (state.onHold) BasicText("Sending is paused for a short while after your account was recovered. You can still receive money.", style = t.footnote.copy(color = c.warning, textAlign = TextAlign.Center))
+    }
+}
+
+private fun formatRate(rate: String) = rate.substringBefore('.') + "." + rate.substringAfter('.', "00").take(2).padEnd(2, '0')
+
+
+@Composable
+private fun Problem(title: String, detail: String?, action: Pair<String, () -> Unit>? = null, chains: List<String> = emptyList(), onChain: (String) -> Unit = {}) {
+    val c = CircasoTheme.colors
+    val t = CircasoTheme.typography
+    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(CircasoSpacing.s2)) {
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+            CircasoIconImage(CircasoIcon.Warning, c.warning, Modifier.size(18.dp))
+            BasicText(title, style = t.callout.copy(color = c.ink, fontWeight = FontWeight.SemiBold))
+        }
+        detail?.let { BasicText(it, style = t.footnote.copy(color = c.inkSecondary)) }
+        if (chains.isNotEmpty()) Row(horizontalArrangement = Arrangement.spacedBy(CircasoSpacing.s2)) { chains.forEach { SuggestionChip(chainName(it), { onChain(it) }) } }
+        action?.let { (label, run) -> CircasoButton(label, run, style = ButtonStyle.Secondary, size = ButtonSize.Small) }
+    }
+}
+
+/** Design C6: the money moment, with the card as it will sit in the chat. */
+@Composable
+private fun DoneStep(state: PayUiState, padding: PaddingValues, onDone: () -> Unit, onOpenTransfer: (String) -> Unit, onOpenChat: ((String) -> Unit)?, onAttachAgain: () -> Unit) {
+    val c = CircasoTheme.colors
+    val t = CircasoTheme.typography
+    val transfer = state.result
+    Column(Modifier.fillMaxSize().padding(horizontal = CircasoSpacing.s6).padding(bottom = padding.calculateBottomPadding() + CircasoSpacing.s4), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(CircasoSpacing.s4, Alignment.CenterVertically)) {
+        AshaMark(size = CircasoSizes.avatarLg)
+        BasicText(
+            when { state.contribution -> "Added to ${state.goalName}"; state.linked -> "Paid from the group"; state.payout -> "The money went"; else -> "On its way" },
+            style = t.title2.copy(color = c.ink, textAlign = TextAlign.Center),
+        )
+        BasicText(
+            when {
+                state.contribution -> "Everyone in the group sees it on the goal. It settles on chain in a moment."
+                state.linked -> "${state.payee?.displayName ?: "They"} will have it in a moment, and the group sees the request as paid."
+                state.payout && state.attaching -> "${state.payee?.displayName ?: "They"} will have it in a moment. Linking it to the request…"
+                state.payout -> "${state.payee?.displayName ?: "They"} will have it in a moment."
+                else -> "${state.payee?.displayName ?: "They"} will see it in your chat. It settles on chain in a moment."
+            },
+            style = t.body.copy(color = c.inkSecondary, textAlign = TextAlign.Center),
+        )
+        if (transfer != null) {
+            MoneyCard(
+                head = if (state.contribution) "Contribution" else "Sent", amount = state.fiatText ?: state.usdcText ?: "", foot = "${MinorUnits.toDisplay(transfer.amount.amountMinor, 6)} USDC · on its way", outgoing = true,
+                note = state.note.trim().takeIf { it.isNotEmpty() }, onClick = { onOpenTransfer(transfer.transferId) },
+            )
+        }
+        // CH6 didn't land: the money went, so say so plainly and keep the link to the request one tap away.
+        if (state.attachPending) {
+            BasicText("The payment went, but it isn't linked to the request yet. Circaso keeps trying; you can also link it now. Don't pay it again.", style = t.footnote.copy(color = c.warning, textAlign = TextAlign.Center))
+            CircasoButton("Link to the Request", onAttachAgain, style = ButtonStyle.Secondary, size = ButtonSize.Large, block = true, enabled = state.online)
+        }
+        Spacer(Modifier.height(CircasoSpacing.s2))
+        val chat = state.chatId
+        if (chat != null && onOpenChat != null) CircasoButton("Open Chat", { onOpenChat(chat) }, size = ButtonSize.Large, block = true)
+        CircasoButton("Done", onDone, style = if (chat != null && onOpenChat != null) ButtonStyle.Plain else ButtonStyle.Primary, size = ButtonSize.Large, block = true)
+    }
+}

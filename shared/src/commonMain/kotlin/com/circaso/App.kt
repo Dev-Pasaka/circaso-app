@@ -1,0 +1,57 @@
+package com.circaso
+
+import androidx.compose.foundation.background
+import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import com.circaso.core.datastore.AppPreferences
+import kotlinx.coroutines.launch
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.ui.tooling.preview.Preview
+import com.circaso.core.navigation.AppNavigation
+import com.circaso.core.network.NetworkEvents
+import com.circaso.designsystem.platform.rememberIsHighContrast
+import com.circaso.designsystem.theme.CircasoTheme
+import com.circaso.gallery.ThemeGallery
+import coil3.ImageLoader
+import coil3.compose.setSingletonImageLoaderFactory
+import coil3.network.ktor3.KtorNetworkFetcherFactory
+import org.koin.compose.koinInject
+
+@Composable
+@Preview
+fun App() {
+    // Pictures come from pre-signed storage links, so they are fetched without our bearer token (a plain Ktor client).
+    setSingletonImageLoaderFactory { context -> ImageLoader.Builder(context).components { add(KtorNetworkFetcherFactory()) }.build() }
+    val events: NetworkEvents = koinInject()
+    val prefs: AppPreferences = koinInject()
+    val outdated by events.clientOutdated.collectAsState()
+    val overrides by prefs.themeOverrides.collectAsState(initial = null)
+    val scope = rememberCoroutineScope()
+
+    val saved = overrides
+    val systemDark = isSystemInDarkTheme()
+    val systemHigh = rememberIsHighContrast()
+    // Wait for the saved choice (a few milliseconds) so the first frame is never the wrong theme.
+    if (saved == null) {
+        Box(Modifier.fillMaxSize().background(if (systemDark) Color.Black else Color.White))
+        return
+    }
+    val isDark = saved.dark ?: systemDark
+    val isHigh = saved.highContrast ?: systemHigh
+    CircasoTheme(darkTheme = isDark, highContrast = isHigh) {
+        AppNavigation(forceUpdate = outdated) {
+            ThemeGallery(
+                darkTheme = isDark,
+                highContrast = isHigh,
+                onToggleDark = { scope.launch { prefs.setDark(!isDark) } },
+                onToggleContrast = { scope.launch { prefs.setHighContrast(!isHigh) } },
+            )
+        }
+    }
+}

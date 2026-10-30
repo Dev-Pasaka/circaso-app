@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Asha's mark (asha-icon-silver.svg from assets.circaso.com/brand/asha, 2026-10-28): the silver disc, the open ring and the two sparks. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt"
+    android:width="200dp" android:height="200dp" android:viewportWidth="200" android:viewportHeight="200">
+    <path android:pathData="M100,8 A92,92 0 1 1 99.99,8 Z">
+        <aapt:attr name="android:fillColor">
+            <gradient android:type="linear" android:startX="30" android:startY="10" android:endX="170" android:endY="190">
+                <item android:offset="0" android:color="#FFFBFBFD" />
+                <item android:offset="0.32" android:color="#FFD4D5D9" />
+                <item android:offset="0.55" android:color="#FF8F9298" />
+                <item android:offset="0.78" android:color="#FFDCDDE1" />
+                <item android:offset="1" android:color="#FFF4F4F6" />
+            </gradient>
+        </aapt:attr>
+    </path>
+    <path android:pathData="M152,120.8 A56,56 0 1 1 152,79.2" android:strokeColor="#FF0B0B0C" android:strokeWidth="9" android:strokeLineCap="round" />
+    <path android:fillColor="#FF0B0B0C" android:pathData="M100,64 C104.5,87 113,95.5 136,100 C113,104.5 104.5,113 100,136 C95.5,113 87,104.5 64,100 C87,95.5 95.5,87 100,64 Z" />
+    <path android:fillColor="#FF0B0B0C" android:pathData="M152,28 C153.5,35 155.5,37 162.5,38.5 C155.5,40 153.5,42 152,49 C150.5,42 148.5,40 141.5,38.5 C148.5,37 150.5,35 152,28 Z" />
+</vector>

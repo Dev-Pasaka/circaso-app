@@ -1,0 +1,465 @@
+package com.circaso.feature.calls
+
+import com.circaso.core.calls.CallEngine
+import com.circaso.core.calls.CallEngineException
+import com.circaso.core.calls.IceServerSpec
+import com.circaso.core.common.AppError
+import com.circaso.core.common.AppResult
+import com.circaso.core.common.ErrorMessages
+import com.circaso.core.network.newIdempotencyKey
+import com.circaso.core.sync.nowMillis
+import com.circaso.feature.calls.data.CallDto
+import com.circaso.feature.calls.data.CallsRemote
+import com.circaso.feature.calls.data.JoinCallRequest
+import com.circaso.feature.calls.data.LocalTrackDto
+import com.circaso.feature.calls.data.PullRequest
+import com.circaso.feature.calls.data.PullTrackRequest
+import com.circaso.feature.calls.data.RenegotiateRequest
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.jsonPrimitive
+
+/** Where this phone is in a call (designs H1–H4). */
+/** [Reconnecting]: the network or the media connection dropped mid-call; the phone is rejoining (as WhatsApp does). */
+enum class CallPhase { Incoming, Ringing, Connecting, Active, Reconnecting, Ended }
+
+/** [name] is the full name; [handle] the "@username" shown under it, as X does (Pasaka, 2026-10-30). */
+data class CallPerson(val userId: String, val name: String, val joined: Boolean, val audio: Boolean, val video: Boolean, val ringing: Boolean, val videoMid: String?, val handle: String? = null)
+
+/** One call as the screens see it. */
+data class CallUi(
+    val callId: String?,
+    val chatId: String,
+    val title: String,
+    val video: Boolean,
+    val group: Boolean,
+    val phase: CallPhase,
+    val people: List<CallPerson> = emptyList(),
+    val mic: Boolean = true,
+    val camera: Boolean = false,
+    val speaker: Boolean = false,
+    val frontCamera: Boolean = true,
+    /** When the call became active (H2's timer). */
+    val activeSince: Long? = null,
+    val endReason: String? = null,
+    val minimised: Boolean = false,
+    val error: String? = null,
+    /** Who started it, for a group's ring ("Otieno is calling · Holiday Fund"). */
+    val caller: String? = null,
+    /** The other person's "@username" under their name in a direct call. */
+    val handle: String? = null,
+) {
+    val joined get() = people.filter { it.joined }
+    /** In the group but not on the call (missed, declined or left): who "Add people" rings. */
+    val notOnCall get() = people.filter { !it.joined && !it.ringing }
+}
+
+/**
+ * The app's one call at a time, alive above every screen (H1 can arrive anywhere; a call keeps going while the person
+ * sends money from it). It talks to the backend (guide CL1–CL8) and drives the platform's WebRTC [engine]:
+ * join = start the engine → CL3 with its offer → the SFU's answer; then every other person's tracks are pulled (CL4)
+ * and the SFU's offer answered (CL5). Frames from the `calls` module keep everyone's state in step.
+ */
+class CallController(
+    private val remote: CallsRemote,
+    private val engine: CallEngine,
+    /** The signed-in person. */
+    private val myUserId: () -> String?,
+    private val scope: CoroutineScope,
+    private val names: suspend (chatId: String) -> Pair<String, Boolean>?,
+    /** Each person's "@username" in the call's chat, shown under their full name (Pasaka, 2026-10-30). */
+    private val labels: suspend (chatId: String) -> Map<String, String> = { emptyMap() },
+    /** Clears the platform's ringing notification once the call is answered, declined or over. */
+    private val stopRinging: (callId: String) -> Unit = {},
+    /** Whether the phone is online; a call rejoins when it comes back. */
+    private val online: kotlinx.coroutines.flow.Flow<Boolean> = kotlinx.coroutines.flow.flowOf(true),
+    private val reconnectGiveUpMillis: Long = 40_000,
+    /** Writes a finished call into its chat's history (WhatsApp-style); see [logEnded]. */
+    private val log: suspend (CallLogEntry) -> Unit = {},
+) {
+    private val _state = MutableStateFlow<CallUi?>(null)
+    val state: StateFlow<CallUi?> = _state
+
+    private val json = Json { ignoreUnknownKeys = true }
+    private val lock = Mutex()
+    private var call: CallDto? = null
+    /** From CL1/CL2/CL3 only: frames carry no ICE servers, so TURN credentials never sit in the frame log. */
+    private var ice: List<IceServerSpec> = emptyList()
+    private var sessionId: String? = null
+    /** Whose tracks are pulled, by their connection tag: a new tag (they rejoined) means pull them again. */
+    private val pulled = mutableMapOf<String, String?>()
+    private var watchJob: Job? = null
+    private val midOf = mutableMapOf<String, String>()
+    private var clearJob: Job? = null
+
+    val available get() = engine.available
+
+    /** Design C2/D2's call buttons: ring the chat (CL1), then join at once so the caller is ready when they answer. */
+    fun start(chatId: String, video: Boolean) {
+        if (_state.value?.phase.let { it != null && it != CallPhase.Ended }) return
+        takeOver()
+        _state.value = CallUi(null, chatId, "", video, false, CallPhase.Ringing, camera = video, speaker = video)
+        scope.launch {
+            names(chatId)?.let { (t, g) -> _state.update { it?.copy(title = t, group = g) } }
+            labelOf = labels(chatId)
+            when (val r = remote.start(chatId, video, newIdempotencyKey())) {
+                is AppResult.Success -> { call = r.value; publish(); join(r.value) }
+                is AppResult.Failure -> {
+                    // A call already running in this chat (a group call someone started): join that one instead.
+                    if ((r.error as? AppError.Api)?.code == "calls.already_in_call") {
+                        val existing = (remote.forChat(chatId) as? AppResult.Success)?.value
+                        if (existing != null) { call = existing; publish(); join(existing); return@launch }
+                    }
+                    fail(r.error)
+                }
+            }
+        }
+    }
+
+    /** A group's "Join call" banner. */
+    fun joinExisting(chatId: String) {
+        scope.launch {
+            val existing = (remote.forChat(chatId) as? AppResult.Success)?.value ?: return@launch
+            takeOver()
+            labelOf = labels(chatId)
+            // Never a call without its screen: the call's own data stands in when the chat isn't on this phone yet.
+            val (t, g) = names(chatId) ?: ("Group call" to (existing.participants.size > 2))
+            _state.value = CallUi(existing.callId, chatId, t, existing.kind == "VIDEO", g, CallPhase.Connecting, camera = existing.kind == "VIDEO", speaker = true)
+            call = existing
+            join(existing)
+        }
+    }
+
+    /** H1: Accept. */
+    fun accept() {
+        val c = call ?: return
+        stopRinging(c.callId)
+        _state.update { it?.copy(phase = CallPhase.Connecting, camera = c.kind == "VIDEO", speaker = c.kind == "VIDEO") }
+        scope.launch { join(c) }
+    }
+
+    /** H1: Decline (CL6). */
+    fun decline() {
+        val c = call ?: return
+        stopRinging(c.callId)
+        _state.update { it?.copy(phase = CallPhase.Ended, endReason = "DECLINED") }
+        scope.launch {
+            (remote.decline(c.callId) as? AppResult.Success)?.value?.takeIf { it.state == "ENDED" }?.let { logEnded(it) }
+            finish()
+        }
+    }
+
+    /**
+     * Tears the peer connection down after whatever the lock is running (a join, rejoin or renegotiation) is done.
+     * Closing it while WebRTC was still applying a description freed it under WebRTC's signaling thread and crashed
+     * the app (2026-10-30, SIGSEGV in libjingle_peerconnection).
+     */
+    private fun closeEngine() {
+        scope.launch { lock.withLock { engine.close() } }
+    }
+
+    /** H2–H4: End (CL7). */
+    fun leave() {
+        val c = call
+        _state.update { it?.copy(phase = CallPhase.Ended, endReason = it.endReason ?: "COMPLETED") }
+        closeEngine()
+        scope.launch {
+            if (c != null) (remote.leave(c.callId) as? AppResult.Success)?.value?.takeIf { it.state == "ENDED" }?.let { logEnded(it) }
+            finish()
+        }
+    }
+
+    fun toggleMic() = media { it.copy(mic = !it.mic) }
+
+    /** The camera only counts as on once it really is: no black "video" when permission was refused. */
+    fun toggleCamera() {
+        val want = !(_state.value?.camera ?: return)
+        scope.launch {
+            if (engine.setCamera(want)) media { it.copy(camera = want) }
+            else _state.update { it?.copy(error = "Circaso needs the camera for video. Turn it on in Settings.") }
+        }
+    }
+    fun toggleSpeaker() { _state.update { it?.copy(speaker = !it.speaker) }; _state.value?.let { engine.setSpeaker(it.speaker) } }
+    fun flipCamera() { engine.flipCamera(); _state.update { it?.copy(frontCamera = !it.frontCamera) } }
+    fun minimise(on: Boolean) = _state.update { it?.copy(minimised = on) }
+
+    /** H4's "Add people" (CL9): ring everyone in the group who isn't on the call. */
+    fun ringOthers() {
+        val c = call ?: return
+        scope.launch {
+            when (val r = remote.ring(c.callId, emptyList())) {
+                is AppResult.Success -> { call = r.value; publish() }
+                is AppResult.Failure -> _state.update { it?.copy(error = ErrorMessages.forError(r.error)) }
+            }
+        }
+    }
+
+    private fun media(change: (CallUi) -> CallUi) {
+        val next = _state.value?.let(change) ?: return
+        _state.value = next
+        engine.setMicrophone(next.mic)
+        call?.let { c -> scope.launch { remote.media(c.callId, next.mic, next.camera) } }
+    }
+
+    /** A `calls` realtime frame. */
+    suspend fun onFrame(type: String, data: JsonObject?) {
+        when (type) {
+            "call.ringing" -> {
+                val callId = data?.get("callId")?.jsonPrimitive?.contentOrNull ?: return
+                if (_state.value?.phase.let { it != null && it != CallPhase.Ended }) return // busy: one call at a time
+                val c = (remote.get(callId) as? AppResult.Success)?.value ?: return
+                if (c.state == "ENDED") return
+                takeOver()
+                call = c
+                labelOf = labels(c.chatId)
+                val (title, group) = names(c.chatId) ?: (c.participants.firstOrNull { it.userId == c.startedBy }?.displayName.orEmpty() to false)
+                val caller = c.participants.firstOrNull { it.userId == c.startedBy }?.displayName?.takeIf { it.isNotBlank() }
+                _state.value = CallUi(c.callId, c.chatId, title, c.kind == "VIDEO", group, CallPhase.Incoming, caller = caller)
+                publish()
+            }
+            "call.updated" -> data?.let { decode(it) }?.let { c -> if (c.callId == call?.callId) { call = c; publish(); pullNew() } }
+            "call.ended" -> data?.let { decode(it) }?.let { c ->
+                stopRinging(c.callId)
+                logEnded(c)
+                if (c.callId != call?.callId) return
+                call = c
+                closeEngine()
+                _state.update { it?.copy(phase = CallPhase.Ended, endReason = c.endReason) }
+                finish()
+            }
+        }
+    }
+
+    /**
+     * One history entry per ended call, from this phone's side: a call I started that nobody answered is "No answer",
+     * one rung to me that I never joined is "Missed", a call someone joined has its talking time.
+     */
+    private suspend fun logEnded(c: CallDto) {
+        val me = myUserId() ?: return
+        val mine = c.participants.firstOrNull { it.userId == me }
+        val outgoing = c.startedBy == me
+        val joined = mine?.joinedAt != null
+        val outcome = when (c.endReason) {
+            "COMPLETED" -> if (joined && c.startedAt != null) CallLogOutcome.Completed else if (outgoing) CallLogOutcome.NoAnswer else CallLogOutcome.Missed
+            "MISSED" -> if (outgoing) CallLogOutcome.NoAnswer else CallLogOutcome.Missed
+            "DECLINED" -> CallLogOutcome.Declined
+            "CANCELLED" -> if (outgoing) CallLogOutcome.Cancelled else CallLogOutcome.Missed
+            else -> CallLogOutcome.Failed
+        }
+        val start = c.startedAt?.let { runCatching { kotlin.time.Instant.parse(it).toEpochMilliseconds() }.getOrNull() }
+        val end = c.endedAt?.let { runCatching { kotlin.time.Instant.parse(it).toEpochMilliseconds() }.getOrNull() }
+        val created = runCatching { kotlin.time.Instant.parse(c.createdAt).toEpochMilliseconds() }.getOrNull() ?: nowMillis()
+        val seconds = if (outcome == CallLogOutcome.Completed && start != null && end != null) ((end - start) / 1000).coerceAtLeast(0) else 0
+        log(CallLogEntry(c.chatId, c.callId, outgoing, c.kind == "VIDEO", outcome, seconds, c.startedBy, created))
+    }
+
+    private fun decode(o: JsonObject): CallDto? = runCatching { json.decodeFromJsonElement(CallDto.serializer(), o) }.getOrNull()
+
+    private suspend fun join(c: CallDto) = lock.withLock {
+        val me = myUserId() ?: return@withLock
+        try {
+            val servers = c.iceServers.map { IceServerSpec(it.urls, it.username, it.credential) }.ifEmpty { ice }.ifEmpty { listOf(IceServerSpec(listOf("stun:stun.cloudflare.com:3478"))) }
+            val offer = engine.start(servers, c.kind == "VIDEO", me)
+            when (val r = remote.join(c.callId, JoinCallRequest(offer.sdp, offer.tracks.map { LocalTrackDto(it.mid, it.trackName, it.kind) }))) {
+                is AppResult.Success -> {
+                    engine.acceptAnswer(r.value.answer)
+                    sessionId = r.value.sessionId
+                    call = r.value.call
+                    val s = _state.value
+                    engine.setMicrophone(s?.mic ?: true)
+                    engine.setSpeaker(s?.speaker ?: false)
+                    watch()
+                    // Tell everyone the real state: a pushed video track isn't a camera that's on (CL8).
+                    remote.media(c.callId, s?.mic ?: true, s?.camera ?: false)
+                    publish()
+                }
+                is AppResult.Failure -> { fail(r.error); return@withLock }
+            }
+        } catch (e: CallEngineException) {
+            fail(null, if (e.reason == "microphone") "Circaso needs the microphone for calls. Turn it on in Settings." else "The call couldn't start on this phone.")
+            remote.leave(c.callId)
+            return@withLock
+        }
+        pullNewLocked()
+    }
+
+    private fun pullNew() { scope.launch { lock.withLock { pullNewLocked() } } }
+
+    /** CL4 for everyone who has joined and isn't pulled yet, then the SFU's offer answered (CL5). */
+    private suspend fun pullNewLocked() {
+        val c = call ?: return
+        val session = sessionId ?: return
+        val me = myUserId()
+        val fresh = c.participants.filter { p ->
+            p.userId != me && p.state == "JOINED" && p.tracks.isNotEmpty() && (p.userId !in pulled || pulled[p.userId] != p.connection)
+        }
+        if (fresh.isEmpty()) return
+        val r = remote.pull(c.callId, PullRequest(session, fresh.flatMap { p -> p.tracks.map { PullTrackRequest(p.userId, it.trackName) } }))
+        val pull = (r as? AppResult.Success)?.value ?: return
+        pull.tracks.forEach { t -> if (t.trackName.startsWith("video") && t.mid != null) midOf[t.userId] = t.mid }
+        com.circaso.core.common.Diagnostics.note("calls: pulled ${pull.tracks.joinToString { it.trackName.substringBefore('-') + "@" + (it.mid ?: "none") }} renegotiate=${pull.requiresRenegotiation}")
+        val offer = pull.offer
+        if (offer != null) {
+            val answer = runCatching { engine.answerOffer(offer) }.getOrNull() ?: return
+            remote.renegotiate(c.callId, RenegotiateRequest(session, answer))
+        }
+        fresh.forEach { pulled[it.userId] = it.connection }
+        publish()
+    }
+
+    /** userId → "@handle" for the call's chat, loaded once per call. */
+    private var labelOf: Map<String, String> = emptyMap()
+
+    private fun publish() {
+        val c = call ?: return
+        com.circaso.core.common.Diagnostics.note("calls: state=${c.state} people=${c.participants.joinToString { it.state + "/v=" + it.video + "/mid=" + (midOf[it.userId] ?: "-") }}")
+        if (c.iceServers.isNotEmpty()) ice = c.iceServers.map { IceServerSpec(it.urls, it.username, it.credential) }
+        val me = myUserId()
+        val people = c.participants.filter { it.userId != me }.map { p ->
+            CallPerson(p.userId, p.displayName.ifBlank { labelOf[p.userId] ?: "Someone" }, p.state == "JOINED", p.audio, p.video, p.state == "INVITED", midOf[p.userId], handle = labelOf[p.userId])
+        }
+        val othersJoined = people.any { it.joined }
+        _state.update { s ->
+            val base = s ?: CallUi(c.callId, c.chatId, people.firstOrNull()?.name.orEmpty(), c.kind == "VIDEO", people.size > 1, CallPhase.Incoming)
+            val phase = when {
+                c.state == "ENDED" -> CallPhase.Ended
+                base.phase == CallPhase.Incoming -> CallPhase.Incoming
+                base.phase == CallPhase.Reconnecting -> CallPhase.Reconnecting
+                c.state == "ACTIVE" && othersJoined && sessionId != null -> CallPhase.Active
+                sessionId == null -> base.phase
+                else -> CallPhase.Ringing
+            }
+            base.copy(
+                callId = c.callId, people = people, phase = phase,
+                // A direct call is titled by the other person's full name with their @username under it; a group keeps its name.
+                title = if (!base.group) people.firstOrNull()?.name ?: base.title else base.title.ifBlank { people.firstOrNull()?.name.orEmpty() },
+                handle = if (!base.group) people.firstOrNull()?.handle else null,
+                activeSince = base.activeSince ?: if (phase == CallPhase.Active) nowMillis() else null,
+            )
+        }
+    }
+
+    private fun fail(error: AppError?, message: String? = null) {
+        closeEngine()
+        _state.update { it?.copy(phase = CallPhase.Ended, error = message ?: error?.let { e -> ErrorMessages.forError(e) }, endReason = it.endReason ?: "FAILED") }
+        finish()
+    }
+
+    /** "Call ended" stays a moment, then the call screen goes. */
+    private fun finish() {
+        clearJob?.cancel()
+        clearJob = scope.launch {
+            delay(if (_state.value?.error != null) 3_000 else 1_500)
+            reset()
+        }
+    }
+
+    /** A new call right after the last one ended: the last one's pending clean-up must not wipe this one. */
+    private fun takeOver() {
+        if (clearJob?.isActive == true) { clearJob?.cancel(); reset() }
+    }
+
+    /**
+     * WhatsApp-style reconnecting: when the network or the media connection drops mid-call the screen says
+     * "Reconnecting…"; once both are back the phone rejoins with a fresh session (CL3) and pulls everyone again.
+     * If it can't within [reconnectGiveUpMillis] it hangs up, so nobody is left alone on a call.
+     */
+    private fun watch() {
+        if (watchJob?.isActive == true) return
+        watchJob = scope.launch {
+            kotlinx.coroutines.flow.combine(engine.connected, online) { media, net -> net && media != false }
+                .collect { healthy ->
+                    val s = _state.value ?: return@collect
+                    if (s.phase == CallPhase.Ended || sessionId == null) return@collect
+                    if (!healthy) {
+                        if (s.phase != CallPhase.Reconnecting) {
+                            _state.update { it?.copy(phase = CallPhase.Reconnecting) }
+                            reconnectJob?.cancel()
+                            reconnectJob = scope.launch { reconnect() }
+                        }
+                    }
+                }
+        }
+    }
+
+    private var reconnectJob: Job? = null
+
+    private suspend fun reconnect() {
+        val started = nowMillis()
+        while (nowMillis() - started < reconnectGiveUpMillis) {
+            // Wait for the network, then a moment for the media connection to come back on its own (ICE often does).
+            val back = kotlinx.coroutines.withTimeoutOrNull(reconnectGiveUpMillis - (nowMillis() - started)) { online.first { it } } ?: break
+            if (back) delay(2_500)
+            if (engine.connected.value == true) { _state.update { it?.copy(phase = CallPhase.Active) }; return }
+            if (rejoin()) { _state.update { it?.copy(phase = CallPhase.Active) }; return }
+            delay(3_000)
+        }
+        _state.update { it?.copy(error = "The call dropped and couldn't reconnect.") }
+        leave()
+    }
+
+    /** CL3 again with a fresh peer connection; everyone is pulled again from scratch. */
+    private suspend fun rejoin(): Boolean = lock.withLock {
+        val c = call ?: return@withLock false
+        val me = myUserId() ?: return@withLock false
+        val s = _state.value
+        try {
+            val offer = engine.start(ice.ifEmpty { listOf(IceServerSpec(listOf("stun:stun.cloudflare.com:3478"))) }, s?.camera == true, me)
+            when (val r = remote.join(c.callId, JoinCallRequest(offer.sdp, offer.tracks.map { LocalTrackDto(it.mid, it.trackName, it.kind) }))) {
+                is AppResult.Success -> {
+                    engine.acceptAnswer(r.value.answer)
+                    sessionId = r.value.sessionId
+                    call = r.value.call
+                    engine.setMicrophone(s?.mic ?: true)
+                    engine.setSpeaker(s?.speaker ?: false)
+                    remote.media(c.callId, s?.mic ?: true, s?.camera ?: false)
+                    pulled.clear()
+                    midOf.clear()
+                }
+                is AppResult.Failure -> return@withLock false
+            }
+        } catch (e: CallEngineException) {
+            return@withLock false
+        }
+        pullNewLocked()
+        true
+    }
+
+    private fun reset() {
+        watchJob?.cancel()
+        reconnectJob?.cancel()
+        call = null
+        ice = emptyList()
+        labelOf = emptyMap()
+        sessionId = null
+        pulled.clear()
+        midOf.clear()
+        _state.value = null
+    }
+}
+
+/** How a finished call reads in its chat, from this phone's side. */
+enum class CallLogOutcome { Completed, Missed, Declined, Cancelled, NoAnswer, Failed }
+
+/** A finished call, for its chat's history. */
+data class CallLogEntry(
+    val chatId: String,
+    val callId: String,
+    val outgoing: Boolean,
+    val video: Boolean,
+    val outcome: CallLogOutcome,
+    val durationSeconds: Long,
+    val callerId: String,
+    val at: Long,
+)
