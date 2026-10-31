@@ -19,6 +19,12 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import coil3.request.crossfade
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import com.circaso.designsystem.motion.pressable
@@ -112,6 +118,14 @@ fun YouContent(
                 .padding(top = CircasoSpacing.s2, bottom = CircasoSpacing.s6 + bottomPadding.calculateBottomPadding() + padding.calculateBottomPadding()),
             verticalArrangement = Arrangement.spacedBy(CircasoSpacing.s6),
         ) {
+            ProfileHero(
+                name = state.profile?.let { it.displayName.ifBlank { "Your profile" } },
+                handle = state.profile?.handle,
+                phone = state.maskedPhone?.maskedForDisplay(),
+                photo = state.profile?.avatarUrl,
+                waiting = state.profile?.pendingSync == true,
+                onEdit = actions.onEditProfile,
+            )
             // Changes that couldn't be saved get their own screen (Pasaka, 2026-10-30); here, one row that says how many.
             if (state.failed.isNotEmpty()) {
                 ListGroup {
@@ -124,14 +138,6 @@ fun YouContent(
                     )
                 }
             }
-            ProfileHero(
-                name = state.profile?.displayName ?: "Your profile",
-                handle = state.profile?.handle,
-                phone = state.maskedPhone?.maskedForDisplay(),
-                photo = state.profile?.avatarUrl,
-                waiting = state.profile?.pendingSync == true,
-                onEdit = actions.onEditProfile,
-            )
             Section("People") {
                 ListRow("Contacts", trailing = { RowChevron() }, onClick = actions.onContacts)
                 RowDivider()
@@ -210,64 +216,90 @@ fun NeedsAttentionScreen(viewModel: YouViewModel, onBack: () -> Unit) {
 }
 
 /**
- * The You tab's top: the photo large and centred, glowing in its own colours. The picture itself, blurred and
- * scaled up, is the backdrop, so the glow always matches it; it fades into the page as it goes down. Without a photo
- * the glow is a quiet grey.
+ * The You tab's top: the photo large and centred, glowing in its own colours (Pasaka, 2026-10-31, in place of F2's
+ * grouped profile row). The glow is the same picture decoded tiny and stretched, so it is a soft wash of its colours
+ * on every Android version (a blur effect alone needs Android 12); it rises out of the page and fades back into it.
+ * Without a photo, or in high contrast, the wash is a quiet grey.
  */
 @Composable
-private fun ProfileHero(name: String, handle: String?, phone: String?, photo: String?, waiting: Boolean, onEdit: () -> Unit) {
+private fun ProfileHero(name: String?, handle: String?, phone: String?, photo: String?, waiting: Boolean, onEdit: () -> Unit) {
     val c = CircasoTheme.colors
     val t = CircasoTheme.typography
-    val page = if (CircasoTheme.colors.isDark) c.bg else c.bgGrouped
+    val page = c.bgGrouped
     Box(
         // Reaches the screen edges (the column has side padding) so the glow isn't boxed in.
         Modifier.layout { measurable, constraints ->
-            val bleed = (CircasoSpacing.s4 * 2).roundToPx()
+            val bleed = (HeroBleed * 2).roundToPx()
             val wide = constraints.maxWidth + bleed
             val placeable = measurable.measure(constraints.copy(minWidth = wide, maxWidth = wide))
             layout(constraints.maxWidth, placeable.height) { placeable.place(-bleed / 2, 0) }
         }.fillMaxWidth(),
         contentAlignment = Alignment.TopCenter,
     ) {
-        // The glow: the photo blurred and scaled up behind everything.
-        Box(Modifier.matchParentSize().clip(androidx.compose.foundation.shape.RoundedCornerShape(0.dp))) {
-            if (photo != null) {
+        Box(Modifier.matchParentSize().clipToBounds()) {
+            if (photo != null && !c.isHighContrast) {
+                val key = photo.substringBefore('?')
                 coil3.compose.AsyncImage(
-                    model = photo, contentDescription = null, contentScale = androidx.compose.ui.layout.ContentScale.Crop,
-                    modifier = Modifier.fillMaxSize().graphicsLayer { scaleX = 1.6f; scaleY = 1.6f; alpha = 0.75f }.blur(60.dp),
+                    model = coil3.request.ImageRequest.Builder(coil3.compose.LocalPlatformContext.current).data(photo)
+                        .size(GlowDecodePx).memoryCacheKey("$key#glow").diskCacheKey(key).crossfade(true).build(),
+                    contentDescription = null, contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+                    modifier = Modifier.fillMaxSize().blur(GlowBlur).graphicsLayer { alpha = GlowAlpha },
                 )
             } else {
-                Box(Modifier.fillMaxSize().background(androidx.compose.ui.graphics.Brush.radialGradient(listOf(c.fillStrong, page), radius = 700f)))
+                Box(
+                    Modifier.fillMaxSize().drawBehind {
+                        val avatarCentre = CircasoSpacing.s6.toPx() + CircasoSizes.avatarHero.toPx() / 2
+                        drawRect(androidx.compose.ui.graphics.Brush.radialGradient(listOf(c.fillStrong, page), center = androidx.compose.ui.geometry.Offset(size.width / 2, avatarCentre), radius = size.width * 0.75f))
+                    },
+                )
             }
-            // Strongest at the top, gone by the bottom: the colour rises behind the photo and fades into the page.
+            // Soft at the very top so the colour rises out of the page, strongest around the photo, gone by the
+            // bottom; dense enough behind the name for its text to keep its contrast.
             Box(
                 Modifier.fillMaxSize().background(
-                    androidx.compose.ui.graphics.Brush.verticalGradient(0f to page.copy(alpha = 0.05f), 0.55f to page.copy(alpha = 0.55f), 1f to page),
+                    androidx.compose.ui.graphics.Brush.verticalGradient(
+                        0f to page.copy(alpha = 0.6f), 0.18f to page.copy(alpha = 0.1f), 0.38f to page.copy(alpha = 0.55f),
+                        0.6f to page.copy(alpha = 0.9f), 1f to page,
+                    ),
                 ),
             )
         }
         Column(
-            Modifier.fillMaxWidth().padding(top = CircasoSpacing.s6, bottom = CircasoSpacing.s5)
-                .pressable(role = androidx.compose.ui.semantics.Role.Button, onClick = onEdit)
-                .semantics(mergeDescendants = true) { contentDescription = "$name. Edit your profile" },
+            Modifier.fillMaxWidth().padding(top = CircasoSpacing.s6, bottom = CircasoSpacing.s5, start = CircasoSpacing.s4, end = CircasoSpacing.s4),
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(CircasoSpacing.s2),
         ) {
-            Box(Modifier.shadow(18.dp, CircasoShapes.circle).clip(CircasoShapes.circle).border(3.dp, page, CircasoShapes.circle)) {
-                Avatar(name, size = 112.dp, imageUrl = photo)
+            if (name == null) {
+                // Loading: shapes only, so "Your profile" never flashes before the real name.
+                Box(Modifier.size(CircasoSizes.avatarHero).clip(CircasoShapes.circle).background(c.fillStrong))
+                Box(Modifier.padding(top = CircasoSpacing.s1).size(160.dp, 24.dp).clip(CircasoShapes.sm).background(c.fill))
+                Box(Modifier.size(120.dp, 16.dp).clip(CircasoShapes.sm).background(c.fill))
+                return@Column
             }
-            Spacer(Modifier.height(4.dp))
-            BasicText(name, style = t.title2.copy(color = c.ink, fontWeight = FontWeight.Bold), maxLines = 1)
-            listOfNotNull(handle?.let { "@$it" }, phone).joinToString("  ·  ").takeIf { it.isNotEmpty() }?.let {
-                BasicText(it, style = t.subhead.copy(color = c.inkSecondary), maxLines = 1)
+            // The ring in the page colour cuts the photo out of its own glow.
+            Avatar(name, size = CircasoSizes.avatarHero, imageUrl = photo, modifier = Modifier.shadow(AvatarShadow, CircasoShapes.circle).border(AvatarRing, page, CircasoShapes.circle))
+            Column(
+                Modifier.padding(top = CircasoSpacing.s1).semantics(mergeDescendants = true) {},
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(CircasoSpacing.s1),
+            ) {
+                BasicText(name, style = t.title2.copy(color = c.ink, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center), maxLines = 2, overflow = TextOverflow.Ellipsis)
+                listOfNotNull(handle?.let { "@$it" }, phone).joinToString("  ·  ").takeIf { it.isNotEmpty() }?.let {
+                    BasicText(it, style = t.subhead.copy(color = c.inkSecondary, textAlign = TextAlign.Center))
+                }
+                if (waiting) BasicText("Waiting to send", style = t.caption1.copy(color = c.warning))
             }
-            if (waiting) BasicText("Waiting to send", style = t.caption1.copy(color = c.warning))
-            Spacer(Modifier.height(4.dp))
-            Box(
-                Modifier.clip(CircasoShapes.pill).background(c.fill.copy(alpha = 0.85f))
-                    .pressable(role = androidx.compose.ui.semantics.Role.Button, onClick = onEdit)
-                    .padding(horizontal = CircasoSpacing.s4, vertical = 8.dp),
-            ) { BasicText("Edit Profile", style = t.subhead.copy(color = c.ink, fontWeight = FontWeight.SemiBold)) }
+            CircasoButton("Edit Profile", onEdit, modifier = Modifier.padding(top = CircasoSpacing.s1).heightIn(min = CircasoSizes.controlMd), style = ButtonStyle.Secondary, size = ButtonSize.Small)
         }
     }
 }
+
+/** Matches the scrolling column's side padding, which the hero reaches past. */
+private val HeroBleed = CircasoSpacing.s4
+/** Decoded this small, the picture stretches into a soft wash of its colours; cheap to load and to draw. */
+private const val GlowDecodePx = 24
+/** Extra smoothing where blur is supported (Android 12+, iOS); harmless where it isn't. */
+private val GlowBlur = 24.dp
+private const val GlowAlpha = 0.8f
+private val AvatarShadow = 18.dp
+private val AvatarRing = 3.dp

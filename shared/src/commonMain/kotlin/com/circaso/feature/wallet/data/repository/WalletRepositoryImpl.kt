@@ -309,6 +309,7 @@ internal fun TransferResponse.toEntity(existing: TransferEntity?): TransferEntit
         amount = amount.amount, feeMinor = fee?.amountMinor, chatId = chatId ?: existing?.chatId, txHash = txHash, failureReason = failureReason,
         counterpartName = existing?.counterpartName, note = existing?.note,
         createdAt = existing?.createdAt ?: createdAt?.let { isoMillis(it) } ?: now, updatedAt = updatedAt?.let { isoMillis(it) } ?: now,
+        counterpartHandle = existing?.counterpartHandle, counterpartAvatar = existing?.counterpartAvatar,
     )
 }
 
@@ -325,6 +326,7 @@ internal fun TransactionDto.toEntity(key: String, existing: TransferEntity?): Tr
         chatId = chatId ?: existing?.chatId, txHash = txHash ?: existing?.txHash, failureReason = existing?.failureReason,
         counterpartName = party?.displayName ?: existing?.counterpartName ?: party?.handle?.let { "@$it" }, note = existing?.note,
         createdAt = existing?.createdAt ?: at, updatedAt = maxOf(existing?.updatedAt ?: 0L, at),
+        counterpartHandle = party?.handle ?: existing?.counterpartHandle, counterpartAvatar = party?.avatarUrl ?: existing?.counterpartAvatar,
     )
 }
 
@@ -337,6 +339,6 @@ internal fun TransferEntity.toDomain() = Transfer(
     blockchain = blockchain, from = fromAddress, toUserId = toUserId, toAddress = toAddress,
     amount = Amount(asset, amountMinor, amount), fee = feeMinor?.let { Amount(asset, it, "") },
     chatId = chatId, txHash = txHash, failureReason = failureReason, counterpartName = counterpartName, note = note,
-    createdAt = createdAt, updatedAt = updatedAt,
+    createdAt = createdAt, updatedAt = updatedAt, counterpartHandle = counterpartHandle, counterpartAvatar = counterpartAvatar,
 )
 

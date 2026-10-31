@@ -42,6 +42,8 @@ object CircasoSizes {
     val avatarMd = 44.dp
     val avatarLg = 64.dp
     val avatarXl = 96.dp
+    /** The You tab's centred photo. */
+    val avatarHero = 112.dp
 }
 
 @Immutable

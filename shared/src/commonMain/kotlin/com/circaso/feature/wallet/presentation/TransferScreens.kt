@@ -123,13 +123,14 @@ fun TransferContent(state: TransferUiState, onBack: () -> Unit) {
         val when_ = formatLocalTime(transfer.createdAt, LocalTimeStyle.ShortDate) + ", " + formatLocalTime(transfer.createdAt, LocalTimeStyle.Clock)
         Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = CircasoSpacing.s4).padding(bottom = padding.calculateBottomPadding() + CircasoSpacing.s4), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(CircasoSpacing.s4)) {
             Spacer(Modifier.height(CircasoSpacing.s2))
-            if (transfer.counterpartName != null) Avatar(transfer.counterpartName, size = CircasoSizes.avatarLg) else CoinDisc(transfer.amount.asset)
+            if (transfer.counterpartName != null) Avatar(transfer.counterpartName, size = CircasoSizes.avatarLg, imageUrl = transfer.counterpartAvatar) else CoinDisc(transfer.amount.asset)
             // "KES 2,000" when it has a rate, else the coin itself ("ETH 0.01"): never split the coin text.
             val cur = if (fiat != null) fiat.substringBefore(' ') else transfer.amount.asset
             val num = if (fiat != null) fiat.substringAfter(' ') else coinNumber
             AmountDisplay(cur, num, sub = "${if (incoming) "Received from" else "Sent to"} $name · $when_", size = AmountSize.Medium, tone = if (incoming && transfer.settled) AmountTone.Money else AmountTone.Ink)
             Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 DetailRow(if (incoming) "From" else "To", name)
+                handleOf(transfer)?.let { DetailRow("Username", it) }
                 transfer.note?.let { DetailRow("Note", it) }
                 DetailRow("Date", when_)
                 DetailRow("Amount in coin", usdc)
@@ -211,12 +212,15 @@ internal fun statusText(t: Transfer) = when (t.state) {
     TransferState.Expired -> if (t.failureReason == "cancelled") "Cancelled" else "Expired"
 }
 
+/** "@amina" when the other side is a Circaso person and the name isn't already that handle. */
+private fun handleOf(t: Transfer): String? = t.counterpartHandle?.let { "@$it" }?.takeIf { it != t.counterpartName }
+
 private fun receiptText(t: Transfer, fiat: FiatValue?): String {
     val usdc = t.amount.amount.takeIf { it.isNotEmpty() }?.let { "$it ${t.amount.asset}" } ?: MinorUnits.coinText(t.amount.amountMinor, t.amount.asset)
     val f = fiat?.takeIf { MinorUnits.isDollar(t.amount.asset) }?.let { usdcToFiat(t.amount.amountMinor, it.rate) }?.let { formatFiat(fiat.currency, it) }
     return listOfNotNull(
         "${if (t.direction == TransferDirection.In) "Received" else "Sent"} ${f ?: usdc}" + (if (f != null) " ($usdc)" else ""),
-        t.counterpartName?.let { "${if (t.direction == TransferDirection.In) "From" else "To"}: $it" },
+        t.counterpartName?.let { "${if (t.direction == TransferDirection.In) "From" else "To"}: $it" + (handleOf(t)?.let { h -> " ($h)" } ?: "") },
         t.note?.let { "Note: $it" },
         "Network: ${chainName(t.blockchain)}",
         "Status: ${statusText(t)}",

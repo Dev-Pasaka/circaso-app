@@ -60,6 +60,9 @@ data class Transfer(
     val note: String?,
     val createdAt: Long,
     val updatedAt: Long,
+    /** The other person's @handle (without the @) and photo when the payment was between two Circaso people. */
+    val counterpartHandle: String? = null,
+    val counterpartAvatar: String? = null,
 ) {
     val outgoing get() = direction == TransferDirection.Out
     val settled get() = state == TransferState.Confirmed

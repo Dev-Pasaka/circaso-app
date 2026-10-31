@@ -368,6 +368,8 @@ fun TransferRow(transfer: Transfer, fiat: FiatValue?, hidden: Boolean, meta: Str
     val name = transfer.counterpartName ?: if (transfer.toUserId == null && transfer.toAddress.isNotEmpty()) shortAddress(transfer.toAddress) else if (incoming) "Received" else "Sent"
     val sub = buildString {
         append(if (incoming) "Received" else "Sent")
+        // Between two Circaso people the @handle tells same-named contacts apart.
+        transfer.counterpartHandle?.takeIf { transfer.counterpartName != null }?.let { append(" · @").append(it) }
         transfer.note?.let { append(" · ").append(it) }
         when (transfer.state) {
             TransferState.AwaitingSignature -> append(" · not signed")
@@ -379,7 +381,7 @@ fun TransferRow(transfer: Transfer, fiat: FiatValue?, hidden: Boolean, meta: Str
     }
     ListRow(
         title = name, sub = sub,
-        leading = { if (transfer.counterpartName != null) Avatar(transfer.counterpartName, size = CircasoSizes.avatarMd) else CoinDisc(if (incoming) "IN" else "OUT") },
+        leading = { if (transfer.counterpartName != null) Avatar(transfer.counterpartName, size = CircasoSizes.avatarMd, imageUrl = transfer.counterpartAvatar) else CoinDisc(if (incoming) "IN" else "OUT") },
         trailing = { RowAmount(if (hidden) "••••" else amountLine(transfer, fiat), meta, incoming = incoming && transfer.state == TransferState.Confirmed) },
         onClick = onClick,
     )

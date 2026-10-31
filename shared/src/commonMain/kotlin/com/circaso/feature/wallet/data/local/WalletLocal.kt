@@ -1,5 +1,6 @@
 package com.circaso.feature.wallet.data.local
 
+import androidx.room.ColumnInfo
 import androidx.room.Dao
 import androidx.room.Entity
 import androidx.room.Insert
@@ -33,6 +34,9 @@ data class TransferEntity(
     val note: String?,
     val createdAt: Long,
     val updatedAt: Long,
+    /** The other person's @handle and photo when they're on Circaso (W6 `counterparty`). */
+    @ColumnInfo(defaultValue = "NULL") val counterpartHandle: String? = null,
+    @ColumnInfo(defaultValue = "NULL") val counterpartAvatar: String? = null,
 )
 
 @Dao
