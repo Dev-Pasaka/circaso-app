@@ -36,12 +36,27 @@ data class ActivityUiState(
     val blockchain: String? = null,
     val symbol: String? = null,
     val held: com.circaso.feature.wallet.domain.Asset? = null,
+    val query: String = "",
 ) {
     val shown get() = when (filter) {
         ActivityFilter.All -> transfers
         ActivityFilter.Sent -> transfers.filter { it.direction == TransferDirection.Out }
         ActivityFilter.Received -> transfers.filter { it.direction == TransferDirection.In }
-    }
+    }.filter { it.matches(query) }
+}
+
+/**
+ * The search on Activity: a payment matches by the other person's name or @handle, its note, the coin, the
+ * network, the amount as typed ("25", "25.5") or an address (start or end).
+ */
+internal fun Transfer.matches(query: String): Boolean {
+    val q = query.trim().removePrefix("@")
+    if (q.isEmpty()) return true
+    val amountText = com.circaso.feature.wallet.domain.MinorUnits.toDisplay(amount.amountMinor, com.circaso.feature.wallet.domain.MinorUnits.decimalsOf(amount.asset))
+    return listOfNotNull(
+        counterpartName, counterpartHandle, note, amount.asset, com.circaso.feature.wallet.domain.chainName(blockchain), amountText, amount.amount,
+        toAddress.takeIf { it.isNotEmpty() }, from.takeIf { it.isNotEmpty() }, txHash,
+    ).any { it.contains(q, ignoreCase = true) }
 }
 
 class ActivityViewModel(
@@ -52,14 +67,16 @@ class ActivityViewModel(
     private val symbol: String? = null,
 ) : ViewModel() {
     private val filter = MutableStateFlow(ActivityFilter.All)
-    val state: StateFlow<ActivityUiState> = combine(observeTransfers(), filter, observeWallet()) { transfers, f, wallet ->
+    private val query = MutableStateFlow("")
+    val state: StateFlow<ActivityUiState> = combine(observeTransfers(), filter, observeWallet(), query) { transfers, f, wallet, q ->
         val mine = if (blockchain == null || symbol == null) transfers
         else transfers.filter { it.blockchain == blockchain && it.amount.asset.equals(symbol, ignoreCase = true) }
         val held = wallet?.chains?.firstOrNull { it.blockchain == blockchain }?.assets?.firstOrNull { it.symbol.equals(symbol, ignoreCase = true) }
-        ActivityUiState(mine, f, wallet?.fiat, blockchain, symbol, held)
+        ActivityUiState(mine, f, wallet?.fiat, blockchain, symbol, held, q)
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), ActivityUiState(blockchain = blockchain, symbol = symbol))
 
     fun onFilter(f: ActivityFilter) { filter.value = f }
+    fun onQuery(text: String) { query.value = text }
 }
 
 data class TransferUiState(val transfer: Transfer? = null, val fiat: FiatValue? = null, val online: Boolean = true, val error: String? = null)

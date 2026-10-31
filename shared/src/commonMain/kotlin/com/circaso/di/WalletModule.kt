@@ -60,6 +60,7 @@ val walletModule = module {
     viewModel { WalletViewModel(get(), get(), get(), get(), get(), get(), get(), getChains = get(), addMissingChains = get()) }
     viewModel { com.circaso.feature.wallet.presentation.CurrencyViewModel(get(), get()) }
     viewModel { (blockchain: String?, symbol: String?) -> ActivityViewModel(get(), get(), blockchain, symbol) }
+    viewModel { (blockchain: String) -> com.circaso.feature.wallet.presentation.NetworkAssetsViewModel(get(), blockchain) }
     viewModel { (transferId: String) -> TransferViewModel(transferId, get(), get(), get(), get()) }
     viewModel { NetworksViewModel(get(), get(), get()) }
     viewModel { (intent: PayIntent) ->

@@ -59,6 +59,7 @@ import com.circaso.designsystem.components.ListRow
 import com.circaso.designsystem.components.RowDivider
 import com.circaso.designsystem.components.SectionHeader
 import com.circaso.designsystem.components.SuggestionChip
+import com.circaso.designsystem.components.SearchPill
 import com.circaso.designsystem.theme.CircasoSizes
 import com.circaso.designsystem.theme.CircasoSpacing
 import com.circaso.designsystem.theme.CircasoTheme
@@ -256,12 +257,15 @@ fun ActivityScreen(viewModel: ActivityViewModel, onBack: () -> Unit, onOpen: (St
                     }
                 }
             }
+            item(key = "search") {
+                SearchPill(state.query, viewModel::onQuery, "Search payments", Modifier.padding(start = CircasoSpacing.s4, end = CircasoSpacing.s4, top = CircasoSpacing.s2))
+            }
             item {
                 LazyRow(contentPadding = PaddingValues(horizontal = CircasoSpacing.s4, vertical = CircasoSpacing.s2), horizontalArrangement = Arrangement.spacedBy(CircasoSpacing.s2)) {
                     items(ActivityFilter.entries) { f -> SuggestionChip(if (f == state.filter) "● ${f.label}" else f.label, { viewModel.onFilter(f) }) }
                 }
             }
-            if (state.shown.isEmpty()) item { BasicText(if (state.symbol != null) "No ${state.symbol} payments on this network yet." else "Nothing here yet. Payments you send and receive will show here.", style = t.footnote.copy(color = c.inkSecondary), modifier = Modifier.padding(CircasoSpacing.s4)) }
+            if (state.shown.isEmpty()) item { BasicText(if (state.query.isNotBlank()) "No payments match \"${state.query.trim()}\"." else if (state.symbol != null) "No ${state.symbol} payments on this network yet." else "Nothing here yet. Payments you send and receive will show here.", style = t.footnote.copy(color = c.inkSecondary), modifier = Modifier.padding(CircasoSpacing.s4)) }
             val shown = state.shown
             shown.forEachIndexed { i, transfer ->
                 val previous = shown.getOrNull(i - 1)

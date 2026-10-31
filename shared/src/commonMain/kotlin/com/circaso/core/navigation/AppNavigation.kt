@@ -166,6 +166,7 @@ fun AppNavigation(forceUpdate: Boolean, home: @Composable () -> Unit) {
                                 onActivity = { backStack.add(ActivityRoute) },
                                 onNetworks = { backStack.add(NetworksRoute) },
                                 onAsset = { chain, symbol -> backStack.add(AssetActivityRoute(chain, symbol)) },
+                                onAssets = { chain -> backStack.add(NetworkAssetsRoute(chain)) },
                             ),
                         )
                     },
@@ -181,6 +182,7 @@ fun AppNavigation(forceUpdate: Boolean, home: @Composable () -> Unit) {
                                 onActivity = { backStack.add(ActivityRoute) },
                                 onNetworks = { backStack.add(NetworksRoute) },
                                 onAsset = { chain, symbol -> backStack.add(AssetActivityRoute(chain, symbol)) },
+                                onAssets = { chain -> backStack.add(NetworkAssetsRoute(chain)) },
                             ),
                             biometrics = koinViewModel(),
                         )
@@ -327,6 +329,12 @@ fun AppNavigation(forceUpdate: Boolean, home: @Composable () -> Unit) {
                 ActivityScreen(
                     koinViewModel(key = route.blockchain + route.symbol, parameters = { parametersOf(route.blockchain, route.symbol) }),
                     onBack = ::pop, onOpen = { id -> backStack.add(TransferRoute(id)) },
+                )
+            }
+            entry<NetworkAssetsRoute> { route ->
+                com.circaso.feature.wallet.presentation.NetworkAssetsScreen(
+                    koinViewModel(key = "assets-" + route.blockchain, parameters = { parametersOf(route.blockchain) }),
+                    onBack = ::pop, onAsset = { chain, symbol -> backStack.add(AssetActivityRoute(chain, symbol)) },
                 )
             }
             entry<PreviewRoute> { route -> PreviewScreens(route.name) }

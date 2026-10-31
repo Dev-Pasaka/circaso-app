@@ -73,6 +73,8 @@ internal fun ChainCards(
     onFocus: (String) -> Unit = {},
     /** An asset row was tapped: its statement on that network. */
     onAsset: (blockchain: String, symbol: String) -> Unit = { _, _ -> },
+    /** See All under the assets: every asset on that network. */
+    onAssets: (blockchain: String) -> Unit = {},
     /** The front card's colour as the person swipes, blended between neighbours: the page glows in it. */
     onGlow: (androidx.compose.ui.graphics.Color) -> Unit = {},
     between: @Composable () -> Unit = {},
@@ -174,25 +176,24 @@ internal fun ChainCards(
         ) { page ->
             val chain = chains.getOrNull(page) ?: return@AnimatedContent
             Column(verticalArrangement = Arrangement.spacedBy(CircasoSpacing.s2)) {
-                BasicText("Assets on ${chainName(chain.blockchain).substringBefore(" (")}", style = t.footnote.copy(color = c.inkSecondary), modifier = Modifier.padding(horizontal = 4.dp))
-                Column(Modifier.clip(CircasoShapes.md).background(c.surface)) {
-                val assets = chain.assets.ifEmpty { listOf(Asset("USDC", "", 6, "0", "0", null)) }
-                assets.forEachIndexed { i, asset ->
-                    ListRow(
-                        title = asset.symbol,
-                        sub = assetName(asset.symbol) + if (!chain.receiveEnabled) " · retiring" else "",
-                        leading = { CoinDisc(asset.symbol) },
-                        onClick = { onAsset(chain.blockchain, asset.symbol) },
-                        trailing = {
-                            RowAmount(
-                                amount = if (hidden) "••••" else MinorUnits.toDisplay(asset.amountMinor, asset.decimals),
-                                meta = if (hidden) null else asset.fiatAmount?.let { f -> fiat?.currency?.let { cur -> formatFiat(cur, f) } },
-                                incoming = false,
-                            )
-                        },
-                    )
-                    if (i < assets.lastIndex) RowDivider(Modifier.padding(start = 72.dp))
+                val assets = assetsByValue(chain)
+                // Two on the card's page, the most valuable; See All opens every one, searchable (the user, 2026-10-31).
+                val preview = assets.take(AssetPreview)
+                Row(Modifier.fillMaxWidth().padding(horizontal = 4.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.Bottom) {
+                    BasicText("Assets on ${chainName(chain.blockchain).substringBefore(" (")}", style = t.footnote.copy(color = c.inkSecondary))
+                    if (assets.size > preview.size) {
+                        BasicText(
+                            "See All", style = t.callout.copy(color = c.action, fontWeight = FontWeight.SemiBold),
+                            modifier = Modifier.pressable(role = androidx.compose.ui.semantics.Role.Button) { onAssets(chain.blockchain) }
+                                .semantics { contentDescription = "See all ${assets.size} assets on ${chainName(chain.blockchain).substringBefore(" (")}" },
+                        )
+                    }
                 }
+                Column(Modifier.clip(CircasoShapes.md).background(c.surface)) {
+                    preview.forEachIndexed { i, asset ->
+                        AssetRow(chain, asset, fiat, hidden) { onAsset(chain.blockchain, asset.symbol) }
+                        if (i < preview.lastIndex) RowDivider(Modifier.padding(start = 72.dp))
+                    }
                 }
             }
         }
@@ -384,7 +385,33 @@ internal fun centsOf(amount: String): Long? {
     return whole * 100 + frac
 }
 
-private fun assetName(symbol: String) = when (symbol.uppercase()) {
+/** A network's assets, the most valuable first (by worth in the person's currency, then by amount held). */
+internal fun assetsByValue(chain: WalletChain): List<Asset> =
+    chain.assets.ifEmpty { listOf(Asset("USDC", "", 6, "0", "0", null)) }
+        .sortedWith(compareByDescending<Asset> { it.fiatAmount?.let(::centsOf) ?: -1L }.thenByDescending { !MinorUnits.isZero(it.amountMinor) })
+
+/** How many assets a card's page shows before See All. */
+private const val AssetPreview = 2
+
+/** One asset on one network: its coin, its name, what is held and its worth. */
+@Composable
+internal fun AssetRow(chain: WalletChain, asset: Asset, fiat: FiatValue?, hidden: Boolean, onClick: () -> Unit) {
+    ListRow(
+        title = asset.symbol,
+        sub = assetName(asset.symbol) + if (!chain.receiveEnabled) " · retiring" else "",
+        leading = { CoinDisc(asset.symbol) },
+        onClick = onClick,
+        trailing = {
+            RowAmount(
+                amount = if (hidden) "••••" else MinorUnits.toDisplay(asset.amountMinor, asset.decimals),
+                meta = if (hidden) null else asset.fiatAmount?.let { f -> fiat?.currency?.let { cur -> formatFiat(cur, f) } },
+                incoming = false,
+            )
+        },
+    )
+}
+
+internal fun assetName(symbol: String) = when (symbol.uppercase()) {
     "USDC" -> "USD Coin"
     "EURC" -> "Euro Coin"
     "ETH" -> "Ether"

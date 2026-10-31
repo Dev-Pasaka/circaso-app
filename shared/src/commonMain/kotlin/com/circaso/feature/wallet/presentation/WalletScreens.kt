@@ -90,6 +90,8 @@ class WalletActions(
     val onNetworks: () -> Unit,
     /** One asset's statement on one network. */
     val onAsset: (blockchain: String, symbol: String) -> Unit = { _, _ -> },
+    /** Every asset on one network, searchable (the card shows two). */
+    val onAssets: (blockchain: String) -> Unit = {},
 )
 
 /** The title bar's actions on the Wallet tab (design E1): hide balances, add money. */
@@ -319,7 +321,7 @@ private fun ActiveWallet(state: WalletUiState, wallet: Wallet, bottom: androidx.
                         layout(constraints.maxWidth, placeable.height) { placeable.place(-bleed / 2, 0) }
                     },
                 ) {
-                    ChainCards(byValue(wallet.chains, fiat), fiat, hidden, onToggleHidden, onFocus = { network = it }, onAsset = actions.onAsset, onGlow = { glow = it }) {
+                    ChainCards(byValue(wallet.chains, fiat), fiat, hidden, onToggleHidden, onFocus = { network = it }, onAsset = actions.onAsset, onAssets = actions.onAssets, onGlow = { glow = it }) {
                         Row(Modifier.fillMaxWidth().padding(horizontal = CircasoSpacing.s2), horizontalArrangement = Arrangement.SpaceBetween) {
                             ActionButton(CircasoIcon.Plus, "Add", { onComing(ComingFlow.AddMoney) })
                             ActionButton(CircasoIcon.ArrowUp, "Send", actions.onPay, enabled = state.canSend)
@@ -343,9 +345,8 @@ private fun ActiveWallet(state: WalletUiState, wallet: Wallet, bottom: androidx.
                         CircasoButton("Add Networks", onAddNetworks, size = ButtonSize.Small, enabled = state.online && !state.addingNetworks, busy = state.addingNetworks)
                     }
                 }
-                Row(Modifier.fillMaxWidth().padding(horizontal = 4.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                    // The rate source's terms ask for a visible credit wherever its rates show.
-                    BasicText(if (fiat != null) "Rates by Exchange Rate API" else "", style = t.caption2.copy(color = c.inkTertiary))
+                // The rate credit lives on the Currency screen now (the user, 2026-10-31).
+                Row(Modifier.fillMaxWidth().padding(horizontal = 4.dp), horizontalArrangement = Arrangement.End, verticalAlignment = Alignment.CenterVertically) {
                     BasicText("Manage networks", style = t.footnote.copy(color = c.action, fontWeight = FontWeight.SemiBold), modifier = Modifier.clickableText(actions.onNetworks))
                 }
             }

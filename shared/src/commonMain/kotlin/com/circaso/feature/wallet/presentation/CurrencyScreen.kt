@@ -133,6 +133,8 @@ fun CurrencyContent(state: CurrencyUiState, onChoose: (String?) -> Unit, onBack:
                     }
                 }
             }
+            // The rate source's terms ask for a visible credit where its rates are chosen and shown.
+            item(key = "credit") { BasicText("Rates by Exchange Rate API", style = t.caption2.copy(color = c.inkTertiary), modifier = Modifier.padding(horizontal = 4.dp)) }
         }
     }
 }
