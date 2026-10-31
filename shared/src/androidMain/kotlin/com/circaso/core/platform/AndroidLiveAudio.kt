@@ -159,6 +159,7 @@ class AndroidLiveSpeaker(private val context: Context) : LiveSpeaker {
     private var track: AudioTrack? = null
     private val queue = ArrayDeque<ShortArray>()
     private val lock = Object()
+    private val gain = SpeechGain()
     private var generation = 0
     private var worker: Thread? = null
 
@@ -169,7 +170,7 @@ class AndroidLiveSpeaker(private val context: Context) : LiveSpeaker {
         val t = AudioTrack.Builder()
             .setAudioAttributes(AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_VOICE_COMMUNICATION).setContentType(AudioAttributes.CONTENT_TYPE_SPEECH).build())
             .setAudioFormat(AudioFormat.Builder().setEncoding(AudioFormat.ENCODING_PCM_16BIT).setSampleRate(sampleRate).setChannelMask(AudioFormat.CHANNEL_OUT_MONO).build())
-            .setBufferSizeInBytes(maxOf(minBuffer, sampleRate * 2 / 5)) // 200 ms of room
+            .setBufferSizeInBytes(maxOf(minBuffer, sampleRate)) // 500 ms of room, so a slow chunk doesn't run it dry
             .setTransferMode(AudioTrack.MODE_STREAM)
             .build()
         if (t.state != AudioTrack.STATE_INITIALIZED) { t.release(); VoiceRoute.release(context); Diagnostics.note("voice: speaker failed"); return }
@@ -180,17 +181,33 @@ class AndroidLiveSpeaker(private val context: Context) : LiveSpeaker {
     }
 
     private fun drain(t: AudioTrack, gen: Int, sampleRate: Int) {
+        var idle = true
         while (true) {
             val chunk: ShortArray
             synchronized(lock) {
                 while (queue.isEmpty() && gen == generation) {
                     _playing.value = false
                     _level.value = 0f
+                    idle = true
                     lock.wait()
                 }
                 if (gen != generation) return
+                // A reply starting after silence: let ~150 ms gather first, so the track (which the system disables
+                // after running dry) restarts with enough to play and her first words aren't swallowed.
+                if (idle) {
+                    val wanted = sampleRate * 3 / 20
+                    val deadline = System.currentTimeMillis() + 150
+                    while (queue.sumOf { it.size } < wanted && System.currentTimeMillis() < deadline && gen == generation) lock.wait(20)
+                    if (gen != generation) return
+                }
                 chunk = queue.removeFirst()
             }
+            if (idle) {
+                // A short lead-in of silence wakes the output path before the voice itself.
+                t.write(ShortArray(sampleRate * 3 / 50), 0, sampleRate * 3 / 50, AudioTrack.WRITE_BLOCKING)
+                idle = false
+            }
+            gain.apply(chunk)
             _playing.value = true
             // The sound is written a little ahead of being heard: report the level per 20 ms as it is written.
             var at = 0
@@ -262,5 +279,30 @@ private object VoiceRoute {
             am.isSpeakerphoneOn = previousSpeaker
         }
         am.mode = previousMode
+    }
+}
+
+/**
+ * Brings Asha's voice up to a comfortable level: her speech arrives quiet (peaks around 4% of full scale on 8 kHz
+ * mu-law), and the call path plays it at call volume. The gain follows the loudness smoothly toward a target, never
+ * more than 4x, and a soft limiter keeps peaks from clipping.
+ */
+internal class SpeechGain(private val target: Float = 18_000f, private val maxGain: Float = 4f) {
+    private var gain = 2f
+
+    fun apply(pcm: ShortArray) {
+        var peak = 1
+        for (v in pcm) { val a = if (v < 0) -v.toInt() else v.toInt(); if (a > peak) peak = a }
+        // Only speech moves the gain; near-silence keeps the last one, so pauses don't get pumped up.
+        if (peak > 300) {
+            val want = (target / peak).coerceIn(1f, maxGain)
+            gain += (want - gain) * if (want < gain) 0.5f else 0.15f
+        }
+        for (i in pcm.indices) {
+            val x = pcm[i] * gain
+            // Soft knee above ~80% of full scale.
+            val y = if (kotlin.math.abs(x) <= 26_000f) x else kotlin.math.sign(x) * (26_000f + (kotlin.math.abs(x) - 26_000f) * 0.25f)
+            pcm[i] = y.coerceIn(-32_767f, 32_767f).toInt().toShort()
+        }
     }
 }
