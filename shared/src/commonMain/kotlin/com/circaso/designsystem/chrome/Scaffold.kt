@@ -26,6 +26,9 @@ import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.displayCutout
+import androidx.compose.foundation.layout.only
+import androidx.compose.foundation.layout.WindowInsetsSides
 import com.circaso.designsystem.adaptive.WindowLayout
 import com.circaso.designsystem.adaptive.readableWidth
 import com.circaso.designsystem.theme.CircasoTheme
@@ -42,6 +45,8 @@ fun CircasoScaffold(
     topBar: @Composable () -> Unit = {},
     banner: @Composable () -> Unit = {},
     bottomBar: (@Composable () -> Unit)? = null,
+    /** In place of [bottomBar] on a wide or short screen: the tabs float down the left side. */
+    sideBar: (@Composable () -> Unit)? = null,
     toast: @Composable BoxScope.() -> Unit = {},
     overlay: @Composable BoxScope.() -> Unit = {},
     /** Drawn behind everything from the very top of the screen, under the status bar (the You tab's photo glow). */
@@ -55,29 +60,47 @@ fun CircasoScaffold(
 ) {
     val c = CircasoTheme.colors
     val density = LocalDensity.current
+    // A phone on its side uses its whole width, as iPhone apps do; only tablets keep text to a readable width.
+    val keepReadable = readable && !com.circaso.designsystem.adaptive.LocalWindowLayout.current.short
     var bottomBarHeight by remember { mutableStateOf(0.dp) }
+    var sideBarWidth by remember { mutableStateOf(0.dp) }
+    val sideInsets = WindowInsets.displayCutout.union(WindowInsets.navigationBars).only(WindowInsetsSides.Horizontal)
     // Some devices report no navigation inset; keep the floating bar off the screen edge anyway.
     val navInset = maxOf(WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding(), 16.dp)
     Box(modifier.fillMaxSize().background(if (grouped) c.bgGrouped else c.bg)) {
         backdrop()
         Column(
-            Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.statusBars).let {
+            // Backgrounds reach every edge; content keeps clear of the camera cut-out and of a navigation bar at the
+            // side (landscape), as it keeps clear of the status bar at the top.
+            Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.statusBars)
+                .windowInsetsPadding(sideInsets)
+                .padding(start = if (sideBar != null) sideBarWidth else 0.dp).let {
                 // With a tab bar the bar itself clears the home indicator; without one the content must.
                 if (bottomBar == null) it.windowInsetsPadding(WindowInsets.navigationBars.union(WindowInsets.ime)) else it.imePadding()
             },
         ) {
             topBar()
             banner()
-            Box(Modifier.weight(1f).let { if (readable) it.readableWidth() else it }) { content(PaddingValues(bottom = if (bottomBar != null) bottomBarHeight + navInset else 0.dp)) }
+            Box(Modifier.weight(1f).let { if (keepReadable) it.readableWidth() else it }) { content(PaddingValues(bottom = if (bottomBar != null) bottomBarHeight + navInset else 0.dp)) }
         }
         if (bottomBar != null) {
             Box(
                 Modifier
                     .align(Alignment.BottomCenter)
-                    .let { if (readable) it.widthIn(max = WindowLayout.ReadableWidth) else it }
+                    .let { if (keepReadable) it.widthIn(max = WindowLayout.ReadableWidth) else it }
+                    .windowInsetsPadding(WindowInsets.displayCutout.union(WindowInsets.navigationBars).only(WindowInsetsSides.Horizontal))
                     .padding(start = 16.dp, end = 16.dp, bottom = navInset)
                     .onSizeChanged { bottomBarHeight = with(density) { it.height.toDp() } + 8.dp },
             ) { bottomBar() }
+        }
+        if (sideBar != null) {
+            Box(
+                Modifier
+                    .align(Alignment.CenterStart)
+                    .windowInsetsPadding(sideInsets)
+                    .padding(start = 12.dp)
+                    .onSizeChanged { sideBarWidth = with(density) { it.width.toDp() } + 12.dp + 8.dp },
+            ) { sideBar() }
         }
         overlay()
         toast()

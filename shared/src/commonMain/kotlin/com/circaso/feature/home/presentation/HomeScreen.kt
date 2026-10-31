@@ -60,18 +60,34 @@ fun HomeScreen(
     androidx.compose.ui.backhandler.BackHandler(enabled = android && !confirmExit && !covered) {
         if (tab != Tab.Chats) selected = Tab.Chats.ordinal else confirmExit = true
     }
+    val layout = com.circaso.designsystem.adaptive.LocalWindowLayout.current
+    val rail = layout.short || layout.widthClass != com.circaso.designsystem.adaptive.WidthClass.Compact
     CircasoScaffold(
         grouped = tab == Tab.You,
         // No title bar on the tabs (Pasaka, 2026-10-30): the tab bar already says where you are, and each screen's
         // actions live in it (the Chats button, the eye on the wallet card).
         topBar = {},
         banner = { when (tab) { Tab.Chats -> chatsBanner(); Tab.Wallet -> ConnectionBanner(); Tab.You -> Unit } },
-        bottomBar = {
-            CircasoTabBar(
-                items = Tab.entries.map { TabItem(it.label, it.icon) },
-                selectedIndex = selected,
-                onSelect = { selected = it },
-            )
+        // On its side, or with room to spare, the tabs move to the left edge (Material's rail, iPad's sidebar);
+        // in a split's narrow list pane they stay at the bottom of the pane.
+        bottomBar = if (rail) null else {
+            {
+                CircasoTabBar(
+                    items = Tab.entries.map { TabItem(it.label, it.icon) },
+                    selectedIndex = selected,
+                    onSelect = { selected = it },
+                )
+            }
+        },
+        sideBar = if (!rail) null else {
+            {
+                CircasoTabBar(
+                    items = Tab.entries.map { TabItem(it.label, it.icon) },
+                    selectedIndex = selected,
+                    onSelect = { selected = it },
+                    vertical = true,
+                )
+            }
         },
         overlay = {
             when (tab) { Tab.Chats -> chatsOverlay(); Tab.Wallet -> walletOverlay(); Tab.You -> Unit }

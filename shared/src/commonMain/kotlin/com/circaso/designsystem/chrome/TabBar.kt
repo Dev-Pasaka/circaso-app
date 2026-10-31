@@ -33,22 +33,43 @@ data class TabItem(val label: String, val icon: CircasoIcon, val unread: Boolean
 
 /** Floating glass pill (design `cx-tabbar`): 54 dp tabs, selected tab on a filled pill, optional unread dot. */
 @Composable
-fun CircasoTabBar(items: List<TabItem>, selectedIndex: Int, onSelect: (Int) -> Unit, modifier: Modifier = Modifier) {
-    val c = CircasoTheme.colors
+fun CircasoTabBar(
+    items: List<TabItem>,
+    selectedIndex: Int,
+    onSelect: (Int) -> Unit,
+    modifier: Modifier = Modifier,
+    /** Stacked down the left side (a phone on its side, a tablet): Material's navigation rail, iPad's sidebar. */
+    vertical: Boolean = false,
+) {
+    if (vertical) {
+        Column(
+            modifier.glass(androidx.compose.foundation.shape.RoundedCornerShape(32.dp), floating = true).padding(5.dp),
+            verticalArrangement = Arrangement.spacedBy(2.dp),
+        ) {
+            items.forEachIndexed { index, item -> TabButton(item, index == selectedIndex, Modifier.size(width = 68.dp, height = 58.dp)) { onSelect(index) } }
+        }
+        return
+    }
     Row(
         modifier.fillMaxWidth().glass(CircasoShapes.pill, floating = true).padding(5.dp),
         horizontalArrangement = Arrangement.spacedBy(2.dp),
     ) {
         items.forEachIndexed { index, item ->
-            val selected = index == selectedIndex
+            TabButton(item, index == selectedIndex, Modifier.weight(1f).defaultMinSize(minWidth = 64.dp).height(54.dp)) { onSelect(index) }
+        }
+    }
+}
+
+@Composable
+private fun TabButton(item: TabItem, selected: Boolean, modifier: Modifier, onSelect: () -> Unit) {
+    val c = CircasoTheme.colors
+    run {
+        run {
             Column(
-                Modifier
-                    .weight(1f)
-                    .defaultMinSize(minWidth = 64.dp)
-                    .height(54.dp)
+                modifier
                     .clip(CircasoShapes.pill)
                     .background(if (selected) c.fill else androidx.compose.ui.graphics.Color.Transparent)
-                    .pressable(role = Role.Tab, pressedScale = 0.96f, onClick = { onSelect(index) })
+                    .pressable(role = Role.Tab, pressedScale = 0.96f, onClick = onSelect)
                     .semantics {
                         this.selected = selected
                         if (item.unread) contentDescription = "${item.label}, new activity"

@@ -22,6 +22,11 @@ class MainActivity : ComponentActivity() {
             !isStartupReady() && SystemClock.uptimeMillis() - started < MaxSplashMillis
         }
         enableEdgeToEdge()
+        // Draw under the camera cut-out in every orientation, so landscape is as edge to edge as portrait (some
+        // phones otherwise leave a black band down the side with the camera).
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
+            window.attributes = window.attributes.apply { layoutInDisplayCutoutMode = android.view.WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS }
+        }
         super.onCreate(savedInstanceState)
         // Debug previews (`--es preview <name>`): read before the first composition so the navigation sees them.
         intent?.extras?.let { bundle -> AndroidLaunchArgs.extras = bundle.keySet().mapNotNull { k -> bundle.getString(k)?.let { k to it } }.toMap() }
