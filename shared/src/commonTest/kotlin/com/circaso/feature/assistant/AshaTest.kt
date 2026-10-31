@@ -111,7 +111,7 @@ class AshaRepositoryTest {
     private val outboxDao = FakeOutboxDao()
     private val remote = FakeAshaRemote()
     private var kicks = 0
-    private val repo = AshaRepositoryImpl(remote, dao, Outbox(outboxDao) { 1_000L }, json) { kicks++ }
+    private val repo = AshaRepositoryImpl(remote, dao, Outbox(outboxDao) { 1_000L }, json, kickOutbox = { kicks++ })
 
     @Test fun historyIsSavedOldestFirstAndReadBack() = runSuspending {
         repo.refreshHistory()

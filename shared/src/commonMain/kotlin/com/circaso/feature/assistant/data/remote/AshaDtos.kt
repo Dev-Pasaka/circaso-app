@@ -17,7 +17,8 @@ data class ChatMessageDto(
 )
 
 @Serializable data class ChatResponse(val messages: List<ChatMessageDto>, val nextCursor: String? = null)
-@Serializable data class SendMessageRequest(val text: String, val askedFrom: AskedFromDto? = null, val chatReading: Boolean? = null)
+/** [currency]: the person's display currency (You → Currency), so Asha answers in it. */
+@Serializable data class SendMessageRequest(val text: String, val askedFrom: AskedFromDto? = null, val chatReading: Boolean? = null, val currency: String? = null)
 @Serializable data class SnippetDto(val chatId: String, val chatName: String? = null, val sender: String, val at: String, val text: String)
 @Serializable data class ToolResultsRequest(val callId: String, val snippets: List<SnippetDto>? = null)
 @Serializable data class TranscriptResponse(val text: String, val seconds: Int)

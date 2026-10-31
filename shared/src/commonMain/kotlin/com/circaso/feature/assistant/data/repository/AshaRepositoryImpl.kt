@@ -40,6 +40,8 @@ class AshaRepositoryImpl(
     private val outbox: Outbox,
     private val json: Json,
     private val kickOutbox: () -> Unit,
+    /** The display currency to answer in: the person's choice, else their phone's region's. */
+    private val currency: suspend () -> String? = { null },
 ) : AshaRepository {
 
     override val history: Flow<List<AshaMessage>> = dao.observe().map { rows -> inConversationOrder(rows.map { it.toDomain() }) }
@@ -58,7 +60,7 @@ class AshaRepositoryImpl(
     }
 
     override fun ask(text: String, askedFrom: AskedFrom?, chatReading: Boolean): Flow<AshaEvent> = flow {
-        val request = SendMessageRequest(text, askedFrom?.let { AskedFromDto(it.chatId, it.chatName) }, chatReading)
+        val request = SendMessageRequest(text, askedFrom?.let { AskedFromDto(it.chatId, it.chatName) }, chatReading, currency())
         remote.stream(request).collect { item ->
             when (item) {
                 is AppResult.Failure -> emit(AshaEvent.Failed(item.error))

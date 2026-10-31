@@ -37,6 +37,16 @@ class AshaAnswerTest {
         assertEquals(listOf("out" to "500"), s.totals)
     }
 
+    @Test fun theContractStatementShowsAmountsWithTheirCoinAndTotalsAsALIst() {
+        val text = "```statement\n{\"title\":\"October\",\"period\":{\"from\":\"2026-10-01\",\"to\":\"2026-10-31\"},\"currency\":\"KES\"," +
+            "\"rows\":[{\"date\":\"2026-10-02\",\"description\":\"To Bob\",\"direction\":\"OUT\",\"amount\":\"5\",\"asset\":\"USDC\",\"fiat\":\"650\"}]," +
+            "\"totals\":[{\"label\":\"Out\",\"amount\":\"5\",\"asset\":\"USDC\",\"fiat\":\"650\"}]}\n```"
+        val s = assertIs<AnswerPart.Statement>(answerParts(text).single())
+        assertEquals("2026-10-01 – 2026-10-31", s.period)
+        assertEquals(listOf("2026-10-02", "To Bob", "−5 USDC", "KES 650"), s.rows.single())
+        assertEquals(listOf("Out" to "5 USDC · KES 650"), s.totals)
+    }
+
     @Test fun aDiagramKeepsOnlyEdgesBetweenItsNodes() {
         val text = "```diagram\n{\"nodes\":[{\"id\":\"a\",\"label\":\"You\"},{\"id\":\"b\",\"label\":\"Bob\"}],\"edges\":[{\"from\":\"a\",\"to\":\"b\",\"label\":\"KES 500\"},{\"from\":\"a\",\"to\":\"zz\"}]}\n```"
         val d = assertIs<AnswerPart.Diagram>(answerParts(text).single())

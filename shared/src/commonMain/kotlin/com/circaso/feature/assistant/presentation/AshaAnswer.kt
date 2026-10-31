@@ -118,15 +118,41 @@ private fun diagramOf(o: JsonObject): AnswerPart.Diagram? {
 
 private fun statementOf(o: JsonObject): AnswerPart.Statement? {
     val rows = (o["rows"] as? JsonArray)?.mapNotNull { it as? JsonObject }.orEmpty()
-    if (rows.isEmpty()) return null
-    val columns = (o["columns"] as? JsonArray)?.mapNotNull { it.str() } ?: rows.first().keys.toList()
-    val cells = rows.map { r -> columns.map { k -> r[k]?.let { v -> v.str() ?: v.toString() }.orEmpty() } }
-    val totals = when (val t = o["totals"]) {
-        is JsonObject -> t.entries.map { (k, v) -> k to (v.str() ?: v.toString()) }
-        is JsonArray -> t.mapNotNull { e -> (e as? JsonObject)?.let { (it["label"].str() ?: "") to (it["value"].str() ?: "") } }
+    val totalsJson = o["totals"]
+    if (rows.isEmpty() && (totalsJson as? JsonArray).isNullOrEmpty() && totalsJson !is JsonObject) return null
+    // The contract's rows (mobile guide §9): date, description, amount with its coin, and the local value if any.
+    val contract = rows.firstOrNull()?.let { "date" in it && "description" in it && "amount" in it } ?: true
+    val withFiat = rows.any { it["fiat"] != null }
+    val columns = if (contract) listOfNotNull("date", "description", "amount", "fiat".takeIf { withFiat })
+    else (o["columns"] as? JsonArray)?.mapNotNull { it.str() } ?: rows.first().keys.toList()
+    val cells = rows.map { r ->
+        columns.map { k ->
+            when {
+                contract && k == "amount" -> {
+                    val sign = if (r["direction"].str() == "OUT") "−" else if (r["direction"].str() == "IN") "+" else ""
+                    sign + listOfNotNull(r["amount"].str(), r["asset"].str()).joinToString(" ")
+                }
+                contract && k == "fiat" -> r["fiat"].str()?.let { f -> listOfNotNull(o["currency"].str(), f).joinToString(" ") }.orEmpty()
+                else -> r[k]?.let { v -> v.str() ?: v.toString() }.orEmpty()
+            }
+        }
+    }
+    val totals = when (totalsJson) {
+        is JsonObject -> totalsJson.entries.map { (k, v) -> k to (v.str() ?: v.toString()) }
+        is JsonArray -> totalsJson.mapNotNull { e ->
+            (e as? JsonObject)?.let { t ->
+                val coin = listOfNotNull(t["amount"].str() ?: t["value"].str(), t["asset"].str()).joinToString(" ")
+                val local = t["fiat"].str()?.let { f -> " · " + listOfNotNull(o["currency"].str(), f).joinToString(" ") }.orEmpty()
+                (t["label"].str() ?: "") to coin + local
+            }
+        }
         else -> emptyList()
     }
-    return AnswerPart.Statement(o["title"].str() ?: "Statement", o["period"].str(), columns, cells, totals)
+    val period = when (val p = o["period"]) {
+        is JsonObject -> listOfNotNull(p["from"].str(), p["to"].str()).joinToString(" – ").ifEmpty { null }
+        else -> p.str()
+    }
+    return AnswerPart.Statement(o["title"].str() ?: "Statement", period, columns, cells, totals)
 }
 
 /** An Asha answer in her bubble: markdown in Circaso's type, charts drawn here, statements with Share as PDF. */

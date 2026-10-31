@@ -80,17 +80,23 @@ interface LiveVoiceRemote {
     suspend fun open(accessToken: String, agentToken: String?, language: String, chatReading: Boolean): LiveVoiceSession
 }
 
-class KtorLiveVoiceRemote(private val sockets: LiveSocketFactory, private val url: String, private val json: Json) : LiveVoiceRemote {
+class KtorLiveVoiceRemote(
+    private val sockets: LiveSocketFactory,
+    private val url: String,
+    private val json: Json,
+    private val currency: suspend () -> String? = { null },
+) : LiveVoiceRemote {
     override suspend fun open(accessToken: String, agentToken: String?, language: String, chatReading: Boolean): LiveVoiceSession =
-        LiveVoiceSocketSession(sockets.open(url), json, authFrame(accessToken, agentToken, language, chatReading))
+        LiveVoiceSocketSession(sockets.open(url), json, authFrame(accessToken, agentToken, language, chatReading, currency()))
 }
 
-internal fun authFrame(accessToken: String, agentToken: String?, language: String? = null, chatReading: Boolean? = null): JsonObject = buildJsonObject {
+internal fun authFrame(accessToken: String, agentToken: String?, language: String? = null, chatReading: Boolean? = null, currency: String? = null): JsonObject = buildJsonObject {
     put("type", "auth")
     put("accessToken", accessToken)
     agentToken?.let { put("agentToken", it) }
     language?.let { put("language", it) }
     chatReading?.let { put("chatReading", it) }
+    currency?.let { put("currency", it) }
 }
 
 /**
