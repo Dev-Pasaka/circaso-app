@@ -90,6 +90,8 @@ class WalletActions(
     val onNetworks: () -> Unit,
     /** One asset's statement on one network. */
     val onAsset: (blockchain: String, symbol: String) -> Unit = { _, _ -> },
+    /** See All under recent payments: the payments on the network whose card is in front. */
+    val onNetworkActivity: (blockchain: String) -> Unit = {},
     /** Every asset on one network, searchable (the card shows two). */
     val onAssets: (blockchain: String) -> Unit = {},
 )
@@ -354,7 +356,7 @@ private fun ActiveWallet(state: WalletUiState, wallet: Wallet, bottom: androidx.
         item {
             Row(Modifier.fillMaxWidth().padding(horizontal = 4.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.Bottom) {
                 BasicText("Recent", style = t.title3.copy(color = c.ink))
-                if (recent.isNotEmpty()) BasicText("See All", style = t.callout.copy(color = c.action, fontWeight = FontWeight.SemiBold), modifier = Modifier.padding(bottom = 2.dp).clickableText(actions.onActivity))
+                if (recent.isNotEmpty()) BasicText("See All", style = t.callout.copy(color = c.action, fontWeight = FontWeight.SemiBold), modifier = Modifier.padding(bottom = 2.dp).clickableText { network?.let(actions.onNetworkActivity) ?: actions.onActivity() })
             }
         }
         if (recent.isEmpty()) {

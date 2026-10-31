@@ -236,7 +236,12 @@ fun ActivityScreen(viewModel: ActivityViewModel, onBack: () -> Unit, onOpen: (St
     val c = CircasoTheme.colors
     val t = CircasoTheme.typography
     val now = nowMillis()
-    val title = state.symbol?.let { s -> "$s on ${chainName(state.blockchain.orEmpty()).substringBefore(" (")}" } ?: "Activity"
+    val network = state.blockchain?.let { chainName(it).substringBefore(" (") }
+    val title = when {
+        state.symbol != null -> "${state.symbol} on $network"
+        network != null -> "Activity on $network"
+        else -> "Activity"
+    }
     CircasoScaffold(topBar = { CircasoNavBar(title = title, onBack = onBack) }) { padding ->
         LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = padding.calculateBottomPadding() + CircasoSpacing.s4)) {
             // An asset's statement opens on what is held, then every payment in it on that network.
@@ -265,7 +270,7 @@ fun ActivityScreen(viewModel: ActivityViewModel, onBack: () -> Unit, onOpen: (St
                     items(ActivityFilter.entries) { f -> SuggestionChip(if (f == state.filter) "● ${f.label}" else f.label, { viewModel.onFilter(f) }) }
                 }
             }
-            if (state.shown.isEmpty()) item { BasicText(if (state.query.isNotBlank()) "No payments match \"${state.query.trim()}\"." else if (state.symbol != null) "No ${state.symbol} payments on this network yet." else "Nothing here yet. Payments you send and receive will show here.", style = t.footnote.copy(color = c.inkSecondary), modifier = Modifier.padding(CircasoSpacing.s4)) }
+            if (state.shown.isEmpty()) item { BasicText(if (state.query.isNotBlank()) "No payments match \"${state.query.trim()}\"." else if (state.symbol != null) "No ${state.symbol} payments on this network yet." else if (network != null) "No payments on $network yet." else "Nothing here yet. Payments you send and receive will show here.", style = t.footnote.copy(color = c.inkSecondary), modifier = Modifier.padding(CircasoSpacing.s4)) }
             val shown = state.shown
             shown.forEachIndexed { i, transfer ->
                 val previous = shown.getOrNull(i - 1)

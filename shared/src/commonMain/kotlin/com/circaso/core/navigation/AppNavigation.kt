@@ -167,6 +167,7 @@ fun AppNavigation(forceUpdate: Boolean, home: @Composable () -> Unit) {
                                 onNetworks = { backStack.add(NetworksRoute) },
                                 onAsset = { chain, symbol -> backStack.add(AssetActivityRoute(chain, symbol)) },
                                 onAssets = { chain -> backStack.add(NetworkAssetsRoute(chain)) },
+                                onNetworkActivity = { chain -> backStack.add(NetworkActivityRoute(chain)) },
                             ),
                         )
                     },
@@ -183,6 +184,7 @@ fun AppNavigation(forceUpdate: Boolean, home: @Composable () -> Unit) {
                                 onNetworks = { backStack.add(NetworksRoute) },
                                 onAsset = { chain, symbol -> backStack.add(AssetActivityRoute(chain, symbol)) },
                                 onAssets = { chain -> backStack.add(NetworkAssetsRoute(chain)) },
+                                onNetworkActivity = { chain -> backStack.add(NetworkActivityRoute(chain)) },
                             ),
                             biometrics = koinViewModel(),
                         )
@@ -328,6 +330,12 @@ fun AppNavigation(forceUpdate: Boolean, home: @Composable () -> Unit) {
             entry<AssetActivityRoute> { route ->
                 ActivityScreen(
                     koinViewModel(key = route.blockchain + route.symbol, parameters = { parametersOf(route.blockchain, route.symbol) }),
+                    onBack = ::pop, onOpen = { id -> backStack.add(TransferRoute(id)) },
+                )
+            }
+            entry<NetworkActivityRoute> { route ->
+                ActivityScreen(
+                    koinViewModel(key = "activity-" + route.blockchain, parameters = { parametersOf(route.blockchain, null) }),
                     onBack = ::pop, onOpen = { id -> backStack.add(TransferRoute(id)) },
                 )
             }

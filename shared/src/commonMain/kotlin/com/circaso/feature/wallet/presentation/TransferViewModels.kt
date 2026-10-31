@@ -62,15 +62,16 @@ internal fun Transfer.matches(query: String): Boolean {
 class ActivityViewModel(
     observeTransfers: ObserveTransfersUseCase,
     observeWallet: ObserveWalletUseCase,
-    /** Set for one asset's statement (both, or neither). */
+    /** One network's payments (blockchain alone), or one asset's statement on it (both); neither for everything. */
     private val blockchain: String? = null,
     private val symbol: String? = null,
 ) : ViewModel() {
     private val filter = MutableStateFlow(ActivityFilter.All)
     private val query = MutableStateFlow("")
     val state: StateFlow<ActivityUiState> = combine(observeTransfers(), filter, observeWallet(), query) { transfers, f, wallet, q ->
-        val mine = if (blockchain == null || symbol == null) transfers
-        else transfers.filter { it.blockchain == blockchain && it.amount.asset.equals(symbol, ignoreCase = true) }
+        val mine = transfers.filter { t ->
+            (blockchain == null || t.blockchain == blockchain) && (symbol == null || t.amount.asset.equals(symbol, ignoreCase = true))
+        }
         val held = wallet?.chains?.firstOrNull { it.blockchain == blockchain }?.assets?.firstOrNull { it.symbol.equals(symbol, ignoreCase = true) }
         ActivityUiState(mine, f, wallet?.fiat, blockchain, symbol, held, q)
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), ActivityUiState(blockchain = blockchain, symbol = symbol))

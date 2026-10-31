@@ -132,6 +132,10 @@ data object CurrencyRoute : Route
 @Serializable
 data class AssetActivityRoute(val blockchain: String, val symbol: String) : Route
 
+/** One network's payments: See All under the recent payments, for the card in front. */
+@Serializable
+data class NetworkActivityRoute(val blockchain: String) : Route
+
 /** Every asset on one network, searchable: See All under a wallet card. */
 @Serializable
 data class NetworkAssetsRoute(val blockchain: String) : Route
@@ -177,6 +181,7 @@ val routeSerializers = SerializersModule {
         subclass(ActivityRoute::class)
         subclass(AssetActivityRoute::class)
         subclass(NetworkAssetsRoute::class)
+        subclass(NetworkActivityRoute::class)
         subclass(CurrencyRoute::class)
         subclass(AshaVoiceRoute::class)
         subclass(NotificationsRoute::class)
