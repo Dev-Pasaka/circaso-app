@@ -24,9 +24,16 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.text.BasicText
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.animation.core.animateFloat
+import kotlinx.coroutines.launch
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.animation.ExitTransition
+import androidx.compose.animation.EnterTransition
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.IntOffset
@@ -85,29 +92,62 @@ class ListDetailSceneStrategy<T : Any>(private val twoPane: Boolean) : SceneStra
             key = list.contentKey,
             list = list,
             detail = detail,
+            underneath = above.getOrNull(above.size - 2),
             depth = above.size,
             previousEntries = entries.dropLast(1),
+            onBack = onBack,
         )
     }
 }
 
-internal data class ListDetailScene<T : Any>(
+internal class ListDetailScene<T : Any>(
     override val key: Any,
     val list: NavEntry<T>,
     val detail: NavEntry<T>?,
+    /** The screen under the detail, shown as a back swipe uncovers it (null: the empty pane is under it). */
+    val underneath: NavEntry<T>?,
     /** How many screens are open above the list: it grows on a push and shrinks on a pop. */
     val depth: Int,
     override val previousEntries: List<NavEntry<T>>,
+    private val onBack: () -> Unit,
 ) : Scene<T> {
-    override val entries: List<NavEntry<T>> = listOfNotNull(list, detail)
+    override val entries: List<NavEntry<T>> = listOfNotNull(list, underneath, detail)
 
-    override val content: @Composable () -> Unit = { ListDetail(list, detail, depth) }
+    override val content: @Composable () -> Unit = { ListDetail(list, detail, underneath, depth, onBack) }
+
+    override fun equals(other: Any?): Boolean =
+        other is ListDetailScene<*> && key == other.key && list == other.list && detail == other.detail &&
+            underneath == other.underneath && depth == other.depth && previousEntries == other.previousEntries
+
+    override fun hashCode(): Int = listOf(key, list, detail, underneath, depth, previousEntries).hashCode()
 }
 
 @Composable
-private fun <T : Any> ListDetail(list: NavEntry<T>, detail: NavEntry<T>?, depth: Int) {
+private fun <T : Any> ListDetail(list: NavEntry<T>, detail: NavEntry<T>?, underneath: NavEntry<T>?, depth: Int, onBack: () -> Unit) {
     val c = CircasoTheme.colors
     val still = CircasoTheme.reduceMotion
+    // Back inside the detail pane follows the finger (Android's predictive back, iOS's edge swipe): the screen slides
+    // off to the right with the one underneath drifting in from a third back and brightening; let go early and it
+    // springs home. Ours sits deeper than NavDisplay's, so it gets the gesture first.
+    val swipe = remember { androidx.compose.animation.core.Animatable(0f) }
+    val scope = androidx.compose.runtime.rememberCoroutineScope()
+    var swiped by remember { androidx.compose.runtime.mutableStateOf(false) }
+    val backState = androidx.navigationevent.compose.rememberNavigationEventState(androidx.navigationevent.NavigationEventInfo.None)
+    val progress = (backState.transitionState as? androidx.navigationevent.NavigationEventTransitionState.InProgress)?.latestEvent?.progress
+    androidx.compose.runtime.LaunchedEffect(progress) { if (progress != null && !still) swipe.snapTo(progress) }
+    androidx.navigationevent.compose.NavigationBackHandler(
+        state = backState,
+        isBackEnabled = detail != null,
+        onBackCancelled = { scope.launch { swipe.animateTo(0f, SwipeSpring) } },
+        onBackCompleted = {
+            scope.launch {
+                if (!still) swipe.animateTo(1f, SwipeSpring)
+                swiped = true // already off screen: the pop itself shouldn't animate again
+                onBack()
+            }
+        },
+    )
+    androidx.compose.runtime.LaunchedEffect(detail?.contentKey) { swipe.snapTo(0f); swiped = false }
     // Push, pop or swap inside the detail pane, by how the stack above the list changed. A running stacking order
     // (as NavDisplay keeps) so a pop's leaving screen stays on top even after several pops in a row.
     val motion = remember { DetailMotion() }
@@ -118,10 +158,24 @@ private fun <T : Any> ListDetail(list: NavEntry<T>, detail: NavEntry<T>?, depth:
         }
         Box(Modifier.width(0.5.dp).fillMaxHeight().background(c.separator))
         ProvideWindowLayout(Modifier.weight(1f).fillMaxHeight().clipToBounds()) {
+          androidx.compose.foundation.layout.BoxWithConstraints(Modifier.fillMaxSize()) {
+            val width = constraints.maxWidth.toFloat()
+            if (swipe.value > 0f) {
+                Box(Modifier.fillMaxSize().graphicsLayer { translationX = -(1f - swipe.value) * width / 3f }.drawWithContent {
+                    drawContent()
+                    drawRect(androidx.compose.ui.graphics.Color.Black.copy(alpha = UnderneathDim * (1f - swipe.value)))
+                }) {
+                    androidx.compose.runtime.CompositionLocalProvider(LocalIsDetailRoot provides (depth <= 2)) {
+                        if (underneath == null) EmptyDetail() else underneath.Content()
+                    }
+                }
+            }
             AnimatedContent(
+                modifier = Modifier.graphicsLayer { translationX = swipe.value * width },
                 targetState = detail,
                 contentKey = { it?.contentKey },
                 transitionSpec = {
+                    if (swiped) return@AnimatedContent EnterTransition.None togetherWith ExitTransition.None
                     when (change.kind) {
                         // A chat picked from the list replaces the one shown: it swaps in place (iPad Messages).
                         DetailChange.Swap -> fadeIn(spring(stiffness = Spring.StiffnessMediumLow)) togetherWith fadeOut(spring(stiffness = Spring.StiffnessMedium))
@@ -135,6 +189,7 @@ private fun <T : Any> ListDetail(list: NavEntry<T>, detail: NavEntry<T>?, depth:
                     if (entry == null) EmptyDetail() else entry.Content()
                 }
             }
+          }
         }
     }
 }
@@ -200,3 +255,39 @@ private val ScreenSpring = spring(dampingRatio = Spring.DampingRatioNoBouncy, st
 /** Whether a scene change keeps the same screen on top: a rotation or resize, not a navigation. */
 internal fun <T : Any> AnimatedContentTransitionScope<Scene<T>>.sameTop(): Boolean =
     initialState.entries.lastOrNull()?.contentKey == targetState.entries.lastOrNull()?.contentKey
+
+/** The back swipe settling, on or off: quick and without a bounce, as UIKit's interactive pop finishes. */
+private val SwipeSpring = spring<Float>(dampingRatio = Spring.DampingRatioNoBouncy, stiffness = 520f)
+
+/** How dark the screen underneath is while one is pushed over it (UIKit's dimming view is about this). */
+internal const val UnderneathDim = 0.12f
+
+/** Whether the latest back stack change was a pop: the screen coming back starts dimmed and brightens. */
+val LocalNavPopping = androidx.compose.runtime.compositionLocalOf { false }
+
+/**
+ * UIKit's dimming view for every screen: the one underneath darkens a little as the next slides over it, and
+ * brightens as it is uncovered again. Driven by NavDisplay's own transition, so it tracks the slide and a back
+ * swipe exactly.
+ */
+@Composable
+fun <T : Any> rememberDimNavEntryDecorator(): androidx.navigation3.runtime.NavEntryDecorator<T> =
+    remember { androidx.navigation3.runtime.NavEntryDecorator { entry -> DimWhenUnderneath { entry.Content() } } }
+
+@Composable
+private fun DimWhenUnderneath(content: @Composable () -> Unit) {
+    val scope = androidx.navigation3.ui.LocalNavAnimatedContentScope.current
+    val popping = LocalNavPopping.current
+    val still = CircasoTheme.reduceMotion
+    val dim by scope.transition.animateFloat(
+        transitionSpec = { spring(dampingRatio = Spring.DampingRatioNoBouncy, stiffness = 420f) },
+        label = "dim",
+    ) { state ->
+        if (still) 0f else when (state) {
+            androidx.compose.animation.EnterExitState.PreEnter -> if (popping) UnderneathDim else 0f
+            androidx.compose.animation.EnterExitState.Visible -> 0f
+            androidx.compose.animation.EnterExitState.PostExit -> if (popping) 0f else UnderneathDim
+        }
+    }
+    Box(Modifier.drawWithContent { drawContent(); if (dim > 0f) drawRect(androidx.compose.ui.graphics.Color.Black.copy(alpha = dim)) }) { content() }
+}

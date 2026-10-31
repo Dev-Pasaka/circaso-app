@@ -60,8 +60,8 @@ fun WelcomeScreen(viewModel: WelcomeViewModel) {
     val t = CircasoTheme.typography
     val ios = CircasoTheme.platform == PlatformStyle.Ios
     val providers = if (ios) listOf(SocialProvider.Apple, SocialProvider.Google) else listOf(SocialProvider.Google)
-    CircasoScaffold(banner = { ConnectionBanner() }) {
-        val short = com.circaso.designsystem.adaptive.LocalWindowLayout.current.short
+    val short = com.circaso.designsystem.adaptive.LocalWindowLayout.current.short
+    CircasoScaffold(banner = { ConnectionBanner() }, maxContentWidth = if (short) com.circaso.designsystem.adaptive.WindowLayout.WideContentWidth else com.circaso.designsystem.adaptive.WindowLayout.ReadableWidth) {
         // On its side the mark and words sit on the left and the sign-in buttons on the right, both centred; upright,
         // the words float in the space above the buttons.
         val intro: @Composable () -> Unit = {

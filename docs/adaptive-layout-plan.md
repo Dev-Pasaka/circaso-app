@@ -63,9 +63,12 @@ wide screens; rotation without recreating the screen; Welcome side by side; sign
 fit; You and Wallet in two columns on their side; voice calls side by side on their side; group call grid adapts;
 sheets as centred cards; map controls clear the cut-out; You's glow stays in its column on a phone on its side.
 
-Left: the back swipe following the finger inside the detail pane (it completes as a pop today); a darkening scrim
-under pushed screens; checking the signed-in flows on a real tablet (previews were checked on iPad Pro 13" and 11"
-simulators: `-preview=split`, `-preview=split-wallet`, `-preview=home`).
+Also done: content is always framed, never stretched (the user, 2026-10-31: everything intentional): one column
+at 680 dp, two-column landscape layouts at 900 dp, while backgrounds and glows are drawn edge to edge by the outermost
+scaffold (`HostedBackdrop`); the back swipe follows the finger inside the detail pane; the screen underneath dims as
+one is pushed over it. Checked on iPhone 17 Pro (portrait and on its side), iPad Pro 11" and 13".
+
+Left: checking the signed-in flows on a real tablet and on the Redmi on its side.
 
 ## Order of work
 

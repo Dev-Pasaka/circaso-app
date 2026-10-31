@@ -133,10 +133,14 @@ fun AppNavigation(forceUpdate: Boolean, home: @Composable () -> Unit) {
     Box {
     val twoPane = com.circaso.designsystem.adaptive.LocalWindowLayout.current.twoPane
     val still = com.circaso.designsystem.theme.CircasoTheme.reduceMotion
+    // Pop or push, decided once per change of depth (not on every recomposition mid-animation).
+    val lastDepth = remember { IntArray(1) { backStack.size } }
+    val popping = remember(backStack.size) { (backStack.size < lastDepth[0]).also { lastDepth[0] = backStack.size } }
+    CompositionLocalProvider(LocalNavPopping provides popping) {
     NavDisplay(
         backStack = backStack,
         onBack = ::pop,
-        entryDecorators = listOf(rememberSaveableStateHolderNavEntryDecorator(), rememberViewModelStoreNavEntryDecorator()),
+        entryDecorators = listOf(rememberSaveableStateHolderNavEntryDecorator(), rememberViewModelStoreNavEntryDecorator(), rememberDimNavEntryDecorator()),
         // On a wide window Home is a list beside whatever it opened (docs/adaptive-layout-plan.md).
         sceneStrategies = listOf(remember(twoPane) { ListDetailSceneStrategy(twoPane) }),
         // The same screen on top before and after (a rotation or resize into or out of the split) only reflows.
@@ -368,6 +372,7 @@ fun AppNavigation(forceUpdate: Boolean, home: @Composable () -> Unit) {
             entry<ForceUpdateRoute> { ForceUpdateScreen() }
         },
     )
+    }
     ToastHost(toast, Modifier.align(Alignment.TopCenter).statusBarsPadding().padding(top = 56.dp))
     // Calls (designs H1–H5) live above every screen: one can ring anywhere, and it keeps going while money is sent from it.
     if (state == AuthState.Active) CallLayer(backStack)

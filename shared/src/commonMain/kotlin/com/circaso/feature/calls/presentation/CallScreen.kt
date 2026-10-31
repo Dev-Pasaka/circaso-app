@@ -38,6 +38,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import com.circaso.designsystem.adaptive.readableWidth
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -215,7 +216,8 @@ private fun VoiceCall(call: CallUi, actions: CallActions, money: String?) {
             ControlButton(CircasoIcon.Phone, "End", "End call", actions.onEnd, tint = Tint.End)
         }
     }
-    Column(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing).padding(horizontal = CircasoSpacing.s6, vertical = CircasoSpacing.s4), horizontalAlignment = Alignment.CenterHorizontally) {
+    // Framed like every screen: the controls never spread across a tablet or a phone on its side.
+    Column(Modifier.fillMaxSize().readableWidth(if (short) com.circaso.designsystem.adaptive.WindowLayout.WideContentWidth else com.circaso.designsystem.adaptive.WindowLayout.ReadableWidth).windowInsetsPadding(WindowInsets.safeDrawing).padding(horizontal = CircasoSpacing.s6, vertical = CircasoSpacing.s4), horizontalAlignment = Alignment.CenterHorizontally) {
         TopRow(call, actions)
         if (short) {
             // On its side, as FaceTime audio: who you're talking to on the left, the controls on the right.
@@ -306,7 +308,7 @@ private fun GroupCall(call: CallUi, actions: CallActions, chama: Chama?, fiat: F
         }
         val tiles = call.people.filter { it.joined || it.ringing }
         // Two across on a phone; more as the screen widens (on its side, tablets), each tile about a phone's half.
-        LazyVerticalGrid(GridCells.Adaptive(minSize = 150.dp), Modifier.weight(1f), horizontalArrangement = Arrangement.spacedBy(CircasoSpacing.s2), verticalArrangement = Arrangement.spacedBy(CircasoSpacing.s2)) {
+        LazyVerticalGrid(GridCells.Adaptive(minSize = 150.dp), Modifier.weight(1f).readableWidth(com.circaso.designsystem.adaptive.WindowLayout.WideContentWidth), horizontalArrangement = Arrangement.spacedBy(CircasoSpacing.s2), verticalArrangement = Arrangement.spacedBy(CircasoSpacing.s2)) {
             items(tiles, key = { it.userId }) { p -> Tile(p) }
             item(key = "me") { MeTile(call) }
         }

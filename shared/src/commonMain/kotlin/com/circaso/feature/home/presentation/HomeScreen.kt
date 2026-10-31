@@ -47,9 +47,11 @@ fun HomeScreen(
     /** Each tab's sheets: drawn in the scaffold's overlay so they cover the floating tab bar, as `cx-sheet` does. */
     chatsOverlay: @Composable androidx.compose.foundation.layout.BoxScope.() -> Unit = {},
     walletOverlay: @Composable androidx.compose.foundation.layout.BoxScope.() -> Unit = {},
+    /** The tab shown first (previews); the person's choice is remembered from then on. */
+    initialTab: Int = Tab.Chats.ordinal,
     you: @Composable (bottomPadding: PaddingValues) -> Unit,
 ) {
-    var selected by rememberSaveable { mutableStateOf(Tab.Chats.ordinal) }
+    var selected by rememberSaveable { mutableStateOf(initialTab) }
     val tab = Tab.entries[selected]
     // Back from Wallet or You goes to Chats first; Back from Chats asks before leaving (the user, 2026-10-31), so a
     // stray swipe never closes the app. Only Android has a Back that leaves; iOS apps don't close themselves.
@@ -64,6 +66,8 @@ fun HomeScreen(
     val rail = layout.short || layout.widthClass != com.circaso.designsystem.adaptive.WidthClass.Compact
     CircasoScaffold(
         grouped = tab == Tab.You,
+        // On its side, Wallet and You are laid out in two columns: a wider frame for them; Chats stays one column.
+        maxContentWidth = if (layout.short && tab != Tab.Chats) com.circaso.designsystem.adaptive.WindowLayout.WideContentWidth else com.circaso.designsystem.adaptive.WindowLayout.ReadableWidth,
         // No title bar on the tabs (Pasaka, 2026-10-30): the tab bar already says where you are, and each screen's
         // actions live in it (the Chats button, the eye on the wallet card).
         topBar = {},

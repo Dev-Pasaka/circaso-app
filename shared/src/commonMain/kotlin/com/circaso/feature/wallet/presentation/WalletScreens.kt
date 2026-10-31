@@ -287,14 +287,13 @@ private fun ActiveWallet(state: WalletUiState, wallet: Wallet, bottom: androidx.
     var pageTop by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(0f) }
     val animatedGlow by androidx.compose.animation.animateColorAsState(glow, tween(CircasoMotion.BaseMs), label = "glow")
     val glowStrength = if (c.isDark) 0.7f else 0.4f
-    androidx.compose.foundation.layout.Box(
-        Modifier.matchParentSize().onGloballyPositioned { pageTop = it.positionInWindow().y },
-    ) {
+    androidx.compose.foundation.layout.Box(Modifier.matchParentSize().onGloballyPositioned { pageTop = it.positionInWindow().y })
+    // Drawn by the outermost scaffold, edge to edge from the top of the screen, so it isn't boxed in by the frame.
+    val glowHeight = with(androidx.compose.ui.platform.LocalDensity.current) { cardsBottom.toDp() }
+    com.circaso.designsystem.chrome.HostedBackdrop {
         if (!c.isHighContrast && cardsBottom > 0f) {
             androidx.compose.foundation.layout.Box(
-                Modifier.fillMaxWidth().height(with(androidx.compose.ui.platform.LocalDensity.current) { cardsBottom.toDp() })
-                    // The tabs sit below the status bar; reach up past it to the top of the screen.
-                    .graphicsLayer { translationY = -pageTop }
+                Modifier.fillMaxWidth().height(glowHeight)
                     .background(
                         androidx.compose.ui.graphics.Brush.verticalGradient(
                             0f to animatedGlow.copy(alpha = glowStrength), 0.45f to animatedGlow.copy(alpha = glowStrength * 0.55f),
@@ -313,7 +312,9 @@ private fun ActiveWallet(state: WalletUiState, wallet: Wallet, bottom: androidx.
                 // focused card's assets, follow under them.
                 androidx.compose.foundation.layout.Box(
                     Modifier.onGloballyPositioned { cardsBottom = it.boundsInWindow().bottom.takeIf { b -> b > pageTop + 1f } ?: 0f }.layout { measurable, constraints ->
-                        val bleed = (CircasoSpacing.s4 * 2).roundToPx()
+                        // Upright the cards reach the screen edges to peek; on its side they stay in their column (the
+                        // rail is beside them).
+                        val bleed = if (short) 0 else (CircasoSpacing.s4 * 2).roundToPx()
                         val wide = constraints.maxWidth + bleed
                         val placeable = measurable.measure(constraints.copy(minWidth = wide, maxWidth = wide))
                         layout(constraints.maxWidth, placeable.height) { placeable.place(-bleed / 2, 0) }

@@ -142,7 +142,8 @@ private val thread = listOf(
 fun PreviewScreens(name: String) {
     when (name) {
         // Home's real frame with sample tabs: the floating tab bar, or the left rail on a short or wide window.
-        "home" -> com.circaso.feature.home.presentation.HomeScreen(
+        "home", "home-wallet", "home-you" -> com.circaso.feature.home.presentation.HomeScreen(
+            initialTab = when (name) { "home-wallet" -> 1; "home-you" -> 2; else -> 0 },
             chats = { pad -> ChatsContent(ChatsUiState(chats = chatList, loaded = true), pad, {}, {}, {}) },
             chatsActions = {}, chatsBanner = {},
             wallet = { pad -> WalletContent(WalletUiState(wallet = sampleWallet(), recent = sampleTransfers()), pad, noWalletActions, {}, {}, {}, {}) },

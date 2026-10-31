@@ -51,6 +51,8 @@ data class WindowLayout(val width: Dp, val height: Dp) {
         val ListPaneWidth = 360.dp
         /** Text and forms never run wider than this (Apple's readable content guide, Material's body width). */
         val ReadableWidth = 680.dp
+        /** A layout designed in two columns (a phone on its side): wider, still framed, never the whole screen. */
+        val WideContentWidth = 900.dp
     }
 }
 

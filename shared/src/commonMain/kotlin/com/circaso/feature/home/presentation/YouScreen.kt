@@ -116,22 +116,22 @@ fun YouContent(
     // Where the hero ends, measured from the top of the screen, so the glow behind it knows how far to reach.
     var heroBottom by remember { mutableStateOf(0) }
     val short = com.circaso.designsystem.adaptive.LocalWindowLayout.current.short
-    val statusTop = androidx.compose.foundation.layout.WindowInsets.statusBars.getTop(LocalDensity.current).toFloat()
     // Tapping the photo opens it large; it springs out of the circle and back into it.
     var viewingPhoto by remember { mutableStateOf(false) }
     var photoBounds by remember { mutableStateOf(androidx.compose.ui.geometry.Rect.Zero) }
     val photoOpen = remember { androidx.compose.animation.core.Animatable(0f) }
     CircasoScaffold(
         grouped = true,
+        // On its side the profile and the settings sit side by side: a wider frame, still not the whole screen.
+        maxContentWidth = if (short) com.circaso.designsystem.adaptive.WindowLayout.WideContentWidth else com.circaso.designsystem.adaptive.WindowLayout.ReadableWidth,
         backdrop = {
             ProfileGlow(
                 photo = state.profile?.avatarUrl,
-                // The tabs sit below the status bar (Home's scaffold pads it), so the glow reaches up past its own top by
-                // that much to start at the top of the screen; it is never clipped there.
+                // Drawn by the outermost scaffold from the top of the screen (under the status bar), edge to edge.
                 modifier = if (short) {
                     // On its side the glow belongs to the profile column alone: full height, fading out sideways
                     // before the settings, and still while they scroll.
-                    Modifier.fillMaxWidth(0.5f).fillMaxHeight().graphicsLayer { translationY = -statusTop }
+                    Modifier.fillMaxWidth(0.5f).fillMaxHeight()
                         .graphicsLayer { compositingStrategy = androidx.compose.ui.graphics.CompositingStrategy.Offscreen }
                         .drawWithContent {
                             drawContent()
@@ -142,7 +142,7 @@ fun YouContent(
                         }
                 } else {
                     Modifier.fillMaxWidth().height(with(LocalDensity.current) { heroBottom.toDp() })
-                        .graphicsLayer { translationY = -statusTop - scroll.value.toFloat() }
+                        .graphicsLayer { translationY = -scroll.value.toFloat() }
                 },
             )
         },
