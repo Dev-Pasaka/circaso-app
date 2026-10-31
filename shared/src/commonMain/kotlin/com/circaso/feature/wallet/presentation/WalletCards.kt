@@ -320,8 +320,8 @@ private fun CardDeck(
 /** How far the rearmost card turns (the user, 2026-10-31). */
 private const val FanAngle = 45f
 private const val FanBehindScale = 0.94f
-/** The open fan's size against the card's: small enough to sit in about the card's own space. */
-private const val FanShrink = 0.62f
+/** The open fan is 30% smaller than the card (the user, 2026-10-31). */
+private const val FanShrink = 0.7f
 /** A little give as the cards land, like cards fanned in the hand, without wobbling. */
 private const val DeckDamping = 0.78f
 private const val DeckStiffness = 420f
