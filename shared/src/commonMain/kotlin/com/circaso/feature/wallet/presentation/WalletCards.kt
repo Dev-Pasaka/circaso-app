@@ -260,8 +260,8 @@ private fun ChainCard(chain: WalletChain, fiat: FiatValue?, hidden: Boolean, onT
 private val CardShape = androidx.compose.foundation.shape.RoundedCornerShape(22.dp)
 
 /**
- * The cards as a fan, held like a hand of cards: [chains] back to front, the front one upright and the ones behind
- * turned clockwise about its bottom-left corner, the rearmost by [FanAngle] and the rest evenly between. They start
+ * The cards as a fan, like slices of a pie: [chains] back to front, the front one upright and the ones behind
+ * turned clockwise about the shared bottom centre, the rearmost by [FanAngle] and the rest evenly between. They start
  * piled exactly where the front card sat in the row, so opening reads as fanning them out and closing as gathering
  * them back; [onClosed] runs once they have settled together.
  */
@@ -278,8 +278,13 @@ private fun CardDeck(
 ) {
     androidx.compose.foundation.layout.BoxWithConstraints(Modifier.fillMaxWidth().padding(horizontal = CircasoSpacing.s6)) {
         val cardHeight = maxWidth / 1.586f
-        // The rearmost card's lowest corner, turned FanAngle about the pivot, hangs this far below the front card.
-        val drop = maxWidth * FanBehindScale * kotlin.math.sin(FanAngle * kotlin.math.PI.toFloat() / 180f)
+        // Turned about its bottom centre, the rearmost card's bottom-right corner hangs this far below the front card.
+        val turn = FanAngle * kotlin.math.PI.toFloat() / 180f
+        val drop = maxWidth * FanBehindScale * 0.5f * kotlin.math.sin(turn)
+        // The open fan leans right of its pivot by this much; it slides left as it opens so the slices sit centred.
+        val lean = with(androidx.compose.ui.platform.LocalDensity.current) {
+            ((cardHeight * kotlin.math.sin(turn) + maxWidth * 0.5f * kotlin.math.cos(turn) - maxWidth * 0.5f) * FanBehindScale / 2f).toPx()
+        }
         fun <T> motion() = if (still) tween<T>(CircasoMotion.BaseMs) else androidx.compose.animation.core.spring<T>(dampingRatio = DeckDamping, stiffness = DeckStiffness)
         // Fanned, the whole hand shrinks so it barely needs more room than the card did, and springs back to full
         // size as it closes: the actions below move a little, not a card's height (the user, 2026-10-31).
@@ -292,6 +297,7 @@ private fun CardDeck(
             Modifier.fillMaxWidth().height(height).graphicsLayer {
                 transformOrigin = androidx.compose.ui.graphics.TransformOrigin(0.5f, 0f)
                 scaleX = shrink; scaleY = shrink
+                translationX = -lean * ((1f - shrink) / (1f - FanShrink)).coerceIn(0f, 1.2f)
             },
         ) {
             val last = chains.lastIndex.coerceAtLeast(1)
@@ -305,7 +311,8 @@ private fun CardDeck(
                         chain, fiat, hidden, onToggleHidden,
                         Modifier.zIndex(slot.toFloat())
                             .graphicsLayer {
-                                transformOrigin = androidx.compose.ui.graphics.TransformOrigin(0f, 1f)
+                                // One point for every card, its bottom centre: the fan opens like slices of a pie.
+                                transformOrigin = androidx.compose.ui.graphics.TransformOrigin(0.5f, 1f)
                                 rotationZ = angle
                                 scaleX = scale; scaleY = scale
                             }
