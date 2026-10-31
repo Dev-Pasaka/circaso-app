@@ -19,6 +19,21 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import com.circaso.designsystem.motion.pressable
+import com.circaso.designsystem.theme.CircasoShapes
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.background
+import androidx.compose.ui.draw.clip
+import androidx.compose.foundation.border
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.draw.blur
+import androidx.compose.ui.layout.layout
 import androidx.compose.ui.unit.dp
 import com.circaso.core.common.maskedForDisplay
 import com.circaso.core.sync.ConnectionBanner
@@ -109,17 +124,14 @@ fun YouContent(
                     )
                 }
             }
-            ListGroup {
-                val profile = state.profile
-                ListRow(
-                    title = profile?.displayName ?: "Your profile",
-                    sub = listOfNotNull(profile?.handle?.let { "@$it" }, state.maskedPhone?.maskedForDisplay()).joinToString("\n").ifEmpty { null },
-                    meta = if (profile?.pendingSync == true) "Waiting to send" else null,
-                    leading = { Avatar(profile?.displayName ?: "?", size = CircasoSizes.avatarLg, imageUrl = profile?.avatarUrl) },
-                    trailing = { RowChevron() },
-                    onClick = actions.onEditProfile,
-                )
-            }
+            ProfileHero(
+                name = state.profile?.displayName ?: "Your profile",
+                handle = state.profile?.handle,
+                phone = state.maskedPhone?.maskedForDisplay(),
+                photo = state.profile?.avatarUrl,
+                waiting = state.profile?.pendingSync == true,
+                onEdit = actions.onEditProfile,
+            )
             Section("People") {
                 ListRow("Contacts", trailing = { RowChevron() }, onClick = actions.onContacts)
                 RowDivider()
@@ -193,6 +205,69 @@ fun NeedsAttentionScreen(viewModel: YouViewModel, onBack: () -> Unit) {
                     }
                 }
             }
+        }
+    }
+}
+
+/**
+ * The You tab's top: the photo large and centred, glowing in its own colours. The picture itself, blurred and
+ * scaled up, is the backdrop, so the glow always matches it; it fades into the page as it goes down. Without a photo
+ * the glow is a quiet grey.
+ */
+@Composable
+private fun ProfileHero(name: String, handle: String?, phone: String?, photo: String?, waiting: Boolean, onEdit: () -> Unit) {
+    val c = CircasoTheme.colors
+    val t = CircasoTheme.typography
+    val page = if (CircasoTheme.colors.isDark) c.bg else c.bgGrouped
+    Box(
+        // Reaches the screen edges (the column has side padding) so the glow isn't boxed in.
+        Modifier.layout { measurable, constraints ->
+            val bleed = (CircasoSpacing.s4 * 2).roundToPx()
+            val wide = constraints.maxWidth + bleed
+            val placeable = measurable.measure(constraints.copy(minWidth = wide, maxWidth = wide))
+            layout(constraints.maxWidth, placeable.height) { placeable.place(-bleed / 2, 0) }
+        }.fillMaxWidth(),
+        contentAlignment = Alignment.TopCenter,
+    ) {
+        // The glow: the photo blurred and scaled up behind everything.
+        Box(Modifier.matchParentSize().clip(androidx.compose.foundation.shape.RoundedCornerShape(0.dp))) {
+            if (photo != null) {
+                coil3.compose.AsyncImage(
+                    model = photo, contentDescription = null, contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+                    modifier = Modifier.fillMaxSize().graphicsLayer { scaleX = 1.6f; scaleY = 1.6f; alpha = 0.75f }.blur(60.dp),
+                )
+            } else {
+                Box(Modifier.fillMaxSize().background(androidx.compose.ui.graphics.Brush.radialGradient(listOf(c.fillStrong, page), radius = 700f)))
+            }
+            // Strongest at the top, gone by the bottom: the colour rises behind the photo and fades into the page.
+            Box(
+                Modifier.fillMaxSize().background(
+                    androidx.compose.ui.graphics.Brush.verticalGradient(0f to page.copy(alpha = 0.05f), 0.55f to page.copy(alpha = 0.55f), 1f to page),
+                ),
+            )
+        }
+        Column(
+            Modifier.fillMaxWidth().padding(top = CircasoSpacing.s6, bottom = CircasoSpacing.s5)
+                .pressable(role = androidx.compose.ui.semantics.Role.Button, onClick = onEdit)
+                .semantics(mergeDescendants = true) { contentDescription = "$name. Edit your profile" },
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(CircasoSpacing.s2),
+        ) {
+            Box(Modifier.shadow(18.dp, CircasoShapes.circle).clip(CircasoShapes.circle).border(3.dp, page, CircasoShapes.circle)) {
+                Avatar(name, size = 112.dp, imageUrl = photo)
+            }
+            Spacer(Modifier.height(4.dp))
+            BasicText(name, style = t.title2.copy(color = c.ink, fontWeight = FontWeight.Bold), maxLines = 1)
+            listOfNotNull(handle?.let { "@$it" }, phone).joinToString("  ·  ").takeIf { it.isNotEmpty() }?.let {
+                BasicText(it, style = t.subhead.copy(color = c.inkSecondary), maxLines = 1)
+            }
+            if (waiting) BasicText("Waiting to send", style = t.caption1.copy(color = c.warning))
+            Spacer(Modifier.height(4.dp))
+            Box(
+                Modifier.clip(CircasoShapes.pill).background(c.fill.copy(alpha = 0.85f))
+                    .pressable(role = androidx.compose.ui.semantics.Role.Button, onClick = onEdit)
+                    .padding(horizontal = CircasoSpacing.s4, vertical = 8.dp),
+            ) { BasicText("Edit Profile", style = t.subhead.copy(color = c.ink, fontWeight = FontWeight.SemiBold)) }
         }
     }
 }
