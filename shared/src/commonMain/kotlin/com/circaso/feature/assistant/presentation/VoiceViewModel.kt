@@ -156,6 +156,7 @@ class VoiceViewModel(
                 local.update { it.copy(phase = VoicePhase.Thinking, question = event.text, heard = "", heardFinal = false, reply = emptyList(), status = null) } }
             is LiveVoiceEvent.Reply -> local.update { it.copy(phase = VoicePhase.Speaking, reply = it.reply + event.text, status = null) }
             is LiveVoiceEvent.UsingTool -> local.update { it.copy(status = "Reading your chats…") }
+            is LiveVoiceEvent.Status -> local.update { it.copy(status = event.label) }
             is LiveVoiceEvent.Interrupted -> { Diagnostics.note("voice: interrupted"); speaker.flush(); local.update { it.copy(phase = VoicePhase.Listening) } }
             is LiveVoiceEvent.ReplyDone -> {
                 Diagnostics.note("voice: reply done, spoken=${event.spoken}")

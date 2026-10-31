@@ -18,6 +18,8 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.foundation.background
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.circaso.core.sync.ConnectionBanner
@@ -167,7 +169,14 @@ private fun BubbleView(b: Bubble, speaking: Boolean, canSpeak: Boolean, onSpeak:
     val c = CircasoTheme.colors
     Row(Modifier.fillMaxWidth(), horizontalArrangement = if (b.mine) Arrangement.End else Arrangement.Start, verticalAlignment = Alignment.Bottom) {
         MessageColumn(b.mine, Modifier.weight(1f, fill = false)) {
-            ChatBubble(b.text, b.mine, quiet = b.thinking, markdown = !b.mine)
+            if (b.mine || b.thinking) ChatBubble(b.text, b.mine, quiet = b.thinking, markdown = !b.mine)
+            else {
+                // Her answers: markdown, charts, statements and diagrams (the output contract), on the incoming bubble.
+                Box(
+                    Modifier.clip(com.circaso.designsystem.components.bubbleShape(false)).background(c.fill)
+                        .padding(horizontal = CircasoSpacing.s4, vertical = CircasoSpacing.s3),
+                ) { AshaAnswer(b.text) }
+            }
             if (speaking) BubbleMeta("Reading aloud", icon = CircasoIcon.Speaker)
         }
         if (b.speakable && (canSpeak || speaking)) {

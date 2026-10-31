@@ -1,5 +1,7 @@
 package com.circaso.core.platform
 
+import platform.Foundation.writeToFile
+import platform.UIKit.drawAtPoint
 import platform.UIKit.UIActivityViewController
 import platform.UIKit.UIApplication
 import platform.UIKit.UIViewController
@@ -16,4 +18,31 @@ private fun topViewController(): UIViewController? {
     var top = (windows.firstOrNull { it.isKeyWindow() } ?: windows.firstOrNull())?.rootViewController
     while (top?.presentedViewController != null) top = top.presentedViewController
     return top
+}
+
+@OptIn(kotlinx.cinterop.ExperimentalForeignApi::class)
+actual fun sharePdf(title: String, lines: List<String>) {
+    val top = topViewController() ?: return
+    // A4 in points; one line of text per entry, a new page when one fills.
+    val page = platform.CoreGraphics.CGRectMake(0.0, 0.0, 595.0, 842.0)
+    val renderer = platform.UIKit.UIGraphicsPDFRenderer(bounds = page)
+    val titleAttrs = mapOf<Any?, Any?>(platform.UIKit.NSFontAttributeName to platform.UIKit.UIFont.boldSystemFontOfSize(18.0))
+    val textAttrs = mapOf<Any?, Any?>(platform.UIKit.NSFontAttributeName to platform.UIKit.UIFont.systemFontOfSize(10.5))
+    val data = renderer.PDFDataWithActions { context ->
+        context?.beginPage()
+        var y = 40.0
+        (title as platform.Foundation.NSString).drawAtPoint(platform.CoreGraphics.CGPointMake(40.0, y), withAttributes = titleAttrs)
+        y += 30.0
+        lines.forEach { line ->
+            if (y > 800.0) { context?.beginPage(); y = 40.0 }
+            (line as platform.Foundation.NSString).drawAtPoint(platform.CoreGraphics.CGPointMake(40.0, y), withAttributes = textAttrs)
+            y += 16.0
+        }
+    }
+    val name = title.replace(Regex("[^A-Za-z0-9 _-]"), "").trim().ifEmpty { "Statement" } + ".pdf"
+    val path = platform.Foundation.NSTemporaryDirectory() + name
+    data.writeToFile(path, atomically = true)
+    val url = platform.Foundation.NSURL.fileURLWithPath(path)
+    val sheet = UIActivityViewController(activityItems = listOf(url), applicationActivities = null)
+    top.presentViewController(sheet, animated = true, completion = null)
 }

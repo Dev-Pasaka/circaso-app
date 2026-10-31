@@ -30,6 +30,9 @@ import kotlinx.coroutines.flow.map
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.jsonObject
 
 class AshaRepositoryImpl(
     private val remote: AshaRemote,
@@ -73,6 +76,8 @@ class AshaRepositoryImpl(
             "tool_request" -> json.decodeFromString(ToolRequestData.serializer(), data).let {
                 AshaEvent.ToolRequest(it.turnId, it.callId, it.name, (it.arguments ?: JsonNull).toString())
             }
+            "tool_status" -> AshaEvent.Status(json.parseToJsonElement(data).jsonObject["label"]?.jsonPrimitive?.contentOrNull)
+            "tool_done" -> AshaEvent.Status(null)
             "done" -> AshaEvent.Done(json.decodeFromString(DoneData.serializer(), data).message.toDomain())
             else -> null
         }

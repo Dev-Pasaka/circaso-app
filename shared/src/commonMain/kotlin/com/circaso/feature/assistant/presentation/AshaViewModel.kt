@@ -100,6 +100,7 @@ class AshaViewModel(
                 when (event) {
                     is AshaEvent.Delta -> local.update { it.copy(streaming = it.streaming + event.text, status = null) }
                     is AshaEvent.UsingTool -> local.update { it.copy(status = "Reading your chats…") }
+                    is AshaEvent.Status -> local.update { it.copy(status = event.label) }
                     is AshaEvent.Done -> Unit
                     is AshaEvent.Failed -> failed = event.error
                     is AshaEvent.ToolRequest -> Unit

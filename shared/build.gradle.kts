@@ -109,6 +109,7 @@ kotlin {
             implementation(libs.ktor.client.websockets)
             implementation(libs.ktor.serialization.kotlinxJson)
             implementation(libs.coil.compose)
+            implementation(libs.markdown.renderer)
             implementation(libs.coil.network.ktor)
             implementation(libs.koin.core)
             implementation(libs.koin.compose)
