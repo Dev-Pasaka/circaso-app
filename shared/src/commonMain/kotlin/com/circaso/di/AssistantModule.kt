@@ -53,7 +53,7 @@ val assistantModule = module {
 
     // Live voice (A11): its own socket, open only while the voice screen is up.
     single<LiveSocketFactory> { KtorLiveSocketFactory(get()) }
-    single<LiveVoiceRemote> { KtorLiveVoiceRemote(get(), liveVoiceUrl(get<ApiConfig>().baseUrl), get(), voice = { get<com.circaso.core.datastore.AppPreferences>().ashaVoice.first() }, currency = { get<com.circaso.core.datastore.AppPreferences>().currency.first() ?: com.circaso.core.platform.localCurrencyCode() }) }
+    single<LiveVoiceRemote> { KtorLiveVoiceRemote(get(), liveVoiceUrl(get<ApiConfig>().baseUrl), get(), conversation = { get<AshaRepository>().let { r -> r.current.value ?: r.conversations.value.firstOrNull()?.id } }, voice = { get<com.circaso.core.datastore.AppPreferences>().ashaVoice.first() }, currency = { get<com.circaso.core.datastore.AppPreferences>().currency.first() ?: com.circaso.core.platform.localCurrencyCode() }) }
     single<LiveVoiceRepository> { LiveVoiceRepositoryImpl(get(), get(), get()) }
     factory { TalkToAshaUseCase(get(), get()) }
 }

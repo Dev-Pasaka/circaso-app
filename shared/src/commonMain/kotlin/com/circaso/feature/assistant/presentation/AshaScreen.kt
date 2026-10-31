@@ -18,6 +18,9 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.foundation.layout.heightIn
+import com.circaso.designsystem.motion.pressable
+import com.circaso.designsystem.chrome.CircasoSheet
 import androidx.compose.foundation.background
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.style.TextAlign
@@ -50,6 +53,8 @@ fun AshaScreen(viewModel: AshaViewModel, onBack: () -> Unit, onVoice: (() -> Uni
     AshaContent(
         state, onBack, viewModel::onDraft, viewModel::onSend, viewModel::onClearRequested, viewModel::onClearConfirmed, viewModel::onClearDismissed,
         onMic = viewModel::onMic, onSpeak = viewModel::onSpeak, onSuggestion = viewModel::onSuggestion, onVoice = onVoice,
+        onHistory = viewModel::onHistory, onNewChat = viewModel::onNewChat, onOpenConversation = viewModel::onOpenConversation,
+        onDeleteConversation = viewModel::onDeleteConversation,
     )
 }
 
@@ -70,6 +75,10 @@ fun AshaContent(
     onSpeak: (String) -> Unit = {},
     onSuggestion: (String) -> Unit = {},
     onVoice: (() -> Unit)? = null,
+    onHistory: (Boolean) -> Unit = {},
+    onNewChat: () -> Unit = {},
+    onOpenConversation: (String) -> Unit = {},
+    onDeleteConversation: (String) -> Unit = {},
 ) {
     val c = CircasoTheme.colors
     val t = CircasoTheme.typography
@@ -77,20 +86,25 @@ fun AshaContent(
         topBar = {
             ThreadHeader(
                 title = "Asha",
-                subtitle = "Reads your activity · can't move money",
+                subtitle = state.conversationTitle ?: "Reads your activity · can't move money",
                 onBack = onBack,
                 avatar = { AshaMark(size = CircasoSizes.avatarSm) },
                 trailing = {
-                    if (state.messages.isNotEmpty()) CircasoButton("Clear", onClearRequested, style = ButtonStyle.Plain, size = ButtonSize.Small) else HeaderSpacer()
+                    // Past conversations, and a fresh one (as Claude): each keeps its own context.
+                    CircasoIconButton(CircasoIcon.Clock, "Past conversations", { onHistory(true) })
+                    CircasoIconButton(CircasoIcon.Plus, "New conversation", onNewChat, enabled = state.online)
                 },
             )
         },
         banner = { ConnectionBanner(showing = "You can read past answers") },
         overlay = {
+            CircasoSheet(state.showHistory, { onHistory(false) }, label = "Conversations") {
+                ConversationsSheet(state, onNew = onNewChat, onOpen = onOpenConversation, onDelete = onDeleteConversation, onClearAll = { onHistory(false); onClearRequested() })
+            }
             ConfirmSheet(
-                visible = state.confirmClear, title = "Clear this conversation?",
-                message = "Your questions and Asha's answers are deleted from this phone and from Circaso.",
-                confirmLabel = "Clear", destructive = true, onConfirm = onClearConfirmed, onDismiss = onClearDismissed,
+                visible = state.confirmClear, title = "Delete all conversations?",
+                message = "Every conversation with Asha is deleted from this phone and from Circaso.",
+                confirmLabel = "Delete All", destructive = true, onConfirm = onClearConfirmed, onDismiss = onClearDismissed,
             )
         },
     ) {
@@ -188,3 +202,44 @@ private fun BubbleView(b: Bubble, speaking: Boolean, canSpeak: Boolean, onSpeak:
 }
 
 private fun clock(seconds: Int) = "${seconds / 60}:${(seconds % 60).toString().padStart(2, '0')}"
+
+/** Past conversations, newest first: open one, delete one, or start fresh. */
+@Composable
+private fun ConversationsSheet(
+    state: AshaUiState,
+    onNew: () -> Unit,
+    onOpen: (String) -> Unit,
+    onDelete: (String) -> Unit,
+    onClearAll: () -> Unit,
+) {
+    val c = CircasoTheme.colors
+    val t = CircasoTheme.typography
+    val current = state.currentConversation ?: state.conversations.firstOrNull()?.id
+    BasicText("Conversations", style = t.title2.copy(color = c.ink))
+    com.circaso.designsystem.components.CircasoButton("New Conversation", onNew, size = com.circaso.designsystem.components.ButtonSize.Large, block = true, enabled = state.online)
+    if (state.conversations.isEmpty()) {
+        BasicText("Your conversations with Asha will show here.", style = t.footnote.copy(color = c.inkSecondary))
+    } else {
+        androidx.compose.foundation.lazy.LazyColumn(Modifier.fillMaxWidth().heightIn(max = 420.dp)) {
+            items(state.conversations, key = { it.id }) { conv ->
+                Row(
+                    Modifier.fillMaxWidth().clip(com.circaso.designsystem.theme.CircasoShapes.md)
+                        .background(if (conv.id == current) c.fill else androidx.compose.ui.graphics.Color.Transparent)
+                        .pressable(role = androidx.compose.ui.semantics.Role.Button, onClick = { onOpen(conv.id) })
+                        .padding(start = CircasoSpacing.s3, top = CircasoSpacing.s2, bottom = CircasoSpacing.s2),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        BasicText(conv.title, style = t.body.copy(color = c.ink), maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
+                        conv.lastMessageAt?.let { at ->
+                            val ms = runCatching { kotlin.time.Instant.parse(at).toEpochMilliseconds() }.getOrNull()
+                            ms?.let { BasicText(com.circaso.core.platform.chatListTime(it, com.circaso.core.sync.nowMillis()), style = t.caption1.copy(color = c.inkSecondary)) }
+                        }
+                    }
+                    CircasoIconButton(CircasoIcon.Delete, "Delete ${conv.title}", { onDelete(conv.id) })
+                }
+            }
+        }
+        com.circaso.designsystem.components.CircasoButton("Delete All Conversations", onClearAll, style = com.circaso.designsystem.components.ButtonStyle.Plain, size = com.circaso.designsystem.components.ButtonSize.Medium, block = true)
+    }
+}

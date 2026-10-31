@@ -86,12 +86,14 @@ class KtorLiveVoiceRemote(
     private val json: Json,
     private val currency: suspend () -> String? = { null },
     private val voice: suspend () -> String? = { null },
+    /** The Asha conversation the voice chat belongs to (the one open), so its turns land there. */
+    private val conversation: () -> String? = { null },
 ) : LiveVoiceRemote {
     override suspend fun open(accessToken: String, agentToken: String?, language: String, chatReading: Boolean): LiveVoiceSession =
-        LiveVoiceSocketSession(sockets.open(url), json, authFrame(accessToken, agentToken, language, chatReading, currency(), voice()))
+        LiveVoiceSocketSession(sockets.open(url), json, authFrame(accessToken, agentToken, language, chatReading, currency(), voice(), conversation()))
 }
 
-internal fun authFrame(accessToken: String, agentToken: String?, language: String? = null, chatReading: Boolean? = null, currency: String? = null, voice: String? = null): JsonObject = buildJsonObject {
+internal fun authFrame(accessToken: String, agentToken: String?, language: String? = null, chatReading: Boolean? = null, currency: String? = null, voice: String? = null, conversationId: String? = null): JsonObject = buildJsonObject {
     put("type", "auth")
     put("accessToken", accessToken)
     agentToken?.let { put("agentToken", it) }
@@ -99,6 +101,7 @@ internal fun authFrame(accessToken: String, agentToken: String?, language: Strin
     chatReading?.let { put("chatReading", it) }
     currency?.let { put("currency", it) }
     voice?.let { put("voice", it) }
+    conversationId?.let { put("conversationId", it) }
 }
 
 /**

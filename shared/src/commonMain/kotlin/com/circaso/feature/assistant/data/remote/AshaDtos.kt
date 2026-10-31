@@ -14,11 +14,12 @@ data class ChatMessageDto(
     val askedFrom: String? = null,
     val readNote: ReadNoteDto? = null,
     val at: String,
+    val conversationId: String? = null,
 )
 
 @Serializable data class ChatResponse(val messages: List<ChatMessageDto>, val nextCursor: String? = null)
 /** [currency]: the person's display currency (You → Currency), so Asha answers in it. */
-@Serializable data class SendMessageRequest(val text: String, val askedFrom: AskedFromDto? = null, val chatReading: Boolean? = null, val currency: String? = null)
+@Serializable data class SendMessageRequest(val text: String, val askedFrom: AskedFromDto? = null, val chatReading: Boolean? = null, val currency: String? = null, val conversationId: String? = null)
 @Serializable data class SnippetDto(val chatId: String, val chatName: String? = null, val sender: String, val at: String, val text: String)
 @Serializable data class ToolResultsRequest(val callId: String, val snippets: List<SnippetDto>? = null)
 @Serializable data class TranscriptResponse(val text: String, val seconds: Int)
@@ -41,4 +42,9 @@ data class UsageResponse(
 /** The `data` of the stream's events. */
 @Serializable data class DeltaData(val delta: String)
 @Serializable data class ToolRequestData(val turnId: String, val callId: String, val name: String, val arguments: kotlinx.serialization.json.JsonElement? = null)
-@Serializable data class DoneData(val message: ChatMessageDto)
+@Serializable data class DoneData(val message: ChatMessageDto, val conversationId: String? = null, val conversation: ConversationDto? = null)
+
+/** C1–C4: Asha's separate conversations, each with its own context. */
+@Serializable data class ConversationDto(val conversationId: String, val title: String, val createdAt: String? = null, val updatedAt: String? = null, val lastMessageAt: String? = null)
+@Serializable data class ConversationsResponse(val conversations: List<ConversationDto> = emptyList(), val nextCursor: String? = null)
+@Serializable data class ConversationRequest(val title: String? = null)

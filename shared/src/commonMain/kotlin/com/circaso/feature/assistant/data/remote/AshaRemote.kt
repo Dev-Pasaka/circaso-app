@@ -38,6 +38,10 @@ interface AshaRemote {
     suspend fun transcribe(audio: ByteArray, contentType: String, seconds: Int): AppResult<TranscriptResponse>
     suspend fun speech(request: SpeechRequest): AppResult<ByteArray>
     suspend fun voices(): AppResult<VoicesResponse>
+    suspend fun conversations(): AppResult<ConversationsResponse> = AppResult.Success(ConversationsResponse())
+    suspend fun createConversation(idempotencyKey: String): AppResult<ConversationDto> = AppResult.Failure(AppError.Network)
+    suspend fun renameConversation(conversationId: String, title: String, idempotencyKey: String): AppResult<ConversationDto> = AppResult.Failure(AppError.Network)
+    suspend fun deleteConversation(conversationId: String, idempotencyKey: String): AppResult<NoBody> = AppResult.Failure(AppError.Network)
     /** A13: a short sample of a voice (MP3), free of the allowance, for the voice picker. */
     suspend fun voiceSample(voiceId: String): AppResult<ByteArray>
     suspend fun usage(): AppResult<UsageResponse>
@@ -106,6 +110,34 @@ class KtorAshaRemote(
         throw e
     } catch (e: Throwable) {
         AppResult.Failure(AppError.Network)
+    }
+
+    override suspend fun conversations() = api.call<ConversationsResponse> {
+        method = HttpMethod.Get
+        url("/v1/assistant/conversations")
+        parameter("limit", 100)
+    }
+
+    override suspend fun createConversation(idempotencyKey: String) = api.call<ConversationDto> {
+        method = HttpMethod.Post
+        url("/v1/assistant/conversations")
+        idempotencyKey(idempotencyKey)
+        contentType(ContentType.Application.Json)
+        setBody(ConversationRequest())
+    }
+
+    override suspend fun renameConversation(conversationId: String, title: String, idempotencyKey: String) = api.call<ConversationDto> {
+        method = HttpMethod.Patch
+        url("/v1/assistant/conversations/$conversationId")
+        idempotencyKey(idempotencyKey)
+        contentType(ContentType.Application.Json)
+        setBody(ConversationRequest(title))
+    }
+
+    override suspend fun deleteConversation(conversationId: String, idempotencyKey: String) = api.call<NoBody> {
+        method = HttpMethod.Delete
+        url("/v1/assistant/conversations/$conversationId")
+        idempotencyKey(idempotencyKey)
     }
 
     override suspend fun voices() = api.call<VoicesResponse> {

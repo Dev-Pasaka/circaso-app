@@ -25,6 +25,17 @@ interface AshaRepository {
     suspend fun transcribe(audio: ByteArray, contentType: String, durationSeconds: Int): AppResult<String>
     suspend fun speak(text: String, language: String?): AppResult<ByteArray>
     suspend fun usage(): AppResult<AshaUsage>
+
+    /** Asha's conversations, newest first (C1), as last read. */
+    val conversations: kotlinx.coroutines.flow.StateFlow<List<AshaConversation>> get() = NoConversations
+    /** The conversation on screen; null means the latest one. */
+    val current: kotlinx.coroutines.flow.StateFlow<String?> get() = NoCurrent
+    fun open(conversationId: String?) {}
+    /** Starts an empty conversation (C2) and opens it. */
+    suspend fun newConversation(): AppResult<Unit> = AppResult.Failure(com.circaso.core.common.AppError.Unexpected(null))
+    suspend fun renameConversation(conversationId: String, title: String): AppResult<Unit> = AppResult.Failure(com.circaso.core.common.AppError.Unexpected(null))
+    /** Deletes a conversation and its messages (C4); the latest one opens if it was on screen. */
+    suspend fun deleteConversation(conversationId: String): AppResult<Unit> = AppResult.Failure(com.circaso.core.common.AppError.Unexpected(null))
 }
 
 /** Runs what Asha asks of the phone. Chats are end-to-end encrypted, so only the phone can search or read them. */
@@ -36,3 +47,6 @@ fun interface DeviceToolRunner {
 object NoChatsToolRunner : DeviceToolRunner {
     override suspend fun run(name: String, argumentsJson: String): List<Snippet> = emptyList()
 }
+
+private val NoConversations = kotlinx.coroutines.flow.MutableStateFlow(emptyList<AshaConversation>())
+private val NoCurrent = kotlinx.coroutines.flow.MutableStateFlow<String?>(null)

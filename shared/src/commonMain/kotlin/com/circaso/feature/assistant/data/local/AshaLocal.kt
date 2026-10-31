@@ -20,6 +20,8 @@ data class AshaMessageEntity(
     val readChatNames: String?,
     val readMessageCount: Int?,
     val at: String,
+    /** The conversation it belongs to (C1–C5); null for rows saved before conversations existed. */
+    val conversationId: String? = null,
 )
 
 @Dao
@@ -35,4 +37,7 @@ interface AshaDao {
 
     @Query("DELETE FROM asha_message")
     suspend fun clear()
+
+    @Query("DELETE FROM asha_message WHERE conversationId = :conversationId")
+    suspend fun deleteConversation(conversationId: String)
 }

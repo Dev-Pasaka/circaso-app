@@ -50,7 +50,13 @@ data class AshaUiState(
     val recordedSeconds: Int = 0,
     /** The reply being read aloud (its text), so its speaker button can show "stop". */
     val speakingText: String? = null,
+    /** Asha's conversations, newest first, and the one on screen (C1). */
+    val conversations: List<com.circaso.feature.assistant.domain.AshaConversation> = emptyList(),
+    val currentConversation: String? = null,
+    val showHistory: Boolean = false,
 ) {
+    /** The open conversation's title, for the header; "New chat" until it has one. */
+    val conversationTitle: String? get() = (currentConversation?.let { id -> conversations.firstOrNull { it.id == id } } ?: conversations.firstOrNull())?.title
     val sending get() = pendingQuestion != null
     val canSend get() = online && !sending && voice == VoiceState.Idle && draft.isNotBlank()
     /** Voice needs the server for both directions, so it is offered only online. */
@@ -68,15 +74,42 @@ class AshaViewModel(
     private val player: AudioPlayer,
     private val transcribe: TranscribeVoiceUseCase,
     private val speak: SpeakUseCase,
+    /** The conversation list (C1–C4); absent in previews and tests that don't need it. */
+    private val chats: com.circaso.feature.assistant.domain.AshaRepository? = null,
 ) : ViewModel() {
     private val local = MutableStateFlow(AshaUiState())
     private var job: Job? = null
     private var timer: Job? = null
     private var speaking: Job? = null
 
-    val state: StateFlow<AshaUiState> = combine(observeHistory(), local, connection.status) { messages, ui, status ->
-        ui.copy(messages = messages, online = status == ConnectionStatus.Online)
+    private val conversationsFlow = chats?.let { r -> combine(r.conversations, r.current) { list, cur -> list to cur } } ?: kotlinx.coroutines.flow.flowOf(emptyList<com.circaso.feature.assistant.domain.AshaConversation>() to null)
+
+    val state: StateFlow<AshaUiState> = combine(observeHistory(), local, connection.status, conversationsFlow) { messages, ui, status, conv ->
+        ui.copy(messages = messages, online = status == ConnectionStatus.Online, conversations = conv.first, currentConversation = conv.second)
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), AshaUiState())
+
+    fun onHistory(open: Boolean) = local.update { it.copy(showHistory = open) }
+
+    /** A brand-new conversation: Asha starts with no context (cheaper, and the reason to start one). */
+    fun onNewChat() {
+        val r = chats ?: return
+        if (!state.value.online || state.value.sending) return
+        local.update { it.copy(showHistory = false, error = null) }
+        viewModelScope.launch {
+            (r.newConversation() as? AppResult.Failure)?.let { f -> local.update { it.copy(error = message(f.error)) } }
+        }
+    }
+
+    fun onOpenConversation(id: String) {
+        stopSpeaking()
+        chats?.open(id)
+        local.update { it.copy(showHistory = false) }
+    }
+
+    fun onDeleteConversation(id: String) {
+        val r = chats ?: return
+        viewModelScope.launch { (r.deleteConversation(id) as? AppResult.Failure)?.let { f -> local.update { it.copy(error = message(f.error)) } } }
+    }
 
     init { viewModelScope.launch { refreshHistory() } }
 

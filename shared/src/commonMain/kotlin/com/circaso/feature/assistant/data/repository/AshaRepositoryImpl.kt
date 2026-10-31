@@ -25,6 +25,9 @@ import com.circaso.feature.assistant.domain.AskedFrom
 import com.circaso.feature.assistant.domain.ReadNote
 import com.circaso.feature.assistant.domain.Snippet
 import kotlinx.coroutines.flow.Flow
+import com.circaso.feature.assistant.data.remote.ConversationDto
+import com.circaso.feature.assistant.domain.AshaConversation
+import com.circaso.core.network.newIdempotencyKey
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.map
 import kotlinx.serialization.json.Json
@@ -46,12 +49,56 @@ class AshaRepositoryImpl(
     private val voice: suspend () -> String? = { null },
 ) : AshaRepository {
 
-    override val history: Flow<List<AshaMessage>> = dao.observe().map { rows -> inConversationOrder(rows.map { it.toDomain() }) }
+    private val _conversations = kotlinx.coroutines.flow.MutableStateFlow<List<AshaConversation>>(emptyList())
+    override val conversations: kotlinx.coroutines.flow.StateFlow<List<AshaConversation>> = _conversations
+    private val _current = kotlinx.coroutines.flow.MutableStateFlow<String?>(null)
+    override val current: kotlinx.coroutines.flow.StateFlow<String?> = _current
+
+    /** The conversation shown: the one opened, else the latest; rows from before conversations show only with none. */
+    private val shown = kotlinx.coroutines.flow.combine(_current, _conversations) { cur, list -> cur ?: list.firstOrNull()?.id }
+
+    override val history: Flow<List<AshaMessage>> = kotlinx.coroutines.flow.combine(dao.observe(), shown) { rows, id ->
+        val mine = if (id == null) rows.filter { it.conversationId == null } else rows.filter { it.conversationId == id }
+        inConversationOrder(mine.map { it.toDomain() })
+    }
+
+    override fun open(conversationId: String?) { _current.value = conversationId }
+
+    override suspend fun newConversation(): AppResult<Unit> = when (val r = remote.createConversation(newIdempotencyKey())) {
+        is AppResult.Failure -> r
+        is AppResult.Success -> {
+            _conversations.value = listOf(r.value.toDomain()) + _conversations.value.filter { it.id != r.value.conversationId }
+            _current.value = r.value.conversationId
+            AppResult.Success(Unit)
+        }
+    }
+
+    override suspend fun renameConversation(conversationId: String, title: String): AppResult<Unit> =
+        when (val r = remote.renameConversation(conversationId, title, newIdempotencyKey())) {
+            is AppResult.Failure -> r
+            is AppResult.Success -> { _conversations.value = _conversations.value.map { if (it.id == conversationId) r.value.toDomain() else it }; AppResult.Success(Unit) }
+        }
+
+    override suspend fun deleteConversation(conversationId: String): AppResult<Unit> =
+        when (val r = remote.deleteConversation(conversationId, newIdempotencyKey())) {
+            is AppResult.Failure -> r
+            is AppResult.Success -> {
+                dao.deleteConversation(conversationId)
+                _conversations.value = _conversations.value.filter { it.id != conversationId }
+                if (_current.value == conversationId) _current.value = null
+                AppResult.Success(Unit)
+            }
+        }
+
+    private suspend fun refreshConversations() {
+        (remote.conversations() as? AppResult.Success)?.value?.let { page -> _conversations.value = page.conversations.map { it.toDomain() } }
+    }
 
     override suspend fun refreshHistory(): AppResult<Unit> {
         // Messages queued for deletion must not come back while the deletion waits to be sent.
         val deleting = outbox.waitingPayloads(AshaDeleteMessageHandler.Type).toSet()
         if (outbox.waiting(AshaDeleteAllHandler.Type) > 0) return AppResult.Success(Unit)
+        refreshConversations()
         return when (val result = remote.history(null, PageSize)) {
             is AppResult.Failure -> result
             is AppResult.Success -> {
@@ -62,12 +109,19 @@ class AshaRepositoryImpl(
     }
 
     override fun ask(text: String, askedFrom: AskedFrom?, chatReading: Boolean): Flow<AshaEvent> = flow {
-        val request = SendMessageRequest(text, askedFrom?.let { AskedFromDto(it.chatId, it.chatName) }, chatReading, currency())
+        val conversation = _current.value ?: _conversations.value.firstOrNull()?.id
+        val request = SendMessageRequest(text, askedFrom?.let { AskedFromDto(it.chatId, it.chatName) }, chatReading, currency(), conversation)
         remote.stream(request).collect { item ->
             when (item) {
                 is AppResult.Failure -> emit(AshaEvent.Failed(item.error))
                 is AppResult.Success -> translate(item.value.name, item.value.data)?.let { event ->
-                    if (event is AshaEvent.Done) { dao.upsert(listOf(event.message.toEntity())); emit(event); refreshHistory() } else emit(event)
+                    if (event is AshaEvent.Done) {
+                        dao.upsert(listOf(event.message.toEntity()))
+                        // The server may have started a conversation (none existed) or titled it: keep it on screen.
+                        event.message.conversationId?.let { id -> if (_current.value == null) _current.value = id }
+                        emit(event)
+                        refreshHistory()
+                    } else emit(event)
                 }
             }
         }
@@ -131,13 +185,17 @@ private fun ChatMessageDto.toEntity() = AshaMessageEntity(
     readChatNames = readNote?.chatNames?.joinToString(Sep),
     readMessageCount = readNote?.messageCount,
     at = at,
+    conversationId = conversationId,
 )
 
 internal fun ChatMessageDto.toDomain() = AshaMessage(
     messageId, role, text, replyTo, askedFrom,
     readNote = readNote?.let { ReadNote(it.chatIds, it.chatNames.orEmpty(), it.messageCount) },
     at = at,
+    conversationId = conversationId,
 )
+
+internal fun ConversationDto.toDomain() = AshaConversation(conversationId, title, lastMessageAt ?: updatedAt ?: createdAt)
 
 private fun AshaMessage.toEntity() = AshaMessageEntity(
     messageId, role, text, replyTo, askedFrom,
@@ -145,12 +203,14 @@ private fun AshaMessage.toEntity() = AshaMessageEntity(
     readChatNames = readNote?.chatNames?.joinToString(Sep),
     readMessageCount = readNote?.messageCount,
     at = at,
+    conversationId = conversationId,
 )
 
 private fun AshaMessageEntity.toDomain() = AshaMessage(
     messageId, role, text, replyTo, askedFrom,
     readNote = readMessageCount?.let { ReadNote(readChatIds?.split(Sep)?.filter { s -> s.isNotEmpty() }.orEmpty(), readChatNames?.split(Sep)?.filter { s -> s.isNotEmpty() }.orEmpty(), it) },
     at = at,
+    conversationId = conversationId,
 )
 
 /**

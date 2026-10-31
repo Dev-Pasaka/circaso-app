@@ -72,6 +72,7 @@ class SseParserTest {
 }
 
 private class FakeAshaDao : AshaDao {
+    override suspend fun deleteConversation(conversationId: String) { rows.value = rows.value.filter { it.conversationId != conversationId } }
     val rows = MutableStateFlow<List<AshaMessageEntity>>(emptyList())
     override fun observe(): Flow<List<AshaMessageEntity>> = rows
     override suspend fun upsert(rows: List<AshaMessageEntity>) { this.rows.value = (this.rows.value.filter { r -> rows.none { it.messageId == r.messageId } } + rows).sortedBy { it.at } }
