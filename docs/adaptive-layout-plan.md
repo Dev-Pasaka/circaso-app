@@ -64,8 +64,8 @@ fit; You and Wallet in two columns on their side; voice calls side by side on th
 sheets as centred cards; map controls clear the cut-out; You's glow stays in its column on a phone on its side.
 
 Left: the back swipe following the finger inside the detail pane (it completes as a pop today); a darkening scrim
-under pushed screens; checking every screen on a tablet and
-an iPad (no tablet device was available to this session).
+under pushed screens; checking the signed-in flows on a real tablet (previews were checked on iPad Pro 13" and 11"
+simulators: `-preview=split`, `-preview=split-wallet`, `-preview=home`).
 
 ## Order of work
 
