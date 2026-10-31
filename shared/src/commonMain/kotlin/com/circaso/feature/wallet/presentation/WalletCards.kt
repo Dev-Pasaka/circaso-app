@@ -281,6 +281,9 @@ private fun CardDeck(
         // Turned about its bottom centre, the rearmost card's bottom-right corner hangs this far below the front card.
         val turn = FanAngle * kotlin.math.PI.toFloat() / 180f
         val drop = maxWidth * FanBehindScale * 0.5f * kotlin.math.sin(turn)
+        // ...and its top-left corner rises this far above the front card's top: room is made above the fan for it,
+        // so nothing reaches past the top of the list (where it would be cut off under the status bar).
+        val rise = ((maxWidth * 0.5f * kotlin.math.sin(turn) + cardHeight * kotlin.math.cos(turn)) * FanBehindScale - cardHeight).coerceAtLeast(0.dp)
         // The open fan leans right of its pivot by this much; it slides left as it opens so the slices sit centred.
         val lean = with(androidx.compose.ui.platform.LocalDensity.current) {
             ((cardHeight * kotlin.math.sin(turn) + maxWidth * 0.5f * kotlin.math.cos(turn) - maxWidth * 0.5f) * FanBehindScale / 2f).toPx()
@@ -289,8 +292,9 @@ private fun CardDeck(
         // Fanned, the whole hand shrinks so it barely needs more room than the card did, and springs back to full
         // size as it closes: the actions below move a little, not a card's height (the user, 2026-10-31).
         val shrink by androidx.compose.animation.core.animateFloatAsState(if (spread) FanShrink else 1f, motion(), label = "shrink")
+        val lift by androidx.compose.animation.core.animateDpAsState(if (spread) rise else 0.dp, motion(), label = "lift")
         val height by androidx.compose.animation.core.animateDpAsState(
-            if (spread) (cardHeight + drop) * FanShrink else cardHeight, motion(), label = "fan",
+            if (spread) (rise + cardHeight + drop) * FanShrink else cardHeight, motion(), label = "fan",
             finishedListener = { if (!spread) onClosed() },
         )
         Box(
@@ -311,6 +315,7 @@ private fun CardDeck(
                         chain, fiat, hidden, onToggleHidden,
                         Modifier.zIndex(slot.toFloat())
                             .graphicsLayer {
+                                translationY = lift.toPx()
                                 // One point for every card, its bottom centre: the fan opens like slices of a pie.
                                 transformOrigin = androidx.compose.ui.graphics.TransformOrigin(0.5f, 1f)
                                 rotationZ = angle
