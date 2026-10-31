@@ -19,6 +19,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.foundation.layout.statusBars
 import kotlinx.coroutines.launch
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
@@ -110,6 +111,7 @@ fun YouContent(
     val scroll = rememberScrollState()
     // Where the hero ends, measured from the top of the screen, so the glow behind it knows how far to reach.
     var heroBottom by remember { mutableStateOf(0) }
+    val statusTop = androidx.compose.foundation.layout.WindowInsets.statusBars.getTop(LocalDensity.current).toFloat()
     // Tapping the photo opens it large; it springs out of the circle and back into it.
     var viewingPhoto by remember { mutableStateOf(false) }
     var photoBounds by remember { mutableStateOf(androidx.compose.ui.geometry.Rect.Zero) }
@@ -119,8 +121,10 @@ fun YouContent(
         backdrop = {
             ProfileGlow(
                 photo = state.profile?.avatarUrl,
+                // The tabs sit below the status bar (Home's scaffold pads it), so the glow reaches up past its own top by
+                // that much to start at the top of the screen; it is never clipped there.
                 modifier = Modifier.fillMaxWidth().height(with(LocalDensity.current) { heroBottom.toDp() })
-                    .graphicsLayer { translationY = -scroll.value.toFloat() },
+                    .graphicsLayer { translationY = -statusTop - scroll.value.toFloat() },
             )
         },
         // No title on the tabs (Pasaka, 2026-10-30): the tab bar says where you are.
