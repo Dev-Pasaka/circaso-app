@@ -23,6 +23,7 @@ val realtimeModule = module {
     single<RealtimeCursors> { get<AppPreferences>() }
     single { RealtimeClient(get(), realtimeUrl(get<ApiConfig>().baseUrl), get<AuthManager>(), get(), get()) }
     single { RealtimeSupervisor(get(), get(), get(), get()) }
+    single { com.circaso.core.realtime.PresenceReporter(get(), get()) }
     single {
         val refreshContacts = get<RefreshContactsUseCase>()
         val refreshBlocks = get<RefreshBlocksUseCase>()

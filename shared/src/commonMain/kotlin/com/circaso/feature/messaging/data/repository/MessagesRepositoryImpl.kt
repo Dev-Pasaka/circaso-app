@@ -83,6 +83,9 @@ class MessagesRepositoryImpl(
     /** chatId -> (userId -> when their typing signal expires). */
     private val typingState = MutableStateFlow<Map<String, Map<String, Long>>>(emptyMap())
 
+    /** userId -> presence, from `presence.changed` frames for the chats being watched. */
+    private val presenceState = MutableStateFlow<Map<String, com.circaso.feature.messaging.domain.Presence>>(emptyMap())
+
     override fun thread(chatId: String, limit: Int): Flow<List<Message>> =
         combine(dao.observeRecent(chatId, limit), chats.observeMembers(chatId), flow { emit(ownUserId()) }) { rows, members, me ->
             rows.asReversed().map { it.toDomain(members, me) }
@@ -197,7 +200,20 @@ class MessagesRepositoryImpl(
     override suspend fun updateSettings(readReceipts: Boolean?, typing: Boolean?): AppResult<MessagingSettings> =
         remote.settings(MessagingSettingsRequest(readReceipts, typing)).let { r -> if (r is AppResult.Success) AppResult.Success(MessagingSettings(r.value.readReceipts, r.value.typing)) else r as AppResult.Failure }
 
+    override fun presence(chatId: String): Flow<com.circaso.feature.messaging.domain.Presence?> =
+        combine(presenceState, chats.observeMembers(chatId), flow { emit(ownUserId()) }) { state, members, me ->
+            members.filter { it.userId != me }.singleOrNull()?.let { state[it.userId] }
+        }
+
+    override suspend fun watchPresence(chatId: String) {
+        realtime.send("messaging", "presence.watch", buildJsonObject { put("chatId", chatId) })
+    }
+
     // ---- frames
+
+    fun onPresence(userId: String, online: Boolean, lastSeenAt: Long?) {
+        presenceState.update { it + (userId to com.circaso.feature.messaging.domain.Presence(online, lastSeenAt)) }
+    }
 
     fun onTyping(chatId: String, userId: String, on: Boolean) {
         typingState.update { state ->
@@ -577,6 +593,11 @@ class MessagingFrameHandler(
                 }
                 messages.onReceipts(chatId, receipts)
             }
+            "presence.changed" -> messages.onPresence(
+                d.str("userId") ?: return,
+                (d["online"] as? kotlinx.serialization.json.JsonPrimitive)?.content == "true",
+                d.str("lastSeenAt")?.let { runCatching { kotlin.time.Instant.parse(it).toEpochMilliseconds() }.getOrNull() },
+            )
             "typing" -> messages.onTyping(d.str("chatId") ?: return, d.str("userId") ?: return, (d["on"] as? kotlinx.serialization.json.JsonPrimitive)?.content == "true")
             "message.deleted" -> messages.onDeleted(d.str("messageId") ?: return)
             "message.undeliverable" -> messages.onUndeliverable(d.str("messageId") ?: return)

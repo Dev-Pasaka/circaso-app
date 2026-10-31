@@ -65,6 +65,12 @@ interface MessagesRepository {
     /** Who is typing in a chat right now (cleared after a few seconds without a new signal). */
     fun typing(chatId: String): Flow<List<String>>
 
+    /** The other person's presence in a direct chat, as the server last told us (null until it does). */
+    fun presence(chatId: String): Flow<Presence?> = kotlinx.coroutines.flow.flowOf(null)
+
+    /** Asks the server for the other members' presence while the chat is open (repeat every [PresenceWatchEveryMillis]). */
+    suspend fun watchPresence(chatId: String) {}
+
     /** Pulls what is waiting on the server (M13). Called when the socket connects, on foreground and on a push. */
     suspend fun syncInbox(): AppResult<Unit>
 
@@ -73,3 +79,9 @@ interface MessagesRepository {
 }
 
 data class MessagingSettings(val readReceipts: Boolean, val typing: Boolean)
+
+/** Someone's presence: online now, or when they were last in the app. */
+data class Presence(val online: Boolean, val lastSeenAt: Long?)
+
+/** The server keeps a watch for 60 s; the open chat renews it before then. */
+const val PresenceWatchEveryMillis = 45_000L

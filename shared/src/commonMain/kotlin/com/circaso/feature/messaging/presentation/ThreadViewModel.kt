@@ -38,6 +38,8 @@ data class ThreadUiState(
     val chat: Chat? = null,
     val messages: List<Message> = emptyList(),
     val typing: List<String> = emptyList(),
+    /** The other person's presence in a direct chat; null until the server says (never assumed online). */
+    val presence: com.circaso.feature.messaging.domain.Presence? = null,
     val draft: String = "",
     val online: Boolean = true,
     val selected: Message.Text? = null,
@@ -88,7 +90,9 @@ data class ThreadUiState(
             !online -> "Waiting for network"
             isSupport -> "Verified Circaso team"
             isGroup -> "${chat?.members?.size ?: 0} members"
-            else -> "Online"
+            presence?.online == true -> "Online"
+            presence?.lastSeenAt != null -> lastSeenText(presence.lastSeenAt)
+            else -> ""
         }
     /** Delete for everyone: my own, sent, within 48 hours (guide, M14). The control is hidden otherwise, never failed after. */
     fun canDeleteForEveryone(m: Message, now: Long): Boolean {
@@ -112,6 +116,8 @@ class ThreadViewModel(
     private val notifications: ChatNotifications,
     private val chama: ThreadChama? = null,
     val media: ThreadMedia? = null,
+    /** Presence of the person on the other side ("Online" / "last seen"). */
+    private val messagesRepository: com.circaso.feature.messaging.domain.MessagesRepository? = null,
 ) : ViewModel() {
     private val _state = MutableStateFlow(ThreadUiState())
     val state: StateFlow<ThreadUiState> = _state.asStateFlow()
@@ -141,6 +147,13 @@ class ThreadViewModel(
             }
         }
         viewModelScope.launch { observeTyping(chatId).collect { names -> _state.update { it.copy(typing = names) } } }
+        // Presence of the person on the other side, kept fresh while the chat is open.
+        messagesRepository?.let { repo ->
+            viewModelScope.launch { repo.presence(chatId).collect { p -> _state.update { it.copy(presence = p) } } }
+            viewModelScope.launch {
+                while (true) { repo.watchPresence(chatId); kotlinx.coroutines.delay(com.circaso.feature.messaging.domain.PresenceWatchEveryMillis) }
+            }
+        }
         viewModelScope.launch { connection.status.collect { s -> _state.update { it.copy(online = s == ConnectionStatus.Online) } } }
     }
 
@@ -369,3 +382,15 @@ private const val MaxGalleryPick = 30
 
 /** Messages per page of a thread: what opens, and what each scroll up adds. */
 private const val ThreadPage = 100
+
+/** "last seen today at 10:32", "last seen yesterday at 21:05", "last seen Mon at 08:10", else the date. */
+internal fun lastSeenText(at: Long, now: Long = com.circaso.core.sync.nowMillis()): String {
+    val clock = com.circaso.core.platform.formatLocalTime(at, com.circaso.core.platform.LocalTimeStyle.Clock)
+    val days = com.circaso.core.platform.localDayIndex(now) - com.circaso.core.platform.localDayIndex(at)
+    return when {
+        days <= 0 -> "last seen today at $clock"
+        days == 1L -> "last seen yesterday at $clock"
+        days < 7 -> "last seen ${com.circaso.core.platform.formatLocalTime(at, com.circaso.core.platform.LocalTimeStyle.Weekday)} at $clock"
+        else -> "last seen ${com.circaso.core.platform.formatLocalTime(at, com.circaso.core.platform.LocalTimeStyle.ShortDate)}"
+    }
+}
