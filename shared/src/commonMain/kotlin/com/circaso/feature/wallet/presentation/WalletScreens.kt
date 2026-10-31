@@ -32,6 +32,9 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.animation.core.tween
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.positionInWindow
@@ -301,17 +304,10 @@ private fun ActiveWallet(state: WalletUiState, wallet: Wallet, bottom: androidx.
             )
         }
     }
-    LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(start = CircasoSpacing.s4, end = CircasoSpacing.s4, top = 10.dp, bottom = bottom), verticalArrangement = Arrangement.spacedBy(22.dp)) {
-        // No overall total (Pasaka, 2026-10-30): each network's card carries its own balance, the richest first.
-        if (!state.online || wallet.holdUntil != null) {
-            item {
-                Column(verticalArrangement = Arrangement.spacedBy(4.dp), modifier = Modifier.padding(horizontal = 4.dp)) {
-                    if (!state.online) BasicText("Offline · balances as of ${formatLocalTime(wallet.fetchedAt, LocalTimeStyle.Clock)}", style = t.caption1.copy(color = c.inkSecondary))
-                    wallet.holdUntil?.let { BasicText("Payments are paused for a short while after a restore.", style = t.footnote.copy(color = c.warning)) }
-                }
-            }
-        }
-        item {
+    // A phone on its side (the user, 2026-10-31): the cards, actions and assets on the left, the payments on the
+    // right, each scrolling on its own; upright, one list.
+    val short = com.circaso.designsystem.adaptive.LocalWindowLayout.current.short
+    val cardsBlock: @Composable () -> Unit = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 // One card per network, swiped sideways (cards reach the screen edges to peek); the actions, then the
                 // focused card's assets, follow under them.
@@ -352,7 +348,19 @@ private fun ActiveWallet(state: WalletUiState, wallet: Wallet, bottom: androidx.
                     BasicText("Manage networks", style = t.footnote.copy(color = c.action, fontWeight = FontWeight.SemiBold), modifier = Modifier.clickableText(actions.onNetworks))
                 }
             }
+    }
+    val statusItems: androidx.compose.foundation.lazy.LazyListScope.() -> Unit = {
+        // No overall total (Pasaka, 2026-10-30): each network's card carries its own balance, the richest first.
+        if (!state.online || wallet.holdUntil != null) {
+            item {
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp), modifier = Modifier.padding(horizontal = 4.dp)) {
+                    if (!state.online) BasicText("Offline · balances as of ${formatLocalTime(wallet.fetchedAt, LocalTimeStyle.Clock)}", style = t.caption1.copy(color = c.inkSecondary))
+                    wallet.holdUntil?.let { BasicText("Payments are paused for a short while after a restore.", style = t.footnote.copy(color = c.warning)) }
+                }
+            }
         }
+    }
+    val recentItems: androidx.compose.foundation.lazy.LazyListScope.() -> Unit = {
         item {
             Row(Modifier.fillMaxWidth().padding(horizontal = 4.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.Bottom) {
                 BasicText("Recent", style = t.title3.copy(color = c.ink))
@@ -373,6 +381,28 @@ private fun ActiveWallet(state: WalletUiState, wallet: Wallet, bottom: androidx.
                     TransferRow(transfer, fiat, hidden, meta = chatListTime(transfer.createdAt, now), onClick = { actions.onTransfer(transfer.transferId) })
                 }
             }
+        }
+    }
+    if (short) {
+        Row(Modifier.fillMaxSize(), horizontalArrangement = Arrangement.spacedBy(CircasoSpacing.s2)) {
+            Column(
+                Modifier.weight(1f).fillMaxHeight().verticalScroll(rememberScrollState())
+                    .padding(start = CircasoSpacing.s4, end = CircasoSpacing.s2, top = 10.dp, bottom = bottom),
+            ) { cardsBlock() }
+            LazyColumn(
+                Modifier.weight(1f).fillMaxHeight(),
+                contentPadding = PaddingValues(start = CircasoSpacing.s2, end = CircasoSpacing.s4, top = 10.dp, bottom = bottom),
+                verticalArrangement = Arrangement.spacedBy(22.dp),
+            ) {
+                statusItems()
+                recentItems()
+            }
+        }
+    } else {
+        LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(start = CircasoSpacing.s4, end = CircasoSpacing.s4, top = 10.dp, bottom = bottom), verticalArrangement = Arrangement.spacedBy(22.dp)) {
+            statusItems()
+            item { cardsBlock() }
+            recentItems()
         }
     }
     }

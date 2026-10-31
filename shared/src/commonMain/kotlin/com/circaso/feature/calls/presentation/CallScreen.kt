@@ -202,18 +202,8 @@ private fun BoxScope.Incoming(call: CallUi, actions: CallActions) {
 @Composable
 private fun VoiceCall(call: CallUi, actions: CallActions, money: String?) {
     val t = CircasoTheme.typography
-    Column(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing).padding(horizontal = CircasoSpacing.s6, vertical = CircasoSpacing.s4), horizontalAlignment = Alignment.CenterHorizontally) {
-        TopRow(call, actions)
-        Spacer(Modifier.height(CircasoSpacing.s6))
-        SecureLine()
-        Spacer(Modifier.height(CircasoSpacing.s6))
-        Avatar(call.title, size = 120.dp)
-        Spacer(Modifier.height(CircasoSpacing.s4))
-        BasicText(call.title, style = t.largeTitle.copy(color = CallColors.Ink, textAlign = TextAlign.Center), maxLines = 1, overflow = TextOverflow.Ellipsis)
-        Handle(call.handle)
-        Status(call)
-        money?.let { Spacer(Modifier.height(CircasoSpacing.s5)); MoneyNote(it) }
-        Spacer(Modifier.weight(1f))
+    val short = com.circaso.designsystem.adaptive.LocalWindowLayout.current.short
+    val controls: @Composable () -> Unit = {
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
             ControlButton(if (call.mic) CircasoIcon.Mic else CircasoIcon.MicOff, "Mute", if (call.mic) "Mute" else "Unmute", actions.onMute, on = !call.mic)
             ControlButton(CircasoIcon.Speaker, "Speaker", "Speaker", actions.onSpeaker, on = call.speaker)
@@ -223,6 +213,37 @@ private fun VoiceCall(call: CallUi, actions: CallActions, money: String?) {
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
             if (actions.onSendMoney != null) ControlButton(CircasoIcon.Money, "Send money", "Send money", actions.onSendMoney)
             ControlButton(CircasoIcon.Phone, "End", "End call", actions.onEnd, tint = Tint.End)
+        }
+    }
+    Column(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing).padding(horizontal = CircasoSpacing.s6, vertical = CircasoSpacing.s4), horizontalAlignment = Alignment.CenterHorizontally) {
+        TopRow(call, actions)
+        if (short) {
+            // On its side, as FaceTime audio: who you're talking to on the left, the controls on the right.
+            Row(Modifier.weight(1f).fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(CircasoSpacing.s6)) {
+                Column(Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally) {
+                    SecureLine()
+                    Spacer(Modifier.height(CircasoSpacing.s3))
+                    Avatar(call.title, size = 88.dp)
+                    Spacer(Modifier.height(CircasoSpacing.s3))
+                    BasicText(call.title, style = t.title1.copy(color = CallColors.Ink, textAlign = TextAlign.Center), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Handle(call.handle)
+                    Status(call)
+                    money?.let { Spacer(Modifier.height(CircasoSpacing.s3)); MoneyNote(it) }
+                }
+                Column(Modifier.weight(1f)) { controls() }
+            }
+        } else {
+            Spacer(Modifier.height(CircasoSpacing.s6))
+            SecureLine()
+            Spacer(Modifier.height(CircasoSpacing.s6))
+            Avatar(call.title, size = 120.dp)
+            Spacer(Modifier.height(CircasoSpacing.s4))
+            BasicText(call.title, style = t.largeTitle.copy(color = CallColors.Ink, textAlign = TextAlign.Center), maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Handle(call.handle)
+            Status(call)
+            money?.let { Spacer(Modifier.height(CircasoSpacing.s5)); MoneyNote(it) }
+            Spacer(Modifier.weight(1f))
+            controls()
         }
     }
 }
@@ -284,7 +305,8 @@ private fun GroupCall(call: CallUi, actions: CallActions, chama: Chama?, fiat: F
             else Spacer(Modifier.size(44.dp))
         }
         val tiles = call.people.filter { it.joined || it.ringing }
-        LazyVerticalGrid(GridCells.Fixed(2), Modifier.weight(1f), horizontalArrangement = Arrangement.spacedBy(CircasoSpacing.s2), verticalArrangement = Arrangement.spacedBy(CircasoSpacing.s2)) {
+        // Two across on a phone; more as the screen widens (on its side, tablets), each tile about a phone's half.
+        LazyVerticalGrid(GridCells.Adaptive(minSize = 150.dp), Modifier.weight(1f), horizontalArrangement = Arrangement.spacedBy(CircasoSpacing.s2), verticalArrangement = Arrangement.spacedBy(CircasoSpacing.s2)) {
             items(tiles, key = { it.userId }) { p -> Tile(p) }
             item(key = "me") { MeTile(call) }
         }

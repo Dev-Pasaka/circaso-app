@@ -48,11 +48,24 @@ Height < 480 dp is **short**: a phone on its side.
 | Voice with Asha | full screen | orb left, captions right | full screen, orb centred, captions readable width |
 | Calls | full screen | tiles side by side | full screen, tiles in a grid |
 | Wallet tab | cards, actions, assets, recent | cards left, assets and recent right | list pane; payments and assets open in the detail pane |
-| Pay, Send to wallet | full sheet | keypad beside amount | centred card, readable width (full-screen flow) |
+| Pay, Send to wallet | full sheet | full width, scrolls with the system keyboard (there is no on-screen keypad) | full-screen flow, readable width |
 | Payment detail, Activity, Asset statement, Network assets, Networks | as is | readable width | detail pane |
 | You tab | hero + settings | hero beside the settings | list pane; each setting opens in the detail pane |
 | Edit profile, Contacts, Blocked, Security, Security log, Notifications, Currency, Asha's voice, Needs attention, Help | as is | readable width | detail pane, readable width |
 | Gallery, Previews (debug) | as is | as is | as is |
+
+## Status (2026-10-31)
+
+Done: window classes; split view from 840 dp with a 360 dp list (Home as list, detail push/pop/swap, no Back at the
+detail's root, the open chat highlighted); spring push/pop (opaque screens, no slide on rotation); readable width on
+tablets and full width on a phone on its side; edge to edge under the camera cut-out; tabs as a left rail on short or
+wide screens; rotation without recreating the screen; Welcome side by side; sign-in, voice scroll when they don't
+fit; You and Wallet in two columns on their side; voice calls side by side on their side; group call grid adapts;
+sheets as centred cards; map controls clear the cut-out.
+
+Left: the back swipe following the finger inside the detail pane (it completes as a pop today); a darkening scrim
+under pushed screens; You's glow limited to its column on a phone on its side; checking every screen on a tablet and
+an iPad (no tablet device was available to this session).
 
 ## Order of work
 
