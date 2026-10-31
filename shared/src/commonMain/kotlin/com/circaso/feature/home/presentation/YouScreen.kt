@@ -19,6 +19,8 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.foundation.layout.windowInsetsPadding
+import com.circaso.designsystem.components.CircasoIconButton
 import androidx.compose.foundation.layout.statusBars
 import kotlinx.coroutines.launch
 import androidx.compose.foundation.layout.offset
@@ -389,7 +391,16 @@ private fun PhotoViewer(
         val p = progress.value
         // The backdrop fades with the open state and lightens as the photo is pulled down.
         val fade = p.coerceIn(0f, 1f) * (1f - (drag.value / (box.height / 2f)).coerceIn(0f, 1f))
-        Box(Modifier.fillMaxSize().graphicsLayer { alpha = fade }.background(androidx.compose.ui.graphics.Color.Black.copy(alpha = 0.94f)))
+        // Around the photo, its own colours: the glow's tiny decode stretched over the screen, with a dark veil for depth.
+        Box(Modifier.fillMaxSize().graphicsLayer { alpha = fade }.background(androidx.compose.ui.graphics.Color.Black)) {
+            coil3.compose.AsyncImage(
+                model = coil3.request.ImageRequest.Builder(coil3.compose.LocalPlatformContext.current).data(photo)
+                    .size(GlowDecodePx).memoryCacheKey("$key#glow").diskCacheKey(key).build(),
+                contentDescription = null, contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+                modifier = Modifier.fillMaxSize().blur(GlowBlur).graphicsLayer { scaleX = 1.2f; scaleY = 1.2f },
+            )
+            Box(Modifier.fillMaxSize().background(androidx.compose.ui.graphics.Color.Black.copy(alpha = ViewerVeil)))
+        }
         val side = box.width.toFloat()
         val start = from.translate(-origin.x, -origin.y)
         val endLeft = 0f
@@ -409,6 +420,11 @@ private fun PhotoViewer(
                 .size(with(density) { size.coerceAtLeast(1f).toDp() })
                 .graphicsLayer { shape = androidx.compose.foundation.shape.RoundedCornerShape(radius); clip = true },
         )
+        CircasoIconButton(
+            CircasoIcon.Back, "Back", onClose,
+            modifier = Modifier.align(Alignment.TopStart).windowInsetsPadding(androidx.compose.foundation.layout.WindowInsets.statusBars)
+                .padding(start = CircasoSpacing.s4, top = CircasoSpacing.s2).graphicsLayer { alpha = fade },
+        )
     }
 }
 
@@ -417,3 +433,5 @@ private val PhotoOpenSpring = androidx.compose.animation.core.spring<Float>(damp
 private val PhotoCloseSpring = androidx.compose.animation.core.spring<Float>(dampingRatio = 0.86f, stiffness = 520f)
 /** How far a downward pull has to go before letting go closes the photo. */
 private const val PhotoDismissPx = 220f
+/** Darkens the photo's colours around it so the picture stays the brightest thing on screen. */
+private const val ViewerVeil = 0.35f
