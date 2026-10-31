@@ -281,11 +281,19 @@ private fun CardDeck(
         // The rearmost card's lowest corner, turned FanAngle about the pivot, hangs this far below the front card.
         val drop = maxWidth * FanBehindScale * kotlin.math.sin(FanAngle * kotlin.math.PI.toFloat() / 180f)
         fun <T> motion() = if (still) tween<T>(CircasoMotion.BaseMs) else androidx.compose.animation.core.spring<T>(dampingRatio = DeckDamping, stiffness = DeckStiffness)
+        // Fanned, the whole hand shrinks so it barely needs more room than the card did, and springs back to full
+        // size as it closes: the actions below move a little, not a card's height (the user, 2026-10-31).
+        val shrink by androidx.compose.animation.core.animateFloatAsState(if (spread) FanShrink else 1f, motion(), label = "shrink")
         val height by androidx.compose.animation.core.animateDpAsState(
-            if (spread) cardHeight + drop else cardHeight, motion(), label = "fan",
+            if (spread) (cardHeight + drop) * FanShrink else cardHeight, motion(), label = "fan",
             finishedListener = { if (!spread) onClosed() },
         )
-        Box(Modifier.fillMaxWidth().height(height)) {
+        Box(
+            Modifier.fillMaxWidth().height(height).graphicsLayer {
+                transformOrigin = androidx.compose.ui.graphics.TransformOrigin(0.5f, 0f)
+                scaleX = shrink; scaleY = shrink
+            },
+        ) {
             val last = chains.lastIndex.coerceAtLeast(1)
             chains.forEachIndexed { slot, chain ->
                 androidx.compose.runtime.key(chain.blockchain) {
@@ -312,6 +320,8 @@ private fun CardDeck(
 /** How far the rearmost card turns (the user, 2026-10-31). */
 private const val FanAngle = 45f
 private const val FanBehindScale = 0.94f
+/** The open fan's size against the card's: small enough to sit in about the card's own space. */
+private const val FanShrink = 0.62f
 /** A little give as the cards land, like cards fanned in the hand, without wobbling. */
 private const val DeckDamping = 0.78f
 private const val DeckStiffness = 420f
