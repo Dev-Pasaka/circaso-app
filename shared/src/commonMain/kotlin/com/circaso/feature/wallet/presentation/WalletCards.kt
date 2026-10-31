@@ -181,7 +181,8 @@ internal fun ChainCards(
                 val preview = assets.take(AssetPreview)
                 Row(Modifier.fillMaxWidth().padding(horizontal = 4.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.Bottom) {
                     BasicText("Assets on ${chainName(chain.blockchain).substringBefore(" (")}", style = t.footnote.copy(color = c.inkSecondary))
-                    if (assets.size > preview.size) {
+                    // Always there, as under the payments, so the full list is one tap away whatever the network holds.
+                    run {
                         BasicText(
                             "See All", style = t.callout.copy(color = c.action, fontWeight = FontWeight.SemiBold),
                             modifier = Modifier.pressable(role = androidx.compose.ui.semantics.Role.Button) { onAssets(chain.blockchain) }
