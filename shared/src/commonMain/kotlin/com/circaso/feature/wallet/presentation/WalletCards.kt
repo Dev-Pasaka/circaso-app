@@ -32,7 +32,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.zIndex
-import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.height
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
@@ -101,8 +100,8 @@ internal fun ChainCards(
         androidx.compose.ui.graphics.lerp(here, there, abs(pager.currentPageOffsetFraction))
     }
     androidx.compose.runtime.LaunchedEffect(glow) { onGlow(glow) }
-    // Tapping the front card deals the cards out into a stack, Apple Wallet style: the others show their top edge
-    // above the one tapped. Tapping any card pulls it to the front and the stack springs closed into the row again.
+    // Tapping the front card fans the cards out clockwise behind it, like a hand of cards (the user, 2026-10-31).
+    // Tapping any card pulls it to the front and the fan springs closed into the row again.
     var deckShown by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(false) }
     var spread by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(false) }
     var order by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(emptyList<String>()) }
@@ -261,9 +260,10 @@ private fun ChainCard(chain: WalletChain, fiat: FiatValue?, hidden: Boolean, onT
 private val CardShape = androidx.compose.foundation.shape.RoundedCornerShape(22.dp)
 
 /**
- * The cards as a stack: [chains] back to front, the front one whole and each one behind showing its top edge. They
- * start piled exactly where the front card sat in the row, so opening reads as dealing them out and closing as
- * gathering them back; [onClosed] runs once they have settled together.
+ * The cards as a fan, held like a hand of cards: [chains] back to front, the front one upright and the ones behind
+ * turned clockwise about its bottom-left corner, the rearmost by [FanAngle] and the rest evenly between. They start
+ * piled exactly where the front card sat in the row, so opening reads as fanning them out and closing as gathering
+ * them back; [onClosed] runs once they have settled together.
  */
 @Composable
 private fun CardDeck(
@@ -278,22 +278,29 @@ private fun CardDeck(
 ) {
     androidx.compose.foundation.layout.BoxWithConstraints(Modifier.fillMaxWidth().padding(horizontal = CircasoSpacing.s6)) {
         val cardHeight = maxWidth / 1.586f
-        val deal = if (still) tween<androidx.compose.ui.unit.Dp>(CircasoMotion.BaseMs) else androidx.compose.animation.core.spring(dampingRatio = DeckDamping, stiffness = DeckStiffness)
+        // The rearmost card's lowest corner, turned FanAngle about the pivot, hangs this far below the front card.
+        val drop = maxWidth * FanBehindScale * kotlin.math.sin(FanAngle * kotlin.math.PI.toFloat() / 180f)
+        fun <T> motion() = if (still) tween<T>(CircasoMotion.BaseMs) else androidx.compose.animation.core.spring<T>(dampingRatio = DeckDamping, stiffness = DeckStiffness)
         val height by androidx.compose.animation.core.animateDpAsState(
-            if (spread) cardHeight + DeckPeek * (chains.size - 1) else cardHeight, deal, label = "deck",
+            if (spread) cardHeight + drop else cardHeight, motion(), label = "fan",
             finishedListener = { if (!spread) onClosed() },
         )
         Box(Modifier.fillMaxWidth().height(height)) {
+            val last = chains.lastIndex.coerceAtLeast(1)
             chains.forEachIndexed { slot, chain ->
                 androidx.compose.runtime.key(chain.blockchain) {
                     val front = slot == chains.lastIndex
-                    val y by androidx.compose.animation.core.animateDpAsState(if (spread) DeckPeek * slot else 0.dp, deal, label = "slot")
-                    // Piled up, the ones behind tuck in a little so their edges don't show around the front card.
-                    val scale by androidx.compose.animation.core.animateFloatAsState(if (spread || front) 1f else 0.94f, if (still) tween(CircasoMotion.BaseMs) else androidx.compose.animation.core.spring(DeckDamping, DeckStiffness), label = "scale")
+                    val angle by androidx.compose.animation.core.animateFloatAsState(if (spread) FanAngle * (chains.lastIndex - slot) / last else 0f, motion(), label = "angle")
+                    // Behind cards sit a touch smaller, so piled up their edges never show around the front card.
+                    val scale by androidx.compose.animation.core.animateFloatAsState(if (front) 1f else FanBehindScale, motion(), label = "scale")
                     ChainCard(
                         chain, fiat, hidden, onToggleHidden,
-                        Modifier.zIndex(slot.toFloat()).offset { androidx.compose.ui.unit.IntOffset(0, y.roundToPx()) }
-                            .graphicsLayer { scaleX = scale; scaleY = scale; transformOrigin = androidx.compose.ui.graphics.TransformOrigin(0.5f, 0f) }
+                        Modifier.zIndex(slot.toFloat())
+                            .graphicsLayer {
+                                transformOrigin = androidx.compose.ui.graphics.TransformOrigin(0f, 1f)
+                                rotationZ = angle
+                                scaleX = scale; scaleY = scale
+                            }
                             .pressable(role = androidx.compose.ui.semantics.Role.Button) { onPick(chain.blockchain) },
                     )
                 }
@@ -302,9 +309,10 @@ private fun CardDeck(
     }
 }
 
-/** How much of each card behind shows in the stack: its network name and mark. */
-private val DeckPeek = 64.dp
-/** A little give as the cards land, like cards dealt onto a table, without wobbling. */
+/** How far the rearmost card turns (the user, 2026-10-31). */
+private const val FanAngle = 45f
+private const val FanBehindScale = 0.94f
+/** A little give as the cards land, like cards fanned in the hand, without wobbling. */
 private const val DeckDamping = 0.78f
 private const val DeckStiffness = 420f
 
