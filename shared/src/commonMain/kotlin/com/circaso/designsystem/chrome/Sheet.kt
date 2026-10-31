@@ -34,6 +34,12 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.foundation.layout.union
+import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.layout.WindowInsetsSides
+import androidx.compose.foundation.layout.only
+import androidx.compose.foundation.layout.displayCutout
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.backhandler.BackHandler
 import androidx.compose.ui.draw.clip
@@ -89,7 +95,10 @@ fun BoxScope.CircasoSheet(
         val dismissAt = with(androidx.compose.ui.platform.LocalDensity.current) { 100.dp.toPx() }
         Column(
             Modifier
+                // A sheet on a tablet or a phone on its side is a centred card, not a strip across the screen.
+                .widthIn(max = 600.dp)
                 .fillMaxWidth()
+                .windowInsetsPadding(WindowInsets.displayCutout.union(WindowInsets.navigationBars).only(WindowInsetsSides.Horizontal))
                 .offset { IntOffset(0, drag.value.roundToInt()) }
                 .shadow(14.dp, CircasoShapes.sheet, ambientColor = Color.Black.copy(alpha = 0.12f), spotColor = Color.Black.copy(alpha = 0.12f))
                 .clip(CircasoShapes.sheet)

@@ -14,6 +14,9 @@ import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBars
+import androidx.compose.foundation.layout.WindowInsetsSides
+import androidx.compose.foundation.layout.only
+import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.text.BasicText
 import androidx.compose.runtime.Composable
@@ -128,7 +131,7 @@ fun LocationMapContent(state: LocationMapUiState, onBack: () -> Unit, onStop: (L
     Box(Modifier.fillMaxSize().background(c.bgGrouped).semantics { contentDescription = "Map" }) {
         if (state.loaded) CircasoMap(pins, camera, Modifier.fillMaxSize(), onPinTap = { if (camera.canMove) camera.moveTo(it.latitude, it.longitude, 16f) })
         Row(
-            Modifier.fillMaxWidth().windowInsetsPadding(WindowInsets.statusBars).padding(horizontal = CircasoSpacing.s4, vertical = CircasoSpacing.s2),
+            Modifier.fillMaxWidth().windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Top + WindowInsetsSides.Horizontal)).padding(horizontal = CircasoSpacing.s4, vertical = CircasoSpacing.s2),
             verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(CircasoSpacing.s2),
         ) {
             CircasoIconButton(CircasoIcon.Back, "Back", onBack, Modifier.glass(CircasoShapes.circle, floating = true))

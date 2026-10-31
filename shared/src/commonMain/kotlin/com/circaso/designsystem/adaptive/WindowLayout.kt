@@ -14,8 +14,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.composed
-import androidx.compose.ui.layout.layout
-import androidx.compose.ui.unit.Constraints
 import androidx.compose.foundation.verticalScroll
 
 /** Apple's compact/regular and Material's compact/medium/expanded, by the space a screen actually has. */
@@ -38,16 +36,19 @@ data class WindowLayout(val width: Dp, val height: Dp) {
     /** A phone on its side: too short for a hero above the content. */
     val short: Boolean get() = height < 480.dp
 
-    /** Wide and tall enough for a list beside its detail (iPad, tablets, iPad split view at half). */
+    /**
+     * Wide and tall enough for a list beside a detail that still has a phone's width or more: Material's expanded
+     * width (iPads and tablets in landscape, 12.9" iPads either way). Narrower tablets stay single-pane.
+     */
     val twoPane: Boolean get() = width >= TwoPaneMinWidth && !short
 
     /** Wide enough to put two columns side by side within one screen (a phone on its side, a tablet). */
     val wide: Boolean get() = width >= 600.dp
 
     companion object {
-        val TwoPaneMinWidth = 700.dp
+        val TwoPaneMinWidth = 840.dp
         /** The list pane's width beside a detail (iPad Messages and Mail use about this). */
-        val ListPaneWidth = 380.dp
+        val ListPaneWidth = 360.dp
         /** Text and forms never run wider than this (Apple's readable content guide, Material's body width). */
         val ReadableWidth = 680.dp
     }
@@ -68,24 +69,9 @@ fun Modifier.readableWidth(max: Dp = WindowLayout.ReadableWidth): Modifier =
     fillMaxWidth().wrapContentWidth(Alignment.CenterHorizontally).widthIn(max = max)
 
 /**
- * Fills the screen when the content fits (so `weight` spacers still push the buttons to the bottom) and scrolls
- * when it doesn't: a phone on its side, the largest text sizes. On a tall screen nothing changes. Put it after the
- * fill modifier: `Modifier.fillMaxSize().fillOrScroll()`.
+ * Fills the screen when the content fits and scrolls when it doesn't: a phone on its side, the largest text sizes.
+ * Put it after the fill modifier (`Modifier.fillMaxSize().fillOrScroll()`): the scroll keeps the screen's height as
+ * its minimum, so `Spacer(Modifier.weight(1f))` still pushes the buttons down when there is room and shrinks to
+ * nothing when there isn't. Never put the content itself in a weighted child: it would be cut to what is left.
  */
-fun Modifier.fillOrScroll(): Modifier = composed {
-    val state = androidx.compose.foundation.rememberScrollState()
-    // The height on offer before scrolling makes it unbounded, read in the same measure pass below.
-    val viewport = androidx.compose.runtime.remember { IntArray(1) }
-    this
-        .layout { measurable, constraints ->
-            viewport[0] = constraints.maxHeight
-            val placeable = measurable.measure(constraints)
-            layout(placeable.width, placeable.height) { placeable.place(0, 0) }
-        }
-        .verticalScroll(state)
-        .layout { measurable, constraints ->
-            val fill = if (viewport[0] == Constraints.Infinity) constraints.minHeight else viewport[0]
-            val placeable = measurable.measure(constraints.copy(minHeight = fill.coerceAtLeast(constraints.minHeight)))
-            layout(placeable.width, placeable.height) { placeable.place(0, 0) }
-        }
-}
+fun Modifier.fillOrScroll(): Modifier = composed { verticalScroll(androidx.compose.foundation.rememberScrollState()) }

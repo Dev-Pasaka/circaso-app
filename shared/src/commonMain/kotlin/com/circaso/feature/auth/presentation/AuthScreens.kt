@@ -61,18 +61,23 @@ fun WelcomeScreen(viewModel: WelcomeViewModel) {
     val ios = CircasoTheme.platform == PlatformStyle.Ios
     val providers = if (ios) listOf(SocialProvider.Apple, SocialProvider.Google) else listOf(SocialProvider.Google)
     CircasoScaffold(banner = { ConnectionBanner() }) {
-        Column(Modifier.fillMaxSize().fillOrScroll().padding(horizontal = 20.dp, vertical = 16.dp)) {
+        val short = com.circaso.designsystem.adaptive.LocalWindowLayout.current.short
+        // On its side the mark and words sit on the left and the sign-in buttons on the right, both centred; upright,
+        // the words float in the space above the buttons.
+        val intro: @Composable () -> Unit = {
             Column(
-                Modifier.weight(1f).fillMaxWidth().padding(horizontal = 8.dp),
-                verticalArrangement = Arrangement.spacedBy(28.dp, Alignment.CenterVertically),
+                Modifier.fillMaxWidth().padding(horizontal = 8.dp),
+                verticalArrangement = Arrangement.spacedBy(if (short) 16.dp else 28.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
-                BrandMark(size = 140.dp)
+                BrandMark(size = if (short) 88.dp else 140.dp)
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp), horizontalAlignment = Alignment.CenterHorizontally) {
                     BasicText("Money, with meaning.", Modifier.semantics { heading() }, style = t.largeTitle.copy(color = c.ink, textAlign = TextAlign.Center))
                     BasicText("Send money to the people you love, as easily as a message.", style = t.body.copy(color = c.inkSecondary, textAlign = TextAlign.Center))
                 }
             }
+        }
+        val actions: @Composable () -> Unit = {
             val message = state.error ?: if (state.signedOutNotice) "You were signed out. Sign in again to carry on." else null
             if (message != null) {
                 BasicText(message, Modifier.fillMaxWidth().padding(bottom = 12.dp), style = t.subhead.copy(color = if (state.error != null) c.critical else c.inkSecondary, textAlign = TextAlign.Center))
@@ -97,6 +102,23 @@ fun WelcomeScreen(viewModel: WelcomeViewModel) {
                 )
             }
         }
+        if (short) {
+            androidx.compose.foundation.layout.Row(
+                Modifier.fillMaxSize().fillOrScroll().padding(horizontal = 20.dp, vertical = 16.dp),
+                horizontalArrangement = Arrangement.spacedBy(32.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Box(Modifier.weight(1f)) { intro() }
+                Column(Modifier.weight(1f)) { actions() }
+            }
+        } else {
+            Column(Modifier.fillMaxSize().fillOrScroll().padding(horizontal = 20.dp, vertical = 16.dp)) {
+                Spacer(Modifier.weight(1f))
+                intro()
+                Spacer(Modifier.weight(1f))
+                actions()
+            }
+        }
     }
 }
 
@@ -117,10 +139,12 @@ fun PhoneScreen(viewModel: PhoneViewModel, onLostAccess: (phone: String) -> Unit
     ) {
         if (state.numberTaken) {
             Column(Modifier.fillMaxSize().fillOrScroll().padding(horizontal = 20.dp, vertical = 16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterVertically)) {
+                Spacer(Modifier.weight(1f))
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     BasicText("This number already has a Circaso account", Modifier.semantics { heading() }, style = t.title1.copy(color = c.ink))
                     BasicText("Sign in with the Google or Apple account you used before, and you'll go straight in.", style = t.body.copy(color = c.inkSecondary))
                 }
+                Spacer(Modifier.weight(1f))
                 CircasoButton("Sign In with a Different Account", viewModel::onCancel, size = ButtonSize.Large, block = true)
                 CircasoButton("Use a Different Number", viewModel::onUseDifferentNumber, style = ButtonStyle.Secondary, size = ButtonSize.Large, block = true)
                 // Design SP06: the account is theirs but the Google or Apple login is gone.

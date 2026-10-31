@@ -32,6 +32,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.circaso.core.platform.chatListTime
@@ -184,7 +185,10 @@ private fun ChatRow(summary: ChatSummary, now: Long, fiat: com.circaso.feature.w
     // The design's end column (`cx-row-end`): the time above the unread count, both right-aligned.
     ListRow(
         title = summary.chat.title,
-        modifier = if (selected) Modifier.padding(horizontal = 8.dp).clip(com.circaso.designsystem.theme.CircasoShapes.md).background(c.fillSelected) else Modifier,
+        // Always inset and rounded so selecting doesn't move the row; only the fill changes, softly.
+        modifier = Modifier.padding(horizontal = CircasoSpacing.s2).clip(com.circaso.designsystem.theme.CircasoShapes.md)
+            .background(androidx.compose.animation.animateColorAsState(if (selected) c.fill else androidx.compose.ui.graphics.Color.Transparent, label = "selected").value)
+            .semantics { this.selected = selected },
         sub = preview,
         leading = { Avatar(summary.chat.title, imageUrl = summary.chat.avatarUrl) },
         trailing = {

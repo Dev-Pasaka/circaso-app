@@ -65,7 +65,8 @@ fun CircasoNavBar(
         horizontalArrangement = Arrangement.spacedBy(8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        if (onBack != null) CircasoIconButton(CircasoIcon.Back, "Back", onBack)
+        // The first screen beside a list has nothing to go back to (iPad): no Back there.
+        if (onBack != null && !com.circaso.core.navigation.LocalIsDetailRoot.current) CircasoIconButton(CircasoIcon.Back, "Back", onBack)
         else if (centered) Spacer(Modifier.width(CircasoSizes.iconButton))
         Column(
             Modifier.weight(1f).semantics { heading() },

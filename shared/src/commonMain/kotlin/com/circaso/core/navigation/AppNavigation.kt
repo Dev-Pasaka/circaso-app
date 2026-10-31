@@ -21,6 +21,9 @@ import androidx.navigation3.runtime.entryProvider
 import androidx.navigation3.runtime.rememberNavBackStack
 import androidx.navigation3.runtime.rememberSaveableStateHolderNavEntryDecorator
 import androidx.navigation3.ui.NavDisplay
+import androidx.compose.animation.EnterTransition
+import androidx.compose.animation.ExitTransition
+import androidx.compose.animation.togetherWith
 import androidx.savedstate.serialization.SavedStateConfiguration
 import com.circaso.core.platform.ClientInfo
 import com.circaso.core.session.AuthManager
@@ -136,8 +139,9 @@ fun AppNavigation(forceUpdate: Boolean, home: @Composable () -> Unit) {
         entryDecorators = listOf(rememberSaveableStateHolderNavEntryDecorator(), rememberViewModelStoreNavEntryDecorator()),
         // On a wide window Home is a list beside whatever it opened (docs/adaptive-layout-plan.md).
         sceneStrategies = listOf(remember(twoPane) { ListDetailSceneStrategy(twoPane) }),
-        transitionSpec = { pushTransition(still) },
-        popTransitionSpec = { popTransition(still) },
+        // The same screen on top before and after (a rotation or resize into or out of the split) only reflows.
+        transitionSpec = { if (sameTop()) EnterTransition.None togetherWith ExitTransition.None else pushTransition(still) },
+        popTransitionSpec = { if (sameTop()) EnterTransition.None togetherWith ExitTransition.None else popTransition(still) },
         predictivePopTransitionSpec = { popTransition(still) },
         entryProvider = entryProvider<NavKey> {
             entry<SplashRoute> { SplashScreen() }
@@ -231,7 +235,7 @@ fun AppNavigation(forceUpdate: Boolean, home: @Composable () -> Unit) {
             entry<HelpRoute> {
                 com.circaso.feature.support.presentation.HelpScreen(
                     koinViewModel(), onBack = ::pop,
-                    onOpenChat = { id -> backStack.add(ChatRoute(id)) },
+                    onOpenChat = { id -> openChatFromList(id) },
                     onAsha = { backStack.add(AshaRoute) },
                     onCallChat = if (calls.available) ({ id -> calls.start(id, false) }) else null,
                 )
@@ -288,9 +292,9 @@ fun AppNavigation(forceUpdate: Boolean, home: @Composable () -> Unit) {
                 )
             }
             entry<NewChatRoute> {
-                NewChatScreen(koinViewModel(), onBack = ::pop, onOpened = { id -> pop(); backStack.add(ChatRoute(id)) }, onNewGroup = { backStack.add(NewGroupRoute) }, onInvite = { backStack.add(ContactsRoute) })
+                NewChatScreen(koinViewModel(), onBack = ::pop, onOpened = { id -> pop(); openChatFromList(id) }, onNewGroup = { backStack.add(NewGroupRoute) }, onInvite = { backStack.add(ContactsRoute) })
             }
-            entry<NewGroupRoute> { NewGroupScreen(koinViewModel(), onBack = ::pop, onCreated = { id -> pop(); pop(); backStack.add(ChatRoute(id)) }) }
+            entry<NewGroupRoute> { NewGroupScreen(koinViewModel(), onBack = ::pop, onCreated = { id -> pop(); pop(); openChatFromList(id) }) }
             entry<LocationMapRoute>(metadata = Panes.FullScreen) { route ->
                 com.circaso.feature.messaging.presentation.map.LocationMapScreen(
                     koinViewModel<com.circaso.feature.messaging.presentation.map.LocationMapViewModel>(
@@ -327,15 +331,15 @@ fun AppNavigation(forceUpdate: Boolean, home: @Composable () -> Unit) {
                     onOpenTransfer = { id -> backStack.add(TransferRoute(id)) },
                 )
             }
-            entry<PayRoute> { route ->
+            entry<PayRoute>(metadata = Panes.FullScreen) { route ->
                 PayScreen(
                     koinViewModel<PayViewModel>(key = "pay-${route.userId}-${route.chatId}-${route.requestId}", parameters = { parametersOf(PayIntent(route.userId, route.chatId, route.displayName, route.amount, route.address, route.goalName, route.requestId)) }),
                     onBack = ::pop,
                     onOpenTransfer = { id -> backStack.add(TransferRoute(id)) },
-                    onOpenChat = if (route.chatId == null) ({ id -> pop(); backStack.add(ChatRoute(id)) }) else null,
+                    onOpenChat = if (route.chatId == null) ({ id -> pop(); openChatFromList(id) }) else null,
                 )
             }
-            entry<SendToWalletRoute> { SendToWalletScreen(koinViewModel(), onBack = ::pop, onOpenTransfer = { id -> pop(); backStack.add(TransferRoute(id)) }) }
+            entry<SendToWalletRoute>(metadata = Panes.FullScreen) { SendToWalletScreen(koinViewModel(), onBack = ::pop, onOpenTransfer = { id -> pop(); backStack.add(TransferRoute(id)) }) }
             entry<TransferRoute> { route -> TransferScreen(koinViewModel<TransferViewModel>(key = route.transferId, parameters = { parametersOf(route.transferId) }), onBack = ::pop) }
             entry<NetworksRoute> { NetworksScreen(koinViewModel(), onBack = ::pop) }
             entry<ActivityRoute> { ActivityScreen(koinViewModel(parameters = { parametersOf(null, null) }), onBack = ::pop, onOpen = { id -> backStack.add(TransferRoute(id)) }) }
