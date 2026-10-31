@@ -220,6 +220,10 @@ interface MessagesDao {
     @Query("SELECT * FROM message WHERE chatId = :chatId AND outgoing = 0 AND kind != 'system' AND messageId IS NOT NULL ORDER BY orderAt DESC, localId DESC LIMIT 1")
     suspend fun newestIncoming(chatId: String): MessageEntity?
 
+    /** The newest incoming row of any kind that counts as unread, including calls (which have no server id). */
+    @Query("SELECT MAX(orderAt) FROM message WHERE chatId = :chatId AND outgoing = 0 AND kind != 'system'")
+    suspend fun newestIncomingOrderAt(chatId: String): Long?
+
     @Query("SELECT * FROM message WHERE chatId = :chatId AND outgoing = 1 AND status IN ('sent', 'delivered') AND messageId IS NOT NULL")
     suspend fun outgoingAwaitingReceipt(chatId: String): List<MessageEntity>
 

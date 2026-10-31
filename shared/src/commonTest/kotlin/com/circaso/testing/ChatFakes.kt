@@ -91,6 +91,7 @@ class FakeMessagesDao(private val chats: FakeChatsDao? = null) : MessagesDao {
     override suspend fun byMessageId(messageId: String) = rows.value.firstOrNull { it.messageId == messageId }
     override suspend fun byClientMessageId(clientMessageId: String) = rows.value.firstOrNull { it.clientMessageId == clientMessageId }
     override suspend fun newestIncoming(chatId: String) = rows.value.filter { it.chatId == chatId && !it.outgoing && it.kind != MessageKind.System && it.messageId != null }.maxByOrNull { it.orderAt }
+    override suspend fun newestIncomingOrderAt(chatId: String) = rows.value.filter { it.chatId == chatId && !it.outgoing && it.kind != MessageKind.System }.maxOfOrNull { it.orderAt }
     override suspend fun outgoingAwaitingReceipt(chatId: String) = rows.value.filter { it.chatId == chatId && it.outgoing && it.messageId != null && it.status in setOf("sent", "delivered") }
     override suspend fun liveShare(chatId: String, senderId: String, liveId: String) =
         rows.value.firstOrNull { it.chatId == chatId && it.senderId == senderId && it.kind == MessageKind.Location && it.text?.contains("\"liveId\":\"$liveId\"") == true }

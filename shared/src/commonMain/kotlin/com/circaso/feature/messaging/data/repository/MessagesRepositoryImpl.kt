@@ -161,11 +161,17 @@ class MessagesRepositoryImpl(
     }
 
     override suspend fun markRead(chatId: String) {
-        val newest = dao.newestIncoming(chatId) ?: return
         val chat = chats.chat(chatId) ?: return
-        if (chat.readUpToOrderAt >= newest.orderAt) return
-        chats.markReadUpTo(chatId, newest.orderAt)
-        realtime.send("messaging", "read", buildJsonObject { put("chatId", chatId); put("upToMessageId", newest.messageId!!) })
+        // Everything counted as unread is read now, calls included: they are local rows with no server id, so the
+        // receipt below can't name them, but they must still leave the unread count (a missed group call stayed "2").
+        val newestAt = dao.newestIncomingOrderAt(chatId) ?: return
+        if (chat.readUpToOrderAt >= newestAt) return
+        chats.markReadUpTo(chatId, newestAt)
+        // The read receipt names the newest message the server knows.
+        val newest = dao.newestIncoming(chatId) ?: return
+        if (chat.readUpToOrderAt < newest.orderAt) {
+            realtime.send("messaging", "read", buildJsonObject { put("chatId", chatId); put("upToMessageId", newest.messageId!!) })
+        }
     }
 
     override suspend fun setTyping(chatId: String, typing: Boolean) {
