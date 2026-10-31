@@ -19,6 +19,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.windowInsetsPadding
 import com.circaso.designsystem.components.CircasoIconButton
@@ -127,8 +128,22 @@ fun YouContent(
                 photo = state.profile?.avatarUrl,
                 // The tabs sit below the status bar (Home's scaffold pads it), so the glow reaches up past its own top by
                 // that much to start at the top of the screen; it is never clipped there.
-                modifier = Modifier.fillMaxWidth().height(with(LocalDensity.current) { heroBottom.toDp() })
-                    .graphicsLayer { translationY = -statusTop - if (short) 0f else scroll.value.toFloat() },
+                modifier = if (short) {
+                    // On its side the glow belongs to the profile column alone: full height, fading out sideways
+                    // before the settings, and still while they scroll.
+                    Modifier.fillMaxWidth(0.5f).fillMaxHeight().graphicsLayer { translationY = -statusTop }
+                        .graphicsLayer { compositingStrategy = androidx.compose.ui.graphics.CompositingStrategy.Offscreen }
+                        .drawWithContent {
+                            drawContent()
+                            drawRect(
+                                androidx.compose.ui.graphics.Brush.horizontalGradient(0.6f to androidx.compose.ui.graphics.Color.Black, 1f to androidx.compose.ui.graphics.Color.Transparent),
+                                blendMode = androidx.compose.ui.graphics.BlendMode.DstIn,
+                            )
+                        }
+                } else {
+                    Modifier.fillMaxWidth().height(with(LocalDensity.current) { heroBottom.toDp() })
+                        .graphicsLayer { translationY = -statusTop - scroll.value.toFloat() }
+                },
             )
         },
         // No title on the tabs (Pasaka, 2026-10-30): the tab bar says where you are.

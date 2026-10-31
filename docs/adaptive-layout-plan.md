@@ -61,10 +61,10 @@ detail's root, the open chat highlighted); spring push/pop (opaque screens, no s
 tablets and full width on a phone on its side; edge to edge under the camera cut-out; tabs as a left rail on short or
 wide screens; rotation without recreating the screen; Welcome side by side; sign-in, voice scroll when they don't
 fit; You and Wallet in two columns on their side; voice calls side by side on their side; group call grid adapts;
-sheets as centred cards; map controls clear the cut-out.
+sheets as centred cards; map controls clear the cut-out; You's glow stays in its column on a phone on its side.
 
 Left: the back swipe following the finger inside the detail pane (it completes as a pop today); a darkening scrim
-under pushed screens; You's glow limited to its column on a phone on its side; checking every screen on a tablet and
+under pushed screens; checking every screen on a tablet and
 an iPad (no tablet device was available to this session).
 
 ## Order of work
