@@ -41,6 +41,8 @@ fun CircasoScaffold(
     bottomBar: (@Composable () -> Unit)? = null,
     toast: @Composable BoxScope.() -> Unit = {},
     overlay: @Composable BoxScope.() -> Unit = {},
+    /** Drawn behind everything from the very top of the screen, under the status bar (the You tab's photo glow). */
+    backdrop: @Composable BoxScope.() -> Unit = {},
     content: @Composable (PaddingValues) -> Unit,
 ) {
     val c = CircasoTheme.colors
@@ -49,6 +51,7 @@ fun CircasoScaffold(
     // Some devices report no navigation inset; keep the floating bar off the screen edge anyway.
     val navInset = maxOf(WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding(), 16.dp)
     Box(modifier.fillMaxSize().background(if (grouped) c.bgGrouped else c.bg)) {
+        backdrop()
         Column(
             Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.statusBars).let {
                 // With a tab bar the bar itself clears the home indicator; without one the content must.

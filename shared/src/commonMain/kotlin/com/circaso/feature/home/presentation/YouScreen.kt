@@ -19,11 +19,22 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import kotlinx.coroutines.launch
+import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.gestures.detectVerticalDragGestures
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.positionInWindow
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.layout.boundsInWindow
+import androidx.compose.ui.layout.onGloballyPositioned
 import coil3.request.crossfade
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -39,7 +50,6 @@ import androidx.compose.foundation.border
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.draw.blur
-import androidx.compose.ui.layout.layout
 import androidx.compose.ui.unit.dp
 import com.circaso.core.common.maskedForDisplay
 import com.circaso.core.sync.ConnectionBanner
@@ -97,11 +107,28 @@ fun YouContent(
 ) {
     val c = CircasoTheme.colors
     val t = CircasoTheme.typography
+    val scroll = rememberScrollState()
+    // Where the hero ends, measured from the top of the screen, so the glow behind it knows how far to reach.
+    var heroBottom by remember { mutableStateOf(0) }
+    // Tapping the photo opens it large; it springs out of the circle and back into it.
+    var viewingPhoto by remember { mutableStateOf(false) }
+    var photoBounds by remember { mutableStateOf(androidx.compose.ui.geometry.Rect.Zero) }
+    val photoOpen = remember { androidx.compose.animation.core.Animatable(0f) }
     CircasoScaffold(
         grouped = true,
+        backdrop = {
+            ProfileGlow(
+                photo = state.profile?.avatarUrl,
+                modifier = Modifier.fillMaxWidth().height(with(LocalDensity.current) { heroBottom.toDp() })
+                    .graphicsLayer { translationY = -scroll.value.toFloat() },
+            )
+        },
         // No title on the tabs (Pasaka, 2026-10-30): the tab bar says where you are.
         banner = { ConnectionBanner(showing = "Showing what is saved on this phone") },
         overlay = {
+            state.profile?.avatarUrl?.let { photo ->
+                PhotoViewer(photo, state.profile.displayName, photoBounds, viewingPhoto, photoOpen, onClose = { viewingPhoto = false })
+            }
             ConfirmSheet(
                 visible = state.confirmSignOut,
                 title = "Sign out of Circaso?",
@@ -113,7 +140,7 @@ fun YouContent(
         },
     ) { padding ->
         Column(
-            Modifier.fillMaxSize().verticalScroll(rememberScrollState())
+            Modifier.fillMaxSize().verticalScroll(scroll)
                 .padding(horizontal = CircasoSpacing.s4)
                 .padding(top = CircasoSpacing.s2, bottom = CircasoSpacing.s6 + bottomPadding.calculateBottomPadding() + padding.calculateBottomPadding()),
             verticalArrangement = Arrangement.spacedBy(CircasoSpacing.s6),
@@ -125,6 +152,11 @@ fun YouContent(
                 photo = state.profile?.avatarUrl,
                 waiting = state.profile?.pendingSync == true,
                 onEdit = actions.onEditProfile,
+                onPhoto = { viewingPhoto = true },
+                onPhotoBounds = { photoBounds = it },
+                photoHidden = photoOpen.value > 0.001f,
+                // Its bottom edge in the window, plus how far the page has scrolled: the glow's height from the top.
+                modifier = Modifier.onGloballyPositioned { heroBottom = (it.boundsInWindow().bottom + scroll.value).toInt().coerceAtLeast(0) },
             )
             // Changes that couldn't be saved get their own screen (Pasaka, 2026-10-30); here, one row that says how many.
             if (state.failed.isNotEmpty()) {
@@ -216,67 +248,45 @@ fun NeedsAttentionScreen(viewModel: YouViewModel, onBack: () -> Unit) {
 }
 
 /**
- * The You tab's top: the photo large and centred, glowing in its own colours (Pasaka, 2026-10-31, in place of F2's
- * grouped profile row). The glow is the same picture decoded tiny and stretched, so it is a soft wash of its colours
- * on every Android version (a blur effect alone needs Android 12); it rises out of the page and fades back into it.
- * Without a photo, or in high contrast, the wash is a quiet grey.
+ * The You tab's top: the photo large and centred, glowing in its own colours (Pasaka, 2026-10-30, in place of F2's
+ * grouped profile row). The glow ([ProfileGlow]) sits behind the whole screen from under the status bar down to the
+ * hero's end, and scrolls away with it.
  */
 @Composable
-private fun ProfileHero(name: String?, handle: String?, phone: String?, photo: String?, waiting: Boolean, onEdit: () -> Unit) {
+private fun ProfileHero(
+    name: String?,
+    handle: String?,
+    phone: String?,
+    photo: String?,
+    waiting: Boolean,
+    onEdit: () -> Unit,
+    onPhoto: () -> Unit,
+    onPhotoBounds: (androidx.compose.ui.geometry.Rect) -> Unit,
+    photoHidden: Boolean,
+    modifier: Modifier = Modifier,
+) {
     val c = CircasoTheme.colors
     val t = CircasoTheme.typography
-    val page = c.bgGrouped
-    Box(
-        // Reaches the screen edges (the column has side padding) so the glow isn't boxed in.
-        Modifier.layout { measurable, constraints ->
-            val bleed = (HeroBleed * 2).roundToPx()
-            val wide = constraints.maxWidth + bleed
-            val placeable = measurable.measure(constraints.copy(minWidth = wide, maxWidth = wide))
-            layout(constraints.maxWidth, placeable.height) { placeable.place(-bleed / 2, 0) }
-        }.fillMaxWidth(),
-        contentAlignment = Alignment.TopCenter,
+    Column(
+        modifier.fillMaxWidth().padding(top = CircasoSpacing.s4, bottom = CircasoSpacing.s2),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(CircasoSpacing.s2),
     ) {
-        Box(Modifier.matchParentSize().clipToBounds()) {
-            if (photo != null && !c.isHighContrast) {
-                val key = photo.substringBefore('?')
-                coil3.compose.AsyncImage(
-                    model = coil3.request.ImageRequest.Builder(coil3.compose.LocalPlatformContext.current).data(photo)
-                        .size(GlowDecodePx).memoryCacheKey("$key#glow").diskCacheKey(key).crossfade(true).build(),
-                    contentDescription = null, contentScale = androidx.compose.ui.layout.ContentScale.Crop,
-                    modifier = Modifier.fillMaxSize().blur(GlowBlur).graphicsLayer { alpha = GlowAlpha },
-                )
-            } else {
-                Box(
-                    Modifier.fillMaxSize().drawBehind {
-                        val avatarCentre = CircasoSpacing.s6.toPx() + CircasoSizes.avatarHero.toPx() / 2
-                        drawRect(androidx.compose.ui.graphics.Brush.radialGradient(listOf(c.fillStrong, page), center = androidx.compose.ui.geometry.Offset(size.width / 2, avatarCentre), radius = size.width * 0.75f))
-                    },
-                )
-            }
-            // Soft at the very top so the colour rises out of the page, strongest around the photo, gone by the
-            // bottom; dense enough behind the name for its text to keep its contrast.
-            Box(
-                Modifier.fillMaxSize().background(
-                    androidx.compose.ui.graphics.Brush.verticalGradient(
-                        0f to page.copy(alpha = 0.6f), 0.18f to page.copy(alpha = 0.1f), 0.38f to page.copy(alpha = 0.55f),
-                        0.6f to page.copy(alpha = 0.9f), 1f to page,
-                    ),
-                ),
-            )
-        }
-        Column(
-            Modifier.fillMaxWidth().padding(top = CircasoSpacing.s6, bottom = CircasoSpacing.s5, start = CircasoSpacing.s4, end = CircasoSpacing.s4),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(CircasoSpacing.s2),
-        ) {
-            if (name == null) {
-                // Loading: shapes only, so "Your profile" never flashes before the real name.
-                Box(Modifier.size(CircasoSizes.avatarHero).clip(CircasoShapes.circle).background(c.fillStrong))
-                Box(Modifier.padding(top = CircasoSpacing.s1).size(160.dp, 24.dp).clip(CircasoShapes.sm).background(c.fill))
-                Box(Modifier.size(120.dp, 16.dp).clip(CircasoShapes.sm).background(c.fill))
-            } else {
+        if (name == null) {
+            // Loading: shapes only, so "Your profile" never flashes before the real name.
+            Box(Modifier.size(CircasoSizes.avatarHero).clip(CircasoShapes.circle).background(c.fillStrong))
+            Box(Modifier.padding(top = CircasoSpacing.s1).size(160.dp, 24.dp).clip(CircasoShapes.sm).background(c.fill))
+            Box(Modifier.size(120.dp, 16.dp).clip(CircasoShapes.sm).background(c.fill))
+        } else {
             // The ring in the page colour cuts the photo out of its own glow.
-            Avatar(name, size = CircasoSizes.avatarHero, imageUrl = photo, modifier = Modifier.shadow(AvatarShadow, CircasoShapes.circle).border(AvatarRing, page, CircasoShapes.circle))
+            Avatar(
+                name, size = CircasoSizes.avatarHero, imageUrl = photo,
+                modifier = Modifier.onGloballyPositioned { onPhotoBounds(it.boundsInWindow()) }
+                    // While it is open large, the circle is where it came from: empty, so the photo reads as lifted out.
+                    .graphicsLayer { alpha = if (photoHidden) 0f else 1f }
+                    .shadow(AvatarShadow, CircasoShapes.circle).border(AvatarRing, c.bgGrouped, CircasoShapes.circle)
+                    .let { m -> if (photo != null) m.pressable(role = androidx.compose.ui.semantics.Role.Image, onClick = onPhoto).semantics { contentDescription = "Your photo. Open it large" } else m },
+            )
             Column(
                 Modifier.padding(top = CircasoSpacing.s1).semantics(mergeDescendants = true) {},
                 horizontalAlignment = Alignment.CenterHorizontally,
@@ -288,14 +298,44 @@ private fun ProfileHero(name: String?, handle: String?, phone: String?, photo: S
                 }
                 if (waiting) BasicText("Waiting to send", style = t.caption1.copy(color = c.warning))
             }
-                CircasoButton("Edit Profile", onEdit, modifier = Modifier.padding(top = CircasoSpacing.s1).heightIn(min = CircasoSizes.controlMd), style = ButtonStyle.Secondary, size = ButtonSize.Small)
-            }
+            CircasoButton("Edit Profile", onEdit, modifier = Modifier.padding(top = CircasoSpacing.s1).heightIn(min = CircasoSizes.controlMd), style = ButtonStyle.Secondary, size = ButtonSize.Small)
         }
     }
 }
 
-/** Matches the scrolling column's side padding, which the hero reaches past. */
-private val HeroBleed = CircasoSpacing.s4
+/**
+ * The photo's own colours as a wash: the picture decoded tiny and stretched, so it is soft on every Android version
+ * (a blur effect alone needs Android 12). Strongest under the status bar, it rises from the top of the screen and
+ * fades into the page by the end of the hero. Without a photo, or in high contrast, a quiet grey.
+ */
+@Composable
+private fun ProfileGlow(photo: String?, modifier: Modifier) {
+    val c = CircasoTheme.colors
+    val page = c.bgGrouped
+    Box(modifier.clipToBounds()) {
+        if (photo != null && !c.isHighContrast) {
+            val key = photo.substringBefore('?')
+            coil3.compose.AsyncImage(
+                model = coil3.request.ImageRequest.Builder(coil3.compose.LocalPlatformContext.current).data(photo)
+                    .size(GlowDecodePx).memoryCacheKey("$key#glow").diskCacheKey(key).crossfade(true).build(),
+                contentDescription = null, contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+                modifier = Modifier.fillMaxSize().blur(GlowBlur).graphicsLayer { alpha = GlowAlpha },
+            )
+        } else {
+            Box(Modifier.fillMaxSize().background(androidx.compose.ui.graphics.Brush.verticalGradient(listOf(c.fillStrong, page))))
+        }
+        // A light veil at the top keeps the status bar readable; then denser behind the name, and gone at the end.
+        Box(
+            Modifier.fillMaxSize().background(
+                androidx.compose.ui.graphics.Brush.verticalGradient(
+                    0f to page.copy(alpha = 0.25f), 0.35f to page.copy(alpha = 0.15f), 0.6f to page.copy(alpha = 0.6f),
+                    0.8f to page.copy(alpha = 0.92f), 1f to page,
+                ),
+            ),
+        )
+    }
+}
+
 /** Decoded this small, the picture stretches into a soft wash of its colours; cheap to load and to draw. */
 private const val GlowDecodePx = 24
 /** Extra smoothing where blur is supported (Android 12+, iOS); harmless where it isn't. */
@@ -303,3 +343,73 @@ private val GlowBlur = 24.dp
 private const val GlowAlpha = 0.8f
 private val AvatarShadow = 18.dp
 private val AvatarRing = 3.dp
+
+/**
+ * The profile photo, large: it grows out of the hero's circle into a full-width square on a dark backdrop with a
+ * spring that overshoots a little, and springs back into the circle on a tap, a swipe down or Back. The full-size
+ * picture loads behind the avatar's cached one, so it never shows empty.
+ */
+@OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class)
+@Composable
+private fun PhotoViewer(
+    photo: String,
+    name: String,
+    from: androidx.compose.ui.geometry.Rect,
+    open: Boolean,
+    progress: androidx.compose.animation.core.Animatable<Float, androidx.compose.animation.core.AnimationVector1D>,
+    onClose: () -> Unit,
+) {
+    val drag = remember { androidx.compose.animation.core.Animatable(0f) }
+    val scope = androidx.compose.runtime.rememberCoroutineScope()
+    androidx.compose.runtime.LaunchedEffect(open) {
+        if (open) drag.snapTo(0f)
+        progress.animateTo(if (open) 1f else 0f, if (open) PhotoOpenSpring else PhotoCloseSpring)
+    }
+    androidx.compose.ui.backhandler.BackHandler(enabled = open, onBack = onClose)
+    if (!open && progress.value <= 0.001f) return
+    var origin by remember { mutableStateOf(androidx.compose.ui.geometry.Offset.Zero) }
+    var box by remember { mutableStateOf(androidx.compose.ui.unit.IntSize.Zero) }
+    val key = photo.substringBefore('?')
+    Box(
+        Modifier.fillMaxSize()
+            .onGloballyPositioned { origin = it.positionInWindow(); box = it.size }
+            .pointerInput(Unit) { detectTapGestures { onClose() } }
+            .pointerInput(Unit) {
+                detectVerticalDragGestures(
+                    onDragEnd = { if (drag.value > PhotoDismissPx) onClose() else scope.launch { drag.animateTo(0f, PhotoCloseSpring) } },
+                    onVerticalDrag = { _, dy -> scope.launch { drag.snapTo((drag.value + dy).coerceAtLeast(0f)) } },
+                )
+            },
+    ) {
+        if (box == androidx.compose.ui.unit.IntSize.Zero) return@Box
+        val p = progress.value
+        // The backdrop fades with the open state and lightens as the photo is pulled down.
+        val fade = p.coerceIn(0f, 1f) * (1f - (drag.value / (box.height / 2f)).coerceIn(0f, 1f))
+        Box(Modifier.fillMaxSize().graphicsLayer { alpha = fade }.background(androidx.compose.ui.graphics.Color.Black.copy(alpha = 0.94f)))
+        val side = box.width.toFloat()
+        val start = from.translate(-origin.x, -origin.y)
+        val endLeft = 0f
+        val endTop = (box.height - side) / 2f
+        val left = start.left + (endLeft - start.left) * p
+        val top = start.top + (endTop - start.top) * p + drag.value
+        val size = start.width + (side - start.width) * p
+        val radius = (size / 2f) * (1f - p).coerceIn(0f, 1f)
+        val density = LocalDensity.current
+        coil3.compose.AsyncImage(
+            model = coil3.request.ImageRequest.Builder(coil3.compose.LocalPlatformContext.current).data(photo)
+                .memoryCacheKey("$key#full").diskCacheKey(key).placeholderMemoryCacheKey(key).crossfade(true).build(),
+            contentDescription = "$name's photo",
+            contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+            modifier = Modifier
+                .offset { androidx.compose.ui.unit.IntOffset(left.toInt(), top.toInt()) }
+                .size(with(density) { size.coerceAtLeast(1f).toDp() })
+                .graphicsLayer { shape = androidx.compose.foundation.shape.RoundedCornerShape(radius); clip = true },
+        )
+    }
+}
+
+/** Opening overshoots a touch, like a spring let go; closing settles without a bounce back into the circle. */
+private val PhotoOpenSpring = androidx.compose.animation.core.spring<Float>(dampingRatio = 0.72f, stiffness = 380f)
+private val PhotoCloseSpring = androidx.compose.animation.core.spring<Float>(dampingRatio = 0.86f, stiffness = 520f)
+/** How far a downward pull has to go before letting go closes the photo. */
+private const val PhotoDismissPx = 220f
