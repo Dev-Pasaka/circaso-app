@@ -39,7 +39,10 @@ class SetRoleUseCase(private val chats: ChatsRepository) { suspend operator fun 
 class SecurityCodeUseCase(private val chats: ChatsRepository) { suspend operator fun invoke(userId: String) = chats.securityCode(userId) }
 
 /** Read. */
-class ObserveThreadUseCase(private val messages: MessagesRepository) { operator fun invoke(chatId: String) = messages.thread(chatId) }
+class ObserveThreadUseCase(private val messages: MessagesRepository) {
+    operator fun invoke(chatId: String) = messages.thread(chatId)
+    operator fun invoke(chatId: String, limit: Int) = messages.thread(chatId, limit)
+}
 
 /** Queueable: saved as Waiting, sent in order when online (design G3). */
 class SendMessageUseCase(private val messages: MessagesRepository) { suspend operator fun invoke(chatId: String, text: String, replyTo: String? = null) = messages.send(chatId, text, replyTo) }

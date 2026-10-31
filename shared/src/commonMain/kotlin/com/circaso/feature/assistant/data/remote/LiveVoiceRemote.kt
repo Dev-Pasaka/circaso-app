@@ -85,18 +85,20 @@ class KtorLiveVoiceRemote(
     private val url: String,
     private val json: Json,
     private val currency: suspend () -> String? = { null },
+    private val voice: suspend () -> String? = { null },
 ) : LiveVoiceRemote {
     override suspend fun open(accessToken: String, agentToken: String?, language: String, chatReading: Boolean): LiveVoiceSession =
-        LiveVoiceSocketSession(sockets.open(url), json, authFrame(accessToken, agentToken, language, chatReading, currency()))
+        LiveVoiceSocketSession(sockets.open(url), json, authFrame(accessToken, agentToken, language, chatReading, currency(), voice()))
 }
 
-internal fun authFrame(accessToken: String, agentToken: String?, language: String? = null, chatReading: Boolean? = null, currency: String? = null): JsonObject = buildJsonObject {
+internal fun authFrame(accessToken: String, agentToken: String?, language: String? = null, chatReading: Boolean? = null, currency: String? = null, voice: String? = null): JsonObject = buildJsonObject {
     put("type", "auth")
     put("accessToken", accessToken)
     agentToken?.let { put("agentToken", it) }
     language?.let { put("language", it) }
     chatReading?.let { put("chatReading", it) }
     currency?.let { put("currency", it) }
+    voice?.let { put("voice", it) }
 }
 
 /**

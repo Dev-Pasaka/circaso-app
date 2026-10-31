@@ -27,6 +27,7 @@ import com.circaso.feature.chama.domain.ChamaRequest
 import com.circaso.feature.chama.presentation.ThreadChama
 import com.circaso.feature.wallet.domain.FiatValue
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
@@ -130,7 +131,9 @@ class ThreadViewModel(
         }
         if (chama != null) viewModelScope.launch { chama.observe(chatId).collect { s -> _state.update { it.copy(chama = s.chama, fiat = s.fiat, showIntro = s.showIntro, myUserId = s.myUserId) } } }
         viewModelScope.launch {
-            observeThread(chatId).collect { list ->
+            // A window of the newest messages that grows by a page as the person scrolls up (onLoadOlder).
+            @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+            window.flatMapLatest { limit -> observeThread(chatId, limit) }.collect { list ->
                 _state.update { it.copy(messages = list) }
                 markRead(chatId) // the thread is on screen: everything in it has been seen
             }
@@ -140,6 +143,13 @@ class ThreadViewModel(
     }
 
     /** Typing goes out at most every few seconds and stops a moment after the last keystroke (guide, section 8). */
+    private val window = MutableStateFlow(ThreadPage)
+
+    /** The person is near the oldest message shown: bring in the next page, if there might be one. */
+    fun onLoadOlder() {
+        if (_state.value.messages.size >= window.value) window.value += ThreadPage
+    }
+
     fun onDraft(text: String) {
         _state.update { it.copy(draft = text) }
         if (text.isEmpty()) { stopTyping(); return }
@@ -355,3 +365,6 @@ class ThreadViewModel(
 
 /** WhatsApp's limit for one send from the gallery. */
 private const val MaxGalleryPick = 30
+
+/** Messages per page of a thread: what opens, and what each scroll up adds. */
+private const val ThreadPage = 100

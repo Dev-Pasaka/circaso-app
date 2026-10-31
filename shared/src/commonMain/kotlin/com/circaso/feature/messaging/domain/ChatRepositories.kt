@@ -38,6 +38,9 @@ interface ChatsRepository {
 interface MessagesRepository {
     fun thread(chatId: String): Flow<List<Message>>
 
+    /** The newest [limit] messages, oldest first (the thread's window; it grows as the person scrolls up). */
+    fun thread(chatId: String, limit: Int): Flow<List<Message>>
+
     /** Saves the message on this phone and queues it. */
     suspend fun send(chatId: String, text: String, replyTo: String? = null)
 

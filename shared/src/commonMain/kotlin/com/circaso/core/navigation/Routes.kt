@@ -120,6 +120,10 @@ data class LostAccessRoute(val phone: String? = null) : Route
 @Serializable
 data object ActivityRoute : Route
 
+/** Asha's voice: pick one, hear it first. */
+@Serializable
+data object AshaVoiceRoute : Route
+
 /** The currency amounts are shown in. */
 @Serializable
 data object CurrencyRoute : Route
@@ -169,6 +173,7 @@ val routeSerializers = SerializersModule {
         subclass(ActivityRoute::class)
         subclass(AssetActivityRoute::class)
         subclass(CurrencyRoute::class)
+        subclass(AshaVoiceRoute::class)
         subclass(NotificationsRoute::class)
         subclass(HelpRoute::class)
         subclass(LostAccessRoute::class)

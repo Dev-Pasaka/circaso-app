@@ -31,6 +31,10 @@ class AppPreferences(private val store: DataStore<Preferences>) : com.circaso.co
 
     /** The currency money is shown in, chosen in You → Currency; null follows the phone's region. */
     val currency: Flow<String?> = store.data.map { it[currencyKey] }
+    /** Asha's voice, chosen in You → Asha's voice; null is the server's default. */
+    val ashaVoice: Flow<String?> = store.data.map { it[stringPreferencesKey("asha.voice")] }
+    suspend fun setAshaVoice(id: String?) { store.edit { if (id == null) it.remove(stringPreferencesKey("asha.voice")) else it[stringPreferencesKey("asha.voice")] = id } }
+
     suspend fun setCurrency(code: String?) { store.edit { if (code == null) it.remove(currencyKey) else it[currencyKey] = code } }
     private val contrastKey = stringPreferencesKey("theme.highContrast")
 

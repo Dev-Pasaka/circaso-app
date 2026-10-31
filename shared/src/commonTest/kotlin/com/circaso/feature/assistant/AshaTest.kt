@@ -83,6 +83,8 @@ private fun dto(id: String, role: String = "assistant", text: String = "t", at: 
     ChatMessageDto(id, role, text, null, null, note, at)
 
 private class FakeAshaRemote : AshaRemote {
+    override suspend fun voices(): AppResult<com.circaso.feature.assistant.data.remote.VoicesResponse> = AppResult.Success(com.circaso.feature.assistant.data.remote.VoicesResponse())
+    override suspend fun voiceSample(voiceId: String): AppResult<ByteArray> = AppResult.Success(ByteArray(0))
     var history: AppResult<ChatResponse> = AppResult.Success(ChatResponse(listOf(dto("m1", "user", at = "2026-10-25T09:00:00Z"), dto("m2", at = "2026-10-25T09:00:05Z")), null))
     var events: List<AppResult<SseEvent>> = emptyList()
     var toolResultsAnswer: AppResult<NoBody> = AppResult.Success(NoBody())

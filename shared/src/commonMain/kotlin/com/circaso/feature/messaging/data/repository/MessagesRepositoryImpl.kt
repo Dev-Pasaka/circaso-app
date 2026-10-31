@@ -83,6 +83,11 @@ class MessagesRepositoryImpl(
     /** chatId -> (userId -> when their typing signal expires). */
     private val typingState = MutableStateFlow<Map<String, Map<String, Long>>>(emptyMap())
 
+    override fun thread(chatId: String, limit: Int): Flow<List<Message>> =
+        combine(dao.observeRecent(chatId, limit), chats.observeMembers(chatId), flow { emit(ownUserId()) }) { rows, members, me ->
+            rows.asReversed().map { it.toDomain(members, me) }
+        }
+
     override fun thread(chatId: String): Flow<List<Message>> =
         combine(dao.observeThread(chatId), chats.observeMembers(chatId), flow { emit(ownUserId()) }) { rows, members, me ->
             rows.map { it.toDomain(members, me) }

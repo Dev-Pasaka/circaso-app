@@ -81,6 +81,7 @@ class FakeMessagesDao(private val chats: FakeChatsDao? = null) : MessagesDao {
     private fun update(localId: Long, change: (MessageEntity) -> MessageEntity) { rows.value = rows.value.map { if (it.localId == localId) change(it) else it } }
 
     override fun observeThread(chatId: String) = rows.map { it.filter { m -> m.chatId == chatId }.sortedWith(compareBy({ it.orderAt }, { it.localId })) }
+    override fun observeRecent(chatId: String, limit: Int) = rows.map { it.filter { m -> m.chatId == chatId }.sortedWith(compareByDescending<MessageEntity> { it.orderAt }.thenByDescending { it.localId }).take(limit) }
     override fun observeLatestPerChat(): Flow<List<MessageEntity>> = rows.map { list -> list.groupBy { it.chatId }.values.map { it.maxWith(compareBy({ m -> m.orderAt }, { m -> m.localId })) } }
     override fun observeUnread(): Flow<List<ChatUnread>> =
         kotlinx.coroutines.flow.combine(rows, chats?.chats ?: MutableStateFlow(emptyMap())) { list, chatRows ->

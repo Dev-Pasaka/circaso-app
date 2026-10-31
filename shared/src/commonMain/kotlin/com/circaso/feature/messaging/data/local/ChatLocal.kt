@@ -202,6 +202,10 @@ interface MessagesDao {
     @Query("SELECT * FROM message WHERE chatId = :chatId ORDER BY orderAt ASC, localId ASC")
     fun observeThread(chatId: String): Flow<List<MessageEntity>>
 
+    /** The newest [limit] messages of a chat, newest first: a thread opens on these and loads older ones as it scrolls up. */
+    @Query("SELECT * FROM message WHERE chatId = :chatId ORDER BY orderAt DESC, localId DESC LIMIT :limit")
+    fun observeRecent(chatId: String, limit: Int): Flow<List<MessageEntity>>
+
     @Query("SELECT m.* FROM message m WHERE m.localId = (SELECT localId FROM message WHERE chatId = m.chatId ORDER BY orderAt DESC, localId DESC LIMIT 1)")
     fun observeLatestPerChat(): Flow<List<MessageEntity>>
 

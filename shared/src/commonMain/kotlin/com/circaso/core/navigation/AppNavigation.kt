@@ -200,6 +200,7 @@ fun AppNavigation(forceUpdate: Boolean, home: @Composable () -> Unit) {
                             onSecretMenu = { backStack.add(GalleryRoute) },
                             onNeedsAttention = { backStack.add(NeedsAttentionRoute) },
                             onCurrency = { backStack.add(CurrencyRoute) },
+                            onAshaVoice = { backStack.add(AshaVoiceRoute) },
                             onMoneySound = youViewModel::onMoneySound,
                         ),
                         appVersion = info.appVersion,
@@ -320,6 +321,7 @@ fun AppNavigation(forceUpdate: Boolean, home: @Composable () -> Unit) {
             entry<TransferRoute> { route -> TransferScreen(koinViewModel<TransferViewModel>(key = route.transferId, parameters = { parametersOf(route.transferId) }), onBack = ::pop) }
             entry<NetworksRoute> { NetworksScreen(koinViewModel(), onBack = ::pop) }
             entry<ActivityRoute> { ActivityScreen(koinViewModel(parameters = { parametersOf(null, null) }), onBack = ::pop, onOpen = { id -> backStack.add(TransferRoute(id)) }) }
+            entry<AshaVoiceRoute> { com.circaso.feature.assistant.presentation.AshaVoiceScreen(koinViewModel(), onBack = ::pop) }
             entry<CurrencyRoute> { com.circaso.feature.wallet.presentation.CurrencyScreen(koinViewModel(), onBack = ::pop) }
             entry<AssetActivityRoute> { route ->
                 ActivityScreen(

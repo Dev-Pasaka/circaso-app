@@ -37,6 +37,9 @@ interface AshaRemote {
     suspend fun toolResults(turnId: String, request: ToolResultsRequest): AppResult<NoBody>
     suspend fun transcribe(audio: ByteArray, contentType: String, seconds: Int): AppResult<TranscriptResponse>
     suspend fun speech(request: SpeechRequest): AppResult<ByteArray>
+    suspend fun voices(): AppResult<VoicesResponse>
+    /** A13: a short sample of a voice (MP3), free of the allowance, for the voice picker. */
+    suspend fun voiceSample(voiceId: String): AppResult<ByteArray>
     suspend fun usage(): AppResult<UsageResponse>
 
     /** Posts the question and streams the answer. Failures before any text arrive as a single failed result. */
@@ -99,6 +102,27 @@ class KtorAshaRemote(
             else AppResult.Failure(errorFrom(r.status.value, r.bodyAsText()))
         }
         response
+    } catch (e: CancellationException) {
+        throw e
+    } catch (e: Throwable) {
+        AppResult.Failure(AppError.Network)
+    }
+
+    override suspend fun voices() = api.call<VoicesResponse> {
+        method = HttpMethod.Get
+        url("/v1/assistant/voices")
+    }
+
+    override suspend fun voiceSample(voiceId: String): AppResult<ByteArray> = try {
+        val token = tokens.accessToken()
+        client.prepareRequest {
+            method = HttpMethod.Get
+            url("/v1/assistant/voices/$voiceId/sample")
+            token?.let { header(HttpHeaders.Authorization, "Bearer $it") }
+        }.execute { r ->
+            if (r.status.value == 200) AppResult.Success(r.body<ByteArray>())
+            else AppResult.Failure(errorFrom(r.status.value, r.bodyAsText()))
+        }
     } catch (e: CancellationException) {
         throw e
     } catch (e: Throwable) {

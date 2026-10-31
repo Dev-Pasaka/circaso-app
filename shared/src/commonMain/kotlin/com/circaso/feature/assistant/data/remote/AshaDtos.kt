@@ -22,7 +22,11 @@ data class ChatMessageDto(
 @Serializable data class SnippetDto(val chatId: String, val chatName: String? = null, val sender: String, val at: String, val text: String)
 @Serializable data class ToolResultsRequest(val callId: String, val snippets: List<SnippetDto>? = null)
 @Serializable data class TranscriptResponse(val text: String, val seconds: Int)
-@Serializable data class SpeechRequest(val text: String, val language: String? = null)
+@Serializable data class SpeechRequest(val text: String, val language: String? = null, val voice: String? = null)
+
+/** A12: the voices Asha can speak in; one is the default. */
+@Serializable data class VoiceDto(val id: String, val name: String, val character: String? = null, val gender: String? = null, val default: Boolean = false)
+@Serializable data class VoicesResponse(val voices: List<VoiceDto> = emptyList())
 
 @Serializable
 data class UsageResponse(

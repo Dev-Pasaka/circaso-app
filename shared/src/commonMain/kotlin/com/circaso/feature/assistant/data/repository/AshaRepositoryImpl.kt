@@ -42,6 +42,8 @@ class AshaRepositoryImpl(
     private val kickOutbox: () -> Unit,
     /** The display currency to answer in: the person's choice, else their phone's region's. */
     private val currency: suspend () -> String? = { null },
+    /** The voice the person chose for Asha (You → Asha's voice); null is the server's default. */
+    private val voice: suspend () -> String? = { null },
 ) : AshaRepository {
 
     override val history: Flow<List<AshaMessage>> = dao.observe().map { rows -> inConversationOrder(rows.map { it.toDomain() }) }
@@ -109,7 +111,7 @@ class AshaRepositoryImpl(
         return remote.transcribe(audio, contentType, durationSeconds).map { it.text }
     }
 
-    override suspend fun speak(text: String, language: String?): AppResult<ByteArray> = remote.speech(SpeechRequest(text, language))
+    override suspend fun speak(text: String, language: String?): AppResult<ByteArray> = remote.speech(SpeechRequest(text, language, voice()))
 
     override suspend fun usage(): AppResult<AshaUsage> =
         remote.usage().map { AshaUsage(it.plan, it.textTurnsUsed, it.textTurnsLeft, it.voiceSecondsUsed, it.voiceSecondsLeft, it.resetsAt) }

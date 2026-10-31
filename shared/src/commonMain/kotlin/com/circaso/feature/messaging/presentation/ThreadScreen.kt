@@ -143,6 +143,7 @@ fun ThreadScreen(
         onOpenGoal = onOpenGoal, onContribute = onContribute, onPayRequest = onPayRequest, onDecide = viewModel::onDecide, onIntroSeen = viewModel::onIntroSeen,
         onSupportDone = viewModel::onSupportDone, onSupportVerdict = viewModel::onSupportVerdict, onCallSupport = onCallSupport, onCall = onCall,
         ongoingCall = ongoingCall, onReturnToCall = onReturnToCall, onOpenLocation = onOpenLocation, quickPay = pay, focusLocalId = focusLocalId,
+        onLoadOlder = viewModel::onLoadOlder,
         media = viewModel.media?.let { m ->
             ThreadMediaActions(
                 canShareLocation = m.canShareLocation, onPhoto = viewModel::onSendPhoto, onLocation = viewModel::onSendLocation,
@@ -196,6 +197,8 @@ fun ThreadContent(
     onOpenLocation: (Message.Media) -> Unit = {},
     quickPay: QuickPay? = null,
     focusLocalId: Long? = null,
+    /** Near the oldest message shown: load the next page up. */
+    onLoadOlder: () -> Unit = {},
 ) {
     val c = CircasoTheme.colors
     var toastPayError by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf<String?>(null) }
@@ -247,21 +250,36 @@ fun ThreadContent(
     // Opened at one message (from search): scroll there once and mark it briefly; otherwise follow the newest.
     var focused by androidx.compose.runtime.remember(focusLocalId) { androidx.compose.runtime.mutableStateOf(focusLocalId == null) }
     var highlight by androidx.compose.runtime.remember(focusLocalId) { androidx.compose.runtime.mutableStateOf<Long?>(null) }
+    // The list is drawn bottom up (newest at index 0, as WhatsApp), so it opens on the latest without scrolling and
+    // stays there as messages arrive. Below the messages (lower indexes) sit the open requests and support replies.
+    val lastMessage = state.messages.lastOrNull()
+    val supportReplies = state.isSupport && lastMessage is Message.Text && !lastMessage.outgoing && state.online
+    val tail = state.openRequests.size + if (supportReplies) 1 else 0
     LaunchedEffect(rows) {
         if (rows == 0) return@LaunchedEffect
         if (!focused) {
             val at = state.messages.indexOfFirst { it.localId == focusLocalId }
             if (at >= 0) {
                 focused = true
-                listState.scrollToItem(at)
+                listState.scrollToItem(tail + state.messages.lastIndex - at)
                 highlight = focusLocalId
                 kotlinx.coroutines.delay(1_600)
                 highlight = null
             }
             return@LaunchedEffect
         }
-        listState.animateScrollToItem(rows - 1)
+        // A new message while the person is at the bottom keeps them there; reading older ones, it leaves them be.
+        if (listState.firstVisibleItemIndex <= 2) listState.animateScrollToItem(0)
     }
+    // Older messages load before the top is reached: 30 rows from the oldest shown, the next page comes in.
+    LaunchedEffect(listState) {
+        androidx.compose.runtime.snapshotFlow {
+            val info = listState.layoutInfo
+            (info.visibleItemsInfo.lastOrNull()?.index ?: 0) >= info.totalItemsCount - 30
+        }.collect { nearTop -> if (nearTop) onLoadOlder() }
+    }
+    val awayFromLatest by androidx.compose.runtime.remember { androidx.compose.runtime.derivedStateOf { listState.firstVisibleItemIndex > 3 } }
+    val listScope = androidx.compose.runtime.rememberCoroutineScope()
     val now = nowMillis()
     val chama = state.chama
 
@@ -499,13 +517,18 @@ fun ThreadContent(
         },
     ) { padding ->
         Column(Modifier.fillMaxSize().padding(bottom = padding.calculateBottomPadding())) {
+            Box(Modifier.weight(1f).fillMaxWidth()) {
             LazyColumn(
                 state = listState,
-                modifier = Modifier.weight(1f).fillMaxWidth(),
+                reverseLayout = true,
+                modifier = Modifier.fillMaxSize(),
                 contentPadding = PaddingValues(start = CircasoSpacing.s4, end = CircasoSpacing.s4, top = CircasoSpacing.s2, bottom = CircasoSpacing.s3),
-                verticalArrangement = Arrangement.spacedBy(CircasoSpacing.s2),
+                verticalArrangement = Arrangement.spacedBy(CircasoSpacing.s2, Alignment.Bottom),
             ) {
-                itemsIndexed(state.messages, key = { _, m -> m.localId }) { index, m ->
+                // Bottom up: what sits under the conversation first, then the messages newest to oldest.
+                threadTail(state, supportReplies, chama, onDecide, onPayRequest, onQuickReply, onCallSupport, onSupportDone)
+                itemsIndexed(state.messages.asReversed(), key = { _, m -> m.localId }) { reversedIndex, m ->
+                    val index = state.messages.lastIndex - reversedIndex
                     val lit by androidx.compose.animation.animateColorAsState(if (highlight == m.localId) c.fill else androidx.compose.ui.graphics.Color.Transparent, tween(CircasoMotion.BaseMs), label = "found")
                     Box(Modifier.fillMaxWidth().background(lit)) {
                     val previous = state.messages.getOrNull(index - 1)
@@ -535,26 +558,18 @@ fun ThreadContent(
                     }
                     }
                 }
-                // Design SP02: replies one tap away while support has the last word.
-                val last = state.messages.lastOrNull()
-                if (state.isSupport && last is Message.Text && !last.outgoing && state.online) item(key = "support-replies") {
-                    // Wraps at large text instead of clipping; a 1:1 chat has no avatar column to indent for.
-                    @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
-                    androidx.compose.foundation.layout.FlowRow(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(CircasoSpacing.s2), verticalArrangement = Arrangement.spacedBy(CircasoSpacing.s2)) {
-                        com.circaso.designsystem.components.SuggestionChip("Yes, please", { onQuickReply("Yes, please") })
-                        if (onCallSupport != null) com.circaso.designsystem.components.SuggestionChip("Call me instead", onCallSupport)
-                        com.circaso.designsystem.components.SuggestionChip("That's all", onSupportDone)
-                    }
+            }
+            // Back to the latest, once the person has scrolled up through older messages.
+            androidx.compose.animation.AnimatedVisibility(
+                awayFromLatest,
+                modifier = Modifier.align(Alignment.BottomEnd).padding(end = CircasoSpacing.s4, bottom = CircasoSpacing.s3),
+                enter = fadeIn(tween(CircasoMotion.QuickMs)) + androidx.compose.animation.scaleIn(tween(CircasoMotion.QuickMs)),
+                exit = fadeOut(tween(CircasoMotion.QuickMs)) + androidx.compose.animation.scaleOut(tween(CircasoMotion.QuickMs)),
+            ) {
+                Box(Modifier.shadow(8.dp, com.circaso.designsystem.theme.CircasoShapes.circle).clip(com.circaso.designsystem.theme.CircasoShapes.circle).background(c.surface)) {
+                    CircasoIconButton(CircasoIcon.ArrowDown, "Jump to the latest message", { listScope.launch { listState.animateScrollToItem(0) } })
                 }
-                // Design D5: the requests still open sit under the conversation, live, until they are paid or closed.
-                items(state.openRequests, key = { "request-" + it.requestId }) { request ->
-                    RequestCard(
-                        request, state.fiat, nameOf = state::memberName,
-                        isAdmin = chama?.isAdmin == true, isTreasurer = chama?.isTreasurer == true, myUserId = state.myUserId, busy = state.chamaBusy, online = state.online,
-                        onApprove = { onDecide(request, true) }, onDecline = { onDecide(request, false) }, onPay = { onPayRequest?.invoke(request) },
-                        modifier = Modifier.animateItem(),
-                    )
-                }
+            }
             }
             ComposerBar(
                 value = state.draft,
@@ -1458,3 +1473,35 @@ internal fun androidx.compose.foundation.layout.BoxScope.ImageViewer(bytes: Byte
 
 /** The coin chips float over the thread, lifted like the payment preview. */
 private fun Modifier.shadowPill(): Modifier = shadow(6.dp, com.circaso.designsystem.theme.CircasoShapes.pill)
+
+/** What sits under the conversation (bottom up): open requests, then support's quick replies. */
+private fun androidx.compose.foundation.lazy.LazyListScope.threadTail(
+    state: ThreadUiState,
+    supportReplies: Boolean,
+    chama: com.circaso.feature.chama.domain.Chama?,
+    onDecide: (com.circaso.feature.chama.domain.ChamaRequest, Boolean) -> Unit,
+    onPayRequest: ((com.circaso.feature.chama.domain.ChamaRequest) -> Unit)?,
+    onQuickReply: (String) -> Unit,
+    onCallSupport: (() -> Unit)?,
+    onSupportDone: () -> Unit,
+) {
+    // Design D5: the requests still open sit under the conversation, live, until they are paid or closed.
+    items(state.openRequests.asReversed(), key = { "request-" + it.requestId }) { request ->
+        RequestCard(
+            request, state.fiat, nameOf = state::memberName,
+            isAdmin = chama?.isAdmin == true, isTreasurer = chama?.isTreasurer == true, myUserId = state.myUserId, busy = state.chamaBusy, online = state.online,
+            onApprove = { onDecide(request, true) }, onDecline = { onDecide(request, false) }, onPay = { onPayRequest?.invoke(request) },
+            modifier = Modifier.animateItem(),
+        )
+    }
+    // Design SP02: replies one tap away while support has the last word.
+    if (supportReplies) item(key = "support-replies") {
+        // Wraps at large text instead of clipping; a 1:1 chat has no avatar column to indent for.
+        @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+        androidx.compose.foundation.layout.FlowRow(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(CircasoSpacing.s2), verticalArrangement = Arrangement.spacedBy(CircasoSpacing.s2)) {
+            com.circaso.designsystem.components.SuggestionChip("Yes, please", { onQuickReply("Yes, please") })
+            if (onCallSupport != null) com.circaso.designsystem.components.SuggestionChip("Call me instead", onCallSupport)
+            com.circaso.designsystem.components.SuggestionChip("That's all", onSupportDone)
+        }
+    }
+}
