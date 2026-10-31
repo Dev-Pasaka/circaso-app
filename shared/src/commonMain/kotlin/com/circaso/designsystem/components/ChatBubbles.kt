@@ -362,7 +362,9 @@ fun ThreadHeader(
     val c = CircasoTheme.colors
     val t = CircasoTheme.typography
     Row(modifier.fillMaxWidth().heightIn(min = 52.dp).padding(horizontal = CircasoSpacing.s4, vertical = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-        CircasoIconButton(CircasoIcon.Back, "Back", onBack)
+        // The first screen beside a list has nothing to go back to (iPad): no Back there, its space kept.
+        if (com.circaso.core.navigation.LocalIsDetailRoot.current) androidx.compose.foundation.layout.Spacer(Modifier.size(CircasoSizes.iconButton))
+        else CircasoIconButton(CircasoIcon.Back, "Back", onBack)
         repeat((trailingCount - 1).coerceAtLeast(0)) { HeaderSpacer() }
         Column(
             Modifier.weight(1f).then(

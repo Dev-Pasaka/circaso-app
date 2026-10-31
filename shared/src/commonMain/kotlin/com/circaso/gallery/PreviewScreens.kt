@@ -1,5 +1,8 @@
 package com.circaso.gallery
 
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.text.BasicText
 import androidx.compose.runtime.Composable
@@ -138,6 +141,26 @@ private val thread = listOf(
 @Composable
 fun PreviewScreens(name: String) {
     when (name) {
+        // Home's real frame with sample tabs: the floating tab bar, or the left rail on a short or wide window.
+        "home" -> com.circaso.feature.home.presentation.HomeScreen(
+            chats = { pad -> ChatsContent(ChatsUiState(chats = chatList, loaded = true), pad, {}, {}, {}) },
+            chatsActions = {}, chatsBanner = {},
+            wallet = { pad -> WalletContent(WalletUiState(wallet = sampleWallet(), recent = sampleTransfers()), pad, noWalletActions, {}, {}, {}, {}) },
+            walletActions = {},
+            you = { pad -> PreviewScreens("you") },
+        )
+        // The split view as a wide window shows it: the chat list beside an open chat, or beside the empty pane.
+        "split", "split-wallet" -> androidx.compose.foundation.layout.Row(androidx.compose.ui.Modifier.fillMaxSize()) {
+            com.circaso.designsystem.adaptive.ProvideWindowLayout(androidx.compose.ui.Modifier.width(com.circaso.designsystem.adaptive.WindowLayout.ListPaneWidth).fillMaxHeight()) {
+                PreviewScreens("home")
+            }
+            androidx.compose.foundation.layout.Box(androidx.compose.ui.Modifier.width(0.5.dp).fillMaxHeight().background(com.circaso.designsystem.theme.CircasoTheme.colors.separator))
+            com.circaso.designsystem.adaptive.ProvideWindowLayout(androidx.compose.ui.Modifier.weight(1f).fillMaxHeight()) {
+                androidx.compose.runtime.CompositionLocalProvider(com.circaso.core.navigation.LocalIsDetailRoot provides true) {
+                    PreviewScreens(if (name == "split") "chat" else "transfer")
+                }
+            }
+        }
         "you" -> YouContent(
             YouUiState(
                 profile = profile, maskedPhone = "+254 7•• ••• 678",
