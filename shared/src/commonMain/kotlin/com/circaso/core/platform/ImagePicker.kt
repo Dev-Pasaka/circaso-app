@@ -13,4 +13,7 @@ interface ImagePicker {
 }
 
 /** The longest side of a profile picture we upload, in pixels. */
-const val AvatarMaxSide = 1024
+const val AvatarMaxSide = 2048
+
+/** JPEG quality for a profile photo: high enough that the full-screen view stays crisp (the user, 2026-10-31). */
+const val AvatarJpegQuality = 92

@@ -62,7 +62,9 @@ private fun scaledJpeg(data: NSData): PickedImage? {
     val (w, h) = image.size.useContents { width to height }
     val scale = if (max(w, h) > AvatarMaxSide) AvatarMaxSide / max(w, h) else 1.0
     val target = CGSizeMake(w * scale, h * scale)
-    val drawn = UIGraphicsImageRenderer(size = target).imageWithActions { image.drawInRect(CGRectMake(0.0, 0.0, w * scale, h * scale)) }
-    val jpeg = UIImageJPEGRepresentation(drawn, 0.85) ?: return null
+    // Exactly that many pixels: the renderer otherwise multiplies by the screen's scale (3x on iPhones).
+    val format = platform.UIKit.UIGraphicsImageRendererFormat.defaultFormat().apply { setScale(1.0) }
+    val drawn = UIGraphicsImageRenderer(size = target, format = format).imageWithActions { image.drawInRect(CGRectMake(0.0, 0.0, w * scale, h * scale)) }
+    val jpeg = UIImageJPEGRepresentation(drawn, AvatarJpegQuality / 100.0) ?: return null
     return PickedImage(jpeg.toByteArray(), "image/jpeg", (w * scale).toInt(), (h * scale).toInt())
 }

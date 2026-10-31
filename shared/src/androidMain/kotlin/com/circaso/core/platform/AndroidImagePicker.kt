@@ -40,7 +40,7 @@ class AndroidImagePicker(private val context: Context) : ImagePicker {
         return withContext(Dispatchers.IO) {
             val bitmap = decode(uri) ?: return@withContext null
             val out = ByteArrayOutputStream()
-            bitmap.compress(Bitmap.CompressFormat.JPEG, 85, out)
+            bitmap.compress(Bitmap.CompressFormat.JPEG, AvatarJpegQuality, out)
             val (w, h) = bitmap.width to bitmap.height
             bitmap.recycle()
             PickedImage(out.toByteArray(), "image/jpeg", w, h)

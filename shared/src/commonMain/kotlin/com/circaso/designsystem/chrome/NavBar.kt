@@ -60,6 +60,18 @@ fun CircasoNavBar(
     val c = CircasoTheme.colors
     val t = CircasoTheme.typography
     val centered = CircasoTheme.platform == PlatformStyle.Ios
+    if (com.circaso.designsystem.adaptive.LocalTopBarOnSide.current) {
+        // Down the left side on a phone on its side: Back, the title, then the actions, all within thumb reach.
+        Column(modifier.fillMaxWidth().padding(start = 16.dp, end = 8.dp, top = 8.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            if (onBack != null && !com.circaso.core.navigation.LocalIsDetailRoot.current) CircasoIconButton(CircasoIcon.Back, "Back", onBack)
+            Column(Modifier.semantics { heading() }) {
+                BasicText(title, style = t.headline.copy(color = c.ink), maxLines = 3, overflow = TextOverflow.Ellipsis)
+                if (subtitle != null) BasicText(subtitle, style = t.caption1.copy(color = c.inkSecondary), maxLines = 2)
+            }
+            androidx.compose.foundation.layout.FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp), content = trailing)
+        }
+        return
+    }
     Row(
         modifier.fillMaxWidth().heightIn(min = CircasoSizes.controlMd).padding(horizontal = 16.dp),
         horizontalArrangement = Arrangement.spacedBy(8.dp),

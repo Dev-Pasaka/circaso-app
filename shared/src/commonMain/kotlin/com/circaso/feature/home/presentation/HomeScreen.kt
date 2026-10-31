@@ -70,7 +70,6 @@ fun HomeScreen(
         maxContentWidth = if (layout.short && tab != Tab.Chats) com.circaso.designsystem.adaptive.WindowLayout.WideContentWidth else com.circaso.designsystem.adaptive.WindowLayout.ReadableWidth,
         // No title bar on the tabs (Pasaka, 2026-10-30): the tab bar already says where you are, and each screen's
         // actions live in it (the Chats button, the eye on the wallet card).
-        topBar = {},
         banner = { when (tab) { Tab.Chats -> chatsBanner(); Tab.Wallet -> ConnectionBanner(); Tab.You -> Unit } },
         // On its side, or with room to spare, the tabs move to the left edge (Material's rail, iPad's sidebar);
         // in a split's narrow list pane they stay at the bottom of the pane.

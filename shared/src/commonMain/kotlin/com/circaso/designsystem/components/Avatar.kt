@@ -35,8 +35,10 @@ fun Avatar(name: String, modifier: Modifier = Modifier, size: Dp = CircasoSizes.
         BasicText(initials, style = CircasoTheme.typography.headline.copy(color = c.ink, fontSize = (size.value * 0.36f).sp))
         if (imageUrl != null) {
             val key = imageUrl.substringBefore('?')
+            // One file on disk; in memory one copy per size drawn, so a small chat-list avatar is never stretched
+            // into the large profile photo or the full-screen view (it looked soft).
             AsyncImage(
-                model = ImageRequest.Builder(LocalPlatformContext.current).data(imageUrl).memoryCacheKey(key).diskCacheKey(key).crossfade(true).build(),
+                model = ImageRequest.Builder(LocalPlatformContext.current).data(imageUrl).memoryCacheKey("$key@${size.value.toInt()}").diskCacheKey(key).crossfade(true).build(),
                 contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.size(size),
             )
         }

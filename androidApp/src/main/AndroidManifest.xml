@@ -37,6 +37,11 @@
         android:roundIcon="@mipmap/ic_launcher_round"
         android:supportsRtl="true"
         android:theme="@style/Theme.Circaso.Starting">
+        <!-- Pushes that Android shows itself (the app in the background) use the high-importance Messages channel,
+             so they pop up over other apps like WhatsApp's, not only in the shade. -->
+        <meta-data
+            android:name="com.google.firebase.messaging.default_notification_channel_id"
+            android:value="messages" />
         <activity
             android:exported="true"
             android:name=".MainActivity"

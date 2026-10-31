@@ -451,7 +451,7 @@ private fun PhotoViewer(
         val density = LocalDensity.current
         coil3.compose.AsyncImage(
             model = coil3.request.ImageRequest.Builder(coil3.compose.LocalPlatformContext.current).data(photo)
-                .memoryCacheKey("$key#full").diskCacheKey(key).placeholderMemoryCacheKey(key).crossfade(true).build(),
+                .memoryCacheKey("$key#full").diskCacheKey(key).placeholderMemoryCacheKey("$key@${CircasoSizes.avatarHero.value.toInt()}").crossfade(true).build(),
             contentDescription = "$name's photo",
             contentScale = androidx.compose.ui.layout.ContentScale.Crop,
             modifier = Modifier

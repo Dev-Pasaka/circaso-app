@@ -87,6 +87,14 @@ fun VoiceContent(
 
     CircasoScaffold(
         topBar = {
+            if (com.circaso.designsystem.adaptive.LocalTopBarOnSide.current) {
+                Column(Modifier.fillMaxWidth().padding(start = CircasoSpacing.s4, end = CircasoSpacing.s2, top = 8.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    CircasoIconButton(CircasoIcon.Back, "Back to the chat", if (state.phase == VoicePhase.Ended) onLeave else onEnd)
+                    BasicText("Asha", style = t.headline.copy(color = c.ink))
+                    BasicText(statusLine(state), style = t.caption1.copy(color = c.inkSecondary), maxLines = 3)
+                }
+                return@CircasoScaffold
+            }
             Row(Modifier.fillMaxWidth().heightIn(min = 52.dp).padding(horizontal = CircasoSpacing.s4, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
                 CircasoIconButton(CircasoIcon.Back, "Back to the chat", if (state.phase == VoicePhase.Ended) onLeave else onEnd)
                 Column(Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(2.dp)) {

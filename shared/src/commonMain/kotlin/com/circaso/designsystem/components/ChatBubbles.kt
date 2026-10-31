@@ -361,6 +361,23 @@ fun ThreadHeader(
 ) {
     val c = CircasoTheme.colors
     val t = CircasoTheme.typography
+    if (com.circaso.designsystem.adaptive.LocalTopBarOnSide.current) {
+        // Down the left side on a phone on its side: Back, who this is, then the call buttons.
+        Column(modifier.fillMaxWidth().padding(start = CircasoSpacing.s4, end = CircasoSpacing.s2, top = 8.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            if (!com.circaso.core.navigation.LocalIsDetailRoot.current) CircasoIconButton(CircasoIcon.Back, "Back", onBack)
+            Column(
+                if (onTitle != null) Modifier.pressable(role = androidx.compose.ui.semantics.Role.Button, pressedScale = 0.97f, onClick = onTitle)
+                    .semantics(mergeDescendants = true) { contentDescription = "$title. $subtitle. View profile" } else Modifier,
+                verticalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                avatar()
+                BasicText(title, style = t.body.copy(color = c.ink, fontWeight = FontWeight.SemiBold), maxLines = 2, overflow = TextOverflow.Ellipsis)
+                BasicText(subtitle, style = t.caption1.copy(color = c.inkSecondary), maxLines = 2, overflow = TextOverflow.Ellipsis)
+            }
+            androidx.compose.foundation.layout.FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp), content = trailing)
+        }
+        return
+    }
     Row(modifier.fillMaxWidth().heightIn(min = 52.dp).padding(horizontal = CircasoSpacing.s4, vertical = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
         // The first screen beside a list has nothing to go back to (iPad): no Back there, its space kept.
         if (com.circaso.core.navigation.LocalIsDetailRoot.current) androidx.compose.foundation.layout.Spacer(Modifier.size(CircasoSizes.iconButton))

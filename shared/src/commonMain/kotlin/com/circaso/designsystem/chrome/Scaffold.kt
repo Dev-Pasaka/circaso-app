@@ -22,6 +22,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.width
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
@@ -42,7 +44,8 @@ import com.circaso.designsystem.theme.CircasoTheme
 fun CircasoScaffold(
     modifier: Modifier = Modifier,
     grouped: Boolean = false,
-    topBar: @Composable () -> Unit = {},
+    /** Across the top; down the left side when the phone is on its side, with everything in it stacked. */
+    topBar: (@Composable () -> Unit)? = null,
     banner: @Composable () -> Unit = {},
     bottomBar: (@Composable () -> Unit)? = null,
     /** In place of [bottomBar] on a wide or short screen: the tabs float down the left side. */
@@ -65,6 +68,7 @@ fun CircasoScaffold(
     // Content is always framed, never stretched to the screen (the user, 2026-10-31: everything intentional);
     // backgrounds still reach every edge.
     val keepReadable = readable
+    val topBarOnSide = topBar != null && com.circaso.designsystem.adaptive.LocalWindowLayout.current.short
     var bottomBarHeight by remember { mutableStateOf(0.dp) }
     var sideBarWidth by remember { mutableStateOf(0.dp) }
     val sideInsets = WindowInsets.displayCutout.union(WindowInsets.navigationBars).only(WindowInsetsSides.Horizontal)
@@ -87,13 +91,13 @@ fun CircasoScaffold(
             // side (landscape), as it keeps clear of the status bar at the top.
             Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.statusBars)
                 .windowInsetsPadding(sideInsets)
-                .padding(start = if (sideBar != null) sideBarWidth else 0.dp).let {
+                .padding(start = (if (sideBar != null) sideBarWidth else 0.dp) + (if (topBarOnSide) WindowLayout.SideTopBarWidth else 0.dp)).let {
                 // With a tab bar the bar itself clears the home indicator; without one the content must.
                 if (bottomBar == null) it.windowInsetsPadding(WindowInsets.navigationBars.union(WindowInsets.ime)) else it.imePadding()
             },
         ) {
             androidx.compose.runtime.CompositionLocalProvider(LocalBackdropHost provides host) {
-            topBar()
+            if (!topBarOnSide) topBar?.invoke()
             banner()
             Box(Modifier.weight(1f).let { if (keepReadable) it.readableWidth(maxContentWidth) else it }) { content(PaddingValues(bottom = if (bottomBar != null) bottomBarHeight + navInset else 0.dp)) }
             }
@@ -107,6 +111,15 @@ fun CircasoScaffold(
                     .padding(start = 16.dp, end = 16.dp, bottom = navInset)
                     .onSizeChanged { bottomBarHeight = with(density) { it.height.toDp() } + 8.dp },
             ) { bottomBar() }
+        }
+        if (topBarOnSide) {
+            Box(
+                // Its own width on top of the notch or side bar inset, so the title always has room.
+                Modifier.align(Alignment.TopStart).fillMaxHeight()
+                    .windowInsetsPadding(WindowInsets.statusBars).windowInsetsPadding(sideInsets).width(WindowLayout.SideTopBarWidth),
+            ) {
+                androidx.compose.runtime.CompositionLocalProvider(com.circaso.designsystem.adaptive.LocalTopBarOnSide provides true) { topBar?.invoke() }
+            }
         }
         if (sideBar != null) {
             Box(

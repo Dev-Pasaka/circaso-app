@@ -53,6 +53,8 @@ data class WindowLayout(val width: Dp, val height: Dp) {
         val ReadableWidth = 680.dp
         /** A layout designed in two columns (a phone on its side): wider, still framed, never the whole screen. */
         val WideContentWidth = 900.dp
+        /** The top bar's column down the left side on a phone on its side. */
+        val SideTopBarWidth = 136.dp
     }
 }
 
@@ -77,3 +79,9 @@ fun Modifier.readableWidth(max: Dp = WindowLayout.ReadableWidth): Modifier =
  * nothing when there isn't. Never put the content itself in a weighted child: it would be cut to what is left.
  */
 fun Modifier.fillOrScroll(): Modifier = composed { verticalScroll(androidx.compose.foundation.rememberScrollState()) }
+
+/**
+ * True inside a screen's top bar when it is drawn as a column down the left side (a phone on its side, the user,
+ * 2026-10-31): the bar's back button, title and actions stack vertically there, within thumb reach.
+ */
+val LocalTopBarOnSide = androidx.compose.runtime.compositionLocalOf { false }
