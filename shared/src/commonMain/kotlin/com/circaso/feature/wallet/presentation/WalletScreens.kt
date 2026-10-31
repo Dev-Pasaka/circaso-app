@@ -32,6 +32,11 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.animation.core.tween
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.layout.positionInWindow
+import androidx.compose.ui.layout.boundsInWindow
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.AnnotatedString
@@ -269,6 +274,29 @@ private fun ActiveWallet(state: WalletUiState, wallet: Wallet, bottom: androidx.
     // Starts on the card shown first (the richest), so the list doesn't show every network for a frame and then shrink.
     var network by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(byValue(wallet.chains, fiat).firstOrNull()?.blockchain) }
     val recent = state.recent.filter { network == null || it.blockchain == network }.take(5)
+    // Behind the cards, the front card's colour from under the status bar, fading out by the end of the cards.
+    var glow by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(androidx.compose.ui.graphics.Color.Transparent) }
+    var cardsBottom by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(0f) }
+    var pageTop by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(0f) }
+    val animatedGlow by androidx.compose.animation.animateColorAsState(glow, tween(CircasoMotion.BaseMs), label = "glow")
+    val glowStrength = if (c.isDark) 0.7f else 0.4f
+    androidx.compose.foundation.layout.Box(
+        Modifier.matchParentSize().onGloballyPositioned { pageTop = it.positionInWindow().y },
+    ) {
+        if (!c.isHighContrast && cardsBottom > 0f) {
+            androidx.compose.foundation.layout.Box(
+                Modifier.fillMaxWidth().height(with(androidx.compose.ui.platform.LocalDensity.current) { cardsBottom.toDp() })
+                    // The tabs sit below the status bar; reach up past it to the top of the screen.
+                    .graphicsLayer { translationY = -pageTop }
+                    .background(
+                        androidx.compose.ui.graphics.Brush.verticalGradient(
+                            0f to animatedGlow.copy(alpha = glowStrength), 0.45f to animatedGlow.copy(alpha = glowStrength * 0.55f),
+                            1f to animatedGlow.copy(alpha = 0f),
+                        ),
+                    ),
+            )
+        }
+    }
     LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(start = CircasoSpacing.s4, end = CircasoSpacing.s4, top = 10.dp, bottom = bottom), verticalArrangement = Arrangement.spacedBy(22.dp)) {
         // No overall total (Pasaka, 2026-10-30): each network's card carries its own balance, the richest first.
         if (!state.online || wallet.holdUntil != null) {
@@ -284,14 +312,14 @@ private fun ActiveWallet(state: WalletUiState, wallet: Wallet, bottom: androidx.
                 // One card per network, swiped sideways (cards reach the screen edges to peek); the actions, then the
                 // focused card's assets, follow under them.
                 androidx.compose.foundation.layout.Box(
-                    Modifier.layout { measurable, constraints ->
+                    Modifier.onGloballyPositioned { cardsBottom = it.boundsInWindow().bottom.takeIf { b -> b > pageTop + 1f } ?: 0f }.layout { measurable, constraints ->
                         val bleed = (CircasoSpacing.s4 * 2).roundToPx()
                         val wide = constraints.maxWidth + bleed
                         val placeable = measurable.measure(constraints.copy(minWidth = wide, maxWidth = wide))
                         layout(constraints.maxWidth, placeable.height) { placeable.place(-bleed / 2, 0) }
                     },
                 ) {
-                    ChainCards(byValue(wallet.chains, fiat), fiat, hidden, onToggleHidden, onFocus = { network = it }, onAsset = actions.onAsset) {
+                    ChainCards(byValue(wallet.chains, fiat), fiat, hidden, onToggleHidden, onFocus = { network = it }, onAsset = actions.onAsset, onGlow = { glow = it }) {
                         Row(Modifier.fillMaxWidth().padding(horizontal = CircasoSpacing.s2), horizontalArrangement = Arrangement.SpaceBetween) {
                             ActionButton(CircasoIcon.Plus, "Add", { onComing(ComingFlow.AddMoney) })
                             ActionButton(CircasoIcon.ArrowUp, "Send", actions.onPay, enabled = state.canSend)

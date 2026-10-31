@@ -31,6 +31,9 @@ import androidx.compose.foundation.text.BasicText
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.zIndex
+import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.height
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.graphicsLayer
@@ -71,6 +74,8 @@ internal fun ChainCards(
     onFocus: (String) -> Unit = {},
     /** An asset row was tapped: its statement on that network. */
     onAsset: (blockchain: String, symbol: String) -> Unit = { _, _ -> },
+    /** The front card's colour as the person swipes, blended between neighbours: the page glows in it. */
+    onGlow: (androidx.compose.ui.graphics.Color) -> Unit = {},
     between: @Composable () -> Unit = {},
 ) {
     if (chains.isEmpty()) return
@@ -88,24 +93,61 @@ internal fun ChainCards(
         val want = chains.indexOfFirst { it.blockchain == focused }
         if (want >= 0 && want != pager.currentPage) pager.scrollToPage(want)
     }
+    // The glow follows the finger: the front card's colour blending into the next one's mid-swipe.
+    val glow = run {
+        val here = cardArt(chainName(chains[pager.currentPage.coerceIn(chains.indices)].blockchain).substringBefore(" ("))[1]
+        val next = (pager.currentPage + if (pager.currentPageOffsetFraction >= 0f) 1 else -1).coerceIn(chains.indices)
+        val there = cardArt(chainName(chains[next].blockchain).substringBefore(" ("))[1]
+        androidx.compose.ui.graphics.lerp(here, there, abs(pager.currentPageOffsetFraction))
+    }
+    androidx.compose.runtime.LaunchedEffect(glow) { onGlow(glow) }
+    // Tapping the front card deals the cards out into a stack, Apple Wallet style: the others show their top edge
+    // above the one tapped. Tapping any card pulls it to the front and the stack springs closed into the row again.
+    var deckShown by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(false) }
+    var spread by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(false) }
+    var order by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(emptyList<String>()) }
+    androidx.compose.runtime.LaunchedEffect(deckShown) { if (deckShown) spread = true }
+    @OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class)
+    androidx.compose.ui.backhandler.BackHandler(enabled = spread) { spread = false }
     Column(verticalArrangement = Arrangement.spacedBy(CircasoSpacing.s3)) {
-        HorizontalPager(
-            state = pager,
-            contentPadding = PaddingValues(horizontal = CircasoSpacing.s6),
-            pageSpacing = CircasoSpacing.s3,
-            modifier = Modifier.fillMaxWidth(),
-        ) { page ->
-            val distance = abs((pager.currentPage - page) + pager.currentPageOffsetFraction).coerceIn(0f, 1f)
-            ChainCard(
-                chains[page], fiat, hidden, onToggleHidden,
-                Modifier.graphicsLayer {
-                    if (!still) {
-                        val scale = 1f - 0.08f * distance
-                        scaleX = scale; scaleY = scale
-                    }
-                    alpha = 1f - 0.35f * distance
+        if (deckShown) {
+            CardDeck(
+                chains = order.mapNotNull { b -> chains.firstOrNull { it.blockchain == b } },
+                fiat = fiat, hidden = hidden, onToggleHidden = onToggleHidden, spread = spread, still = still,
+                onPick = { picked ->
+                    // The picked card goes to the front at once (it is pulled out), then the stack closes behind it.
+                    order = order.filter { it != picked } + picked
+                    spread = false
+                    chains.indexOfFirst { it.blockchain == picked }.takeIf { it >= 0 }?.let { pager.requestScrollToPage(it) }
                 },
+                onClosed = { deckShown = false },
             )
+        } else {
+            HorizontalPager(
+                state = pager,
+                contentPadding = PaddingValues(horizontal = CircasoSpacing.s6),
+                pageSpacing = CircasoSpacing.s3,
+                modifier = Modifier.fillMaxWidth(),
+            ) { page ->
+                val distance = abs((pager.currentPage - page) + pager.currentPageOffsetFraction).coerceIn(0f, 1f)
+                ChainCard(
+                    chains[page], fiat, hidden, onToggleHidden,
+                    Modifier.graphicsLayer {
+                        if (!still) {
+                            val scale = 1f - 0.08f * distance
+                            scaleX = scale; scaleY = scale
+                        }
+                        alpha = 1f - 0.35f * distance
+                    }.let { m ->
+                        if (chains.size > 1 && page == pager.currentPage) {
+                            m.pressable(role = androidx.compose.ui.semantics.Role.Button) {
+                                order = chains.map { it.blockchain }.filter { it != chains[page].blockchain } + chains[page].blockchain
+                                deckShown = true
+                            }
+                        } else m
+                    },
+                )
+            }
         }
         if (chains.size > 1) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center) {
@@ -217,6 +259,54 @@ private fun ChainCard(chain: WalletChain, fiat: FiatValue?, hidden: Boolean, onT
 }
 
 private val CardShape = androidx.compose.foundation.shape.RoundedCornerShape(22.dp)
+
+/**
+ * The cards as a stack: [chains] back to front, the front one whole and each one behind showing its top edge. They
+ * start piled exactly where the front card sat in the row, so opening reads as dealing them out and closing as
+ * gathering them back; [onClosed] runs once they have settled together.
+ */
+@Composable
+private fun CardDeck(
+    chains: List<WalletChain>,
+    fiat: FiatValue?,
+    hidden: Boolean,
+    onToggleHidden: () -> Unit,
+    spread: Boolean,
+    still: Boolean,
+    onPick: (String) -> Unit,
+    onClosed: () -> Unit,
+) {
+    androidx.compose.foundation.layout.BoxWithConstraints(Modifier.fillMaxWidth().padding(horizontal = CircasoSpacing.s6)) {
+        val cardHeight = maxWidth / 1.586f
+        val deal = if (still) tween<androidx.compose.ui.unit.Dp>(CircasoMotion.BaseMs) else androidx.compose.animation.core.spring(dampingRatio = DeckDamping, stiffness = DeckStiffness)
+        val height by androidx.compose.animation.core.animateDpAsState(
+            if (spread) cardHeight + DeckPeek * (chains.size - 1) else cardHeight, deal, label = "deck",
+            finishedListener = { if (!spread) onClosed() },
+        )
+        Box(Modifier.fillMaxWidth().height(height)) {
+            chains.forEachIndexed { slot, chain ->
+                androidx.compose.runtime.key(chain.blockchain) {
+                    val front = slot == chains.lastIndex
+                    val y by androidx.compose.animation.core.animateDpAsState(if (spread) DeckPeek * slot else 0.dp, deal, label = "slot")
+                    // Piled up, the ones behind tuck in a little so their edges don't show around the front card.
+                    val scale by androidx.compose.animation.core.animateFloatAsState(if (spread || front) 1f else 0.94f, if (still) tween(CircasoMotion.BaseMs) else androidx.compose.animation.core.spring(DeckDamping, DeckStiffness), label = "scale")
+                    ChainCard(
+                        chain, fiat, hidden, onToggleHidden,
+                        Modifier.zIndex(slot.toFloat()).offset { androidx.compose.ui.unit.IntOffset(0, y.roundToPx()) }
+                            .graphicsLayer { scaleX = scale; scaleY = scale; transformOrigin = androidx.compose.ui.graphics.TransformOrigin(0.5f, 0f) }
+                            .pressable(role = androidx.compose.ui.semantics.Role.Button) { onPick(chain.blockchain) },
+                    )
+                }
+            }
+        }
+    }
+}
+
+/** How much of each card behind shows in the stack: its network name and mark. */
+private val DeckPeek = 64.dp
+/** A little give as the cards land, like cards dealt onto a table, without wobbling. */
+private const val DeckDamping = 0.78f
+private const val DeckStiffness = 420f
 
 /**
  * Card art per network: deep, quiet gradients, so the stack reads like a wallet of real cards and each network is
