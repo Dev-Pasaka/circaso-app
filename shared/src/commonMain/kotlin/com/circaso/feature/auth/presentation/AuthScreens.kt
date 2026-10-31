@@ -19,6 +19,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import com.circaso.designsystem.adaptive.fillOrScroll
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.input.KeyboardType
@@ -60,7 +61,7 @@ fun WelcomeScreen(viewModel: WelcomeViewModel) {
     val ios = CircasoTheme.platform == PlatformStyle.Ios
     val providers = if (ios) listOf(SocialProvider.Apple, SocialProvider.Google) else listOf(SocialProvider.Google)
     CircasoScaffold(banner = { ConnectionBanner() }) {
-        Column(Modifier.fillMaxSize().padding(horizontal = 20.dp, vertical = 16.dp)) {
+        Column(Modifier.fillMaxSize().fillOrScroll().padding(horizontal = 20.dp, vertical = 16.dp)) {
             Column(
                 Modifier.weight(1f).fillMaxWidth().padding(horizontal = 8.dp),
                 verticalArrangement = Arrangement.spacedBy(28.dp, Alignment.CenterVertically),
@@ -115,7 +116,7 @@ fun PhoneScreen(viewModel: PhoneViewModel, onLostAccess: (phone: String) -> Unit
         banner = { ConnectionBanner() },
     ) {
         if (state.numberTaken) {
-            Column(Modifier.fillMaxSize().padding(horizontal = 20.dp, vertical = 16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Column(Modifier.fillMaxSize().fillOrScroll().padding(horizontal = 20.dp, vertical = 16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterVertically)) {
                     BasicText("This number already has a Circaso account", Modifier.semantics { heading() }, style = t.title1.copy(color = c.ink))
                     BasicText("Sign in with the Google or Apple account you used before, and you'll go straight in.", style = t.body.copy(color = c.inkSecondary))
@@ -126,7 +127,7 @@ fun PhoneScreen(viewModel: PhoneViewModel, onLostAccess: (phone: String) -> Unit
                 CircasoButton("Lost Access to That Account?", { onLostAccess(state.input) }, style = ButtonStyle.Plain, size = ButtonSize.Large, block = true)
             }
         } else {
-            Column(Modifier.fillMaxSize().padding(horizontal = 20.dp, vertical = 16.dp)) {
+            Column(Modifier.fillMaxSize().fillOrScroll().padding(horizontal = 20.dp, vertical = 16.dp)) {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(top = 8.dp)) {
                     BasicText("Add your number", Modifier.semantics { heading() }, style = t.title1.copy(color = c.ink))
                     BasicText(
@@ -172,7 +173,7 @@ fun CodeScreen(viewModel: CodeViewModel, codeLength: Int, onBack: () -> Unit) {
         topBar = { CircasoNavBar(title = "", onBack = onBack) },
         banner = { ConnectionBanner() },
     ) {
-        Column(Modifier.fillMaxSize().padding(horizontal = 20.dp, vertical = 16.dp)) {
+        Column(Modifier.fillMaxSize().fillOrScroll().padding(horizontal = 20.dp, vertical = 16.dp)) {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(top = 8.dp)) {
                 BasicText("Enter the code", Modifier.semantics { heading() }, style = t.title1.copy(color = c.ink))
                 BasicText("Sent to ${viewModel.maskedPhone.maskedForDisplay()}", style = t.body.copy(color = c.inkSecondary))
@@ -215,7 +216,7 @@ fun RegisteringScreen(viewModel: RegisteringViewModel) {
     val t = CircasoTheme.typography
     CircasoScaffold(banner = { ConnectionBanner() }) {
         Column(
-            Modifier.fillMaxSize().padding(horizontal = 20.dp),
+            Modifier.fillMaxSize().fillOrScroll().padding(horizontal = 20.dp),
             verticalArrangement = Arrangement.spacedBy(20.dp, Alignment.CenterVertically),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {

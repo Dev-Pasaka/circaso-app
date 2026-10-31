@@ -93,6 +93,7 @@ fun AppNavigation(forceUpdate: Boolean, home: @Composable () -> Unit) {
     val auth: AuthManager = koinInject()
     val state by auth.state.collectAsState()
     val stored by auth.stored.collectAsState()
+    val twoPaneNow = com.circaso.designsystem.adaptive.LocalWindowLayout.current.twoPane
     val backStack = rememberNavBackStack(SavedStateConfiguration { serializersModule = routeSerializers }, SplashRoute)
 
     val root: Route = when (state) {
@@ -111,6 +112,12 @@ fun AppNavigation(forceUpdate: Boolean, home: @Composable () -> Unit) {
     }
 
     fun pop() { if (backStack.size > 1) backStack.removeAt(backStack.lastIndex) }
+    // From the list in a split, a chat replaces what the detail pane shows (iPad Messages): Home stays the only
+    // thing under it, so Back from the chat returns to the empty pane, not through every chat opened before.
+    fun openChatFromList(id: String) {
+        if (twoPaneNow) while (backStack.size > 1 && backStack.last() != HomeRoute) backStack.removeAt(backStack.lastIndex)
+        backStack.add(ChatRoute(id))
+    }
     val calls = koinInject<com.circaso.feature.calls.CallController>()
     // Typing /asha in any text field opens Asha, but only with a full session (she needs the server) and never twice.
     val asha = if (state == AuthState.Active) AshaLauncher { if (backStack.lastOrNull() != AshaRoute) backStack.add(AshaRoute) } else null
@@ -121,10 +128,17 @@ fun AppNavigation(forceUpdate: Boolean, home: @Composable () -> Unit) {
     }
     CompositionLocalProvider(LocalAshaLauncher provides asha) {
     Box {
+    val twoPane = com.circaso.designsystem.adaptive.LocalWindowLayout.current.twoPane
+    val still = com.circaso.designsystem.theme.CircasoTheme.reduceMotion
     NavDisplay(
         backStack = backStack,
         onBack = ::pop,
         entryDecorators = listOf(rememberSaveableStateHolderNavEntryDecorator(), rememberViewModelStoreNavEntryDecorator()),
+        // On a wide window Home is a list beside whatever it opened (docs/adaptive-layout-plan.md).
+        sceneStrategies = listOf(remember(twoPane) { ListDetailSceneStrategy(twoPane) }),
+        transitionSpec = { pushTransition(still) },
+        popTransitionSpec = { popTransition(still) },
+        predictivePopTransitionSpec = { popTransition(still) },
         entryProvider = entryProvider<NavKey> {
             entry<SplashRoute> { SplashScreen() }
             entry<WelcomeRoute> { WelcomeScreen(koinViewModel()) }
@@ -141,12 +155,12 @@ fun AppNavigation(forceUpdate: Boolean, home: @Composable () -> Unit) {
                 CodeScreen(viewModel, route.codeLength, onBack = { if (backStack.size > 1) backStack.removeAt(backStack.lastIndex) })
             }
             entry<RegisteringRoute> { RegisteringScreen(koinViewModel()) }
-            entry<HomeRoute> {
+            entry<HomeRoute>(metadata = Panes.List) {
                 val info: ClientInfo = koinInject()
                 val chatsViewModel = koinViewModel<ChatsViewModel>()
                 val walletViewModel = koinViewModel<WalletViewModel>()
                 HomeScreen(
-                    chats = { bottomPadding -> ChatsTab(chatsViewModel, bottomPadding, onAsha = { backStack.add(AshaRoute) }, onVoice = { backStack.add(AshaRoute); backStack.add(VoiceRoute) }, onNewChat = { backStack.add(NewChatRoute) }) { id -> backStack.add(ChatRoute(id)) } },
+                    chats = { bottomPadding -> ChatsTab(chatsViewModel, bottomPadding, onAsha = { backStack.add(AshaRoute) }, onVoice = { backStack.add(AshaRoute); backStack.add(VoiceRoute) }, onNewChat = { backStack.add(NewChatRoute) }, selectedChatId = if (twoPane) backStack.filterIsInstance<ChatRoute>().lastOrNull()?.chatId else null) { id -> openChatFromList(id) } },
                     chatsActions = {},
                     chatsBanner = {
                         val s by chatsViewModel.state.collectAsState()
@@ -240,7 +254,7 @@ fun AppNavigation(forceUpdate: Boolean, home: @Composable () -> Unit) {
                 val live = koinInject<LiveMicrophone>().supported
                 AshaScreen(koinViewModel(), onBack = ::pop, onVoice = if (live) ({ if (backStack.lastOrNull() != VoiceRoute) backStack.add(VoiceRoute) }) else null)
             }
-            entry<VoiceRoute> { VoiceScreen(koinViewModel(), onBack = ::pop) }
+            entry<VoiceRoute>(metadata = Panes.FullScreen) { VoiceScreen(koinViewModel(), onBack = ::pop) }
             entry<ChatRoute> { route ->
                 val threadViewModel = koinViewModel<ThreadViewModel>(key = route.chatId, parameters = { parametersOf(route.chatId) })
                 val thread by threadViewModel.state.collectAsState()
@@ -277,7 +291,7 @@ fun AppNavigation(forceUpdate: Boolean, home: @Composable () -> Unit) {
                 NewChatScreen(koinViewModel(), onBack = ::pop, onOpened = { id -> pop(); backStack.add(ChatRoute(id)) }, onNewGroup = { backStack.add(NewGroupRoute) }, onInvite = { backStack.add(ContactsRoute) })
             }
             entry<NewGroupRoute> { NewGroupScreen(koinViewModel(), onBack = ::pop, onCreated = { id -> pop(); pop(); backStack.add(ChatRoute(id)) }) }
-            entry<LocationMapRoute> { route ->
+            entry<LocationMapRoute>(metadata = Panes.FullScreen) { route ->
                 com.circaso.feature.messaging.presentation.map.LocationMapScreen(
                     koinViewModel<com.circaso.feature.messaging.presentation.map.LocationMapViewModel>(
                         key = "map-${route.chatId}-${route.focusLocalId}", parameters = { parametersOf(route.chatId, route.focusLocalId) },

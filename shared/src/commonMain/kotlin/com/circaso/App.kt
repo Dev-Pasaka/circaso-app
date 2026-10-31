@@ -45,6 +45,8 @@ fun App() {
     val isDark = saved.dark ?: systemDark
     val isHigh = saved.highContrast ?: systemHigh
     CircasoTheme(darkTheme = isDark, highContrast = isHigh) {
+        // Every screen knows the space it has (rotation, split screen, tablets): see designsystem/adaptive.
+        com.circaso.designsystem.adaptive.ProvideWindowLayout {
         AppNavigation(forceUpdate = outdated) {
             ThemeGallery(
                 darkTheme = isDark,
@@ -52,6 +54,7 @@ fun App() {
                 onToggleDark = { scope.launch { prefs.setDark(!isDark) } },
                 onToggleContrast = { scope.launch { prefs.setHighContrast(!isHigh) } },
             )
+        }
         }
     }
 }

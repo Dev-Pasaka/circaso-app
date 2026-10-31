@@ -26,6 +26,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import com.circaso.designsystem.adaptive.fillOrScroll
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.semantics.Role
@@ -98,7 +99,7 @@ fun VoiceContent(
         toast = { ToastHost(toast, Modifier.align(Alignment.TopCenter).padding(top = 8.dp)) },
     ) { padding ->
         Column(
-            Modifier.fillMaxSize().padding(bottom = padding.calculateBottomPadding()).padding(horizontal = CircasoSpacing.s6),
+            Modifier.fillMaxSize().fillOrScroll().padding(bottom = padding.calculateBottomPadding()).padding(horizontal = CircasoSpacing.s6),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
             Spacer(Modifier.weight(1f))

@@ -56,7 +56,8 @@ fun HomeScreen(
     var confirmExit by rememberSaveable { mutableStateOf(false) }
     // iOS sends its edge swipe here too: there it would only jump tabs and offer a Leave that can't leave, so Android only.
     val android = com.circaso.designsystem.platform.LocalPlatformStyle.current == com.circaso.designsystem.platform.PlatformStyle.Android && com.circaso.core.platform.canExitApp
-    androidx.compose.ui.backhandler.BackHandler(enabled = android && !confirmExit) {
+    val covered = com.circaso.core.navigation.LocalListHasDetail.current
+    androidx.compose.ui.backhandler.BackHandler(enabled = android && !confirmExit && !covered) {
         if (tab != Tab.Chats) selected = Tab.Chats.ordinal else confirmExit = true
     }
     CircasoScaffold(

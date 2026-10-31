@@ -53,9 +53,9 @@ import com.circaso.feature.messaging.domain.Message
 
 /** Design C1: the chat list. The title bar and tab bar come from the home scaffold; this is the tab's content. */
 @Composable
-fun ChatsTab(viewModel: ChatsViewModel, bottomPadding: PaddingValues, onAsha: () -> Unit, onVoice: () -> Unit = onAsha, onNewChat: () -> Unit = {}, onOpen: (chatId: String) -> Unit) {
+fun ChatsTab(viewModel: ChatsViewModel, bottomPadding: PaddingValues, onAsha: () -> Unit, onVoice: () -> Unit = onAsha, onNewChat: () -> Unit = {}, selectedChatId: String? = null, onOpen: (chatId: String) -> Unit) {
     val state by viewModel.state.collectAsState()
-    ChatsContent(state, bottomPadding, viewModel::onQuery, onAsha, onOpen, onNewChat = onNewChat, onFilter = viewModel::onFilter)
+    ChatsContent(state, bottomPadding, viewModel::onQuery, onAsha, onOpen, onNewChat = onNewChat, onFilter = viewModel::onFilter, selectedChatId = selectedChatId)
 }
 
 /** The Chats tab's sheet (A10), for the home scaffold's overlay so it sits above the tab bar. */
@@ -87,7 +87,7 @@ fun ChatsBanner(state: ChatsUiState) {
 }
 
 @Composable
-fun ChatsContent(state: ChatsUiState, bottomPadding: PaddingValues, onQuery: (String) -> Unit, onAsha: () -> Unit, onOpen: (String) -> Unit, onNewChat: (() -> Unit)? = null, onFilter: (ChatFilter) -> Unit = {}) {
+fun ChatsContent(state: ChatsUiState, bottomPadding: PaddingValues, onQuery: (String) -> Unit, onAsha: () -> Unit, onOpen: (String) -> Unit, onNewChat: (() -> Unit)? = null, onFilter: (ChatFilter) -> Unit = {}, selectedChatId: String? = null) {
     val c = CircasoTheme.colors
     val t = CircasoTheme.typography
     val now = nowMillis()
@@ -139,7 +139,7 @@ fun ChatsContent(state: ChatsUiState, bottomPadding: PaddingValues, onQuery: (St
             }
         }
         items(state.shown, key = { it.chat.chatId }) { summary ->
-            ChatRow(summary, now, state.fiat) { onOpen(summary.chat.chatId) }
+            ChatRow(summary, now, state.fiat, selected = summary.chat.chatId == selectedChatId) { onOpen(summary.chat.chatId) }
         }
     }
     if (onNewChat != null) {
@@ -149,7 +149,8 @@ fun ChatsContent(state: ChatsUiState, bottomPadding: PaddingValues, onQuery: (St
 }
 
 @Composable
-private fun ChatRow(summary: ChatSummary, now: Long, fiat: com.circaso.feature.wallet.domain.FiatValue? = null, onClick: () -> Unit) {
+/** [selected]: the chat open in the detail pane beside the list (wide windows), shown as iPad Messages does. */
+private fun ChatRow(summary: ChatSummary, now: Long, fiat: com.circaso.feature.wallet.domain.FiatValue? = null, selected: Boolean = false, onClick: () -> Unit) {
     val c = CircasoTheme.colors
     val t = CircasoTheme.typography
     val latest = summary.latest
@@ -183,6 +184,7 @@ private fun ChatRow(summary: ChatSummary, now: Long, fiat: com.circaso.feature.w
     // The design's end column (`cx-row-end`): the time above the unread count, both right-aligned.
     ListRow(
         title = summary.chat.title,
+        modifier = if (selected) Modifier.padding(horizontal = 8.dp).clip(com.circaso.designsystem.theme.CircasoShapes.md).background(c.fillSelected) else Modifier,
         sub = preview,
         leading = { Avatar(summary.chat.title, imageUrl = summary.chat.avatarUrl) },
         trailing = {

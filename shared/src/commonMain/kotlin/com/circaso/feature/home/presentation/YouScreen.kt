@@ -19,6 +19,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.windowInsetsPadding
 import com.circaso.designsystem.components.CircasoIconButton
 import androidx.compose.foundation.layout.statusBars
@@ -113,6 +114,7 @@ fun YouContent(
     val scroll = rememberScrollState()
     // Where the hero ends, measured from the top of the screen, so the glow behind it knows how far to reach.
     var heroBottom by remember { mutableStateOf(0) }
+    val short = com.circaso.designsystem.adaptive.LocalWindowLayout.current.short
     val statusTop = androidx.compose.foundation.layout.WindowInsets.statusBars.getTop(LocalDensity.current).toFloat()
     // Tapping the photo opens it large; it springs out of the circle and back into it.
     var viewingPhoto by remember { mutableStateOf(false) }
@@ -126,7 +128,7 @@ fun YouContent(
                 // The tabs sit below the status bar (Home's scaffold pads it), so the glow reaches up past its own top by
                 // that much to start at the top of the screen; it is never clipped there.
                 modifier = Modifier.fillMaxWidth().height(with(LocalDensity.current) { heroBottom.toDp() })
-                    .graphicsLayer { translationY = -statusTop - scroll.value.toFloat() },
+                    .graphicsLayer { translationY = -statusTop - if (short) 0f else scroll.value.toFloat() },
             )
         },
         // No title on the tabs (Pasaka, 2026-10-30): the tab bar says where you are.
@@ -145,71 +147,93 @@ fun YouContent(
             )
         },
     ) { padding ->
-        Column(
-            Modifier.fillMaxSize().verticalScroll(scroll)
-                .padding(horizontal = CircasoSpacing.s4)
-                .padding(top = CircasoSpacing.s2, bottom = CircasoSpacing.s6 + bottomPadding.calculateBottomPadding() + padding.calculateBottomPadding()),
-            verticalArrangement = Arrangement.spacedBy(CircasoSpacing.s6),
-        ) {
-            ProfileHero(
-                name = state.profile?.let { it.displayName.ifBlank { "Your profile" } },
-                handle = state.profile?.handle,
-                phone = state.maskedPhone?.maskedForDisplay(),
-                photo = state.profile?.avatarUrl,
-                waiting = state.profile?.pendingSync == true,
-                onEdit = actions.onEditProfile,
-                onPhoto = { viewingPhoto = true },
-                onPhotoBounds = { photoBounds = it },
-                photoHidden = photoOpen.value > 0.001f,
-                // Its bottom edge in the window, plus how far the page has scrolled: the glow's height from the top.
-                modifier = Modifier.onGloballyPositioned { heroBottom = (it.boundsInWindow().bottom + scroll.value).toInt().coerceAtLeast(0) },
-            )
-            // Changes that couldn't be saved get their own screen (Pasaka, 2026-10-30); here, one row that says how many.
-            if (state.failed.isNotEmpty()) {
-                ListGroup {
+        val hero: @Composable (Modifier) -> Unit = { m ->
+                ProfileHero(
+                    name = state.profile?.let { it.displayName.ifBlank { "Your profile" } },
+                    handle = state.profile?.handle,
+                    phone = state.maskedPhone?.maskedForDisplay(),
+                    photo = state.profile?.avatarUrl,
+                    waiting = state.profile?.pendingSync == true,
+                    onEdit = actions.onEditProfile,
+                    onPhoto = { viewingPhoto = true },
+                    onPhotoBounds = { photoBounds = it },
+                    photoHidden = photoOpen.value > 0.001f,
+                    // Its bottom edge in the window, plus how far the page has scrolled: the glow's height from the top.
+                    modifier = m.onGloballyPositioned { heroBottom = (it.boundsInWindow().bottom + if (short) 0 else scroll.value).toInt().coerceAtLeast(0) },
+                )
+        }
+        val settings: @Composable androidx.compose.foundation.layout.ColumnScope.() -> Unit = {
+                // Changes that couldn't be saved get their own screen (Pasaka, 2026-10-30); here, one row that says how many.
+                if (state.failed.isNotEmpty()) {
+                    ListGroup {
+                        ListRow(
+                            title = "Needs attention",
+                            sub = if (state.failed.size == 1) "1 change wasn't saved" else "${state.failed.size} changes weren't saved",
+                            leading = { CircasoIconImage(CircasoIcon.Warning, c.critical, Modifier.size(22.dp)) },
+                            trailing = { RowChevron() },
+                            onClick = actions.onNeedsAttention,
+                        )
+                    }
+                }
+                Section("People") {
+                    ListRow("Contacts", trailing = { RowChevron() }, onClick = actions.onContacts)
+                    RowDivider()
+                    ListRow("Blocked people", trailing = { RowChevron() }, onClick = actions.onBlocked)
+                }
+                Section("Security") {
+                    ListRow("Security and Privacy", trailing = { RowChevron() }, onClick = actions.onSecurity)
+                    RowDivider(Modifier.padding(start = CircasoSpacing.s4))
+                    ListRow("Notifications", trailing = { RowChevron() }, onClick = actions.onNotifications)
+                }
+                Section("Money") {
+                    ListRow("Currency", sub = "How amounts are shown in your wallet and chats", trailing = { RowChevron() }, onClick = actions.onCurrency)
+                    RowDivider(Modifier.padding(start = CircasoSpacing.s4))
                     ListRow(
-                        title = "Needs attention",
-                        sub = if (state.failed.size == 1) "1 change wasn't saved" else "${state.failed.size} changes weren't saved",
-                        leading = { CircasoIconImage(CircasoIcon.Warning, c.critical, Modifier.size(22.dp)) },
-                        trailing = { RowChevron() },
-                        onClick = actions.onNeedsAttention,
+                        "Money sound", sub = "Coins dropping into your wallet when money arrives",
+                        trailing = { com.circaso.designsystem.components.CircasoSwitch(state.moneySound, actions.onMoneySound) },
+                        onClick = { actions.onMoneySound(!state.moneySound) },
                     )
                 }
-            }
-            Section("People") {
-                ListRow("Contacts", trailing = { RowChevron() }, onClick = actions.onContacts)
-                RowDivider()
-                ListRow("Blocked people", trailing = { RowChevron() }, onClick = actions.onBlocked)
-            }
-            Section("Security") {
-                ListRow("Security and Privacy", trailing = { RowChevron() }, onClick = actions.onSecurity)
-                RowDivider(Modifier.padding(start = CircasoSpacing.s4))
-                ListRow("Notifications", trailing = { RowChevron() }, onClick = actions.onNotifications)
-            }
-            Section("Money") {
-                ListRow("Currency", sub = "How amounts are shown in your wallet and chats", trailing = { RowChevron() }, onClick = actions.onCurrency)
-                RowDivider(Modifier.padding(start = CircasoSpacing.s4))
-                ListRow(
-                    "Money sound", sub = "Coins dropping into your wallet when money arrives",
-                    trailing = { com.circaso.designsystem.components.CircasoSwitch(state.moneySound, actions.onMoneySound) },
-                    onClick = { actions.onMoneySound(!state.moneySound) },
+                Section("Assistant") {
+                    ListRow("Asha", sub = "Ask about your money by text or voice", trailing = { RowChevron() }, onClick = actions.onAsha)
+                    RowDivider(Modifier.padding(start = CircasoSpacing.s4))
+                    ListRow("Asha's voice", sub = "Pick how she sounds", trailing = { RowChevron() }, onClick = actions.onAshaVoice)
+                    RowDivider(Modifier.padding(start = CircasoSpacing.s4))
+                    ListRow("Help", sub = "Chat with a person at Circaso", trailing = { RowChevron() }, onClick = actions.onHelp)
+                }
+                Section(null) {
+                    ListRow("Sign out", destructive = true, onClick = onSignOutRequested)
+                }
+                BasicText(
+                    "Circaso $appVersion",
+                    Modifier.fillMaxWidth().combinedClickable(onClick = {}, onLongClick = actions.onSecretMenu),
+                    style = t.footnote.copy(color = c.inkTertiary, textAlign = androidx.compose.ui.text.style.TextAlign.Center),
+                )
+        }
+        if (short) {
+            // A phone on its side: the profile holds still on the left, the settings scroll beside it.
+            Row(Modifier.fillMaxSize().padding(horizontal = CircasoSpacing.s4), horizontalArrangement = Arrangement.spacedBy(CircasoSpacing.s5)) {
+                Box(
+                    Modifier.weight(0.42f).fillMaxHeight().verticalScroll(rememberScrollState()).padding(bottom = CircasoSpacing.s6 + bottomPadding.calculateBottomPadding() + padding.calculateBottomPadding()),
+                    contentAlignment = Alignment.Center,
+                ) { hero(Modifier) }
+                Column(
+                    Modifier.weight(0.58f).fillMaxHeight().verticalScroll(scroll)
+                        .padding(top = CircasoSpacing.s4, bottom = CircasoSpacing.s6 + bottomPadding.calculateBottomPadding() + padding.calculateBottomPadding()),
+                    verticalArrangement = Arrangement.spacedBy(CircasoSpacing.s6),
+                    content = settings,
                 )
             }
-            Section("Assistant") {
-                ListRow("Asha", sub = "Ask about your money by text or voice", trailing = { RowChevron() }, onClick = actions.onAsha)
-                RowDivider(Modifier.padding(start = CircasoSpacing.s4))
-                ListRow("Asha's voice", sub = "Pick how she sounds", trailing = { RowChevron() }, onClick = actions.onAshaVoice)
-                RowDivider(Modifier.padding(start = CircasoSpacing.s4))
-                ListRow("Help", sub = "Chat with a person at Circaso", trailing = { RowChevron() }, onClick = actions.onHelp)
+        } else {
+            Column(
+                Modifier.fillMaxSize().verticalScroll(scroll)
+                    .padding(horizontal = CircasoSpacing.s4)
+                    .padding(top = CircasoSpacing.s2, bottom = CircasoSpacing.s6 + bottomPadding.calculateBottomPadding() + padding.calculateBottomPadding()),
+                verticalArrangement = Arrangement.spacedBy(CircasoSpacing.s6),
+            ) {
+                hero(Modifier)
+                settings()
             }
-            Section(null) {
-                ListRow("Sign out", destructive = true, onClick = onSignOutRequested)
-            }
-            BasicText(
-                "Circaso $appVersion",
-                Modifier.fillMaxWidth().combinedClickable(onClick = {}, onLongClick = actions.onSecretMenu),
-                style = t.footnote.copy(color = c.inkTertiary, textAlign = androidx.compose.ui.text.style.TextAlign.Center),
-            )
         }
     }
 }
