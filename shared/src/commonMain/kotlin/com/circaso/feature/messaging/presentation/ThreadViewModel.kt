@@ -118,6 +118,8 @@ class ThreadViewModel(
     private var typingSentAt = 0L
     private var typingStop: Job? = null
     private var chamaRefreshed = false
+    // Declared before init: the collector below starts at once (Main.immediate) and would read it unset.
+    private val window = MutableStateFlow(ThreadPage)
 
     init {
         notifications.activeChatId = chatId
@@ -143,7 +145,6 @@ class ThreadViewModel(
     }
 
     /** Typing goes out at most every few seconds and stops a moment after the last keystroke (guide, section 8). */
-    private val window = MutableStateFlow(ThreadPage)
 
     /** The person is near the oldest message shown: bring in the next page, if there might be one. */
     fun onLoadOlder() {

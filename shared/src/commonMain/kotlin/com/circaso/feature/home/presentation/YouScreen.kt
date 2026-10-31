@@ -274,8 +274,7 @@ private fun ProfileHero(name: String?, handle: String?, phone: String?, photo: S
                 Box(Modifier.size(CircasoSizes.avatarHero).clip(CircasoShapes.circle).background(c.fillStrong))
                 Box(Modifier.padding(top = CircasoSpacing.s1).size(160.dp, 24.dp).clip(CircasoShapes.sm).background(c.fill))
                 Box(Modifier.size(120.dp, 16.dp).clip(CircasoShapes.sm).background(c.fill))
-                return@Column
-            }
+            } else {
             // The ring in the page colour cuts the photo out of its own glow.
             Avatar(name, size = CircasoSizes.avatarHero, imageUrl = photo, modifier = Modifier.shadow(AvatarShadow, CircasoShapes.circle).border(AvatarRing, page, CircasoShapes.circle))
             Column(
@@ -289,7 +288,8 @@ private fun ProfileHero(name: String?, handle: String?, phone: String?, photo: S
                 }
                 if (waiting) BasicText("Waiting to send", style = t.caption1.copy(color = c.warning))
             }
-            CircasoButton("Edit Profile", onEdit, modifier = Modifier.padding(top = CircasoSpacing.s1).heightIn(min = CircasoSizes.controlMd), style = ButtonStyle.Secondary, size = ButtonSize.Small)
+                CircasoButton("Edit Profile", onEdit, modifier = Modifier.padding(top = CircasoSpacing.s1).heightIn(min = CircasoSizes.controlMd), style = ButtonStyle.Secondary, size = ButtonSize.Small)
+            }
         }
     }
 }
