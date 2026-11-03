@@ -55,7 +55,7 @@ class AndroidChatNotifications(private val context: Context) : ChatNotifications
         }
         val tap = open?.let { PendingIntent.getActivity(context, chatId.hashCode(), it, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE) }
         val notification = NotificationCompat.Builder(context, ChannelId)
-            .setSmallIcon(android.R.drawable.ic_dialog_email)
+            .setSmallIcon(com.circaso.shared.R.drawable.ic_stat_circaso)
             .setContentTitle(title)
             .setContentText(text)
             .setStyle(NotificationCompat.BigTextStyle().bigText(text))
@@ -78,7 +78,7 @@ class AndroidChatNotifications(private val context: Context) : ChatNotifications
         }
         val tap = open?.let { PendingIntent.getActivity(context, MoneyNotificationId, it, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE) }
         val notification = NotificationCompat.Builder(context, if (coins) MoneyChannelId else MoneyQuietChannelId)
-            .setSmallIcon(android.R.drawable.ic_dialog_email)
+            .setSmallIcon(com.circaso.shared.R.drawable.ic_stat_circaso)
             .setContentTitle(title)
             .setContentText(text)
             .setCategory(NotificationCompat.CATEGORY_STATUS)

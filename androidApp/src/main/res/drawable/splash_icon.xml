@@ -1,10 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  The mark, inset so it stays inside the circle the system masks the splash icon to.
-  This one is a 1024 px bitmap on purpose: the system rasterises a vector (especially one with gradients) at a low
-  resolution for the splash and scales it up, which looks blurry. A bitmap larger than the target stays sharp.
-  Everywhere else in the app the mark is a vector.
+  The launch splash icon. It is an animated-vector with nothing to animate, on purpose:
+  Android 12+ draws a still splash icon by first rendering it into a 108 dp bitmap and then stretching that bitmap to
+  192 dp (SplashscreenIconDrawableFactory.ImmobileIconDrawable), which is blurry whatever the source resolution.
+  An Animatable icon skips that bitmap and is drawn live at full size, so the mark stays sharp.
 -->
-<inset xmlns:android="http://schemas.android.com/apk/res/android"
-    android:drawable="@drawable/splash_mark"
-    android:inset="17%" />
+<animated-vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:drawable="@drawable/splash_mark_vector" />

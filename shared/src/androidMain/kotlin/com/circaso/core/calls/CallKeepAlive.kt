@@ -58,7 +58,7 @@ class CallService : Service() {
         val open = packageManager.getLaunchIntentForPackage(packageName)?.apply { addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP) }
         val tap = open?.let { PendingIntent.getActivity(this, 7, it, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE) }
         val notification: Notification = NotificationCompat.Builder(this, ChannelId)
-            .setSmallIcon(android.R.drawable.stat_sys_phone_call)
+            .setSmallIcon(com.circaso.shared.R.drawable.ic_stat_circaso)
             .setContentTitle(if (video) "Video call · $title" else "Call · $title")
             .setContentText("Call in progress. Tap to return.")
             .setCategory(NotificationCompat.CATEGORY_CALL)

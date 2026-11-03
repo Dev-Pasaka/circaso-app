@@ -93,7 +93,7 @@ class LiveLocationService : Service() {
         val tap = open?.let { PendingIntent.getActivity(this, 11, it, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE) }
         val stop = PendingIntent.getService(this, 12, Intent(this, LiveLocationService::class.java).setAction(ActionStop), PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
         return NotificationCompat.Builder(this, ChannelId)
-            .setSmallIcon(android.R.drawable.ic_menu_mylocation)
+            .setSmallIcon(com.circaso.shared.R.drawable.ic_stat_circaso)
             .setContentTitle("Sharing live location")
             .setContentText(if (chats == 1) "In 1 chat. Tap to open Circaso." else "In $chats chats. Tap to open Circaso.")
             .setOngoing(true)

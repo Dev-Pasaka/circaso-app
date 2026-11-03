@@ -38,7 +38,7 @@ class AndroidCallNotifier(private val context: Context) {
         }
         val tap = open?.let { PendingIntent.getActivity(context, callId.hashCode(), it, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE) }
         val n = NotificationCompat.Builder(context, ChannelId)
-            .setSmallIcon(android.R.drawable.sym_call_incoming)
+            .setSmallIcon(com.circaso.shared.R.drawable.ic_stat_circaso)
             .setContentTitle(title)
             .setContentText(if (video) "Circaso video call" else "Circaso voice call")
             .setCategory(NotificationCompat.CATEGORY_CALL)
