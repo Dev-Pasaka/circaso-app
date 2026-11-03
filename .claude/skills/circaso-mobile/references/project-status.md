@@ -128,7 +128,7 @@ Media3 1.4.1, multiplatform-markdown-renderer 0.46.0.
 ## 5. Pending tasks
 
 ### Blocked on Pasaka
-1. ~~Cloudflare Workers Paid plan~~ **Done by Pasaka (2026-11-03).** Checked the same day: Asha's three Workers AI models answer `200` with the paid plan: Kimi K2.6 (text, about 4.9 s), Aura-2 (speech) and Nova-3 (transcription; Aura's audio came back word for word). The `429` is gone. Not yet run end to end through the app (the emulator wouldn't connect over adb).
+1. ~~Cloudflare Workers Paid plan~~ **Done by Pasaka (2026-11-03).** Checked the same day: Asha's three Workers AI models answer `200` with the paid plan: Kimi K2.6 (text, about 4.9 s), Aura-2 (speech) and Nova-3 (transcription; Aura's audio came back word for word). The `429` is gone. In the app (emulator, signed in): Asha answered a question in full, and Read aloud fetched speech and played it. Live voice (microphone) not tried: the emulator runs without audio.
 2. **Rotate the Tavily API key** (it was pasted in chat).
 3. **iPhone install**: unlock the phone and turn on Developer Mode.
 4. **Calls on the sandbox**: set `INTEGRATIONS_CALLS_PROVIDER=cloudflare`, `CLOUDFLARE_REALTIME_APP_ID`, `CLOUDFLARE_REALTIME_APP_TOKEN` (optional TURN key) if not done yet.
@@ -203,7 +203,7 @@ design.** Plan: `references/spaces-plan.md`.
 | --- | --- |
 | Opening a chat crashed (message window read before it was set) | **Fixed** in `acfe332` (2026-10-31). The "iOS app won't start" report afterwards was a stale simulator build; a clean build fixes it. |
 | Blurry first splash logo on Android | **Fixed and verified** on an API 37 emulator (2026-11-03): the cold-start mark is sharp at full resolution. |
-| Android notifications showed stock system icons | Fix written (D-UI10) and the drawable is in the APK (`drawable/ic_stat_circaso`); **not yet seen on a notification**: every app notification and the FCM token need a signed-in account. |
+| Android notifications showed stock system icons | **Fixed and verified** (2026-11-03): a real FCM push to the signed-in emulator showed the Circaso mark (`icon=0x7f080116`, `ic_stat_circaso`, channel `messages`). |
 | Asha returned 429 | **Fixed** by the paid plan (2026-11-03): all three models answer 200 when called directly. |
 | iOS gets no pushes and doesn't ring in the background | Not built (see Next work 3 and 4). |
 | Android emulator `Pixel_9_Pro` stuck "offline" in adb after cold boots | **Fixed** 2026-11-03 by Wipe Data (approved by Pasaka); the test account must sign in again. Use the SDK's adb, not Homebrew's. A spare AVD `Circaso_Check` also exists. |
