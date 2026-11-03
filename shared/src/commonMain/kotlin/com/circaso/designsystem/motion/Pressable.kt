@@ -5,6 +5,7 @@ import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
 import androidx.compose.foundation.LocalIndication
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.material3.ripple
@@ -25,6 +26,8 @@ fun Modifier.pressable(
     enabled: Boolean = true,
     role: Role? = Role.Button,
     pressedScale: Float = 0.97f,
+    /** A long press (reactions on a card, WhatsApp-style); null keeps plain clicks. */
+    onLongClick: (() -> Unit)? = null,
     onClick: () -> Unit,
 ): Modifier = composed {
     val style = LocalPlatformStyle.current
@@ -41,9 +44,9 @@ fun Modifier.pressable(
                 scaleY = s
                 alpha = 1f - 0.15f * p
             }
-            .clickable(interactionSource = source, indication = null, enabled = enabled, role = role, onClick = onClick)
+            .combinedClickable(interactionSource = source, indication = null, enabled = enabled, role = role, onLongClick = onLongClick, onClick = onClick)
     } else {
-        this.clickable(interactionSource = source, indication = ripple(), enabled = enabled, role = role, onClick = onClick)
+        this.combinedClickable(interactionSource = source, indication = ripple(), enabled = enabled, role = role, onLongClick = onLongClick, onClick = onClick)
     }
 }
 

@@ -144,7 +144,7 @@ fun ThreadScreen(
         onOpenGoal = onOpenGoal, onContribute = onContribute, onPayRequest = onPayRequest, onDecide = viewModel::onDecide, onIntroSeen = viewModel::onIntroSeen,
         onSupportDone = viewModel::onSupportDone, onSupportVerdict = viewModel::onSupportVerdict, onCallSupport = onCallSupport, onCall = onCall,
         ongoingCall = ongoingCall, onReturnToCall = onReturnToCall, onOpenLocation = onOpenLocation, quickPay = pay, focusLocalId = focusLocalId,
-        onLoadOlder = viewModel::onLoadOlder, onSavePeer = viewModel::onSavePeer, onOpenMoment = onOpenMoment, onReact = viewModel::onReact,
+        onLoadOlder = viewModel::onLoadOlder, onSavePeer = viewModel::onSavePeer, onOpenMoment = onOpenMoment, onReact = viewModel::onReact, onReactTo = viewModel::onReactTo,
         media = viewModel.media?.let { m ->
             ThreadMediaActions(
                 canShareLocation = m.canShareLocation, onPhoto = viewModel::onSendPhoto, onLocation = viewModel::onSendLocation,
@@ -204,6 +204,8 @@ fun ThreadContent(
     onSavePeer: () -> Unit = {},
     /** React to a message (null takes mine back). */
     onReact: (Message.Text, String?) -> Unit = { _, _ -> },
+    /** React to any message by id (photos, voice notes, payments). */
+    onReactTo: (messageId: String, emoji: String?) -> Unit = { _, _ -> },
     /** A reply's quoted moment was tapped: open it ([posterId] null for my own). */
     onOpenMoment: (posterId: String?, momentId: String) -> Unit = { _, _ -> },
 ) {
@@ -248,6 +250,7 @@ fun ThreadContent(
     var attaching by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(false) }
     var viewing by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf<ByteArray?>(null) }
     var selectedMedia by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf<Message.Media?>(null) }
+    var reactingTo by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf<String?>(null) }
     val t = CircasoTheme.typography
     val toast = rememberToastState()
     val quoteScope = androidx.compose.runtime.rememberCoroutineScope()
@@ -495,9 +498,20 @@ fun ThreadContent(
                 }
             }
             // A photo, voice note or location: send again or discard when it failed, delete for everyone when sent.
+            CircasoSheet(visible = reactingTo != null, onDismiss = { reactingTo = null }, label = "React") {
+                reactingTo?.let { id ->
+                    val mine = state.reactions[id]?.firstOrNull { it.first == state.myId }?.second
+                    ReactionBar(mine, onPick = { emoji -> reactingTo = null; onReactTo(id, if (emoji == mine) null else emoji) })
+                }
+                CircasoButton("Cancel", { reactingTo = null }, style = ButtonStyle.Plain, size = ButtonSize.Large, block = true)
+            }
             CircasoSheet(visible = selectedMedia != null, onDismiss = { selectedMedia = null }, label = "Message") {
                 val sm = selectedMedia
                 if (sm != null) {
+                    sm.messageId?.let { id ->
+                        val mine = state.reactions[id]?.firstOrNull { it.first == state.myId }?.second
+                        ReactionBar(mine, onPick = { emoji -> selectedMedia = null; onReactTo(id, if (emoji == mine) null else emoji) })
+                    }
                     BasicText(mediaLabel(sm), style = t.body.copy(color = c.ink))
                     if (sm.state == DeliveryState.Failed) {
                         BasicText(failureText(sm.errorCode), style = t.footnote.copy(color = c.inkSecondary))
@@ -565,7 +579,11 @@ fun ThreadContent(
                                 else onOpenMoment(if (outgoing) state.chat?.peerId else null, q.momentId)
                             }) { onSelect(m) }
                         }
-                        is Message.Payment -> PaymentMessage(m, onOpen = { onOpenTransfer(m.transferId) }, moment = !m.outgoing && index == state.messages.lastIndex, onThanks = { onQuickReply("Asante!") }, chama = chama, fiat = state.fiat)
+                        is Message.Payment -> Column {
+                            PaymentMessage(m, onOpen = { onOpenTransfer(m.transferId) }, moment = !m.outgoing && index == state.messages.lastIndex, onThanks = { onQuickReply("Asante!") }, chama = chama, fiat = state.fiat,
+                                onLongPress = m.messageId?.let { { reactingTo = it } })
+                            ChipsFor(m.messageId, m.outgoing, state) { m.messageId?.let { reactingTo = it } }
+                        }
                         is Message.Deleted -> MessageColumn(m.outgoing) { ChatBubble("This message was deleted", m.outgoing, quiet = true) }
                         is Message.Unreadable -> MessageColumn(false) { ChatBubble("A message from ${m.senderName} this phone can't show", false, quiet = true) }
                         is Message.System -> SystemLine(m.text)
@@ -581,6 +599,7 @@ fun ThreadContent(
                                 onOpenLocation = { onOpenLocation(m) }, onStopLive = { media?.onStopLive?.invoke(m) }, now = liveNow,
                                 onPlayVideo = { media?.onPlayVideo?.invoke(m) }, videoLoading = state.videoLoading == m.localId,
                             )
+                            ChipsFor(m.messageId, m.outgoing, state) { selectedMedia = m }
                         }
                     }
                     }
@@ -730,7 +749,7 @@ internal fun amountShortcut(text: String): String? {
 
 /** A payment card in the thread (designs C3–C7): the money colour for money received, `fill` for money sent. */
 @Composable
-private fun PaymentMessage(m: Message.Payment, onOpen: () -> Unit, moment: Boolean = false, onThanks: () -> Unit = {}, chama: Chama? = null, fiat: FiatValue? = null) {
+private fun PaymentMessage(m: Message.Payment, onOpen: () -> Unit, moment: Boolean = false, onThanks: () -> Unit = {}, chama: Chama? = null, fiat: FiatValue? = null, onLongPress: (() -> Unit)? = null) {
     val waiting = m.state == DeliveryState.Waiting || m.state == DeliveryState.Sending
     val failed = m.state == DeliveryState.Failed
     val usdc = MinorUnits.coinText(m.amountMinor, m.asset)
@@ -754,7 +773,7 @@ private fun PaymentMessage(m: Message.Payment, onOpen: () -> Unit, moment: Boole
                 amount = shownFiat ?: usdc,
                 note = if (kind == "Contribution" && chama != null) "${if (m.outgoing) "You" else m.senderName.substringBefore(' ')} added to ${chama.goal.name}" else m.note,
                 foot = (if (shownFiat != null) "$usdc · " else "") + formatLocalTime(m.orderAt, LocalTimeStyle.Clock) + when { failed -> " · card not sent"; waiting -> " · sending card"; else -> "" },
-                outgoing = m.outgoing, pending = waiting, failed = failed, onClick = onOpen, symbol = m.asset,
+                outgoing = m.outgoing, pending = waiting, failed = failed, onClick = onOpen, onLongClick = onLongPress, symbol = m.asset,
             )
             // Design C6: the money moment offers a thank-you and the details while the card is the latest thing said.
             if (moment) Row(Modifier.padding(top = CircasoSpacing.s2), horizontalArrangement = Arrangement.spacedBy(CircasoSpacing.s2)) {
@@ -1620,5 +1639,16 @@ private fun ReactionChips(reactions: List<Pair<String, String>>, myId: String?, 
     ) {
         counts.take(3).forEach { BasicText(it.key, style = t.footnote) }
         if (reactions.size > 1) BasicText(reactions.size.toString(), style = t.caption1.copy(color = c.inkSecondary, fontFeatureSettings = "tnum"))
+    }
+}
+
+
+/** Reaction chips under a photo, voice note or payment, on the message's own side. */
+@Composable
+private fun ChipsFor(messageId: String?, outgoing: Boolean, state: ThreadUiState, onTap: () -> Unit) {
+    val list = messageId?.let { state.reactions[it] }.orEmpty()
+    if (list.isEmpty()) return
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = if (outgoing) Arrangement.End else Arrangement.Start) {
+        ReactionChips(list, state.myId, outgoing, onTap)
     }
 }

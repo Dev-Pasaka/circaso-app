@@ -121,6 +121,7 @@ fun MoneyCard(
     pending: Boolean = false,
     failed: Boolean = false,
     onClick: (() -> Unit)? = null,
+    onLongClick: (() -> Unit)? = null,
     /** The coin it moved in: its mark sits at the card's top right, beside "Sent" / "Received". */
     symbol: String? = null,
 ) {
@@ -161,7 +162,7 @@ fun MoneyCard(
             .shadow(lift, CircasoShapes.lg, ambientColor = Color.Black.copy(alpha = 0.18f), spotColor = Color.Black.copy(alpha = 0.18f))
             .clip(CircasoShapes.lg).background(metal).then(if (failed || glintAlpha == 0f) Modifier else Modifier.background(glint))
             .then(if (c.isHighContrast && !received) Modifier.border(1.dp, c.separator, CircasoShapes.lg) else Modifier)
-            .then(if (onClick != null) Modifier.pressable(role = Role.Button, onClick = onClick) else Modifier)
+            .then(if (onClick != null) Modifier.pressable(role = Role.Button, onLongClick = onLongClick, onClick = onClick) else Modifier)
             .padding(horizontal = CircasoSpacing.s5, vertical = CircasoSpacing.s4)
             .semantics { contentDescription = listOfNotNull(head, amount, note, foot).joinToString(", ") },
         verticalArrangement = Arrangement.spacedBy(6.dp),

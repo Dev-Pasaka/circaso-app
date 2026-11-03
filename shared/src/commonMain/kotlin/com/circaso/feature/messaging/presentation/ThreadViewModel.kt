@@ -144,6 +144,8 @@ class ThreadViewModel(
     }
 
     /** React to a message (WhatsApp-style); null takes my reaction back. Queued like any message. */
+    fun onReactTo(messageId: String, emoji: String?) { viewModelScope.launch { messagesRepository?.react(chatId, messageId, emoji) } }
+
     fun onReact(m: com.circaso.feature.messaging.domain.Message.Text, emoji: String?) {
         val id = m.messageId ?: return
         _state.update { it.copy(selected = null) }
