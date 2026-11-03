@@ -536,7 +536,7 @@ fun ThreadContent(
                     when (m) {
                         is Message.Text -> {
                             val firstOfRun = previous !is Message.Text || previous.senderId != m.senderId || previous.outgoing != m.outgoing
-                            TextMessage(m, state.isGroup, firstOfRun) { onSelect(m) }
+                            TextMessage(m, state.isGroup, firstOfRun, peerName = state.chat?.title) { onSelect(m) }
                         }
                         is Message.Payment -> PaymentMessage(m, onOpen = { onOpenTransfer(m.transferId) }, moment = !m.outgoing && index == state.messages.lastIndex, onThanks = { onQuickReply("Asante!") }, chama = chama, fiat = state.fiat)
                         is Message.Deleted -> MessageColumn(m.outgoing) { ChatBubble("This message was deleted", m.outgoing, quiet = true) }
@@ -661,7 +661,7 @@ fun ThreadContent(
 
 /** A text message as the design draws it: the bubble, then its time (or state) under it on the sender's side. */
 @Composable
-private fun TextMessage(m: Message.Text, group: Boolean, firstOfRun: Boolean, onTap: () -> Unit) {
+private fun TextMessage(m: Message.Text, group: Boolean, firstOfRun: Boolean, peerName: String? = null, onTap: () -> Unit) {
     val c = CircasoTheme.colors
     val waiting = m.state == DeliveryState.Waiting || m.state == DeliveryState.Sending
     val failed = m.state == DeliveryState.Failed
@@ -674,7 +674,7 @@ private fun TextMessage(m: Message.Text, group: Boolean, firstOfRun: Boolean, on
         MessageColumn(m.outgoing, Modifier.weight(1f, fill = false)) {
             ChatBubble(m.text, m.outgoing, faded = waiting, onClick = onTap, above = if ((group && !m.outgoing && firstOfRun) || m.momentQuote != null) ({
                 if (group && !m.outgoing && firstOfRun) BasicText(m.senderName, style = CircasoTheme.typography.caption1.copy(color = c.inkSecondary), modifier = Modifier.padding(bottom = 2.dp))
-                m.momentQuote?.let { MomentQuoteCard(it, m.outgoing, if (m.outgoing) null else m.senderName) }
+                m.momentQuote?.let { MomentQuoteCard(it, m.outgoing, if (m.outgoing) peerName else m.senderName) }
             }) else null)
             when {
                 failed -> BubbleMeta("Not sent · tap for options", icon = CircasoIcon.Close, color = c.critical)
@@ -1516,7 +1516,8 @@ private fun MomentQuoteCard(quote: com.circaso.core.crypto.MomentQuote, outgoing
     val c = CircasoTheme.colors
     val t = CircasoTheme.typography
     val ink = if (outgoing) c.onAction else c.ink
-    val thumb = androidx.compose.runtime.remember(quote.thumb) { quote.thumb?.let { runCatching { kotlin.io.encoding.Base64.decode(it) }.getOrNull() } }
+    val gone = quote.expiresAt?.let { it <= com.circaso.core.sync.nowMillis() } == true
+    val thumb = androidx.compose.runtime.remember(quote.thumb, gone) { if (gone) null else quote.thumb?.let { runCatching { kotlin.io.encoding.Base64.decode(it) }.getOrNull() } }
     Row(
         Modifier.padding(bottom = 6.dp).clip(com.circaso.designsystem.theme.CircasoShapes.md).background(ink.copy(alpha = 0.12f)).padding(6.dp)
             .semantics(mergeDescendants = true) { contentDescription = "Reply to ${if (outgoing) "a" else "your"} moment" + (quote.text?.let { ": $it" } ?: "") },
@@ -1524,8 +1525,8 @@ private fun MomentQuoteCard(quote: com.circaso.core.crypto.MomentQuote, outgoing
     ) {
         if (thumb != null) coil3.compose.AsyncImage(thumb, null, Modifier.size(36.dp, 48.dp).clip(androidx.compose.foundation.shape.RoundedCornerShape(6.dp)), contentScale = androidx.compose.ui.layout.ContentScale.Crop)
         Column(Modifier.padding(end = 4.dp)) {
-            BasicText(if (outgoing) "${posterName ?: "Their"} · Moment" else "Your moment", style = t.footnote.copy(color = ink, fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold))
-            BasicText(quote.text ?: when (quote.kind) { "IMAGE" -> "Photo"; "VIDEO" -> "Video"; "VOICE" -> "Voice"; else -> "Moment" }, style = t.footnote.copy(color = ink), maxLines = 2)
+            BasicText(if (outgoing) "${posterName?.substringBefore(' ') ?: "Their"} · Moment" else "Your moment", style = t.footnote.copy(color = ink, fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold))
+            BasicText(if (gone) "No longer available" else quote.text ?: when (quote.kind) { "IMAGE" -> "Photo"; "VIDEO" -> "Video"; "VOICE" -> "Voice"; else -> "Moment" }, style = t.footnote.copy(color = ink), maxLines = 2)
         }
     }
 }

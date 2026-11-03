@@ -174,8 +174,19 @@ design.** Plan: `references/spaces-plan.md`.
   host tests pass.
 - To finish: merge and deploy the backend branch, sign in on the emulator, post and view a moment between two
   accounts; design-reviewer pass on the built screens.
-- Follow-ups: video moments travel to the outbox fully in memory (about 45 MB for 60 s); gallery picks one photo
-  (design shows up to 10) and no video trimmer yet (M3b); moment media files on the phone aren't swept after 24 h.
+- Design review of the built screens (2026-11-03): its 6 Blockers are fixed (no "sent" before the server has a
+  reply; the quote names the poster and goes "no longer available"; media hashed and decrypted off the main thread;
+  video at 3.5 Mbit/s so 60 s fits the 32 MiB limit, with a size check and plain copy; hold-to-record that can't leave
+  the camera or mic running; the voice moment as designed with listen-back, 1:00 cap and slide to cancel). Also fixed:
+  view count from the server, the heart undone when not taken, Only-share-with needs someone.
+- Still open from that review (should-fix, before release): gallery picks one photo, no videos, no recents strip, no
+  trimmer (M1, M3–M3c); V3 voice viewer and V7 "no longer available"; Forward and "Message X" in More (V1b, V4); the
+  viewers sheet doesn't scroll; shade gradients behind text on media; Ask Asha and Search in the Spaces header; the
+  Spaces tab dot; S1e "not downloaded" ring; offline first open says "No moments yet"; the heart and Delete should be
+  disabled offline (or queued); a decrypted moment's media isn't deleted after 24 h; hold doesn't pause video or voice;
+  the reply draft should follow the moment; no prefetch of the next moment; drag-to-close and ring transitions;
+  a determinate posting ring; accessibility actions in the viewer; proper icons (More, Lock, Heart, People, Mute,
+  Forward, ChevronDown); composer, viewer and privacy previews and ViewModel tests.
 
 ### Backend gaps (design exists, no API yet)
 - W7/W8: statements on the server, PIN change and restore.

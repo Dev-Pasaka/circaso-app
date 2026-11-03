@@ -174,11 +174,13 @@ private fun Picker(state: MomentsPrivacyUiState, vm: MomentsPrivacyViewModel, on
     val c = CircasoTheme.colors
     val t = CircasoTheme.typography
     val except = state.picking == MomentAudienceMode.ContactsExcept
+    @OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class)
+    androidx.compose.ui.backhandler.BackHandler(onBack = vm::cancelPicking)
     CircasoScaffold(
         topBar = {
             CircasoNavBar(
                 title = if (except) "Hide my moments from" else "Only share with", onBack = vm::cancelPicking,
-                trailing = { CircasoButton(if (state.draft.isEmpty()) "Done" else "Done (${state.draft.size})", vm::donePicking, style = com.circaso.designsystem.components.ButtonStyle.Plain, size = com.circaso.designsystem.components.ButtonSize.Small, enabled = state.contacts.isNotEmpty()) },
+                trailing = { CircasoButton(if (state.draft.isEmpty()) "Done" else "Done (${state.draft.size})", vm::donePicking, style = com.circaso.designsystem.components.ButtonStyle.Plain, size = com.circaso.designsystem.components.ButtonSize.Small, enabled = state.contacts.isNotEmpty() && (except || state.draft.isNotEmpty())) },
             )
         },
     ) { padding ->
@@ -216,4 +218,3 @@ private fun Check(on: Boolean) {
     ) { if (on) CircasoIconImage(CircasoIcon.Check, c.bg, Modifier.size(14.dp)) }
 }
 
-private fun Modifier.fillMaxWidthIf(b: Boolean) = if (b) fillMaxWidth() else this

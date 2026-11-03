@@ -94,7 +94,7 @@ class MomentViewerViewModel(
                         val keep = s.current?.posterId?.let { id -> rings.indexOfFirst { it.posterId == id } } ?: -1
                         if (keep < 0) s.copy(rings = rings, ring = s.ring.coerceAtMost((rings.size - 1).coerceAtLeast(0)), index = 0)
                         else s.copy(rings = rings, ring = keep, index = s.index.coerceAtMost(rings[keep].moments.size - 1))
-                    }.let { if (started && rings.isEmpty()) it.copy(closed = true) else it }
+                    }.let { if (rings.isEmpty() || (posterId != null && !started)) it.copy(closed = true) else it }
                 }
                 showCurrent()
             }
@@ -173,7 +173,14 @@ class MomentViewerViewModel(
         viewModelScope.launch {
             // An ordinary chat message: it waits and sends offline like any other (G3).
             val r = replyInChat(m.posterId, text, m)
-            _state.update { it.copy(notice = if (r is AppResult.Success) "Reply sent to ${s.current?.name?.substringBefore(' ')}" else "The reply couldn’t be saved to send. Try again.") }
+            val name = s.current?.name?.substringBefore(' ')
+            _state.update {
+                it.copy(notice = when {
+                    r !is AppResult.Success -> if ((r as AppResult.Failure).error is AppError.Network) "You’re offline. Reply to $name when you’re back online." else "The reply couldn’t be saved to send. Try again."
+                    it.online -> "Reply on its way to $name"
+                    else -> "Reply saved. It sends when you’re back online."
+                })
+            }
         }
     }
 

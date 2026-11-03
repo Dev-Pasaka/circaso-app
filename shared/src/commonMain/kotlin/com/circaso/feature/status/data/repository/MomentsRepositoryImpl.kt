@@ -38,7 +38,9 @@ import io.ktor.client.request.put
 import io.ktor.client.request.setBody
 import io.ktor.client.statement.readRawBytes
 import io.ktor.http.isSuccess
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flatMapLatest
@@ -159,7 +161,8 @@ class MomentsRepositoryImpl(
     override suspend fun onFrame(type: String, momentId: String?, posterId: String?) {
         when (type) {
             "status.deleted" -> momentId?.let { dao.delete(it) }
-            "status.viewed" -> momentId?.let { id -> dao.byId(id)?.let { dao.setViewCount(id, it.viewCount + 1) } }
+            // ST5 repeats when a heart changes, so the count comes from the server, never by adding one per frame.
+            "status.viewed" -> refresh()
             else -> refresh() // status.posted: fetch and decrypt it
         }
     }
@@ -170,7 +173,8 @@ class MomentsRepositoryImpl(
         dao.setViewed(momentId, reacted ?: row.reacted)
         return when (val r = remote.view(momentId, reacted, newIdempotencyKey())) {
             is AppResult.Success -> AppResult.Success(Unit)
-            is AppResult.Failure -> r
+            // Not taken: put the heart back as it was, so the screen never shows a reaction the poster won't see.
+            is AppResult.Failure -> { if (reacted != null) dao.setViewed(momentId, row.reacted); r }
         }
     }
 
@@ -195,10 +199,12 @@ class MomentsRepositoryImpl(
         }
         val sealed = runCatching { storage.get(link.downloadUrl).takeIf { it.status.isSuccess() }?.readRawBytes() }.getOrNull()
             ?: return MomentMediaLoad.NeedsConnection
-        val plain = runCatching {
-            check(crypto.sha256(sealed).contentEquals(Base64.decode(media.digest)))
-            crypto.aesGcmOpen(Base64.decode(media.key), sealed)
-        }.getOrNull() ?: return MomentMediaLoad.Failed(null)
+        val plain = withContext(Dispatchers.Default) {
+            runCatching {
+                check(crypto.sha256(sealed).contentEquals(Base64.decode(media.digest)))
+                crypto.aesGcmOpen(Base64.decode(media.key), sealed)
+            }.getOrNull()
+        } ?: return MomentMediaLoad.Failed(null)
         files.write(media.mediaId, plain)
         return MomentMediaLoad.Loaded(plain, files.path(media.mediaId))
     }
@@ -272,7 +278,7 @@ class MomentsRepositoryImpl(
     private suspend fun upload(row: PendingMomentEntity, draft: PendingDraft): AppResult<Unit> {
         val plain = files.read(row.localId) ?: return AppResult.Failure(AppError.Api("status.media_missing", 400, null, null, emptyMap()))
         val key = crypto.randomBytes(32)
-        val sealed = crypto.aesGcmSeal(key, plain)
+        val sealed = withContext(Dispatchers.Default) { crypto.aesGcmSeal(key, plain) }
         val kind = when (kindOf(draft.kind)) { MomentKind.Video -> "video"; MomentKind.Voice -> "voice"; else -> "image" }
         val slot = when (val r = remote.prepareMedia(sealed.size.toLong(), kind, newIdempotencyKey())) {
             is AppResult.Success -> r.value
@@ -285,7 +291,7 @@ class MomentsRepositoryImpl(
         (remote.completeMedia(slot.mediaId, newIdempotencyKey()) as? AppResult.Failure)?.let { return it }
         // Filed under the media id, the name a viewer's copy gets, so my own viewer opens it without downloading.
         files.write(slot.mediaId, plain)
-        dao.savePending(row.copy(mediaId = slot.mediaId, mediaKey = Base64.encode(key), mediaDigest = Base64.encode(crypto.sha256(sealed))))
+        dao.savePending(row.copy(mediaId = slot.mediaId, mediaKey = Base64.encode(key), mediaDigest = Base64.encode(withContext(Dispatchers.Default) { crypto.sha256(sealed) })))
         return AppResult.Success(Unit)
     }
 

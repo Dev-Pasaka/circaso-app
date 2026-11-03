@@ -66,6 +66,8 @@ class AndroidMomentCamera(private val context: Context) : MomentCamera {
         val granted = ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED ||
             PermissionBridge.request(Manifest.permission.CAMERA)
         if (!granted) return CameraStart.PermissionDenied
+        // The microphone now too, so a hold to record never stops for a prompt; refused, videos are silent.
+        if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) PermissionBridge.request(Manifest.permission.RECORD_AUDIO)
         return if (context.packageManager.hasSystemFeature(PackageManager.FEATURE_CAMERA_ANY)) CameraStart.Started else CameraStart.Unavailable
     }
 
@@ -79,7 +81,9 @@ class AndroidMomentCamera(private val context: Context) : MomentCamera {
         val preview = Preview.Builder().build().also { it.surfaceProvider = view.surfaceProvider }
         val photo = ImageCapture.Builder().setCaptureMode(ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY)
             .setFlashMode(if (flash) ImageCapture.FLASH_MODE_ON else ImageCapture.FLASH_MODE_OFF).build()
-        val video = VideoCapture.withOutput(Recorder.Builder().setQualitySelector(QualitySelector.from(Quality.HD)).build())
+        val video = VideoCapture.withOutput(Recorder.Builder().setQualitySelector(QualitySelector.from(Quality.HD))
+            // About 3.5 Mbit/s: a full minute stays near 26 MB, under the server's 32 MiB for a moment's media.
+            .setTargetVideoEncodingBitRate(MomentVideoBitRate).build())
         val selector = if (front) CameraSelector.DEFAULT_FRONT_CAMERA else CameraSelector.DEFAULT_BACK_CAMERA
         runCatching {
             p.unbindAll()
@@ -115,8 +119,7 @@ class AndroidMomentCamera(private val context: Context) : MomentCamera {
     override suspend fun startVideo(): Boolean {
         val capture = videoCapture ?: return false
         val file = File(context.cacheDir, "moment-${System.currentTimeMillis()}.mp4")
-        val withAudio = ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED ||
-            PermissionBridge.request(Manifest.permission.RECORD_AUDIO)
+        val withAudio = ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
         val done = CompletableDeferred<File?>()
         val options = FileOutputOptions.Builder(file).setDurationLimitMillis(MomentVideoMaxMs).build()
         val pending = capture.output.prepareRecording(context, options).let { if (withAudio) it.withAudioEnabled() else it }

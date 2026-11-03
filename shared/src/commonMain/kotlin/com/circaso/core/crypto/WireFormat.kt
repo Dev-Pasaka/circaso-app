@@ -48,6 +48,8 @@ data class MomentQuote(
     val text: String? = null,
     /** The moment's tiny placeholder JPEG (base64), so the quote shows a picture without the media. */
     val thumb: String? = null,
+    /** When the moment ends (epoch ms); after it, the quote says it is no longer available and drops the picture. */
+    val expiresAt: Long? = null,
 )
 
 @Serializable

@@ -150,6 +150,8 @@ fun SpacesContent(
 private fun postError(code: String?) = when (code) {
     "status.audience_invalid" -> "None of your contacts can see moments yet, so it didn't post."
     "outbox.stale" -> "Your moment waited too long and didn't post."
+    "status.media_invalid", "status.moment_too_large" -> "Your moment was too large to post. Try a shorter video."
+    "status.too_many_moments" -> "You’ve shared a lot of moments today. Try again later."
     else -> "Your moment didn’t post."
 }
 

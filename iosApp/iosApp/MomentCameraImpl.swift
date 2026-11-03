@@ -79,9 +79,9 @@ final class MomentCameraImpl: NSObject, MomentCameraProvider, AVCapturePhotoCapt
         if let connection = movieOutput.connection(with: .video) {
             if movieOutput.availableVideoCodecTypes.contains(.h264) {
                 var settings: [String: Any] = [AVVideoCodecKey: AVVideoCodecType.h264]
-                // About 6 Mbit/s keeps a full minute near 45 MB instead of the camera's default of three times that.
+                // About 3.5 Mbit/s keeps a full minute near 26 MB, under the server's 32 MiB for a moment's media.
                 if movieOutput.supportedOutputSettingsKeys(for: connection).contains(AVVideoCompressionPropertiesKey) {
-                    settings[AVVideoCompressionPropertiesKey] = [AVVideoAverageBitRateKey: 6_000_000]
+                    settings[AVVideoCompressionPropertiesKey] = [AVVideoAverageBitRateKey: 3_500_000] // MomentVideoBitRate: 60 s stays under the 32 MiB media limit
                 }
                 movieOutput.setOutputSettings(settings, for: connection)
             }
