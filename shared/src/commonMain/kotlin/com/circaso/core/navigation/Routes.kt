@@ -49,7 +49,7 @@ data object MomentComposerRoute : Route
 
 /** Moments viewer (V1–V8): one person's ring, then on to the next. [posterId] is null for my own moments (V4). */
 @Serializable
-data class MomentViewerRoute(val posterId: String? = null) : Route
+data class MomentViewerRoute(val posterId: String? = null, val momentId: String? = null) : Route
 
 /** You → Privacy → Moments (P1–P3). */
 @Serializable

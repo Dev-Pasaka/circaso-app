@@ -47,8 +47,11 @@ expect fun momentThumbnail(jpeg: ByteArray): ByteArray?
 /** Moments: a photo's long side, and a video's length (design M1b: up to 60 s). */
 const val MomentPhotoMaxSide = 2048
 const val MomentVideoMaxMs = 60_000L
-/** The placeholder's long side in pixels; it is drawn blurred, so tiny is enough and keeps the body small. */
-const val MomentThumbSide = 24
+/**
+ * The preview's long side in pixels: blurred behind a loading moment, and sharp in a reply's quote (Pasaka, 2026-11-03),
+ * so 96 px; as a JPEG it stays a few KB inside the encrypted body.
+ */
+const val MomentThumbSide = 96
 /** Video bit rate for moments, so 60 s fits the server's 32 MiB media limit with room for audio and encryption. */
 const val MomentVideoBitRate = 3_500_000
 /** The server's limit for a moment's encrypted media (ST1); checked before sharing so nobody waits for a refusal. */

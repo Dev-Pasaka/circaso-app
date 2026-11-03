@@ -69,6 +69,8 @@ class MomentViewerViewModel(
     connection: ConnectionState,
     /** Opens (or finds) the 1:1 chat with someone and sends a text there quoting a moment (V8). */
     private val replyInChat: suspend (posterId: String, text: String, moment: Moment) -> AppResult<String>,
+    /** Open at this moment (a reply's quote in a chat was tapped); gone already means V7. */
+    private val startAt: String? = null,
 ) : ViewModel() {
     private val _state = MutableStateFlow(MomentViewerUiState())
     val state: StateFlow<MomentViewerUiState> = _state.asStateFlow()
@@ -94,14 +96,22 @@ class MomentViewerViewModel(
                         started = true
                         // Open at the tapped person, at their first moment I haven't seen (WhatsApp does the same).
                         val r = posterId?.let { id -> rings.indexOfFirst { it.posterId == id } }?.takeIf { it >= 0 } ?: 0
-                        val i = rings[r].moments.indexOfFirst { !it.viewed }.takeIf { it >= 0 } ?: 0
+                        val i = startAt?.let { id -> rings[r].moments.indexOfFirst { it.momentId == id } }?.takeIf { it >= 0 }
+                            ?: rings[r].moments.indexOfFirst { !it.viewed }.takeIf { it >= 0 } ?: 0
                         s.copy(rings = rings, ring = r, index = i)
                     } else {
                         // A moment that expired or was deleted while open: stay on the same person if they still have one.
                         val keep = s.current?.posterId?.let { id -> rings.indexOfFirst { it.posterId == id } } ?: -1
                         if (keep < 0) s.copy(rings = rings, ring = s.ring.coerceAtMost((rings.size - 1).coerceAtLeast(0)), index = 0)
                         else s.copy(rings = rings, ring = keep, index = s.index.coerceAtMost(rings[keep].moments.size - 1))
-                    }.let { if (rings.isEmpty() || (posterId != null && !started)) it.copy(closed = true) else it }
+                    }.let {
+                        when {
+                            // Opened from a reply's quote but that moment has ended: say so, then close.
+                            startAt != null && !started -> it.copy(closed = true, notice = "This moment is no longer available")
+                            rings.isEmpty() || (posterId != null && !started) -> it.copy(closed = true)
+                            else -> it
+                        }
+                    }
                 }
                 showCurrent()
             }

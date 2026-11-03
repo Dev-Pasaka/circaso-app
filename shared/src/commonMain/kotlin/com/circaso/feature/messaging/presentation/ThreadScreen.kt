@@ -131,6 +131,7 @@ fun ThreadScreen(
     /** Design C3: `#500` pays the other person from inside the chat (direct chats); only the PIN step leaves it. */
     quickPay: com.circaso.feature.wallet.presentation.PayViewModel? = null,
     focusLocalId: Long? = null,
+    onOpenMoment: (posterId: String?, momentId: String) -> Unit = { _, _ -> },
 ) {
     val state by viewModel.state.collectAsState()
     val pay = quickPay?.let { vm ->
@@ -143,7 +144,7 @@ fun ThreadScreen(
         onOpenGoal = onOpenGoal, onContribute = onContribute, onPayRequest = onPayRequest, onDecide = viewModel::onDecide, onIntroSeen = viewModel::onIntroSeen,
         onSupportDone = viewModel::onSupportDone, onSupportVerdict = viewModel::onSupportVerdict, onCallSupport = onCallSupport, onCall = onCall,
         ongoingCall = ongoingCall, onReturnToCall = onReturnToCall, onOpenLocation = onOpenLocation, quickPay = pay, focusLocalId = focusLocalId,
-        onLoadOlder = viewModel::onLoadOlder, onSavePeer = viewModel::onSavePeer,
+        onLoadOlder = viewModel::onLoadOlder, onSavePeer = viewModel::onSavePeer, onOpenMoment = onOpenMoment,
         media = viewModel.media?.let { m ->
             ThreadMediaActions(
                 canShareLocation = m.canShareLocation, onPhoto = viewModel::onSendPhoto, onLocation = viewModel::onSendLocation,
@@ -201,6 +202,8 @@ fun ThreadContent(
     onLoadOlder: () -> Unit = {},
     /** Save the other person of a direct chat as a contact. */
     onSavePeer: () -> Unit = {},
+    /** A reply's quoted moment was tapped: open it ([posterId] null for my own). */
+    onOpenMoment: (posterId: String?, momentId: String) -> Unit = { _, _ -> },
 ) {
     val c = CircasoTheme.colors
     var toastPayError by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf<String?>(null) }
@@ -245,6 +248,7 @@ fun ThreadContent(
     var selectedMedia by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf<Message.Media?>(null) }
     val t = CircasoTheme.typography
     val toast = rememberToastState()
+    val quoteScope = androidx.compose.runtime.rememberCoroutineScope()
     LaunchedEffect(state.message) { state.message?.let { toast.show(it); onMessageShown() } }
     LaunchedEffect(toastPayError) { toastPayError?.let { toast.show(it); toastPayError = null } }
     val listState = rememberLazyListState()
@@ -548,7 +552,11 @@ fun ThreadContent(
                     when (m) {
                         is Message.Text -> {
                             val firstOfRun = previous !is Message.Text || previous.senderId != m.senderId || previous.outgoing != m.outgoing
-                            TextMessage(m, state.isGroup, firstOfRun, peerName = state.chat?.title) { onSelect(m) }
+                            TextMessage(m, state.isGroup, firstOfRun, peerName = state.chat?.title, onOpenMoment = { q, outgoing ->
+                                // My reply quotes their moment; their reply quotes mine.
+                                if (q.expiresAt?.let { it <= com.circaso.core.sync.nowMillis() } == true) quoteScope.launch { toast.show("This moment is no longer available") }
+                                else onOpenMoment(if (outgoing) state.chat?.peerId else null, q.momentId)
+                            }) { onSelect(m) }
                         }
                         is Message.Payment -> PaymentMessage(m, onOpen = { onOpenTransfer(m.transferId) }, moment = !m.outgoing && index == state.messages.lastIndex, onThanks = { onQuickReply("Asante!") }, chama = chama, fiat = state.fiat)
                         is Message.Deleted -> MessageColumn(m.outgoing) { ChatBubble("This message was deleted", m.outgoing, quiet = true) }
@@ -673,7 +681,7 @@ fun ThreadContent(
 
 /** A text message as the design draws it: the bubble, then its time (or state) under it on the sender's side. */
 @Composable
-private fun TextMessage(m: Message.Text, group: Boolean, firstOfRun: Boolean, peerName: String? = null, onTap: () -> Unit) {
+private fun TextMessage(m: Message.Text, group: Boolean, firstOfRun: Boolean, peerName: String? = null, onOpenMoment: (com.circaso.core.crypto.MomentQuote, Boolean) -> Unit = { _, _ -> }, onTap: () -> Unit) {
     val c = CircasoTheme.colors
     val waiting = m.state == DeliveryState.Waiting || m.state == DeliveryState.Sending
     val failed = m.state == DeliveryState.Failed
@@ -686,7 +694,7 @@ private fun TextMessage(m: Message.Text, group: Boolean, firstOfRun: Boolean, pe
         MessageColumn(m.outgoing, Modifier.weight(1f, fill = false)) {
             ChatBubble(m.text, m.outgoing, faded = waiting, onClick = onTap, above = if ((group && !m.outgoing && firstOfRun) || m.momentQuote != null) ({
                 if (group && !m.outgoing && firstOfRun) BasicText(m.senderName, style = CircasoTheme.typography.caption1.copy(color = c.inkSecondary), modifier = Modifier.padding(bottom = 2.dp))
-                m.momentQuote?.let { MomentQuoteCard(it, m.outgoing, if (m.outgoing) peerName else m.senderName) }
+                m.momentQuote?.let { q -> MomentQuoteCard(q, m.outgoing, if (m.outgoing) peerName else m.senderName) { onOpenMoment(q, m.outgoing) } }
             }) else null)
             when {
                 failed -> BubbleMeta("Not sent · tap for options", icon = CircasoIcon.Close, color = c.critical)
@@ -1524,18 +1532,25 @@ private fun androidx.compose.foundation.lazy.LazyListScope.threadTail(
 
 /** Design V8: a reply to a moment shows the moment quoted (its picture and words); it stays after the moment expires. */
 @Composable
-private fun MomentQuoteCard(quote: com.circaso.core.crypto.MomentQuote, outgoing: Boolean, posterName: String?) {
+private fun MomentQuoteCard(quote: com.circaso.core.crypto.MomentQuote, outgoing: Boolean, posterName: String?, onOpen: () -> Unit) {
     val c = CircasoTheme.colors
     val t = CircasoTheme.typography
     val ink = if (outgoing) c.onAction else c.ink
     val gone = quote.expiresAt?.let { it <= com.circaso.core.sync.nowMillis() } == true
     val thumb = androidx.compose.runtime.remember(quote.thumb, gone) { if (gone) null else quote.thumb?.let { runCatching { kotlin.io.encoding.Base64.decode(it) }.getOrNull() } }
     Row(
-        Modifier.padding(bottom = 6.dp).clip(com.circaso.designsystem.theme.CircasoShapes.md).background(ink.copy(alpha = 0.12f)).padding(6.dp)
-            .semantics(mergeDescendants = true) { contentDescription = "Reply to ${if (outgoing) "a" else "your"} moment" + (quote.text?.let { ": $it" } ?: "") },
+        Modifier.padding(bottom = 6.dp).clip(com.circaso.designsystem.theme.CircasoShapes.md).background(ink.copy(alpha = 0.12f))
+            // Tap to open that moment in the viewer (Pasaka, 2026-11-03); an ended one says so where it is.
+            .pressable(role = androidx.compose.ui.semantics.Role.Button, onClick = onOpen).padding(6.dp)
+            .semantics(mergeDescendants = true) { contentDescription = "Reply to ${if (outgoing) "a" else "your"} moment" + (quote.text?.let { ": $it" } ?: "") + if (gone) ", no longer available" else ", open it" },
         verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        if (thumb != null) coil3.compose.AsyncImage(thumb, null, Modifier.size(36.dp, 48.dp).clip(androidx.compose.foundation.shape.RoundedCornerShape(6.dp)), contentScale = androidx.compose.ui.layout.ContentScale.Crop)
+        if (thumb != null) Box(Modifier.size(44.dp, 60.dp).clip(com.circaso.designsystem.theme.CircasoShapes.xs), contentAlignment = Alignment.Center) {
+            coil3.compose.AsyncImage(thumb, null, Modifier.matchParentSize(), contentScale = androidx.compose.ui.layout.ContentScale.Crop)
+            if (quote.kind == "VIDEO") Box(Modifier.size(22.dp).clip(com.circaso.designsystem.theme.CircasoShapes.circle).background(c.scrim), contentAlignment = Alignment.Center) {
+                CircasoIconImage(CircasoIcon.Play, c.onMoney, Modifier.size(12.dp))
+            }
+        } else if (quote.kind == "VOICE") CircasoIconImage(CircasoIcon.Waveform, ink, Modifier.size(22.dp))
         Column(Modifier.padding(end = 4.dp)) {
             BasicText(if (outgoing) "${posterName?.substringBefore(' ') ?: "Their"} · Moment" else "Your moment", style = t.footnote.copy(color = ink, fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold))
             BasicText(if (gone) "No longer available" else quote.text ?: when (quote.kind) { "IMAGE" -> "Photo"; "VIDEO" -> "Video"; "VOICE" -> "Voice"; else -> "Moment" }, style = t.footnote.copy(color = ink), maxLines = 2)

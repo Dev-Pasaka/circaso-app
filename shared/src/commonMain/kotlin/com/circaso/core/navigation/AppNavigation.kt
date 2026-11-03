@@ -172,6 +172,14 @@ fun AppNavigation(forceUpdate: Boolean, home: @Composable () -> Unit) {
                 val chatsViewModel = koinViewModel<ChatsViewModel>()
                 val walletViewModel = koinViewModel<WalletViewModel>()
                 val spacesViewModel: com.circaso.feature.status.presentation.SpacesViewModel = koinViewModel()
+                // A tapped "loved your moment" push (kind moment.loved) opens my moments, once per launch.
+                val openedFromPush = androidx.compose.runtime.saveable.rememberSaveable { androidx.compose.runtime.mutableStateOf(false) }
+                androidx.compose.runtime.LaunchedEffect(Unit) {
+                    if (!openedFromPush.value && com.circaso.gallery.launchValue("kind") == "moment.loved") {
+                        openedFromPush.value = true
+                        backStack.add(MomentViewerRoute(null))
+                    }
+                }
                 val spacesActions = com.circaso.feature.status.presentation.SpacesActions(
                     onOpenRing = { id -> backStack.add(MomentViewerRoute(id)) },
                     onOpenMine = { backStack.add(MomentViewerRoute(null)) },
@@ -269,7 +277,7 @@ fun AppNavigation(forceUpdate: Boolean, home: @Composable () -> Unit) {
                 val chats = koinInject<com.circaso.feature.messaging.domain.ChatsRepository>()
                 val scope = androidx.compose.runtime.rememberCoroutineScope()
                 com.circaso.feature.status.presentation.MomentViewerScreen(
-                    koinViewModel(key = "moments-${key.posterId}", parameters = { parametersOf(key.posterId) }), onClose = ::pop,
+                    koinViewModel(key = "moments-${key.posterId}-${key.momentId}", parameters = { parametersOf(key.posterId, key.momentId) }), onClose = ::pop,
                     // V1b "Message": their chat on this phone if there is one, else opened on the server.
                     onMessage = { posterId ->
                         scope.launch {
@@ -305,6 +313,7 @@ fun AppNavigation(forceUpdate: Boolean, home: @Composable () -> Unit) {
                 ThreadScreen(
                     threadViewModel,
                     onBack = ::pop,
+                    onOpenMoment = { posterId, momentId -> backStack.add(MomentViewerRoute(posterId, momentId)) },
                     onInfo = { backStack.add(ChatInfoRoute(route.chatId)) },
                     onAsha = { if (backStack.lastOrNull() != AshaRoute) backStack.add(AshaRoute) },
                     onPay = if (peer != null) ({ amount -> backStack.add(PayRoute(userId = peer, chatId = route.chatId, displayName = thread.chat?.title, amount = amount)) }) else null,

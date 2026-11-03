@@ -41,6 +41,7 @@ val statusModule = module {
         val messages = get<com.circaso.feature.messaging.domain.MessagesRepository>()
         com.circaso.feature.status.presentation.MomentViewerViewModel(
             params.getOrNull<String>(), get(), get(), get(), get(),
+            startAt = params.values.getOrNull(1) as? String,
             replyInChat = { posterId, text, moment ->
                 // The 1:1 chat on this phone if there is one (so a reply waits offline like any message), else open it.
                 val existing = chats.chats.first().firstOrNull { it.chat.peerId == posterId }?.chat?.chatId
