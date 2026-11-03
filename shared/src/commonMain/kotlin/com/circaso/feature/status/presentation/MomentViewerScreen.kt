@@ -60,6 +60,7 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.progressBarRangeInfo
 import androidx.compose.ui.semantics.ProgressBarRangeInfo
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.semantics.customActions
@@ -294,7 +295,7 @@ private fun ViewerBody(state: MomentViewerUiState, vm: MomentViewerActions, onCl
             Spinner(c.inkSecondary, Modifier.align(Alignment.Center))
             return@Box
         }
-        Stage(moment, state.media, vm.retryMedia, paused = paused, muted = state.muted)
+        Stage(moment, state.media, vm.retryMedia, paused = paused, muted = state.muted, posterName = ring.name, posterAvatar = ring.avatarUrl)
         // Shade behind the header and the caption/reply, so white text reads on any photo (design shade-top/bot).
         Box(Modifier.fillMaxWidth().height(200.dp).background(Brush.verticalGradient(listOf(c.scrim, Color.Transparent))))
         Box(Modifier.align(Alignment.BottomCenter).fillMaxWidth().height(260.dp).background(Brush.verticalGradient(listOf(Color.Transparent, c.scrim))))
@@ -404,7 +405,7 @@ private fun ViewerBody(state: MomentViewerUiState, vm: MomentViewerActions, onCl
 
 /** The moment itself: a text card, the photo, the video, or the voice with its waveform (V1–V3, V5–V6). */
 @Composable
-private fun BoxScope.Stage(moment: Moment, media: ViewerMedia, onRetry: () -> Unit, paused: Boolean, muted: Boolean) {
+private fun BoxScope.Stage(moment: Moment, media: ViewerMedia, onRetry: () -> Unit, paused: Boolean, muted: Boolean, posterName: String = "", posterAvatar: String? = null) {
     val c = CircasoTheme.colors
     val t = CircasoTheme.typography
     when (moment.kind) {
@@ -422,6 +423,11 @@ private fun BoxScope.Stage(moment: Moment, media: ViewerMedia, onRetry: () -> Un
         else -> {
             // The blurred placeholder that travelled in the encrypted body holds the place (V5).
             val thumb = remember(moment.thumb) { moment.thumb?.let { runCatching { Base64.decode(it) }.getOrNull() } }
+            // A voice moment is its colour and wave from the first frame (V3); loading just says so on the clock line.
+            if (moment.kind == MomentKind.Voice && (media is ViewerMedia.Loading || media is ViewerMedia.None)) {
+                VoiceStage(moment, null, paused, posterName, posterAvatar)
+                return
+            }
             if (media !is ViewerMedia.Ready && thumb != null) {
                 coil3.compose.AsyncImage(thumb, null, Modifier.fillMaxSize().blur(24.dp).graphicsLayer { scaleX = 1.2f; scaleY = 1.2f }, contentScale = ContentScale.Crop)
             }
@@ -430,7 +436,7 @@ private fun BoxScope.Stage(moment: Moment, media: ViewerMedia, onRetry: () -> Un
                     MomentKind.Image -> coil3.compose.AsyncImage(media.bytes, moment.caption ?: "Photo", Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
                     // No player controls (Pasaka, 2026-11-03): hold anywhere to pause, the speaker at the top mutes.
                     MomentKind.Video -> media.path?.let { MomentVideo(it, playing = !paused, muted = muted, modifier = Modifier.fillMaxSize(), poster = thumb) }
-                    else -> VoiceStage(moment, media.bytes)
+                    else -> VoiceStage(moment, media.bytes, paused, posterName, posterAvatar)
                 }
                 ViewerMedia.Loading -> Column(Modifier.align(Alignment.Center), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     Spinner(c.ink, Modifier.size(28.dp))
@@ -446,17 +452,40 @@ private fun BoxScope.Stage(moment: Moment, media: ViewerMedia, onRetry: () -> Un
 }
 
 @Composable
-private fun BoxScope.VoiceStage(moment: Moment, bytes: ByteArray) {
-    val c = CircasoTheme.colors
+private fun BoxScope.VoiceStage(moment: Moment, bytes: ByteArray?, paused: Boolean, posterName: String, posterAvatar: String?) {
+    val t = CircasoTheme.typography
     val player: AudioPlayer = koinInject()
-    LaunchedEffect(moment.momentId) { player.play(bytes, moment.media?.mime ?: "audio/mp4") }
+    var playing by remember(moment.momentId) { mutableStateOf(false) }
+    var finished by remember(moment.momentId) { mutableStateOf(false) }
+    // Played once the bytes are here; until then the stage is already the poster's colour and wave (no spinner).
+    LaunchedEffect(moment.momentId, bytes != null) {
+        if (bytes == null) return@LaunchedEffect
+        playing = true
+        player.play(bytes, moment.media?.mime ?: "audio/mp4")
+        playing = false
+        finished = true
+    }
+    // Hold to pause holds the voice where it is, and the wave with it (the player keeps the hold if it hasn't started).
+    LaunchedEffect(moment.momentId, paused) { if (paused) player.pause() else player.resume() }
     androidx.compose.runtime.DisposableEffect(moment.momentId) { onDispose { player.stop() } }
-    Column(Modifier.align(Alignment.Center), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(18.dp)) {
-        Box(Modifier.size(CircasoSizes.avatarXl).border(3.dp, c.ink, CircasoShapes.circle), contentAlignment = Alignment.Center) {
-            CircasoIconImage(CircasoIcon.Waveform, c.ink, Modifier.size(40.dp))
-        }
+    // V3: the poster's background (older voice moments have none: Ink, the dark stage they always had).
+    val swatch = MomentPalette.of(moment.background)
+    Box(Modifier.fillMaxSize().background(brush = swatch.brush))
+    val polled = playbackProgress(playing && !paused, moment.momentId) { player.progress() }
+    val progress = if (finished) 1f else polled
+    val total = moment.media?.durationMs ?: 0
+    val clockLine = if (bytes == null) "Loading" else "${voiceClock((total * progress).toLong())} / ${voiceClock(total)}"
+    Column(Modifier.align(Alignment.Center).padding(horizontal = CircasoSpacing.s6), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(18.dp)) {
+        Avatar(posterName, size = CircasoSizes.avatarXl, imageUrl = posterAvatar, modifier = Modifier.border(3.dp, swatch.ink.copy(alpha = 0.9f), CircasoShapes.circle))
+        VoiceWave(
+            { moment.levels }, progress = progress, playing = playing && !paused, ink = swatch.ink,
+            spoken = if (bytes == null) "Loading" else "${voiceClock((total * progress).toLong())} of ${voiceClock(total)}",
+        )
+        BasicText(clockLine, Modifier.clearAndSetSemantics { }, style = t.subhead.copy(color = swatch.ink.copy(alpha = 0.8f), fontFeatureSettings = "tnum"))
     }
 }
+
+private fun voiceClock(ms: Long): String { val s = (ms / 1000).coerceIn(0, 3600); return "${s / 60}:${(s % 60).toString().padStart(2, '0')}" }
 
 @Composable
 private fun BoxScope.StageMessage(icon: CircasoIcon, title: String, sub: String?, action: Pair<String, () -> Unit>? = null) {

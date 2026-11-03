@@ -66,6 +66,8 @@ internal data class MomentBody(
     val caption: String? = null,
     val media: MomentMediaBody? = null,
     val thumb: String? = null,
+    /** A voice moment's waveform, 0..100 per bar (small whole numbers keep the body light); absent on older phones. */
+    val levels: List<Int>? = null,
 )
 
 @Serializable
@@ -79,6 +81,7 @@ internal data class MomentMediaBody(
 internal data class PendingDraft(
     val kind: String, val text: String? = null, val background: String? = null, val style: String? = null, val caption: String? = null,
     val mime: String? = null, val thumb: String? = null, val durationMs: Long? = null, val width: Int? = null, val height: Int? = null,
+    val levels: List<Int>? = null,
 )
 
 @Serializable
@@ -346,7 +349,8 @@ class MomentsRepositoryImpl(
             is MomentDraft.Media -> {
                 files.write(localId, draft.bytes)
                 PendingDraft(draft.kind.name, caption = draft.caption?.takeIf { it.isNotBlank() }, mime = draft.mime, thumb = draft.thumb?.let { Base64.encode(it) },
-                    durationMs = draft.durationMs, width = draft.width, height = draft.height)
+                    durationMs = draft.durationMs, width = draft.width, height = draft.height, background = draft.background,
+                    levels = draft.levels?.map { (it * 100).toInt().coerceIn(0, 100) })
             }
         }
         dao.savePending(PendingMomentEntity(localId, pending.kind, json.encodeToString(PendingDraft.serializer(), pending), null, null, null, StatePosting, null, now()))
@@ -392,7 +396,7 @@ class MomentsRepositoryImpl(
             row = dao.pending(row.localId) ?: return AppResult.Success(Unit)
         }
         val body = MomentBody(
-            kind = kind.name, text = draft.text, background = draft.background, style = draft.style, caption = draft.caption, thumb = draft.thumb,
+            kind = kind.name, text = draft.text, background = draft.background, style = draft.style, caption = draft.caption, thumb = draft.thumb, levels = draft.levels,
             media = row.mediaId?.let { MomentMediaBody(it, row.mediaKey!!, row.mediaDigest!!, draft.mime ?: "application/octet-stream", files.read(it)?.size?.toLong() ?: 0, draft.durationMs, draft.width, draft.height) },
         )
         val plain = json.encodeToString(MomentBody.serializer(), body).encodeToByteArray()
@@ -492,6 +496,7 @@ class MomentsRepositoryImpl(
             media = b.media?.let { MomentMedia(it.mediaId, it.key, it.digest, it.mime, it.sizeBytes, it.durationMs, it.width, it.height) },
             postedAt = postedAt, expiresAt = expiresAt, mine = mine, viewed = viewed, reacted = reacted, viewCount = viewCount,
             reaction = reaction, reactionCount = reactionCount,
+            levels = b.levels?.takeIf { it.isNotEmpty() }?.map { (it / 100f).coerceIn(0f, 1f) },
         )
     }
 

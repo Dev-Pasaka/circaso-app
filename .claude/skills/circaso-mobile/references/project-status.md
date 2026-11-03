@@ -199,6 +199,12 @@ Nothing to show is never an error screen. The first moment was posted through th
   video review on the emulator was the emulator's `c2.goldfish.h264.decoder` failing on its first buffer (Codec2
   BufferPool error 14); `MomentVideo` now retries without a decoder that failed (software decoder) and shows the
   thumbnail until the first frame renders, and says so if the phone can't preview it.
+- Voice moments (2026-11-04): the waveform is the person's own, sampled from the recorder's meter while recording
+  (Android `MediaRecorder.getMaxAmplitude`, iOS AVAudioRecorder metering; no Visualizer, no new permission) and
+  sent as 48 bars (0..100) in the encrypted body (`levels`); it fills as the voice plays, the bars at the playhead
+  lift, it freezes when held or paused, and only the fill moves under reduced motion. Older moments and picked
+  audio get a gentle procedural wave. Voice moments take a background from the text palette (default Metal, as
+  before), chosen on the review and drawn by the viewer. `AudioPlayer` gained progress, pause and resume.
 - Still open from that review (should-fix, before release): V3 voice viewer and V7 "no longer available"; "Message X" in More (V1b); the
   viewers sheet doesn't scroll; shade gradients behind text on media; Ask Asha and Search in the Spaces header; the
   Spaces tab dot; S1e "not downloaded" ring; offline first open says "No moments yet"; the heart and Delete should be

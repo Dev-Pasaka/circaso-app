@@ -43,7 +43,27 @@ data class Moment(
     /** My emoji on someone else's moment; on mine, how many viewers reacted. */
     val reaction: String? = null,
     val reactionCount: Int = 0,
+    /** A voice moment's waveform as recorded (0..1 each, about [VoiceLevelCount]); null for older or picked audio. */
+    val levels: List<Float>? = null,
 )
+
+/** How many bars a voice moment's waveform keeps (sampled while recording, sent in the encrypted body). */
+const val VoiceLevelCount = 48
+
+/**
+ * Evens out the levels sampled while recording into [count] bars (the loudest sample in each slice), scaled so the
+ * loudest bar is full height. Empty in, empty out.
+ */
+fun voiceLevels(samples: List<Float>, count: Int = VoiceLevelCount): List<Float> {
+    if (samples.isEmpty() || count <= 0) return emptyList()
+    val bars = List(count) { i ->
+        val from = i * samples.size / count
+        val to = maxOf(from + 1, (i + 1) * samples.size / count)
+        samples.subList(from.coerceAtMost(samples.size - 1), to.coerceAtMost(samples.size)).maxOrNull() ?: 0f
+    }
+    val top = bars.maxOrNull()?.takeIf { it > 0f } ?: return List(count) { 0f }
+    return bars.map { (it / top).coerceIn(0f, 1f) }
+}
 
 /**
  * My moment that hasn't reached the server yet (M6): posting, waiting for a connection, or failed. [progress] is how
@@ -79,6 +99,9 @@ sealed interface MomentDraft {
         val durationMs: Long? = null,
         val width: Int? = null,
         val height: Int? = null,
+        /** A voice moment's background (a `MomentPalette` id) and its recorded waveform. */
+        val background: String? = null,
+        val levels: List<Float>? = null,
     ) : MomentDraft
 }
 

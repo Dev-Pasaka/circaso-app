@@ -64,6 +64,7 @@ class IosAudioRecorder : AudioRecorder {
                 "AVEncoderBitRateKey" to 32_000,
             )
             val r = AVAudioRecorder(uRL = file, settings = settings, error = error.ptr)
+            r.meteringEnabled = true // the level for the voice moment's waveform
             if (!r.prepareToRecord() || !r.record()) {
                 NSFileManager.defaultManager.removeItemAtURL(file, null)
                 return@memScoped RecordingStart.Failed
@@ -87,6 +88,14 @@ class IosAudioRecorder : AudioRecorder {
 
     override suspend fun cancel() = cancelNow()
 
+    /** The meter's average power, -50 dB (or quieter) to 0 dB, as 0..1. */
+    override fun level(): Float {
+        val r = recorder ?: return 0f
+        r.updateMeters()
+        val db = r.averagePowerForChannel(0u)
+        return ((db + 50f) / 50f).coerceIn(0f, 1f)
+    }
+
     private fun cancelNow() {
         recorder?.stop()
         url?.let { NSFileManager.defaultManager.removeItemAtURL(it, null) }
@@ -101,6 +110,7 @@ class IosAudioRecorder : AudioRecorder {
 
 class IosAudioPlayer : AudioPlayer {
     private var player: AVAudioPlayer? = null
+    private var held = false
 
     override suspend fun play(bytes: ByteArray, contentType: String) {
         stop()
@@ -112,15 +122,26 @@ class IosAudioPlayer : AudioPlayer {
             AVAudioPlayer(data = bytes.toNSData(), error = error.ptr)
         }
         player = p
+        held = false
         if (!p.prepareToPlay() || !p.play()) { stop(); return }
         try {
-            while (p.playing) delay(100)
+            // A held clip isn't playing but isn't over either: keep waiting until it ends or is stopped.
+            while (player === p && (p.playing || held)) delay(100)
         } finally {
             if (player === p) stop()
         }
     }
 
+    override fun progress(): Float? {
+        val p = player ?: return null
+        return if (p.duration <= 0.0) null else (p.currentTime / p.duration).toFloat().coerceIn(0f, 1f)
+    }
+
+    override fun pause() { player?.takeIf { it.playing }?.let { held = true; it.pause() } }
+    override fun resume() { player?.takeIf { held }?.let { held = false; it.play() } }
+
     override fun stop() {
+        held = false
         player?.stop()
         player = null
         AVAudioSession.sharedInstance().setActive(false, AVAudioSessionSetActiveOptionNotifyOthersOnDeactivation, null)

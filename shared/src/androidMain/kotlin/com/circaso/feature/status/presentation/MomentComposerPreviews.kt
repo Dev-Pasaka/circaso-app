@@ -219,3 +219,33 @@ private fun ForwardLightHcPreview() = PreviewForward(dark = false, highContrast 
 @Preview(name = "V4 · Forward, dark high contrast", fontScale = 1.6f)
 @Composable
 private fun ForwardDarkHcPreview() = PreviewForward(dark = true, highContrast = true)
+
+private val previewLevels = List(48) { i -> (0.2f + 0.8f * kotlin.math.abs(kotlin.math.sin(i / 5f))) }
+
+@Preview(name = "M5 · Voice review, chosen background")
+@Composable
+private fun VoiceReviewPreview() = PreviewComposer(
+    MomentComposerUiState(mode = ComposerMode.Voice, voiceBackground = "g-ocean", items = listOf(ComposerItem(ComposerCapture.Voice(ByteArray(0), "audio/mp4", 23_000, previewLevels)))),
+)
+
+@Preview(name = "M5 · Voice review on Lemon, no levels, person in light theme, large text", fontScale = 1.6f)
+@Composable
+private fun VoiceReviewLightPreview() = PreviewComposer(
+    MomentComposerUiState(mode = ComposerMode.Voice, voiceBackground = "c-lemon", items = listOf(ComposerItem(ComposerCapture.Voice(ByteArray(0), "audio/mp4", 23_000, null)))),
+    dark = false,
+)
+
+@Preview(name = "M5b · Recording a voice moment")
+@Composable
+private fun VoiceRecordingPreview() = PreviewComposer(MomentComposerUiState(mode = ComposerMode.Voice, recordingVoice = true, recordingSince = 0))
+
+@Preview(name = "M5b · Recording on a light background, dark high contrast")
+@Composable
+private fun VoiceRecordingLemonPreview() = PreviewComposer(MomentComposerUiState(mode = ComposerMode.Voice, voiceBackground = "c-lemon"), dark = true, highContrast = true)
+
+@Preview(name = "M5 · Voice review on Lemon, light high contrast")
+@Composable
+private fun VoiceReviewLemonHcPreview() = PreviewComposer(
+    MomentComposerUiState(mode = ComposerMode.Voice, voiceBackground = "c-lemon", items = listOf(ComposerItem(ComposerCapture.Voice(ByteArray(0), "audio/mp4", 23_000, previewLevels)))),
+    dark = false, highContrast = true,
+)

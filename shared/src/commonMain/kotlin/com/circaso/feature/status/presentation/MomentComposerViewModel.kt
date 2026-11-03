@@ -35,7 +35,8 @@ enum class ComposerMode { Text, Photo, Video, Voice }
 /** What is ready to share (M4 for a photo or video, M5 for a recorded voice). */
 sealed interface ComposerCapture {
     class Shot(val media: CapturedMedia, val kind: MomentKind) : ComposerCapture
-    class Voice(val bytes: ByteArray, val mime: String, val durationMs: Long) : ComposerCapture
+    /** [levels]: the waveform sampled while recording (null for a picked audio file). */
+    class Voice(val bytes: ByteArray, val mime: String, val durationMs: Long, val levels: List<Float>? = null) : ComposerCapture
 }
 
 /**
@@ -95,6 +96,10 @@ data class MomentComposerUiState(
     val recordingSince: Long? = null,
     /** Listening back to a recorded voice before sharing (M5). */
     val playingBack: Boolean = false,
+    /** Listening back, held part-way: Play carries on from there. */
+    val playbackHeld: Boolean = false,
+    /** A voice moment's background (M5), from the same palette as text; Metal as before. */
+    val voiceBackground: String = "Metal",
     /** The recents strip for the current mode (WhatsApp-style), newest first; empty without library access. */
     val recents: List<LibraryItem> = emptyList(),
     /** What the phone lets the strip show for this mode; null until it has answered. */
@@ -151,6 +156,13 @@ class MomentComposerViewModel(
 ) : ViewModel() {
     private val _state = MutableStateFlow(initial)
     val state: StateFlow<MomentComposerUiState> = _state.asStateFlow()
+
+    /**
+     * The microphone's level over the last moments while recording, oldest first (the live wave, M5b). Apart from
+     * [state] so twenty samples a second redraw the wave and nothing else.
+     */
+    private val _liveLevels = MutableStateFlow<List<Float>>(emptyList())
+    val liveLevels: StateFlow<List<Float>> = _liveLevels.asStateFlow()
     private var voiceStartedAt = 0L
     // Holds (M1b video, M5b voice): a release can arrive while the start is still in progress (a permission prompt,
     // the encoder warming up). It is remembered, and the recording stops as soon as it has started, never left running.
@@ -159,6 +171,8 @@ class MomentComposerViewModel(
     private var voiceStarting = false
     private var voiceReleaseAsked = false
     private var voiceCap: Job? = null
+    private var voiceSampler: Job? = null
+    private val voiceSamples = mutableListOf<Float>()
     private var recentsJob: Job? = null
     private var trimJob: Job? = null
 
@@ -311,7 +325,8 @@ class MomentComposerViewModel(
     /** M4's strip: put another picked item on the stage. */
     fun select(index: Int) {
         if (index !in _state.value.items.indices) return
-        _state.update { it.copy(current = index, playingBack = false) }
+        player.stop()
+        _state.update { it.copy(current = index, playingBack = false, playbackHeld = false) }
         openTrimIfNeeded()
     }
 
@@ -320,7 +335,7 @@ class MomentComposerViewModel(
         player.stop()
         _state.update { s ->
             val left = s.items.filterIndexed { i, _ -> i != s.current }
-            s.copy(items = left, current = s.current.coerceAtMost((left.size - 1).coerceAtLeast(0)), playingBack = false, trim = null)
+            s.copy(items = left, current = s.current.coerceAtMost((left.size - 1).coerceAtLeast(0)), playingBack = false, playbackHeld = false, trim = null)
         }
     }
 
@@ -438,6 +453,17 @@ class MomentComposerViewModel(
                     voiceStartedAt = now()
                     _state.update { it.copy(recordingVoice = true, micDenied = false, recordingSince = voiceStartedAt) }
                     voiceCap = viewModelScope.launch { kotlinx.coroutines.delay(com.circaso.core.platform.MomentVideoMaxMs); voiceUp() }
+                    // The person's own waveform: the recorder's meter, sampled while the mic is held.
+                    voiceSamples.clear()
+                    voiceSampler?.cancel()
+                    voiceSampler = viewModelScope.launch {
+                        while (_state.value.recordingVoice) {
+                            val level = recorder.level()
+                            voiceSamples += level
+                            _liveLevels.value = voiceSamples.takeLast(LiveBars)
+                            kotlinx.coroutines.delay(SampleMs)
+                        }
+                    }
                     if (voiceReleaseAsked) voiceUp()
                 }
                 RecordingStart.PermissionDenied -> _state.update { it.copy(micDenied = true) }
@@ -450,13 +476,16 @@ class MomentComposerViewModel(
         if (voiceStarting) { voiceReleaseAsked = true; return }
         if (!_state.value.recordingVoice) return
         voiceCap?.cancel()
+        voiceSampler?.cancel()
+        val levels = com.circaso.feature.status.domain.voiceLevels(voiceSamples.toList()).takeIf { l -> l.any { it > 0f } }
+        _liveLevels.value = emptyList()
         _state.update { it.copy(recordingVoice = false, recordingSince = null) }
         viewModelScope.launch {
             val clip = recorder.stop()
             val heldMs = now() - voiceStartedAt
             // Under half a second is a slip, not a moment.
             if (clip != null && heldMs >= 500) {
-                _state.update { it.withSingle(ComposerCapture.Voice(clip.bytes, clip.contentType, heldMs.coerceAtMost(com.circaso.core.platform.MomentVideoMaxMs))) }
+                _state.update { it.withSingle(ComposerCapture.Voice(clip.bytes, clip.contentType, heldMs.coerceAtMost(com.circaso.core.platform.MomentVideoMaxMs), levels)) }
             }
         }
     }
@@ -465,23 +494,36 @@ class MomentComposerViewModel(
     fun voiceCancel() {
         if (voiceStarting) { voiceReleaseAsked = true }
         voiceCap?.cancel()
+        voiceSampler?.cancel()
+        _liveLevels.value = emptyList()
         _state.update { it.copy(recordingVoice = false, recordingSince = null) }
         viewModelScope.launch { recorder.cancel() }
     }
 
-    /** M5: listen back before sharing. */
+    /** M5: listen back before sharing. Pause holds it where it is; Play again carries on from there. */
     fun togglePlayback() {
-        val voice = _state.value.capture as? ComposerCapture.Voice ?: return
-        if (_state.value.playingBack) { player.stop(); _state.update { it.copy(playingBack = false) }; return }
-        _state.update { it.copy(playingBack = true) }
-        viewModelScope.launch {
-            player.play(voice.bytes, voice.mime)
-            _state.update { it.copy(playingBack = false) }
+        val s = _state.value
+        val voice = s.capture as? ComposerCapture.Voice ?: return
+        when {
+            s.playingBack -> { player.pause(); _state.update { it.copy(playingBack = false, playbackHeld = true) } }
+            s.playbackHeld -> { player.resume(); _state.update { it.copy(playingBack = true, playbackHeld = false) } }
+            else -> {
+                _state.update { it.copy(playingBack = true) }
+                viewModelScope.launch {
+                    player.play(voice.bytes, voice.mime)
+                    _state.update { it.copy(playingBack = false, playbackHeld = false) }
+                }
+            }
         }
     }
 
+    /** How far listening back has got (0..1), for the wave's fill. */
+    fun playbackProgress(): Float? = player.progress()
+
+    fun onVoiceBackground(bg: String) = _state.update { it.copy(voiceBackground = bg) }
+
     /** The close button on the review: everything picked or captured is let go, back to the camera. */
-    fun discardCapture() { player.stop(); _state.update { it.copy(items = emptyList(), current = 0, playingBack = false, trim = null, forwarding = false) } }
+    fun discardCapture() { player.stop(); _state.update { it.copy(items = emptyList(), current = 0, playingBack = false, playbackHeld = false, trim = null, forwarding = false) } }
 
     fun onCaption(text: String) = _state.update { s -> s.copy(items = s.items.mapIndexed { i, it -> if (i == s.current) it.copy(caption = text.take(700)) else it }) }
     fun onText(text: String) = _state.update { it.copy(text = text.take(700)) }
@@ -546,7 +588,8 @@ class MomentComposerViewModel(
 
     /** The draft for one item, with its bytes read; or why not (the file is gone, or too large even re-encoded). */
     private suspend fun draftOf(item: ComposerItem): Draft = when (val cap = item.capture) {
-        is ComposerCapture.Voice -> if (cap.bytes.size > MomentMediaMaxBytes) Draft.TooLarge else Draft.Ready(MomentDraft.Media(MomentKind.Voice, cap.bytes, cap.mime, item.caption, null, cap.durationMs))
+        is ComposerCapture.Voice -> if (cap.bytes.size > MomentMediaMaxBytes) Draft.TooLarge
+        else Draft.Ready(MomentDraft.Media(MomentKind.Voice, cap.bytes, cap.mime, item.caption, null, cap.durationMs, background = _state.value.voiceBackground, levels = cap.levels))
         is ComposerCapture.Shot -> {
             var media = cap.media
             var bytes = media.bytes.takeIf { it.isNotEmpty() } ?: media.path?.let { library.read(it) } ?: ByteArray(0)
@@ -573,6 +616,10 @@ class MomentComposerViewModel(
     companion object {
         /** Frames in the trim bar's filmstrip (design M3b shows eight). */
         const val TrimFrames = 8
+        /** The recorder's meter is read this often while recording (a minute is 1,200 samples, 48 bars). */
+        const val SampleMs = 50L
+        /** Bars in the live wave while recording. */
+        const val LiveBars = 32
         /** The shortest clip the trimmer keeps. */
         const val MinTrimMs = 1_000L
     }

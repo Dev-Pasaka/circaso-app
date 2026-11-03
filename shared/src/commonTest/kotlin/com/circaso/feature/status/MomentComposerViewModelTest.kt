@@ -63,6 +63,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
+import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
@@ -176,6 +177,26 @@ private object NoRecorder : AudioRecorder {
 }
 private object NoPlayer : AudioPlayer { override suspend fun play(bytes: ByteArray, contentType: String) = Unit; override fun stop() = Unit }
 
+/** A microphone whose meter rises with each read, so the waveform can be checked. */
+private class RisingRecorder : AudioRecorder {
+    var reads = 0
+    override suspend fun start() = RecordingStart.Started
+    override suspend fun stop(): Recording? = Recording(ByteArray(4), "audio/mp4", 1)
+    override suspend fun cancel() = Unit
+    override fun level(): Float = (++reads).toFloat()
+}
+
+/** A player that waits until stopped, and remembers pauses. */
+private class HoldingPlayer : AudioPlayer {
+    val calls = mutableListOf<String>()
+    private val done = kotlinx.coroutines.CompletableDeferred<Unit>()
+    override suspend fun play(bytes: ByteArray, contentType: String) { calls += "play"; done.await() }
+    override fun stop() { calls += "stop"; done.complete(Unit) }
+    override fun pause() { calls += "pause" }
+    override fun resume() { calls += "resume" }
+    override fun progress() = 0.4f
+}
+
 @OptIn(ExperimentalCoroutinesApi::class)
 class MomentComposerViewModelTest {
     private val dispatcher = UnconfinedTestDispatcher()
@@ -185,7 +206,73 @@ class MomentComposerViewModelTest {
     @BeforeTest fun setUp() = Dispatchers.setMain(dispatcher)
     @AfterTest fun tearDown() = Dispatchers.resetMain()
 
-    private fun composer() = MomentComposerViewModel(moments, FakeCamera(), NoPicker, NoRecorder, ObserveContactsUseCase(Contacts()), NoPlayer, library, ObserveProfileUseCase(Me()), now = { 0 })
+    private var clock = 0L
+    private fun composer(recorder: AudioRecorder = NoRecorder, player: AudioPlayer = NoPlayer) =
+        MomentComposerViewModel(moments, FakeCamera(), NoPicker, recorder, ObserveContactsUseCase(Contacts()), player, library, ObserveProfileUseCase(Me()), now = { clock })
+
+    @Test fun aRecordedVoiceKeepsItsWaveformAndChosenBackground() = runTest(dispatcher) {
+        val recorder = RisingRecorder()
+        val vm = composer(recorder)
+        vm.setMode(ComposerMode.Voice)
+        vm.voiceDown()
+        advanceTimeBy(MomentComposerViewModel.SampleMs * 99 + 1)
+        assertTrue(vm.liveLevels.value.isNotEmpty())
+        clock = 5_000
+        vm.voiceUp()
+        val voice = vm.state.value.capture as ComposerCapture.Voice
+        val levels = assertNotNull(voice.levels)
+        assertEquals(com.circaso.feature.status.domain.VoiceLevelCount, levels.size)
+        assertEquals(1f, levels.last()) // the loudest is full height
+        assertTrue(levels.first() < levels.last())
+        assertTrue(vm.liveLevels.value.isEmpty())
+        assertEquals("Metal", vm.state.value.voiceBackground) // as before, until chosen
+        vm.onVoiceBackground("g-ocean")
+        vm.share()
+        val draft = moments.posted.single() as MomentDraft.Media
+        assertEquals(MomentKind.Voice, draft.kind)
+        assertEquals("g-ocean", draft.background)
+        assertEquals(levels, draft.levels)
+    }
+
+    @Test fun listeningBackPausesWhereItIsAndCarriesOn() = runTest(dispatcher) {
+        val player = HoldingPlayer()
+        library.systemPicks = listOf(CapturedMedia(ByteArray(3), "audio/mp4", null, null, durationMs = 9_000))
+        val vm = composer(player = player)
+        vm.setMode(ComposerMode.Voice)
+        vm.pickFromLibrary()
+        assertNull((vm.state.value.capture as ComposerCapture.Voice).levels) // picked audio: the gentle fallback wave
+        vm.togglePlayback()
+        assertTrue(vm.state.value.playingBack)
+        assertEquals(0.4f, vm.playbackProgress())
+        vm.togglePlayback()
+        assertTrue(vm.state.value.playbackHeld)
+        assertFalse(vm.state.value.playingBack)
+        vm.togglePlayback()
+        assertEquals(listOf("play", "pause", "resume"), player.calls)
+        vm.discardCapture()
+        assertFalse(vm.state.value.playbackHeld)
+    }
+
+    @Test fun recordedLevelsAreEvenedIntoBarsAndScaled() {
+        val bars = com.circaso.feature.status.domain.voiceLevels(List(96) { if (it == 50) 0.5f else 0.1f }, 48)
+        assertEquals(48, bars.size)
+        assertEquals(1f, bars[25])
+        assertEquals(0.2f, bars[0], 0.0001f)
+        assertTrue(com.circaso.feature.status.domain.voiceLevels(emptyList()).isEmpty())
+        assertEquals(List(4) { 0f }, com.circaso.feature.status.domain.voiceLevels(List(10) { 0f }, 4))
+        // Fewer samples than bars still fills every bar.
+        assertEquals(48, com.circaso.feature.status.domain.voiceLevels(listOf(0.2f, 0.4f)).size)
+    }
+
+    @Test fun aVoiceBodyCarriesItsLevelsAndOlderBodiesStillRead() {
+        val json = kotlinx.serialization.json.Json { ignoreUnknownKeys = true }
+        val body = com.circaso.feature.status.data.repository.MomentBody(kind = "Voice", background = "c-teal", levels = listOf(0, 50, 100))
+        val back = json.decodeFromString(com.circaso.feature.status.data.repository.MomentBody.serializer(), json.encodeToString(com.circaso.feature.status.data.repository.MomentBody.serializer(), body))
+        assertEquals(listOf(0, 50, 100), back.levels)
+        assertEquals("c-teal", back.background)
+        val older = json.decodeFromString(com.circaso.feature.status.data.repository.MomentBody.serializer(), """{"v":1,"kind":"Voice"}""")
+        assertNull(older.levels)
+    }
 
     @Test fun eachKindAsksForItsOwnAccessAndAnEmptyStripSaysWhy() = runTest(dispatcher) {
         library.items[LibraryKind.Photo] = listOf(photo("p1"))
