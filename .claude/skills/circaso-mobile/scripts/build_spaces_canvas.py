@@ -923,10 +923,12 @@ HELD = f"{RATE} · fee and rate held for 14:52"
 def group_backdrop():
     return (bar("Kilimani Chama", sub="8 members", avatar=gav("sm"), right=icon_btn("more", "Group info"))
             + f'<div class="cx-thread" style="padding: 12px 16px 0;"><div style="align-self: center; font-size: 12px; line-height: 16px; font-weight: 600; color: var(--ink-secondary); padding: 4px 0;">Today</div>'
-            + f'<div class="cx-msg">{av("otieno", "sm")}<div class="cx-bubble cx-bubble-in">Requesting the bus deposit now</div></div></div>')
-def person_backdrop(who):
+            + f'<div class="cx-msg">{av("otieno", "sm")}<div class="cx-bubble cx-bubble-in">Requesting the bus deposit now</div></div></div>'
+            + composer(None, None, placeholder=True))
+def person_backdrop(who, chip="#500", text="for lunch tomorrow"):
     return (bar(NAMES[who], sub="Online", avatar=av(who, "sm"))
-            + f'<div class="cx-thread" style="padding: 8px 16px 0;"><div class="cx-bubble cx-bubble-in">Habari ya leo? Did you eat?</div><div class="cx-bubble cx-bubble-out">Not yet, still in a meeting</div></div>')
+            + f'<div class="cx-thread" style="padding: 8px 16px 0;"><div class="cx-bubble cx-bubble-in">Habari ya leo? Did you eat?</div><div class="cx-bubble cx-bubble-out">Not yet, still in a meeting</div></div>'
+            + composer(chip, text))
 
 def wchip(name):
     a = gav("sm") if name == "Kilimani Chama" else av("pasaka", "sm")
@@ -940,7 +942,7 @@ def send_sheet(title="Send", from_wallet="Kilimani Chama", to="Coast Bus", amoun
     static_from = (f'<span style="display: inline-flex; align-items: center; gap: 6px;" aria-label="Paying from {from_wallet}, fixed by the approval">'
                    f'{gav("sm", "width: 22px; height: 22px; font-size: 9px;")}{from_wallet}<span style="color: var(--ink-secondary); display: flex;">{ic("lock", 13)}</span></span>')
     rows = [("Paying from", static_from if locked else wchip(from_wallet))] if show_from else [("From", "Personal")]
-    rows += ([] if problem else [("Network", "USDC on Base")]) + (extra_rows or [])
+    rows += ([] if problem else [("Network", "USDC on Base")]) + ([("For", note)] if note and not problem else []) + (extra_rows or [])
     rows += [("Fee", fee if not fee_sub else f'{fee} <span style="color: var(--ink-secondary); font-weight: 400;">· {fee_sub}</span>'), ("Total", total), (f"{who_name} receives", receives)]
     lock = (f'<div class="cx-amount-sub" style="display: flex; gap: 4px; justify-content: center; align-items: center;">{ic("lock", 12)}The amount the admins approved</div>' if locked else "")
     foot = footer if footer is not None else f'<div class="cx-footnote">One Circaso fee, network cost included.<br>{HELD}</div>'
@@ -948,44 +950,73 @@ def send_sheet(title="Send", from_wallet="Kilimani Chama", to="Coast Bus", amoun
              + f'<div style="display: flex; align-items: center; gap: 12px;">{who_av}<div style="flex: 1; min-width: 0;"><div style="font: 600 17px/22px var(--font-sans);">{who_name}</div>'
              + f'<div style="font: 400 13px/18px var(--font-sans); color: var(--ink-secondary);">{usdc}</div></div>'
              + f'<div class="cx-amount cx-amount-medium" style="align-items: flex-end;"><div class="cx-amount-main"><span class="cx-amount-cur">KES</span><span class="cx-amount-num">{amount}</span></div></div></div>'
-             + lock + ("" if locked or problem else field("Note", note, fid="pn")) + problem + details(rows)
+             + lock + problem + details(rows)
              + btn(button or f"Send {total}", disabled=disabled, busy=busy) + foot)
     return sheet(inner, title, pb=34, gap=14)
+
+def coin_chip(sym, held, on=False):
+    ring = "box-shadow: 0 0 0 2px var(--ink);" if on else "box-shadow: var(--shadow-float);"
+    return (f'<button type="button" aria-label="Pay in {sym}, you hold {held}" style="display: inline-flex; align-items: center; gap: 8px; padding: 6px 12px 6px 6px; border-radius: 999px; border: 0; background: var(--surface); color: var(--ink); {ring}">'
+            f'<span style="width: 28px; height: 28px; border-radius: 50%; background: var(--fill-strong); display: flex; align-items: center; justify-content: center; font: 700 10px/1 var(--font-sans);">{sym[:2]}</span>'
+            f'<span style="display: flex; flex-direction: column; text-align: left;"><span style="font: 600 15px/20px var(--font-sans);">{sym}</span><span style="font: 400 11px/13px var(--font-sans); color: var(--ink-secondary);">{held}</span></span></button>')
+
+def composer(chip, text, title=None, sub=None, sub_tone="ink-secondary", coins="", arrow_on=True, placeholder=False):
+    prev = ""
+    if title:
+        dim = "" if arrow_on else ' style="opacity: 0.35; pointer-events: none;"'
+        prev = (f'<div class="cx-preview" role="status" aria-live="polite"><div class="cx-preview-text"><div class="cx-preview-title">{title}</div>'
+                f'<div class="cx-preview-sub" style="color: var(--{sub_tone});">{sub}</div></div>'
+                f'<button type="button" class="cx-icon-btn cx-icon-btn-action" aria-label="Review {title}"{dim}>{ic("send")}</button></div>')
+    coin_row = f'<div style="display: flex; gap: 8px; padding: 0 12px 8px; overflow: hidden;">{coins}</div>' if coins else ""
+    field_html = (f'<span class="cx-chip-money">{chip}</span>' if chip else "") + (f'<span>{text}</span>' if text else "")
+    if placeholder: field_html = '<span class="cx-composer-placeholder">Message, or #amount to send</span>'
+    return (f'<div style="position: absolute; left: 0; right: 0; bottom: 0; padding-bottom: 26px; background: var(--glass); -webkit-backdrop-filter: blur(24px); backdrop-filter: blur(24px); z-index: 4;">'
+            f'<div class="cx-composer">{coin_row}{prev}<div class="cx-composer-bar"><button type="button" class="cx-icon-btn" aria-label="Attach">{ic("plus")}</button>'
+            f'<div class="cx-composer-field">{field_html}</div><button type="button" class="cx-icon-btn cx-icon-btn-action" aria-label="Send">{ic("send")}</button></div></div></div>')
 
 def pay_frame(sheet_html, backdrop=None):
     return (backdrop or group_backdrop()) + sheet_html
 
 APPROVED = [("Request", "Approved by Otieno and Wanjiru")]
+frame(P_G, "GW9a-Chat-hash-amount", "GW9 · Start in the chat: #amount @asset",
+      "Money always starts in the chat, as today (C3): \"#500 \" becomes the money chip, \"@\" offers the coins you hold "
+      "(narrowing as you type), the rest of the line is the note. The glass preview names the payment; its arrow opens the review.",
+      person_backdrop("mum", "#500", "@us for lunch tomorrow").replace(composer("#500", "@us for lunch tomorrow"),
+          composer("#500", "@us for lunch tomorrow", "Send KES 500 to Mum", "3.87 USDC · for lunch tomorrow",
+                   coins=coin_chip("USDC", "141.18") + coin_chip("USDT", "12.40"))))
+
+frame(P_G, "GW9a2-Group-hash", "GW9 · # in a group with a wallet",
+      "In a group that has a wallet, \"#1000\" pays into the group wallet (a contribution); the preview says so and shows "
+      "where the target will stand. In a group without a wallet, # is just text. To pay a member, use their own chat.",
+      bar("Kilimani Chama", sub="8 members", avatar=gav("sm"), right=icon_btn("more", "Group info"))
+      + f'<div class="cx-thread" style="padding: 12px 16px 0;"><div style="align-self: center; font-size: 12px; line-height: 16px; font-weight: 600; color: var(--ink-secondary); padding: 4px 0;">Today</div>'
+      + f'<div class="cx-msg">{av("wanjiru", "sm")}<div class="cx-bubble cx-bubble-in">November contributions are due Friday</div></div></div>'
+      + composer("#1,000", "November", "Add KES 1,000 to Kilimani Chama", "7.74 USDC · target 67% after this"))
+
 frame(P_G, "GW9-Pay-approved-payout", "GW9 · Pay an approved payout",
       "Money leaves a group wallet only through an approved request (option A): the owner taps Pay on the D5 card once the "
-      "admins have approved, and this C4 sheet opens with the approved amount locked, the approvals named and the one fee line.",
+      "admins have approved. The review sheet opens with the approved amount and wallet locked, the approvals named and the one fee line.",
       pay_frame(send_sheet(title="Pay Payout", button="Pay KES 12,120", extra_rows=APPROVED, locked=True)))
 
 frame(P_G, "GW9b-Pay-personal", "GW9 · Send, from personal (default)",
-      "Personal stays the default everywhere. Between Circaso wallets the fee is the lowest rate (seed 0.5 %). The receiver "
-      "always gets exactly the amount; the sender pays the fee on top, and the button carries the total.",
+      "The arrow on the chat preview opens this review: nothing is typed here (amount, coin and note came from the chat). "
+      "Personal is the default; between Circaso wallets the fee is the lowest rate (seed 0.5 %). The receiver gets exactly the "
+      "amount, the sender pays the fee on top, and the button carries the total.",
       pay_frame(send_sheet(from_wallet="Personal", to="mum", amount="500", usdc="3.87 USDC", fee="KES 2.50", fee_sub="0.5%", total="KES 502.50", receives="KES 500", note="for lunch tomorrow"), person_backdrop("mum")))
 
 frame(P_G, "GW9c-Request-payout", "GW9 · Paying from a group: request",
-      "When the owner switches Paying from to the group wallet, Send becomes Request Payout: it posts the D5 card for the "
-      "admins. The fee is shown as it stands; the final one is quoted when the approved payout is paid.",
+      "In Otieno's chat the owner typed \"#5000 Venue deposit\" and switched Paying from to the group wallet: the review "
+      "becomes Request Payout and posts the D5 card for the admins. The fee is shown as it stands; the final one is quoted when paid.",
       pay_frame(send_sheet(title="Request Payout", to="otieno", amount="5,000", usdc="38.70 USDC", fee="about KES 50", fee_sub="1%, set when paid", total="about KES 5,050",
                            receives="KES 5,000", note="Venue deposit", extra_rows=[("Approvals", "2 admins")], button="Request KES 5,000 Payout",
-                           footer='<div class="cx-footnote">Admins approve in the group chat. Then you pay it with Kilimani Chama’s PIN.</div>')))
-
-frame(P_G, "GW9e-Request-offline", "GW9 · Request Payout offline",
-      "Asking for a payout is online-only (admins must see it at once). Offline the sheet fills in but Request Payout is "
-      "disabled before the tap, with the same line as money.",
-      pay_frame(send_sheet(title="Request Payout", to="otieno", amount="5,000", usdc="38.70 USDC", fee="—", fee_sub="", total="—",
-                           receives="KES 5,000", extra_rows=[("Approvals", "2 admins")], button="Request Payout", disabled=True, footer='<div class="cx-footnote">Needs a connection</div>',
-                           problem=banner("You’re offline. Money sends only while you’re connected."))))
+                           footer='<div class="cx-footnote">Admins approve in the group chat. Then you pay it with Kilimani Chama’s PIN.</div>'), person_backdrop("otieno", "#5,000", "Venue deposit")))
 
 frame(P_G, "GW9d-Contribute", "GW9 · Contribute to the group",
-      "D3 with the fee: paying into a group is the \"to groups\" rate (seed 1 %). The group receives exactly the "
-      "contribution; the goal line shows where it will stand.",
+      "The review for \"#1,000 November\" in the group chat (GW9a2): the \"to groups\" rate (seed 1 %). The group receives "
+      "exactly the contribution; the goal line shows where it will stand.",
       pay_frame(send_sheet(title="Contribute", from_wallet="Personal", to="Kilimani Chama", amount="1,000", usdc="7.74 USDC", fee="KES 10", fee_sub="1%",
                            total="KES 1,010", receives="KES 1,000", note="November", button="Pay KES 1,010",
-                           problem='<div class="cx-goal"><div class="cx-goal-top"><span class="cx-goal-raised">KES 33,400</span><span class="cx-goal-of">of 50,000</span><span class="cx-goal-pct">67%</span></div><div class="cx-goal-track" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="67" aria-label="Target after your contribution"><div class="cx-goal-bar" style="width: 67%;"></div></div><div class="cx-goal-meta">After your contribution</div></div>')))
+                           problem='<div class="cx-goal" style="padding-bottom: 2px;"><div class="cx-goal-top"><span class="cx-goal-raised">KES 33,400</span><span class="cx-goal-of">of 50,000</span><span class="cx-goal-pct">67%</span></div><div class="cx-goal-track" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="67" aria-label="Target after your contribution"><div class="cx-goal-bar" style="width: 67%;"></div></div><div class="cx-goal-meta">After your contribution</div></div>'), group_backdrop().replace(composer(None, None, placeholder=True), composer("#1,000", "November"))))
 
 def wallet_opt(name, sub, avh, on):
     return (f'<div role="radio" aria-checked="{str(on).lower()}" tabindex="0" class="cx-row cx-row-tap">{avh}<div class="cx-row-body"><div class="cx-row-text"><div class="cx-row-title">{name}</div><div class="cx-row-sub">{sub}</div></div>'
@@ -1004,12 +1035,6 @@ frame(P_G, "GW10-Switcher", "GW10 · Paying from, the switcher",
       "Tap the chip. Every wallet the person can send from, with its balance and kind. Picking a space wallet re-quotes the "
       "fee; picking a group wallet turns the sheet into Request Payout (GW9c). People with only a personal wallet see no chip.",
       pay_frame(send_sheet(**P_MUM), person_backdrop("mum")) + sheet(switch_sheet(), "Pay from").replace('z-index: 5;', 'z-index: 7;').replace('z-index: 6;', 'z-index: 8;'))
-
-frame(P_G, "GW10b-Switcher-offline", "GW10 · Switcher offline",
-      "Offline the balances show as of the last sync. Money never queues, so the send button stays dimmed behind it; the "
-      "switcher still opens so the person can look.",
-      pay_frame(send_sheet(**{**P_MUM, "fee": "—", "fee_sub": "", "total": "—"}, button="Send", disabled=True, footer=""), person_backdrop("mum"))
-      + sheet(switch_sheet(True), "Pay from").replace('z-index: 5;', 'z-index: 7;').replace('z-index: 6;', 'z-index: 8;'))
 
 def approve_sheet(wallet, avh, amount, to, filled=3, pin_note="Kilimani Chama’s PIN, not your personal one.", bio="Use Fingerprint Instead"):
     return sheet(f'<div style="width: 100%; display: flex; justify-content: flex-end;"><button type="button" class="cx-icon-btn" aria-label="Cancel">{ic("close", 16)}</button></div>'
@@ -1080,7 +1105,7 @@ frame(P_G, "GW14-Cap-request", "GW14 · A request over the daily limit",
       pay_frame(send_sheet(title="Request Payout", to="otieno", amount="150,000", usdc="1,160.99 USDC", fee="about KES 1,500", fee_sub="1%, set when paid", total="about KES 151,500",
                            receives="KES 150,000", note="Stock for December", extra_rows=[("Approvals", "2 admins")], button="Request KES 150,000 Payout",
                            problem=note_box("Kilimani Chama can send KES 76,752 more today", "With the fee, that’s what fits under the group limit of 10,000 USDC in 24 hours. More is available from 14:30.", "Request KES 76,752 Instead"),
-                           footer="")))
+                           footer=""), person_backdrop("otieno", "#150,000", "Stock for December")))
 
 frame(P_G, "GW14b-Cap-reached", "GW14 · Paying when the limit is used",
       "The server refuses at W4 with wallet.limit_exceeded; resetsAt is when this payout fits again. Nothing to offer, "
@@ -1103,10 +1128,11 @@ frame(P_G, "GW14c-Cap-in-thread", "GW14 · The limit on a payout request",
       + f'<div class="cx-msg">{av("otieno", "sm")}<div class="cx-bubble cx-bubble-in">Requesting the bus money for December</div></div>' + payout_card + "</div>")
 
 frame(P_G, "GW15-Pay-offline", "GW15 · Offline",
-      "As today: the sheet fills in, the fee waits for a quote and Send is dimmed. One line, offline-first's wording. Money "
-      "never queues.",
-      pay_frame(send_sheet(**{**P_MUM, "fee": "—", "fee_sub": "", "total": "—"}, button="Send", disabled=True, footer="",
-                           problem=banner("You’re offline. Money sends only while you’re connected.")), person_backdrop("mum")))
+      "As today (G3): the chip and the preview stay, the preview says why and its arrow is dimmed, so the review (and with it "
+      "Paying from and Request Payout) never opens offline. Money never queues.",
+      person_backdrop("mum").replace(composer("#500", "for lunch tomorrow"),
+          composer("#500", "for lunch tomorrow", "Send KES 500 to Mum", "You’re offline. Money sends only while you’re connected.", "warning", arrow_on=False))
+      .replace('<div class="cx-thread"', f'<div style="padding: 6px 16px 4px;">{banner("You’re offline. Messages send when you reconnect.")}</div><div class="cx-thread"', 1))
 
 # ---- after signing
 frame(P_G, "GW17-Sending", "GW17 · Sending",
@@ -1174,7 +1200,8 @@ PAGES = [
 DECISIONS = """
 <ul>
 <li><strong>Money leaves a group wallet only through an approved request</strong> (option A in the plan). When the owner switches Paying from to a group wallet, Send becomes Request Payout; the PIN signs only from an approved card (Pay Payout, amount locked). Space wallets have no approval rule and keep Send.</li>
-<li><strong>Pay is the C4 sheet</strong> ("Send", "Pay Payout", "Request Payout", "Contribute"), over the chat it was opened from. Once quoted, the fee and the rate are held for the challenge's 15 minutes, so the rate line counts that down instead of C4's 30-second refresh.</li>
+<li><strong>Money always starts in the chat</strong>, exactly as today (C3): <code>#amount</code> becomes the chip, <code>@</code> picks the coin, the rest of the line is the note, and the glass preview's arrow opens a <strong>review sheet with nothing to type</strong>: who, amount, Paying from, network, the note as "For", fee, total. In a group with a wallet, <code>#</code> contributes to the group wallet (today <code>#</code> is off in groups). An approved payout's review opens from its D5 card instead.</li>
+<li><strong>The review is the C4 sheet</strong> ("Send", "Pay Payout", "Request Payout", "Contribute"), over the chat it was opened from. Once quoted, the fee and the rate are held for the challenge's 15 minutes, so the rate line counts that down instead of C4's 30-second refresh.</li>
 <li><strong>The daily cap counts what leaves the wallet, fee included</strong>, over a rolling 24 hours. The server's <code>resetsAt</code> means "when this amount fits", not when the whole cap clears; the copy says "available from 14:30" accordingly.</li>
 <li><strong>Creating a group, setting up a group wallet and adding a target are online-only</strong> (the server creates the group and needs the members' keys; Circle needs a live challenge). They are disabled offline with "Needs a connection", never failed after the tap. Recorded in <code>offline-first.md</code>.</li>
 <li><strong>A group is kept when its wallet set-up fails or the connection drops mid-way.</strong> The wallet waits for the person (Finish Wallet Setup) and is never made silently.</li>
