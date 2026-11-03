@@ -2,7 +2,7 @@
 
 Lives in the `circaso-mobile` skill (`references/spaces-plan.md`).
 
-Status: **phase 0 done and approved (2026-11-03); phase 1 (Moments) built in the backend branch and both apps, not yet run end to end.** Details in `project-status.md`. Earlier: the fee spike is done (§7b); the phase 0a frames for phases 1 and 2
+Status: **phase 0 done and approved (2026-11-03); phase 1 (Moments) built in the backend branch and both apps, not yet run end to end. Phase 2 (groups with wallets): plan in §11, backend built in PR #28 (`feat/group-wallets`, not merged or deployed); app work not started.** Details in `project-status.md`. Earlier: the fee spike is done (§7b); the phase 0a frames for phases 1 and 2
 are in `assets/Circaso-Spaces.html` (built by `scripts/build_spaces_canvas.py`), waiting for Pasaka's review. Nothing is built in code yet. Decisions marked **(proposed)** need a yes
 or a change; open questions are in §8.
 
@@ -430,3 +430,178 @@ and video), across backend and both apps.
 - **Live scale:** Cloudflare Realtime costs per participant-minute; set listener caps until measured.
 - **Several PINs** (personal plus each group or space wallet) can confuse; every PIN and biometric screen names whose
   wallet it is, and biometrics per wallet keep PIN entry rare.
+
+## 11. Phase 2 build plan (2026-11-03)
+
+Phase 2, "Groups with wallets": §7 built for groups (spaces reuse it in phase 3). **Backend done** in branch
+`feat/group-wallets` (worktree `circaso-group-wallets`), **PR #28** open, **not merged or deployed**; the app contract is in
+`mobile-integration.md` → "Group wallets (phase 2, PR #28, not deployed)". §7a limits and §7b fees stay **phase 2F**: nothing
+here charges a fee or applies a group cap yet (W4's `fee` is still zero, group wallets use the personal placeholder
+limits), but the data model below is where 2F plugs in (§11.7).
+
+### 11.1 Data model
+
+**Wallet owner model (wallet module).** A wallet is one Circle user. Every wallet has a `walletId`, and its rows in
+`circle_users`, `wallets`, `transactions` and `transfers` are filed under that id (the "holder"):
+- **Personal:** `walletId` = the person's user id. So every personal row that exists stays as it is, and every route
+  without `walletId` behaves exactly as before. No owner row.
+- **Group:** a fresh UUIDv7, with one row in the new **`wallet.wallet_owners`** (`wallet_id` PK, `owner_type`
+  `GROUP` | `SPACE`, `chat_id` (unique per group: one wallet per group), `signer_id`, `created_by`, `created_at`).
+  `signer_id` is whoever set the PIN (the group's owner at set-up): the only person who can sign (option A).
+- `wallet.transfers` gains `signer_id`, `payout_request_id`, `from_group_id`, `to_group_id` (so events and W5 need no
+  lookup), plus a lookup index on `payout_request_id`.
+- A group wallet's **name** is the group's sealed name: the server never has it. The phone names the wallet from its
+  group (`owner.chatId`) on every approval, PIN and biometric screen. (Spaces aren't end-to-end encrypted, so a space
+  wallet can carry its name server-side in phase 3.)
+- **PIN and biometrics per wallet** need no server state: each group wallet is its own Circle user, so W3
+  `?walletId=` gives its own SDK session and the phone runs `enableBiometrics(session)` with it (GW4, GW8, GW8b).
+
+**Groups and chamas merged (chama module, the "group money" now).** The module keeps its name, schema and routes
+(the app already calls them); the meaning moves from a treasurer to the group's wallet:
+- `chama.goals` is the optional **target**: `treasurer_id` becomes nullable (legacy goals only). A target needs the
+  group's active wallet; contributions count towards it from its `created_at` (changing it keeps that; removing and
+  re-adding starts over).
+- `chama.contributions`: every confirmed member payment **into the group wallet** (W4 `to: { groupId }`), target or
+  not; new `legacy` flag for those paid to a treasurer before (kept in the ledger, never counted).
+- New `chama.group_settings` (`chat_id`, `approval_policy` `TWO_ADMINS` | `ANY_ADMIN`, `updated_by`, `updated_at`):
+  GW1's "Who approves payouts". No row = two admins (every admin when fewer).
+- `chama.requests` unchanged: payouts are requested and approved as CH4/CH5, then paid from the group wallet.
+- Cross-module: wallet:api gains `Wallets.groupWallet(chatId)` and the guard **`PayoutApprovals`** (declared in
+  wallet:api, implemented and bound by chama, like identity's `DeletionGuard` is by wallet); messaging's
+  `ChatDirectory` gains `owner(chatId)`.
+
+### 11.2 Who may do what
+
+| Action | Who | Enforced |
+| --- | --- | --- |
+| Set up the group wallet (W14) | The group's owner (messaging `OWNER`) | wallet |
+| See its balance, history, payments (W1, W5, W6, W15) | Every member | wallet |
+| Pay into it (W4 `to: { groupId }`) | Every member | wallet |
+| Ask for a payout (CH4) | Every member | chama |
+| Approve or decline (CH5) | Admins (two, or any one, per CH9) | chama |
+| Choose who approves (CH9) | The group's owner | chama |
+| Set or remove the target (CH2, CH8) | Admins | chama |
+| Sign: W3 session, W4 from the wallet, add networks (W12/W13) | The signer only, while still in the group | wallet |
+| Move money out (W4 `walletId`) | The signer, **only for an `APPROVED` payout, to exactly its payee and amount**, one live payment per payout | wallet asks chama through `PayoutApprovals` |
+
+The cap on what one person can take (§7a, 2F) then adds to this. Asking at W4 is what makes option A real: Circle can
+only sign challenges our server creates, so a payout the admins didn't approve can't be prepared.
+
+### 11.3 API contract (numbered after the existing W1–W13 and CH1–CH6)
+
+Full shapes, notes and error codes: `mobile-integration.md` → "Group wallets (phase 2, …)". In short:
+
+- **W14** `POST /v1/wallet/groups/{chatId}` → `{ walletId, chatId, status, challengeId?, sdk }`. Owner only. Errors
+  `wallet.group_not_found`, `wallet.not_group_owner`, `wallet.not_signer`, `wallet.already_exists`,
+  `wallet.account_restricted`, `wallet.support_account_has_no_wallet`, `wallet.custody_unavailable`.
+- **W15** `GET /v1/wallet/groups/{chatId}` → `{ chatId, status: NONE|SETTING_UP|ACTIVE, wallet? }`. Members.
+- **W16** `GET /v1/wallets` → `{ wallets: [{ walletId, owner { type, userId?, chatId?, signerUserId }, status,
+  canSign, blockchains }] }`: own first, then groups' (signer's first).
+- **W1, W3, W6, W12, W13** take `?walletId=` (null = your own). W1 gains `walletId`, `owner`, `canSign`. W3 and the
+  writes of W12/W13 are signer only (`wallet.not_signer`, `wallet.signer_left`).
+- **W4** gains `to: { groupId }`, `walletId`, `payoutRequestId`; answers `walletId`. New errors
+  `wallet.payout_required`, `wallet.payout_not_approved`, `wallet.payout_mismatch`, `wallet.payout_in_progress`,
+  `wallet.not_signer`, `wallet.signer_left`, `wallet.group_not_found`.
+- **W5** visible to the group's members; gains `fromGroupId`, `toGroupId`, `signerUserId`, `payoutRequestId`.
+- **I14** (delete account) also refuses `wallet.group_funds_remaining` while a group wallet you sign for holds money.
+- **CH7** `GET /v1/chama/chats/{chatId}/money` → the group's money for any group (wallet, approval policy, target or
+  null, contributions towards it, open requests, `isAdmin`, `isOwner`, `isSigner`).
+- **CH8** `DELETE /v1/chama/chats/{chatId}/goal` (admins). **CH9** `PUT /v1/chama/chats/{chatId}/settings`
+  `{ approvalPolicy }` (owner; `chama.not_owner`).
+- **CH1** unchanged in shape (+ `walletId`, `approvalPolicy`; `isTreasurer` = signer). **CH2** needs the active wallet
+  (`chama.no_wallet`). **CH4** needs the active wallet, not a target. **CH6** optional (W4's `payoutRequestId` links it),
+  signer only (`chama.not_signer` replaces `chama.not_treasurer`).
+- **Events:** `wallet.TransferConfirmed`/`TransferFailed` gain `fromGroupId`, `toGroupId`, `payoutRequestId`,
+  `signerId`; `WalletCreated` gains `groupId`. Chama records a contribution from `toGroupId` and pays a request from
+  `payoutRequestId`.
+- **Frames:** `wallet` frames for a group wallet carry `walletId`: `transfer.updated` and `payment.received` go to the
+  signer, `wallet.ready` to every member. New `chama/group.updated`; `request.updated` gains `signerId` (the signer is
+  pushed "ready for you to pay" on approval).
+
+### 11.4 Migration of existing chamas
+
+Dev is testnet and the treasurer model is retired (§7), so nothing moves on chain. `chama` V2: goals stay as targets
+with no wallet yet (CH1 shows `walletId: null`; the owner gets GW7's "a target needs a wallet"; saving the target
+again once the wallet exists starts it over), contributions are marked `legacy` (in the ledger, never counted), and
+requests still `PENDING`/`APPROVED` become `EXPIRED` (no treasurer pays them now). `wallet` V3 only adds a table and
+columns: personal rows are untouched.
+
+### 11.5 App screens mapped to the phase-0 frames (`Circaso-Spaces.html`, page GW)
+
+| Frames | Screen / change | Backend |
+| --- | --- | --- |
+| GW1, GW1b–d | New Group: "Group wallet" switch (off by default), target and "Who approves payouts" when on; offline and failed states | messaging create, then W14, CH9, CH2 |
+| GW2, GW3 | Circle PIN set/confirm with the group's photo and name | W14 `challengeId` + its `sdk` |
+| GW4, GW4b | Biometrics offer for this wallet | W3 `?walletId=` session → `enableBiometrics` |
+| GW5, GW5b, GW5c | Setting up (ticks), failed, connection lost | W14 → W13 `?walletId=`; poll W15 / `wallet.ready` |
+| GW6, GW6b, GW6c | Group info without a wallet / finish set-up / offline | W15 + CH7 |
+| GW7, GW7b | A target needs a wallet → set up → Add a Target | `chama.no_wallet` → W14 → CH2 |
+| GW8, GW8b | Group info with wallet: balance, target, per-wallet Fingerprint, Change PIN | W1 `?walletId=`, CH7, W3 session |
+| GW9a, GW9a2, GW9d | `#amount` in a group with a wallet = Contribute | W4 `to: { groupId }`, `chatId` = group |
+| GW9c, GW14 (request part) | Paying from a group wallet = Request Payout, posts the D5 card | CH4 |
+| GW9, GW11, GW12, GW12b, GW17–GW19 | Pay Payout from the D5 card: locked amount/payee, named-wallet approval, sending, paid card, not sent | W4 `walletId` + `payoutRequestId`, W3 `?walletId=`, W5 |
+| GW9b, GW10, GW11b, GW16 | Paying from switcher (personal default), Wallet tab title switcher | W16, W1 `?walletId=` |
+| GW13–GW13d, GW14b–c, GW20 (fee and cap lines) | Fee quote, minimum, expired quote, daily cap | **2F** (until then: `fee` zero, no cap line) |
+| GW15 | Offline: preview dimmed, nothing opens | none (money never queues) |
+
+`feature/chama` folds into group info and the thread: the goal strip reads CH7, "held by Otieno" becomes "in the group
+wallet", treasurer selection and the CH6 link persistence (`chama.link.*`) go (W4 carries `payoutRequestId`; keep CH6
+only to show "Paying" early).
+
+### 11.6 Order of work
+
+1. **2a Backend** (done, PR open): owner model, W14–W16, `walletId` on W1/W3/W5/W6/W12/W13, W4 group payee and
+   payouts with the approval guard, frames and pushes, chama V2 with CH7–CH9, deletion guard, tests. Then merge and
+   deploy (Pasaka), and refresh this guide copy from the backend's.
+2. **2b App wallet model**: `WalletOwner`/`walletId` in DTOs, Room snapshot per wallet, W16, sessions and biometrics
+   per wallet in `WalletSigner` (the Circle module keeps one SDK, switches session per call), every approval names its
+   wallet.
+3. **2c Create group with wallet** (GW1–GW5) and **2d group info** (GW6–GW8).
+4. **2e Contribute** (GW9a2, GW9d) and **2f payouts** (GW9, GW9c, GW11, GW12, GW17–GW19), retiring the treasurer flow.
+5. **2g Switcher and Wallet tab** (GW9b, GW10, GW11b, GW16).
+6. Design review of every built screen, device check on the emulator with two accounts (owner and member) against
+   the sandbox, commit. Then **2F**.
+
+### 11.7 How 2F slots in
+
+- **Limit rules** (`limit_rule`: owner type, optional `wallet_id` override, asset, `per_payment_max`, `daily_max`,
+  rolling 24 h) match on `wallet_owners.owner_type` (no row = `PERSON`) and `wallet_id`; the check replaces
+  `SenderRules.checkAmount`'s placeholder for the holder at W4. The counted window reads `transfers` by `sender_id`
+  (the holder), states `AWAITING_SIGNATURE`/`SUBMITTED`/`CONFIRMED`; payouts to members count because every payout is a
+  W4 from the group wallet. GW14's "fits now" uses CH4's amount against the same rule.
+- **Fee rules** match the sender's owner type (`wallet_owners`) and the receiver's (`to_group_id` set ⇒ `GROUP`,
+  a person ⇒ `PERSON`, an address ⇒ `EXTERNAL`); the quote is added to W4's answer and locked on the transfer row
+  (new columns in 2F), and the batch challenge replaces the plain transfer.
+
+### 11.8 Decisions taken while planning (premium standard, Pasaka's delegation)
+
+- **The signer is fixed when the PIN is set**, not whoever is the group's owner later: a PIN can't move between
+  people. W14 refuses a new owner while a set-up the old one started is unfinished (`wallet.not_signer`).
+- **A signer who leaves locks the wallet**: members still see it, nothing can be sent (`wallet.signer_left`) until they
+  rejoin. Their account can't be deleted while it holds money (`wallet.group_funds_remaining`).
+- **Contributions to a group without a target** are recorded (ledger, W6) but send no `contribution.added` (that frame
+  and its push name a target); the payment card in the chat shows it.
+- **Changing who approves** is for the group's owner only and announced to every member (`group.updated`), so a rule
+  that guards everyone's money never changes unseen. With "Any admin", an admin's own request is approved at once
+  (the admin who asks counts as one, as GW1b says).
+- **The server never stores a group wallet's name** (sealed group names stay sealed); pushes say "a group wallet".
+- **Routes keep the `chama` prefix** (no breaking rename); copy in the app says "group" and "target".
+
+### 11.9 Decided 2026-11-03 (premium standard under Pasaka's delegation; he may overrule)
+
+1. **Handing a group wallet to someone else: (a).** Locked until the signer is back; a "Hand over" flow comes later
+   (the old signer pays everything out to a new wallet the new owner sets up). The locked state says why and who can
+   unlock it, in plain words. Why: only the signer can sign (option A), so anything else would be a promise the
+   wallet can't keep.
+2. **Leaving with money in the group wallet: blocked**, the same rule as account deletion. The leave screen says how
+   much is in the wallet and offers the way out (an approved payout, or Hand over once it exists). Why: a signer
+   leaving locks everyone's money; a warning people tap through is not enough protection for other members' money.
+
+### 11.9a Original questions (kept for the record)
+
+1. **Handing a group wallet to someone else.** When the signer leaves or ownership moves, today the wallet is locked
+   until they return. Options: (a) keep that and add "Hand over" later (the old signer pays everything out to a new
+   wallet the new owner sets up); (b) let the admins approve a full payout to the new owner's new wallet even without
+   the old signer (impossible under option A: only the signer can sign). Recommend (a) with copy explaining it.
+2. **Should leaving be blocked** for a signer whose group wallet holds money (as account deletion now is), or only
+   warned?
