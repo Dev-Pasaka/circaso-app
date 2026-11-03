@@ -45,6 +45,8 @@ sealed interface Message {
         val state: DeliveryState,
         val errorCode: String?,
         val replyTo: String?,
+        /** A reply to a moment (V8), quoted. */
+        val momentQuote: com.circaso.core.crypto.MomentQuote? = null,
     ) : Message
 
     /** A payment card (designs C3–C7): money sent from this chat. The state comes from the wallet's copy of the transfer. */

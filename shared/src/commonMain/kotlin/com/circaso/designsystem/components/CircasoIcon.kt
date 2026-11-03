@@ -17,7 +17,7 @@ import com.circaso.designsystem.platform.PlatformStyle
 import com.circaso.designsystem.theme.CircasoTheme
 
 /** Semantic icon names. Each is drawn per platform (chevron back on iOS, arrow back on Android). */
-enum class CircasoIcon { Back, Close, Check, Delete, Backspace, Offline, Clock, Chat, Wallet, Person, ChevronRight, Plus, Search, Send, Mic, MicOff, Speaker, Stop, Waveform, ArrowUp, ArrowDown, Bank, Eye, EyeOff, Copy, Share, Clipboard, Network, Money, Warning, Scan, Phone, Video, VideoOff, FlipCamera, Minimise, Pin, Play, Pause, Photo, Camera, Spaces }
+enum class CircasoIcon { Back, Close, Check, Delete, Backspace, Offline, Clock, Chat, Wallet, Person, ChevronRight, Plus, Search, Send, Mic, MicOff, Speaker, Stop, Waveform, ArrowUp, ArrowDown, Bank, Eye, EyeOff, Copy, Share, Clipboard, Network, Money, Warning, Scan, Phone, Video, VideoOff, FlipCamera, Minimise, Pin, Play, Pause, Photo, Camera, Spaces, Flash }
 
 /** Strokes drawn on a 24x24 grid, same as the design's inline SVGs. */
 @Composable
@@ -83,6 +83,7 @@ fun CircasoIconImage(icon: CircasoIcon, tint: Color, modifier: Modifier = Modifi
                     p.moveTo(16f, 14.5f); p.lineTo(16.1f, 14.5f)
                 }
                 // A ring around a centre (the Circaso mark's idea) with two small circles: people around a place.
+                CircasoIcon.Flash -> { p.moveTo(13f, 3f); p.lineTo(5.5f, 13.5f); p.lineTo(12f, 13.5f); p.lineTo(11f, 21f); p.lineTo(18.5f, 10.5f); p.lineTo(12f, 10.5f); p.close() }
                 CircasoIcon.Spaces -> {
                     p.addOval(Rect(7.2f, 7.2f, 16.8f, 16.8f))
                     p.addOval(Rect(10.6f, 10.6f, 13.4f, 13.4f))

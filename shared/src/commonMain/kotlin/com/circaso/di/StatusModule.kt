@@ -11,6 +11,7 @@ import com.circaso.feature.status.domain.MomentsRepository
 import org.koin.core.qualifier.named
 import org.koin.core.module.dsl.viewModel
 import org.koin.dsl.bind
+import kotlinx.coroutines.flow.first
 import org.koin.dsl.module
 
 /**
@@ -33,4 +34,24 @@ val statusModule = module {
     single { MomentPostHandler { get<MomentsRepositoryImpl>() } } bind OutboxHandler::class
     single<MomentsRepository> { get<MomentsRepositoryImpl>() }
     viewModel { com.circaso.feature.status.presentation.SpacesViewModel(get(), get(), get(), get()) }
+    viewModel { com.circaso.feature.status.presentation.MomentComposerViewModel(get(), get(), get(), get(), get()) }
+    viewModel { com.circaso.feature.status.presentation.MomentsPrivacyViewModel(get(), get()) }
+    viewModel { params ->
+        val chats = get<com.circaso.feature.messaging.domain.ChatsRepository>()
+        val messages = get<com.circaso.feature.messaging.domain.MessagesRepository>()
+        com.circaso.feature.status.presentation.MomentViewerViewModel(
+            params.getOrNull<String>(), get(), get(), get(), get(),
+            replyInChat = { posterId, text, moment ->
+                // The 1:1 chat on this phone if there is one (so a reply waits offline like any message), else open it.
+                val existing = chats.chats.first().firstOrNull { it.chat.peerId == posterId }?.chat?.chatId
+                val chatId = existing ?: when (val r = chats.openDirect(posterId)) {
+                    is com.circaso.core.common.AppResult.Success -> r.value.chatId
+                    is com.circaso.core.common.AppResult.Failure -> return@MomentViewerViewModel r
+                }
+                val quote = com.circaso.core.crypto.MomentQuote(moment.momentId, moment.kind.name.uppercase(), (moment.text ?: moment.caption)?.take(140), moment.thumb)
+                messages.sendMomentReply(chatId, text, quote)
+                com.circaso.core.common.AppResult.Success(chatId)
+            },
+        )
+    }
 }

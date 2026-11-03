@@ -93,6 +93,11 @@ actual fun openUrl(url: String) {
     runCatching { activity.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url))) }
 }
 
+actual fun openAppSettings() {
+    val activity = runCatching { KoinPlatform.getKoin().get<CurrentActivity>().get() }.getOrNull() ?: return
+    runCatching { activity.startActivity(Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.fromParts("package", activity.packageName, null))) }
+}
+
 /** Decrypted media in the app's private files (never on shared storage, never backed up). */
 class AndroidMediaFiles(context: Context) : MediaFiles {
     private val dir = File(context.filesDir, "media")

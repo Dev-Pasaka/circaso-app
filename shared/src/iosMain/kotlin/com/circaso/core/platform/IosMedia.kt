@@ -57,6 +57,11 @@ actual fun openUrl(url: String) {
     UIApplication.sharedApplication.openURL(link, options = emptyMap<Any?, Any?>(), completionHandler = null)
 }
 
+actual fun openAppSettings() {
+    val link = NSURL.URLWithString(platform.UIKit.UIApplicationOpenSettingsURLString) ?: return
+    UIApplication.sharedApplication.openURL(link, options = emptyMap<Any?, Any?>(), completionHandler = null)
+}
+
 private fun String.encodeUrl(): String = buildString { this@encodeUrl.encodeToByteArray().forEach { b -> val c = b.toInt().toChar(); if (c.isLetterOrDigit()) append(c) else append("%" + (b.toInt() and 0xff).toString(16).padStart(2, '0').uppercase()) } }
 
 /** Decrypted media in Application Support (excluded from backups), under `media/`. */

@@ -43,6 +43,8 @@ interface MessagesRepository {
 
     /** Saves the message on this phone and queues it. */
     suspend fun send(chatId: String, text: String, replyTo: String? = null)
+    /** A reply to someone's moment (V8): an ordinary text that quotes it; it waits offline like any message. */
+    suspend fun sendMomentReply(chatId: String, text: String, quote: com.circaso.core.crypto.MomentQuote)
 
     /** Queueable like text: the card for a payment already made (or signed) from this chat. */
     suspend fun sendPayment(chatId: String, card: PaymentCard)

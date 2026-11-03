@@ -40,11 +40,24 @@ object WireFormat {
  * has no case for is shown as "a message this version can't show". Encoded as JSON, then padded (see [Padding]).
  */
 @Serializable
+data class MomentQuote(
+    val momentId: String,
+    /** `TEXT`, `IMAGE`, `VIDEO` or `VOICE`. */
+    val kind: String,
+    /** The moment's text or caption, cut to 140 characters. */
+    val text: String? = null,
+    /** The moment's tiny placeholder JPEG (base64), so the quote shows a picture without the media. */
+    val thumb: String? = null,
+)
+
+@Serializable
 data class ChatPayload(
     val v: Int = 1,
     val type: String,
     val text: String? = null,
     val replyTo: String? = null,
+    /** A reply to a moment (design V8): the moment it answers, quoted so the chat keeps it after the moment expires. */
+    val moment: MomentQuote? = null,
     /** Base64 sender-key distribution (type [SenderKey]) handed over a 1:1 session. */
     val senderKey: String? = null,
     /** Base64 group metadata key (type [MetaKey]) and the `metaVersion` it opens, handed over a 1:1 session. */

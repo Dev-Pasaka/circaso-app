@@ -1,0 +1,219 @@
+package com.circaso.feature.status.presentation
+
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.viewModelScope
+import com.circaso.core.common.AppError
+import com.circaso.core.common.AppResult
+import com.circaso.core.platform.ConnectionStatus
+import com.circaso.core.sync.ConnectionState
+import com.circaso.feature.contacts.domain.ObserveContactsUseCase
+import com.circaso.feature.profile.domain.ObserveProfileUseCase
+import com.circaso.feature.status.domain.Moment
+import com.circaso.feature.status.domain.MomentKind
+import com.circaso.feature.status.domain.MomentMediaLoad
+import com.circaso.feature.status.domain.MomentRing
+import com.circaso.feature.status.domain.MomentViewer
+import com.circaso.feature.status.domain.MomentsRepository
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.launch
+
+/** The media of the moment on screen (V1, V5, V5b, V6). */
+sealed interface ViewerMedia {
+    data object None : ViewerMedia
+    data object Loading : ViewerMedia
+    class Ready(val bytes: ByteArray, val path: String?) : ViewerMedia
+    data object NeedsConnection : ViewerMedia
+    class Failed(val requestId: String?) : ViewerMedia
+}
+
+/** Design V1–V8: one person's ring at a time, then on to the next ring. */
+data class MomentViewerUiState(
+    val rings: List<MomentRing> = emptyList(),
+    val ring: Int = 0,
+    val index: Int = 0,
+    val media: ViewerMedia = ViewerMedia.None,
+    val paused: Boolean = false,
+    val viewersOpen: Boolean = false,
+    val viewers: List<Pair<MomentViewer, String>>? = null,
+    val viewersError: String? = null,
+    val confirmDelete: Boolean = false,
+    val moreOpen: Boolean = false,
+    val reply: String = "",
+    val online: Boolean = true,
+    val closed: Boolean = false,
+    val notice: String? = null,
+) {
+    val current: MomentRing? get() = rings.getOrNull(ring)
+    val moment: Moment? get() = current?.moments?.getOrNull(index)
+    val mine: Boolean get() = moment?.mine == true
+}
+
+class MomentViewerViewModel(
+    private val posterId: String?,
+    private val repository: MomentsRepository,
+    private val observeContacts: ObserveContactsUseCase,
+    private val observeProfile: ObserveProfileUseCase,
+    connection: ConnectionState,
+    /** Opens (or finds) the 1:1 chat with someone and sends a text there quoting a moment (V8). */
+    private val replyInChat: suspend (posterId: String, text: String, moment: Moment) -> AppResult<String>,
+) : ViewModel() {
+    private val _state = MutableStateFlow(MomentViewerUiState())
+    val state: StateFlow<MomentViewerUiState> = _state.asStateFlow()
+    private var load: Job? = null
+    private var started = false
+
+    init {
+        viewModelScope.launch {
+            combine(repository.moments, observeContacts(), repository.muted) { all, contacts, muted -> Triple(all, contacts, muted) }.collect { (all, contacts, muted) ->
+                val me = observeProfile().first()
+                val rings = if (posterId == null) {
+                    val mine = all.filter { it.mine }.sortedBy { it.postedAt }
+                    if (mine.isEmpty()) emptyList() else listOf(MomentRing(me?.userId ?: "me", "My moment", me?.avatarUrl, mine, muted = false))
+                } else {
+                    val byId = contacts.associateBy { it.person.userId }
+                    all.filterNot { it.mine }.groupBy { it.posterId }.mapNotNull { (id, list) ->
+                        val p = byId[id]?.person ?: return@mapNotNull null
+                        MomentRing(id, p.displayName, p.avatarUrl, list.sortedBy { it.postedAt }, muted = id in muted)
+                    }.sortedWith(compareBy<MomentRing> { it.muted }.thenBy { !it.unseen }.thenByDescending { it.latestAt })
+                }
+                _state.update { s ->
+                    if (!started && rings.isNotEmpty()) {
+                        started = true
+                        // Open at the tapped person, at their first moment I haven't seen (WhatsApp does the same).
+                        val r = posterId?.let { id -> rings.indexOfFirst { it.posterId == id } }?.takeIf { it >= 0 } ?: 0
+                        val i = rings[r].moments.indexOfFirst { !it.viewed }.takeIf { it >= 0 } ?: 0
+                        s.copy(rings = rings, ring = r, index = i)
+                    } else {
+                        // A moment that expired or was deleted while open: stay on the same person if they still have one.
+                        val keep = s.current?.posterId?.let { id -> rings.indexOfFirst { it.posterId == id } } ?: -1
+                        if (keep < 0) s.copy(rings = rings, ring = s.ring.coerceAtMost((rings.size - 1).coerceAtLeast(0)), index = 0)
+                        else s.copy(rings = rings, ring = keep, index = s.index.coerceAtMost(rings[keep].moments.size - 1))
+                    }.let { if (started && rings.isEmpty()) it.copy(closed = true) else it }
+                }
+                showCurrent()
+            }
+        }
+        viewModelScope.launch { connection.status.collect { st -> _state.update { it.copy(online = st == ConnectionStatus.Online) } } }
+    }
+
+    private var shownId: String? = null
+
+    /** Loads the media and records the view once per moment. */
+    private fun showCurrent() {
+        val m = _state.value.moment ?: return
+        if (shownId == m.momentId) return
+        shownId = m.momentId
+        load?.cancel()
+        if (m.media == null || m.kind == MomentKind.Text) {
+            _state.update { it.copy(media = ViewerMedia.None) }
+        } else {
+            _state.update { it.copy(media = ViewerMedia.Loading) }
+            load = viewModelScope.launch {
+                val loaded = when (val r = repository.media(m)) {
+                    is MomentMediaLoad.Loaded -> ViewerMedia.Ready(r.bytes, r.path)
+                    MomentMediaLoad.NeedsConnection -> ViewerMedia.NeedsConnection
+                    is MomentMediaLoad.Failed -> ViewerMedia.Failed(r.requestId)
+                }
+                _state.update { it.copy(media = loaded) }
+            }
+        }
+        if (!m.mine && !m.viewed) viewModelScope.launch { repository.markViewed(m.momentId) }
+    }
+
+    fun next() {
+        val s = _state.value
+        val ring = s.current ?: return
+        when {
+            s.index < ring.moments.size - 1 -> _state.update { it.copy(index = it.index + 1) }
+            s.ring < s.rings.size - 1 -> _state.update { it.copy(ring = it.ring + 1, index = 0) }
+            else -> _state.update { it.copy(closed = true) }
+        }
+        showCurrent()
+    }
+
+    fun previous() {
+        val s = _state.value
+        when {
+            s.index > 0 -> _state.update { it.copy(index = it.index - 1) }
+            s.ring > 0 -> _state.update { it.copy(ring = it.ring - 1, index = 0) }
+            else -> return
+        }
+        showCurrent()
+    }
+
+    /** Swipe left: the next person's ring. */
+    fun nextRing() {
+        val s = _state.value
+        if (s.ring < s.rings.size - 1) { _state.update { it.copy(ring = it.ring + 1, index = 0) }; showCurrent() } else _state.update { it.copy(closed = true) }
+    }
+
+    fun retryMedia() { shownId = null; showCurrent() }
+    fun setPaused(paused: Boolean) = _state.update { it.copy(paused = paused) }
+    fun onReply(text: String) = _state.update { it.copy(reply = text, paused = text.isNotEmpty()) }
+
+    fun react() {
+        val m = _state.value.moment ?: return
+        viewModelScope.launch {
+            val r = repository.markViewed(m.momentId, reacted = !m.reacted)
+            if (r is AppResult.Failure && r.error is AppError.Network) _state.update { it.copy(notice = "You’re offline. Try again when you’re connected.") }
+        }
+    }
+
+    fun sendReply() {
+        val s = _state.value
+        val m = s.moment ?: return
+        val text = s.reply.trim().ifEmpty { return }
+        _state.update { it.copy(reply = "", paused = false) }
+        viewModelScope.launch {
+            // An ordinary chat message: it waits and sends offline like any other (G3).
+            val r = replyInChat(m.posterId, text, m)
+            _state.update { it.copy(notice = if (r is AppResult.Success) "Reply sent to ${s.current?.name?.substringBefore(' ')}" else "The reply couldn’t be saved to send. Try again.") }
+        }
+    }
+
+    fun noticeShown() = _state.update { it.copy(notice = null) }
+    fun openMore(open: Boolean) = _state.update { it.copy(moreOpen = open, paused = open) }
+
+    fun mute() {
+        val ring = _state.value.current ?: return
+        viewModelScope.launch { repository.setMuted(ring.posterId, true) }
+        _state.update { it.copy(moreOpen = false, notice = "${ring.name.substringBefore(' ')}’s moments are muted") }
+        nextRing()
+    }
+
+    // ---- my own moments (V4)
+
+    fun openViewers(open: Boolean) {
+        _state.update { it.copy(viewersOpen = open, paused = open, viewers = if (open) it.viewers else null, viewersError = null) }
+        val m = _state.value.moment ?: return
+        if (!open) return
+        viewModelScope.launch {
+            when (val r = repository.viewers(m.momentId)) {
+                is AppResult.Success -> {
+                    val names = observeContacts().first().associate { it.person.userId to it.person.displayName }
+                    _state.update { it.copy(viewers = r.value.map { v -> v to (names[v.userId] ?: "Someone not in your contacts") }) }
+                }
+                is AppResult.Failure -> _state.update { it.copy(viewersError = if (r.error is AppError.Network) "Viewers show when you’re online." else "Viewers didn’t load.") }
+            }
+        }
+    }
+
+    fun askDelete(open: Boolean) = _state.update { it.copy(confirmDelete = open, paused = open) }
+
+    fun delete() {
+        val m = _state.value.moment ?: return
+        _state.update { it.copy(confirmDelete = false) }
+        viewModelScope.launch {
+            when (val r = repository.delete(m.momentId)) {
+                is AppResult.Success -> _state.update { it.copy(notice = "Moment deleted") }
+                is AppResult.Failure -> _state.update { it.copy(notice = if (r.error is AppError.Network) "You’re offline. Delete it when you’re connected." else "The moment couldn’t be deleted. Try again.") }
+            }
+        }
+    }
+}

@@ -240,6 +240,7 @@ fun AppNavigation(forceUpdate: Boolean, home: @Composable () -> Unit) {
                             onCurrency = { backStack.add(CurrencyRoute) },
                             onAshaVoice = { backStack.add(AshaVoiceRoute) },
                             onMoneySound = youViewModel::onMoneySound,
+                            onMomentsPrivacy = { backStack.add(MomentsPrivacyRoute) },
                         ),
                         appVersion = info.appVersion,
                         bottomPadding = bottomPadding,
@@ -260,6 +261,9 @@ fun AppNavigation(forceUpdate: Boolean, home: @Composable () -> Unit) {
                 com.circaso.feature.support.presentation.LostAccessScreen(koinViewModel(key = "lost-" + route.phone, parameters = { parametersOf(route.phone) }), onBack = ::pop)
             }
             entry<ContactsRoute> { ContactsScreen(koinViewModel(), onBack = ::pop) }
+            entry<MomentComposerRoute> { com.circaso.feature.status.presentation.MomentComposerScreen(koinViewModel(), onClose = ::pop, onAudience = { backStack.add(MomentsPrivacyRoute) }) }
+            entry<MomentViewerRoute> { key -> com.circaso.feature.status.presentation.MomentViewerScreen(koinViewModel(key = "moments-${key.posterId}", parameters = { parametersOf(key.posterId) }), onClose = ::pop) }
+            entry<MomentsPrivacyRoute> { com.circaso.feature.status.presentation.MomentsPrivacyScreen(koinViewModel(), onBack = ::pop, onFindPeople = { backStack.add(ContactsRoute) }) }
             entry<BlockedRoute> { BlockedScreen(koinViewModel(), onBack = ::pop) }
             entry<SecurityRoute> {
                 SecurityScreen(

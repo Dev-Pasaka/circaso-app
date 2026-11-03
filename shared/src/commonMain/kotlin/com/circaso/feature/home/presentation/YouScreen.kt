@@ -90,6 +90,8 @@ data class YouActions(
     val onCurrency: () -> Unit = {},
     val onAshaVoice: () -> Unit = {},
     val onMoneySound: (Boolean) -> Unit = {},
+    /** Who sees my moments (P1). */
+    val onMomentsPrivacy: () -> Unit = {},
 )
 
 @Composable
@@ -197,6 +199,8 @@ fun YouContent(
                 }
                 Section("Security") {
                     ListRow("Security and Privacy", trailing = { RowChevron() }, onClick = actions.onSecurity)
+                    RowDivider(Modifier.padding(start = CircasoSpacing.s4))
+                    ListRow("Moments", sub = "Who can see your moments", trailing = { RowChevron() }, onClick = actions.onMomentsPrivacy)
                     RowDivider(Modifier.padding(start = CircasoSpacing.s4))
                     ListRow("Notifications", trailing = { RowChevron() }, onClick = actions.onNotifications)
                 }

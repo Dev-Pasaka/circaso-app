@@ -96,7 +96,11 @@ class MessagesRepositoryImpl(
             rows.map { it.toDomain(members, me) }
         }
 
-    override suspend fun send(chatId: String, text: String, replyTo: String?) {
+    override suspend fun send(chatId: String, text: String, replyTo: String?) = send(chatId, text, replyTo, null)
+
+    override suspend fun sendMomentReply(chatId: String, text: String, quote: com.circaso.core.crypto.MomentQuote) = send(chatId, text, null, quote)
+
+    private suspend fun send(chatId: String, text: String, replyTo: String?, quote: com.circaso.core.crypto.MomentQuote?) {
         val me = ownUserId() ?: return
         val at = now()
         val localId = dao.insert(
@@ -104,6 +108,7 @@ class MessagesRepositoryImpl(
                 clientMessageId = newClientMessageId(), messageId = null, chatId = chatId, senderId = me, outgoing = true,
                 kind = MessageKind.Text, text = text, replyTo = replyTo, status = MessageStatus.Waiting, errorCode = null,
                 cachedRequest = null, sentAt = null, orderAt = at, createdAt = at,
+                momentQuote = quote?.let { json.encodeToString(com.circaso.core.crypto.MomentQuote.serializer(), it) },
             ),
         )
         chats.touch(chatId, at)
@@ -331,7 +336,8 @@ class ChatSendHandler(
         } else if (isMediaKind(message.kind)) {
             (MediaDetails.read(message.text) ?: return AppResult.Failure(AppError.Unexpected(null))).toPayload(sentAt)
         } else {
-            ChatPayload(type = ChatPayload.Text, text = message.text, replyTo = message.replyTo, clientSentAt = sentAt)
+            ChatPayload(type = ChatPayload.Text, text = message.text, replyTo = message.replyTo, clientSentAt = sentAt,
+                moment = message.momentQuote?.let { runCatching { json.decodeFromString(com.circaso.core.crypto.MomentQuote.serializer(), it) }.getOrNull() })
         }
         return sealer.seal(chat, ChatPayload.encode(payload), message.clientMessageId, pushable = true)
     }
@@ -481,6 +487,7 @@ class InboxProcessor(
                         kind = if (payment) MessageKind.Payment else MessageKind.Text, text = if (payment) payload.text else payload.text.orEmpty(), replyTo = payload.replyTo,
                         status = MessageStatus.Received, errorCode = null, cachedRequest = null, sentAt = dto.sentAt, orderAt = at, createdAt = now(),
                         transferId = payload.transferId, amountMinor = payload.amountMinor, asset = payload.asset, blockchain = payload.blockchain,
+                        momentQuote = payload.moment?.let { kotlinx.serialization.json.Json.encodeToString(com.circaso.core.crypto.MomentQuote.serializer(), it) },
                     ),
                 )
                 chats.touch(dto.chatId, at)
@@ -653,6 +660,7 @@ internal fun MessageEntity.toDomain(members: List<ChatMemberEntity>, me: String?
             localId = localId, chatId = chatId, orderAt = orderAt, sentAt = sentAt, messageId = messageId, senderId = senderId, senderName = name,
             outgoing = outgoing, text = text.orEmpty(), replyTo = replyTo, errorCode = errorCode,
             state = deliveryState(status),
+            momentQuote = momentQuote?.let { runCatching { kotlinx.serialization.json.Json { ignoreUnknownKeys = true }.decodeFromString(com.circaso.core.crypto.MomentQuote.serializer(), it) }.getOrNull() },
         )
     }
 }

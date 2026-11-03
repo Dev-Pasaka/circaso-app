@@ -39,6 +39,9 @@ expect val canExitApp: Boolean
 /** Opens a web page in the phone's browser (a block explorer for a payment). Does nothing if it can't. */
 expect fun openUrl(url: String)
 
+/** Opens this app's page in the phone's Settings, where a refused permission (camera, microphone) can be turned on. */
+expect fun openAppSettings()
+
 /**
  * Decrypted chat media kept on this phone (photos, voice notes), by attachment id, in the app's private storage so a
  * file is downloaded and decrypted once. Cleared with the rest of the chats on sign-out.

@@ -75,6 +75,12 @@ kotlin {
             implementation(libs.media3.ui)
             implementation(libs.media3.transformer)
             implementation(libs.play.services.maps)
+            // Moments' in-app camera (approved 2026-11-03): CameraX, latest stable at build time (1.6.2).
+            implementation(libs.camerax.core)
+            implementation(libs.camerax.camera2)
+            implementation(libs.camerax.lifecycle)
+            implementation(libs.camerax.video)
+            implementation(libs.camerax.view)
             implementation(libs.androidx.activity.compose)
             implementation(libs.androidx.credentials)
             implementation(libs.androidx.credentials.playServicesAuth)

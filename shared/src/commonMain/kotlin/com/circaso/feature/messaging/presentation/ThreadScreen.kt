@@ -672,7 +672,10 @@ private fun TextMessage(m: Message.Text, group: Boolean, firstOfRun: Boolean, on
             else Spacer(Modifier.width(CircasoSizes.avatarSm + CircasoSpacing.s2))
         }
         MessageColumn(m.outgoing, Modifier.weight(1f, fill = false)) {
-            ChatBubble(m.text, m.outgoing, faded = waiting, onClick = onTap, above = if (group && !m.outgoing && firstOfRun) ({ BasicText(m.senderName, style = CircasoTheme.typography.caption1.copy(color = c.inkSecondary), modifier = Modifier.padding(bottom = 2.dp)) }) else null)
+            ChatBubble(m.text, m.outgoing, faded = waiting, onClick = onTap, above = if ((group && !m.outgoing && firstOfRun) || m.momentQuote != null) ({
+                if (group && !m.outgoing && firstOfRun) BasicText(m.senderName, style = CircasoTheme.typography.caption1.copy(color = c.inkSecondary), modifier = Modifier.padding(bottom = 2.dp))
+                m.momentQuote?.let { MomentQuoteCard(it, m.outgoing, if (m.outgoing) null else m.senderName) }
+            }) else null)
             when {
                 failed -> BubbleMeta("Not sent · tap for options", icon = CircasoIcon.Close, color = c.critical)
                 waiting -> BubbleMeta("Waiting to send", icon = CircasoIcon.Clock)
@@ -1502,6 +1505,27 @@ private fun androidx.compose.foundation.lazy.LazyListScope.threadTail(
             com.circaso.designsystem.components.SuggestionChip("Yes, please", { onQuickReply("Yes, please") })
             if (onCallSupport != null) com.circaso.designsystem.components.SuggestionChip("Call me instead", onCallSupport)
             com.circaso.designsystem.components.SuggestionChip("That's all", onSupportDone)
+        }
+    }
+}
+
+
+/** Design V8: a reply to a moment shows the moment quoted (its picture and words); it stays after the moment expires. */
+@Composable
+private fun MomentQuoteCard(quote: com.circaso.core.crypto.MomentQuote, outgoing: Boolean, posterName: String?) {
+    val c = CircasoTheme.colors
+    val t = CircasoTheme.typography
+    val ink = if (outgoing) c.onAction else c.ink
+    val thumb = androidx.compose.runtime.remember(quote.thumb) { quote.thumb?.let { runCatching { kotlin.io.encoding.Base64.decode(it) }.getOrNull() } }
+    Row(
+        Modifier.padding(bottom = 6.dp).clip(com.circaso.designsystem.theme.CircasoShapes.md).background(ink.copy(alpha = 0.12f)).padding(6.dp)
+            .semantics(mergeDescendants = true) { contentDescription = "Reply to ${if (outgoing) "a" else "your"} moment" + (quote.text?.let { ": $it" } ?: "") },
+        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        if (thumb != null) coil3.compose.AsyncImage(thumb, null, Modifier.size(36.dp, 48.dp).clip(androidx.compose.foundation.shape.RoundedCornerShape(6.dp)), contentScale = androidx.compose.ui.layout.ContentScale.Crop)
+        Column(Modifier.padding(end = 4.dp)) {
+            BasicText(if (outgoing) "${posterName ?: "Their"} · Moment" else "Your moment", style = t.footnote.copy(color = ink, fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold))
+            BasicText(quote.text ?: when (quote.kind) { "IMAGE" -> "Photo"; "VIDEO" -> "Video"; "VOICE" -> "Voice"; else -> "Moment" }, style = t.footnote.copy(color = ink), maxLines = 2)
         }
     }
 }

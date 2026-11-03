@@ -69,6 +69,8 @@ data class MessageEntity(
     val amountMinor: String? = null,
     val asset: String? = null,
     val blockchain: String? = null,
+    /** A reply to a moment (V8): the quote as JSON ([com.circaso.core.crypto.MomentQuote]). */
+    @androidx.room.ColumnInfo(defaultValue = "NULL") val momentQuote: String? = null,
 )
 
 object MessageStatus {
