@@ -143,7 +143,7 @@ fun ThreadScreen(
         onOpenGoal = onOpenGoal, onContribute = onContribute, onPayRequest = onPayRequest, onDecide = viewModel::onDecide, onIntroSeen = viewModel::onIntroSeen,
         onSupportDone = viewModel::onSupportDone, onSupportVerdict = viewModel::onSupportVerdict, onCallSupport = onCallSupport, onCall = onCall,
         ongoingCall = ongoingCall, onReturnToCall = onReturnToCall, onOpenLocation = onOpenLocation, quickPay = pay, focusLocalId = focusLocalId,
-        onLoadOlder = viewModel::onLoadOlder,
+        onLoadOlder = viewModel::onLoadOlder, onSavePeer = viewModel::onSavePeer,
         media = viewModel.media?.let { m ->
             ThreadMediaActions(
                 canShareLocation = m.canShareLocation, onPhoto = viewModel::onSendPhoto, onLocation = viewModel::onSendLocation,
@@ -199,6 +199,8 @@ fun ThreadContent(
     focusLocalId: Long? = null,
     /** Near the oldest message shown: load the next page up. */
     onLoadOlder: () -> Unit = {},
+    /** Save the other person of a direct chat as a contact. */
+    onSavePeer: () -> Unit = {},
 ) {
     val c = CircasoTheme.colors
     var toastPayError by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf<String?>(null) }
@@ -287,6 +289,16 @@ fun ThreadContent(
     androidx.compose.runtime.CompositionLocalProvider(LocalMapPicture provides media?.mapPicture) {
     CircasoScaffold(
         banner = {
+            // Someone I chat with but haven't saved: one tap saves them (moments need both sides saved).
+            if (state.peerUnsaved && state.chat?.members?.any { it.userId == state.chat.peerId && it.handle != null } == true) {
+                Row(
+                    Modifier.fillMaxWidth().background(c.fill).padding(start = CircasoSpacing.s4, end = CircasoSpacing.s2, top = 6.dp, bottom = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(CircasoSpacing.s2),
+                ) {
+                    BasicText("${state.chat.title.substringBefore(' ')} isn’t in your contacts. Save them to see each other’s moments.", Modifier.weight(1f), style = t.footnote.copy(color = c.ink))
+                    com.circaso.designsystem.components.CircasoButton("Save", onSavePeer, style = com.circaso.designsystem.components.ButtonStyle.Secondary, size = com.circaso.designsystem.components.ButtonSize.Small, busy = state.savingPeer)
+                }
+            }
             // A call in this chat that's on but minimised: one tap goes back to it.
             AnimatedVisibility(ongoingCall != null, enter = fadeIn(tween(CircasoMotion.BaseMs)), exit = fadeOut(tween(CircasoMotion.QuickMs))) {
                 Row(

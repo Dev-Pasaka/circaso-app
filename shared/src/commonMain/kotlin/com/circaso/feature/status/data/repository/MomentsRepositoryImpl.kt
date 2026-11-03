@@ -157,7 +157,7 @@ class MomentsRepositoryImpl(
             momentId = dto.momentId, posterId = dto.posterId, body = body,
             ciphertext = if (body == null) dto.ciphertext else null, keyCopy = if (body == null) dto.keyCopy else null,
             postedAt = millis(dto.postedAt), expiresAt = millis(dto.expiresAt), mine = dto.mine,
-            viewed = dto.viewed || old?.viewed == true, reacted = dto.reacted, viewCount = dto.viewCount,
+            viewed = dto.viewed || old?.viewed == true, reacted = dto.reacted, viewCount = dto.viewCount ?: 0,
         )
     }
 

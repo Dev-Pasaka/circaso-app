@@ -36,6 +36,9 @@ import kotlinx.coroutines.launch
 /** Designs C2 (direct) and D2 (group), with the offline states of G2/G3. */
 data class ThreadUiState(
     val chat: Chat? = null,
+    /** A direct chat with someone I haven't saved: offer to save them (needed both ways for moments, Pasaka 2026-11-03). */
+    val peerUnsaved: Boolean = false,
+    val savingPeer: Boolean = false,
     val messages: List<Message> = emptyList(),
     val typing: List<String> = emptyList(),
     /** The other person's presence in a direct chat; null until the server says (never assumed online). */
@@ -118,8 +121,33 @@ class ThreadViewModel(
     val media: ThreadMedia? = null,
     /** Presence of the person on the other side ("Online" / "last seen"). */
     private val messagesRepository: com.circaso.feature.messaging.domain.MessagesRepository? = null,
+    private val contacts: com.circaso.feature.contacts.domain.ContactsRepository? = null,
 ) : ViewModel() {
     private val _state = MutableStateFlow(ThreadUiState())
+
+    init {
+        contacts?.let { repo ->
+            viewModelScope.launch {
+                kotlinx.coroutines.flow.combine(observeChat(chatId), repo.contacts) { chat, saved ->
+                    val peer = chat?.peerId
+                    chat != null && chat.kind == com.circaso.feature.messaging.domain.ChatKind.Direct && peer != null && saved.none { it.person.userId == peer }
+                }.collect { unsaved -> _state.update { it.copy(peerUnsaved = unsaved) } }
+            }
+        }
+    }
+
+    /** Saves the other person as my contact (their @handle), so we see each other's moments and they can find me. */
+    fun onSavePeer() {
+        val chat = _state.value.chat ?: return
+        val handle = chat.members.firstOrNull { it.userId == chat.peerId }?.handle ?: return
+        val repo = contacts ?: return
+        _state.update { it.copy(savingPeer = true) }
+        viewModelScope.launch {
+            val r = repo.connect(com.circaso.feature.contacts.domain.ConnectVia.Handle, handle)
+            if (r is com.circaso.core.common.AppResult.Success) repo.refreshContacts()
+            _state.update { it.copy(savingPeer = false, message = if (r is com.circaso.core.common.AppResult.Success) "${chat.title.substringBefore(' ')} is in your contacts" else "Couldn’t save ${chat.title.substringBefore(' ')}. Try again when you’re online.") }
+        }
+    }
     val state: StateFlow<ThreadUiState> = _state.asStateFlow()
     private var typingSentAt = 0L
     private var typingStop: Job? = null

@@ -42,7 +42,8 @@ import kotlinx.serialization.Serializable
     val mine: Boolean = false,
     val viewed: Boolean = false,
     val reacted: Boolean = false,
-    val viewCount: Int = 0,
+    /** Only on my own moments; null (or absent) on everyone else's. */
+    val viewCount: Int? = null,
 )
 @Serializable data class MomentsPageDto(val moments: List<MomentDto> = emptyList(), val next: String? = null)
 

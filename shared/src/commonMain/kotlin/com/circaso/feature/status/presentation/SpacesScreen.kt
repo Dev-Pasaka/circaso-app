@@ -77,6 +77,12 @@ class SpacesActions(
 @Composable
 fun SpacesTab(viewModel: SpacesViewModel, bottomPadding: PaddingValues, actions: SpacesActions) {
     val state by viewModel.state.collectAsState()
+    // Always current (Pasaka, 2026-11-03): fetched each time the tab shows and each time the app comes back to the
+    // front. New moments posted meanwhile also arrive as status.posted frames; offline, the stored ones show.
+    androidx.lifecycle.compose.LifecycleResumeEffect(Unit) {
+        viewModel.refresh()
+        onPauseOrDispose { }
+    }
     SpacesContent(state, bottomPadding, actions, onNew = { viewModel.onNew(true) }, onRetry = viewModel::refresh,
         onRetryPost = viewModel::onRetryPost, onDeletePost = viewModel::onDeletePost)
 }
@@ -119,7 +125,7 @@ fun SpacesContent(
             item { MomentsRow(state, actions) }
             // Nothing to show is never an error screen (Pasaka, 2026-11-03): the empty state stays, and a failed check
             // is one quiet line under it with Try Again and the reference for support.
-            if (state.failed || (state.empty && !state.loading)) item { NoMoments(state.hasContacts, actions, offline = !state.online) }
+            if ((state.failed && !state.checkFailedWithData) || (state.empty && !state.loading)) item { NoMoments(state.hasContacts, actions, offline = !state.online) }
             if (state.failed) item { CheckFailed(state.requestId, onRetry) }
             item {
                 Column(Modifier.padding(top = CircasoSpacing.s5)) {

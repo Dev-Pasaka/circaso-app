@@ -41,6 +41,8 @@ data class SpacesUiState(
     val online: Boolean = true,
     /** The newest refresh failed with nothing on the phone to show (S1f), and its reference. */
     val failed: Boolean = false,
+    /** The check failed but stored moments are on screen: they stay, with the quiet line under them. */
+    val checkFailedWithData: Boolean = false,
     val requestId: String? = null,
     val newSheet: Boolean = false,
 ) {
@@ -55,7 +57,7 @@ data class SpacesUiState(
     val failedPost: PendingMoment? get() = pending.firstOrNull { it.state == PendingState.Failed }
     /** S1d: skeleton rings only on the very first open, before anything is stored or answered. */
     val loading: Boolean get() = !refreshed && rings.isEmpty() && myMoments.isEmpty() && online
-    val empty: Boolean get() = refreshed && rings.isEmpty() && !failed
+    val empty: Boolean get() = refreshed && rings.isEmpty() && (!failed || checkFailedWithData)
 }
 
 class SpacesViewModel(
@@ -85,11 +87,23 @@ class SpacesViewModel(
             }
         }
         viewModelScope.launch { moments.pending.collect { p -> _state.update { it.copy(pending = p) } } }
-        viewModelScope.launch { connection.status.collect { s -> _state.update { it.copy(online = s == ConnectionStatus.Online) } } }
-        refresh()
+        viewModelScope.launch {
+            connection.status.collect { s ->
+                val back = s == ConnectionStatus.Online && !_state.value.online
+                _state.update { it.copy(online = s == ConnectionStatus.Online) }
+                if (back) refresh() // the connection came back: catch up at once
+            }
+        }
+        refresh() // at launch, so the Spaces tab's dot is right before the tab is opened
     }
 
+    private var lastRefresh = 0L
+
     fun refresh() {
+        // Tab switches and resumes come close together: one fetch per two seconds is plenty.
+        val now = com.circaso.core.sync.nowMillis()
+        if (now - lastRefresh < 2_000) return
+        lastRefresh = now
         // Rings are named from my contacts, and only people in them are shown: keep them current too.
         refreshContacts?.let { r -> viewModelScope.launch { r() } }
         viewModelScope.launch {
@@ -97,10 +111,10 @@ class SpacesViewModel(
             _state.update {
                 val nothingShown = it.rings.isEmpty() && it.myMoments.isEmpty()
                 when {
-                    r is AppResult.Success -> it.copy(refreshed = true, failed = false, requestId = null)
+                    r is AppResult.Success -> it.copy(refreshed = true, failed = false, checkFailedWithData = false, requestId = null)
                     // Offline is not an error: the banner says so and what is stored stays (S1e).
                     (r as AppResult.Failure).error is AppError.Network -> it.copy(refreshed = true)
-                    else -> it.copy(refreshed = true, failed = nothingShown, requestId = (r.error as? AppError.Api)?.requestId)
+                    else -> it.copy(refreshed = true, failed = true, checkFailedWithData = !nothingShown, requestId = (r.error as? AppError.Api)?.requestId)
                 }
             }
         }
