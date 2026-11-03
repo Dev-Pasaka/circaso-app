@@ -57,6 +57,13 @@ import kotlinx.serialization.Serializable
 @Serializable data class MomentViewsDto(val views: List<MomentViewDto> = emptyList())
 @Serializable data class MomentDeletedDto(val deleted: Boolean)
 
+/** Key request (moments-api.md): the posters whose moments this phone can't open, and the poster's fresh copies. */
+@Serializable data class KeyRequestDto(val posterIds: List<String>)
+@Serializable data class KeyRequestedDto(val requested: List<String> = emptyList())
+@Serializable data class MomentKeyCopyDto(val momentId: String, val userId: String, val ciphertext: String)
+@Serializable data class KeyCopiesDto(val copies: List<MomentKeyCopyDto>)
+@Serializable data class KeyCopiesSentDto(val copied: Int = 0)
+
 interface MomentsRemote {
     suspend fun prepareMedia(sizeBytes: Long, kind: String, idempotencyKey: String): AppResult<MomentMediaUploadDto>
     suspend fun completeMedia(mediaId: String, idempotencyKey: String): AppResult<MomentMediaCompletedDto>
@@ -66,6 +73,8 @@ interface MomentsRemote {
     suspend fun views(momentId: String): AppResult<MomentViewsDto>
     suspend fun delete(momentId: String, idempotencyKey: String): AppResult<MomentDeletedDto>
     suspend fun download(mediaId: String): AppResult<MomentMediaDownloadDto>
+    suspend fun requestKeys(posterIds: List<String>, idempotencyKey: String): AppResult<KeyRequestedDto>
+    suspend fun shareKeyCopies(copies: List<MomentKeyCopyDto>, idempotencyKey: String): AppResult<KeyCopiesSentDto>
 }
 
 class KtorMomentsRemote(private val api: CircasoApi) : MomentsRemote {
@@ -100,4 +109,14 @@ class KtorMomentsRemote(private val api: CircasoApi) : MomentsRemote {
     }
 
     override suspend fun download(mediaId: String) = api.call<MomentMediaDownloadDto> { method = HttpMethod.Get; url("/v1/moments/media/$mediaId") }
+
+    override suspend fun requestKeys(posterIds: List<String>, idempotencyKey: String) = api.call<KeyRequestedDto> {
+        method = HttpMethod.Post; url("/v1/moments/keys/request"); idempotencyKey(idempotencyKey)
+        contentType(ContentType.Application.Json); setBody(KeyRequestDto(posterIds))
+    }
+
+    override suspend fun shareKeyCopies(copies: List<MomentKeyCopyDto>, idempotencyKey: String) = api.call<KeyCopiesSentDto> {
+        method = HttpMethod.Post; url("/v1/moments/key-copies"); idempotencyKey(idempotencyKey)
+        contentType(ContentType.Application.Json); setBody(KeyCopiesDto(copies))
+    }
 }

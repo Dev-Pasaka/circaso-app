@@ -180,7 +180,7 @@ private class ViewerFakeMoments : MomentsRepository {
     override suspend fun media(moment: Moment): MomentMediaLoad = MomentMediaLoad.NeedsConnection
     override suspend fun setPrivacy(privacy: MomentPrivacy) = Unit
     override suspend fun setMuted(userId: String, muted: Boolean) = Unit
-    override suspend fun onFrame(type: String, momentId: String?, posterId: String?) = Unit
+    override suspend fun onFrame(type: String, momentId: String?, posterId: String?, requesterId: String?) = Unit
 }
 
 private class FakeContacts : ContactsRepository {

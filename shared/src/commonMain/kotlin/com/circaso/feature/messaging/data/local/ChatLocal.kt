@@ -195,6 +195,10 @@ interface ChatsDao {
     @Query("DELETE FROM sender_key_delivery WHERE chatId = :chatId")
     suspend fun deleteDeliveries(chatId: String)
 
+    /** [userId] no longer holds any of my sender keys under [chatId] (a new phone, a new identity). */
+    @Query("DELETE FROM sender_key_delivery WHERE chatId = :chatId AND userId = :userId")
+    suspend fun deleteDelivery(chatId: String, userId: String)
+
     @Query("DELETE FROM chat") suspend fun clearChats()
     @Query("DELETE FROM chat_member") suspend fun clearMembers()
     @Query("DELETE FROM group_meta_key") suspend fun clearMetaKeys()

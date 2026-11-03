@@ -214,6 +214,22 @@ Nothing to show is never an error screen. The first moment was posted through th
   Previews: `-preview=moment-text|moment-photo|moment-video|moment-mine|moment-mine-viewers|moment-react|reaction-picker|reaction-picker-expanded`.
   ViewModel tests in `MomentViewerViewModelTest`. Open: a radius/elevation token for the picker bubble (26 dp, 10 dp
   shadow; ask Pasaka), composer and privacy previews.
+- **Key request for a new phone (2026-11-04)**, app branch `worktree-agent-a484d47e0ab67d8f2`, backend branch
+  `feat/moment-key-request` (PR #29, **not merged or deployed**; the app's requests answer 404 until it is, which
+  the app treats as "ask again at the next refresh"). Why: signing in again makes a new Signal identity, so every
+  key copy sealed before is unreadable on the new phone, and the poster's phone still counted that person as holding
+  its moments key (deliveries are per user, not per identity), so later moments stayed unreadable too. Now: after a
+  refresh the viewer asks each poster whose live moments it can't open (`POST /v1/moments/keys/request`, once per
+  unreadable moment, at most every 10 minutes per poster, never for my own); the poster gets
+  `status.key_requested`, and through the outbox (`moment.key_copies`) refreshes the 1:1 session to the requester's
+  current identity (`SessionCipher.refresh`), forgets their delivery, seals each live moment's **body** again for
+  them (a `momentBody` 1:1 payload; a sender-key copy made now could not open moments already posted, the chain only
+  moves forward) and sends `POST /v1/moments/key-copies`; the viewer gets `status.keys_ready`, refreshes, and
+  `MomentKeys.learn` returns the body for that moment. Any identity change seen in chats (`SessionCipher`'s
+  `identityChanged`: a message from, or a send to, a new identity, or `keys.changed`) also forgets that person's
+  moments delivery, so my next moment carries a fresh copy. My own moments posted from an earlier phone can't be
+  recovered and stay hidden. Tests: `MomentKeyRequestTest`. Not pushed: a poster who is offline answers when their
+  socket replays the frame.
 
 ### Backend gaps (design exists, no API yet)
 - W7/W8: statements on the server, PIN change and restore.

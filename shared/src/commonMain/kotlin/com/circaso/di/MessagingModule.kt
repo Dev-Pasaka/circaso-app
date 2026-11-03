@@ -72,7 +72,11 @@ val messagingModule = module {
     single { KeyMaintainer(get(), get(), get(), get()) }
 
     single<suspend () -> String?>(named("ownUserId")) { val auth = get<AuthManager>(); { auth.userId } }
-    single { SessionCipher(get(), get(), get()) }
+    single {
+        val chats = get<com.circaso.feature.messaging.data.local.ChatsDao>()
+        // A new identity (new phone) no longer holds my moments key: my next moment carries a fresh copy for them.
+        SessionCipher(get(), get(), get(), identityChanged = { chats.deleteDelivery(com.circaso.feature.status.data.repository.MomentKeys.Scope, it) })
+    }
     single { GroupKeys(get(), get(), get(), get(), get(), get(), get(named("ownUserId"))) }
     single { ChatsRepositoryImpl(get(), get(), get(), get(), get(), get(named("ownUserId"))) } bind ChatsRepository::class
     single { InboxProcessor(get(), get(), get(), get(), get(), get<RealtimeClient>(), { id -> get<ChatsRepositoryImpl>().refreshChat(id) }, onPaymentReceived = { id -> get<com.circaso.feature.wallet.domain.WalletRepository>().loadTransfer(id) }, reactionsDao = get()) }

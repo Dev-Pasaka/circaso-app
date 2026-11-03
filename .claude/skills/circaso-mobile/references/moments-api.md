@@ -44,9 +44,24 @@ this file is updated to match.
 | ST6 | `GET /moments/{momentId}/views` | → `{views: [{userId, viewedAt, reacted}]}` | Poster only. |
 | ST7 | `DELETE /moments/{momentId}` | → `{deleted: true}` | Poster only. Removes the media too; sends `status.deleted` to the audience. |
 | ST8 | `GET /moments/media/{mediaId}` | → `{downloadUrl, expiresAt, sizeBytes}` | 15-minute link for the poster or anyone in the audience of a live moment carrying it. |
+| ST9 | `POST /moments/keys/request` | `{posterIds: [userId]}` → `{requested: [userId]}` | 1–100 distinct posters, never me. Each poster with a live moment shown to me (no block either way) gets `status.key_requested {requesterId}`, at most once per 10 minutes per pair; others skipped silently. Error `status.keys_invalid` (400). |
+| ST10 | `POST /moments/key-copies` | `{copies: [{momentId, userId, ciphertext}]}` → `{copied}` | The poster's answer: per live moment of mine, the body sealed again over the 1:1 session (a `momentBody` payload), ≤ 72 KiB decoded, 1–200 copies, one per (moment, person), never me. Replaces that person's `keyCopy` on that moment; skipped when not my live moment, not in its audience, or blocked. Each person reached gets `status.keys_ready {posterId}`. |
 
 `Moment`: `{momentId, posterId, ciphertext, keyCopy: String?, mediaIds, postedAt, expiresAt, mine, viewed, reacted,
-viewCount}`. `keyCopy` is the caller's own copy, if one was sent with this moment. `viewCount` only on `mine`.
+viewCount}`. `keyCopy` is the caller's own copy, if one was sent with this moment (or replaced by ST10). It is a 1:1
+Signal message whose `ChatPayload` is either `senderKey` (the poster's moments key) or `momentBody` (`momentId` and
+`text` = that moment's body JSON, only for the moment it names). `viewCount` only on `mine`.
+
+### Key request (a new phone)
+
+Signing in again makes a new Signal identity, so copies sealed before can't be opened there, and a sender-key copy
+made now would only open later moments (the chain moves forward). So: the viewer calls ST9 for posters whose live
+moments it can't open (once per unreadable moment, at most every 10 minutes per poster, never for itself). The
+poster, on `status.key_requested` and through the outbox, checks the requester is still in its audience, refreshes
+the 1:1 session to their current identity (a changed identity drops the old session), forgets that they hold its
+moments key (so the next moment carries a copy), seals each live moment's body for them and sends ST10. The viewer
+gets `status.keys_ready` and refreshes. Any identity change seen in chats also forgets that person's delivery. My own
+moments posted from an earlier phone can't be recovered (no other phone of mine holds them) and stay hidden.
 
 Errors (`status.*`): `audience_invalid` (400), `moment_too_large` (400), `media_invalid` (400: size or kind),
 `media_not_found` (404: also when not allowed, so nothing leaks), `moment_not_found` (404: missing, expired, deleted,
@@ -57,7 +72,9 @@ or not visible), `not_poster` (403), `too_many_moments` (429: more than 50 in 24
 - `status.posted` `{momentId, posterId}` to the audience. The phone then fetches ST4.
 - `status.deleted` `{momentId, posterId}` to the audience.
 - `status.viewed` `{momentId, viewerId, viewedAt, reacted}` to the poster.
-- No pushes. A reply to a moment is an ordinary M12 chat message quoting it.
+- `status.key_requested` `{requesterId}` to a poster (ST9): answer with ST10.
+- `status.keys_ready` `{posterId}` to a viewer (ST10): fetch ST4 again.
+- No pushes, except the reaction push (`moment.loved`). A reply to a moment is an ordinary M12 chat message quoting it.
 
 ## Retention
 

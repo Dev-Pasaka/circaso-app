@@ -118,6 +118,6 @@ interface MomentsRepository {
     suspend fun setPrivacy(privacy: MomentPrivacy)
     suspend fun setMuted(userId: String, muted: Boolean)
 
-    /** A `status.*` frame from the realtime socket. */
-    suspend fun onFrame(type: String, momentId: String?, posterId: String?)
+    /** A `status.*` frame from the realtime socket; [requesterId] comes with `status.key_requested`. */
+    suspend fun onFrame(type: String, momentId: String?, posterId: String?, requesterId: String? = null)
 }
