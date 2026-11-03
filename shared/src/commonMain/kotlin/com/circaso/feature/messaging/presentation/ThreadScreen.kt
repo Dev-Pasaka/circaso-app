@@ -144,7 +144,7 @@ fun ThreadScreen(
         onOpenGoal = onOpenGoal, onContribute = onContribute, onPayRequest = onPayRequest, onDecide = viewModel::onDecide, onIntroSeen = viewModel::onIntroSeen,
         onSupportDone = viewModel::onSupportDone, onSupportVerdict = viewModel::onSupportVerdict, onCallSupport = onCallSupport, onCall = onCall,
         ongoingCall = ongoingCall, onReturnToCall = onReturnToCall, onOpenLocation = onOpenLocation, quickPay = pay, focusLocalId = focusLocalId,
-        onLoadOlder = viewModel::onLoadOlder, onSavePeer = viewModel::onSavePeer, onOpenMoment = onOpenMoment,
+        onLoadOlder = viewModel::onLoadOlder, onSavePeer = viewModel::onSavePeer, onOpenMoment = onOpenMoment, onReact = viewModel::onReact,
         media = viewModel.media?.let { m ->
             ThreadMediaActions(
                 canShareLocation = m.canShareLocation, onPhoto = viewModel::onSendPhoto, onLocation = viewModel::onSendLocation,
@@ -202,6 +202,8 @@ fun ThreadContent(
     onLoadOlder: () -> Unit = {},
     /** Save the other person of a direct chat as a contact. */
     onSavePeer: () -> Unit = {},
+    /** React to a message (null takes mine back). */
+    onReact: (Message.Text, String?) -> Unit = { _, _ -> },
     /** A reply's quoted moment was tapped: open it ([posterId] null for my own). */
     onOpenMoment: (posterId: String?, momentId: String) -> Unit = { _, _ -> },
 ) {
@@ -384,6 +386,11 @@ fun ThreadContent(
             val m = state.selected
             CircasoSheet(visible = m != null, onDismiss = { onSelect(null) }, label = "Message") {
                 if (m != null) {
+                    // WhatsApp-style: react from the top of the message's sheet; tapping my current emoji takes it back.
+                    if (m.messageId != null) {
+                        val mine = state.reactions[m.messageId]?.firstOrNull { it.first == state.myId }?.second
+                        ReactionBar(mine, onPick = { emoji -> onReact(m, if (emoji == mine) null else emoji) })
+                    }
                     BasicText(m.text, style = t.body.copy(color = c.ink))
                     if (m.state == DeliveryState.Failed) {
                         BasicText(failureText(m.errorCode), style = t.footnote.copy(color = c.inkSecondary))
@@ -552,7 +559,7 @@ fun ThreadContent(
                     when (m) {
                         is Message.Text -> {
                             val firstOfRun = previous !is Message.Text || previous.senderId != m.senderId || previous.outgoing != m.outgoing
-                            TextMessage(m, state.isGroup, firstOfRun, peerName = state.chat?.title, onOpenMoment = { q, outgoing ->
+                            TextMessage(m, state.isGroup, firstOfRun, peerName = state.chat?.title, reactions = m.messageId?.let { state.reactions[it] }.orEmpty(), myId = state.myId, onOpenMoment = { q, outgoing ->
                                 // My reply quotes their moment; their reply quotes mine.
                                 if (q.expiresAt?.let { it <= com.circaso.core.sync.nowMillis() } == true) quoteScope.launch { toast.show("This moment is no longer available") }
                                 else onOpenMoment(if (outgoing) state.chat?.peerId else null, q.momentId)
@@ -681,7 +688,7 @@ fun ThreadContent(
 
 /** A text message as the design draws it: the bubble, then its time (or state) under it on the sender's side. */
 @Composable
-private fun TextMessage(m: Message.Text, group: Boolean, firstOfRun: Boolean, peerName: String? = null, onOpenMoment: (com.circaso.core.crypto.MomentQuote, Boolean) -> Unit = { _, _ -> }, onTap: () -> Unit) {
+private fun TextMessage(m: Message.Text, group: Boolean, firstOfRun: Boolean, peerName: String? = null, onOpenMoment: (com.circaso.core.crypto.MomentQuote, Boolean) -> Unit = { _, _ -> }, reactions: List<Pair<String, String>> = emptyList(), myId: String? = null, onTap: () -> Unit) {
     val c = CircasoTheme.colors
     val waiting = m.state == DeliveryState.Waiting || m.state == DeliveryState.Sending
     val failed = m.state == DeliveryState.Failed
@@ -696,6 +703,7 @@ private fun TextMessage(m: Message.Text, group: Boolean, firstOfRun: Boolean, pe
                 if (group && !m.outgoing && firstOfRun) BasicText(m.senderName, style = CircasoTheme.typography.caption1.copy(color = c.inkSecondary), modifier = Modifier.padding(bottom = 2.dp))
                 m.momentQuote?.let { q -> MomentQuoteCard(q, m.outgoing, if (m.outgoing) peerName else m.senderName) { onOpenMoment(q, m.outgoing) } }
             }) else null)
+            if (reactions.isNotEmpty()) ReactionChips(reactions, myId, m.outgoing, onTap)
             when {
                 failed -> BubbleMeta("Not sent · tap for options", icon = CircasoIcon.Close, color = c.critical)
                 waiting -> BubbleMeta("Waiting to send", icon = CircasoIcon.Clock)
@@ -1555,5 +1563,62 @@ private fun MomentQuoteCard(quote: com.circaso.core.crypto.MomentQuote, outgoing
             BasicText(if (outgoing) "${posterName?.substringBefore(' ') ?: "Their"} · Moment" else "Your moment", style = t.footnote.copy(color = ink, fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold))
             BasicText(if (gone) "No longer available" else quote.text ?: when (quote.kind) { "IMAGE" -> "Photo"; "VIDEO" -> "Video"; "VOICE" -> "Voice"; else -> "Moment" }, style = t.footnote.copy(color = ink), maxLines = 2)
         }
+    }
+}
+
+
+/** The quick reactions (WhatsApp's six) and a few more behind "+". */
+private val QuickReactions = listOf("👍", "❤️", "😂", "😮", "😢", "🙏")
+private val MoreReactions = listOf("🔥", "🎉", "👏", "😍", "🥰", "😁", "🤣", "😅", "😊", "😎", "🤔", "😴", "😡", "🙌", "💯", "✅", "💪", "👀", "🤝", "🙈")
+
+@Composable
+private fun ReactionBar(mine: String?, onPick: (String) -> Unit) {
+    val c = CircasoTheme.colors
+    var more by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(false) }
+    Column(verticalArrangement = Arrangement.spacedBy(CircasoSpacing.s2)) {
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+            QuickReactions.forEach { e -> ReactionButton(e, e == mine) { onPick(e) } }
+            Box(
+                Modifier.size(CircasoSizes.controlMd).clip(com.circaso.designsystem.theme.CircasoShapes.circle).background(c.fill)
+                    .pressable(role = androidx.compose.ui.semantics.Role.Button, onClick = { more = !more })
+                    .semantics { contentDescription = if (more) "Fewer reactions" else "More reactions" },
+                contentAlignment = Alignment.Center,
+            ) { CircasoIconImage(CircasoIcon.Plus, c.ink, Modifier.size(18.dp)) }
+        }
+        if (more) {
+            androidx.compose.foundation.layout.FlowRow(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                MoreReactions.forEach { e -> ReactionButton(e, e == mine) { onPick(e) } }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ReactionButton(emoji: String, on: Boolean, onClick: () -> Unit) {
+    val c = CircasoTheme.colors
+    Box(
+        Modifier.size(CircasoSizes.controlMd).clip(com.circaso.designsystem.theme.CircasoShapes.circle).background(if (on) c.fillStrong else androidx.compose.ui.graphics.Color.Transparent)
+            .pressable(role = androidx.compose.ui.semantics.Role.Button, onClick = onClick)
+            .semantics { contentDescription = if (on) "Remove reaction $emoji" else "React $emoji" },
+        contentAlignment = Alignment.Center,
+    ) { BasicText(emoji, style = CircasoTheme.typography.title2) }
+}
+
+/** Under the bubble: each emoji once with how many chose it (WhatsApp-style); tap opens the message's sheet. */
+@Composable
+private fun ReactionChips(reactions: List<Pair<String, String>>, myId: String?, outgoing: Boolean, onTap: () -> Unit) {
+    val c = CircasoTheme.colors
+    val t = CircasoTheme.typography
+    val counts = reactions.groupingBy { it.second }.eachCount().entries.sortedByDescending { it.value }
+    val mineIn = reactions.any { it.first == myId }
+    Row(
+        Modifier.padding(top = 2.dp).clip(com.circaso.designsystem.theme.CircasoShapes.pill).background(c.surface)
+            .border(1.dp, if (mineIn) c.ink else c.separator, com.circaso.designsystem.theme.CircasoShapes.pill)
+            .pressable(role = androidx.compose.ui.semantics.Role.Button, onClick = onTap).padding(horizontal = 8.dp, vertical = 3.dp)
+            .semantics(mergeDescendants = true) { contentDescription = "Reactions: " + counts.joinToString { "${it.key} ${it.value}" } },
+        horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically,
+    ) {
+        counts.take(3).forEach { BasicText(it.key, style = t.footnote) }
+        if (reactions.size > 1) BasicText(reactions.size.toString(), style = t.caption1.copy(color = c.inkSecondary, fontFeatureSettings = "tnum"))
     }
 }

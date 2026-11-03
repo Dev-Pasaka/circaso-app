@@ -79,7 +79,34 @@ class MessagesRepositoryImpl(
     private val json: Json,
     private val ownUserId: suspend () -> String?,
     private val now: () -> Long = ::nowMillis,
+    private val reactionsDao: com.circaso.feature.messaging.data.local.ReactionsDao? = null,
 ) : MessagesRepository {
+    /** messageId -> each person's reaction (userId to emoji), oldest first. */
+    override fun reactions(chatId: String): kotlinx.coroutines.flow.Flow<Map<String, List<Pair<String, String>>>> =
+        reactionsDao?.observe(chatId)?.let { f -> kotlinx.coroutines.flow.flow { f.collect { rows -> emit(rows.groupBy({ it.messageId }, { it.userId to it.emoji })) } } }
+            ?: kotlinx.coroutines.flow.flowOf(emptyMap())
+
+    /**
+     * My reaction to [messageId] ([emoji] null takes it back), WhatsApp-style: shown at once, sent as an encrypted
+     * `reaction` message through the outbox (so it waits offline like any message).
+     */
+    override suspend fun myId(): String? = ownUserId()
+
+    override suspend fun react(chatId: String, messageId: String, emoji: String?) {
+        val me = ownUserId() ?: return
+        val at = now()
+        if (emoji == null) reactionsDao?.remove(messageId, me) else reactionsDao?.upsert(com.circaso.feature.messaging.data.local.MessageReactionEntity(chatId, messageId, me, emoji, at))
+        val localId = dao.insert(
+            MessageEntity(
+                clientMessageId = newClientMessageId(), messageId = null, chatId = chatId, senderId = me, outgoing = true,
+                kind = MessageKind.Reaction, text = emoji.orEmpty(), replyTo = messageId, status = MessageStatus.Waiting, errorCode = null,
+                cachedRequest = null, sentAt = null, orderAt = at, createdAt = at,
+            ),
+        )
+        outbox.enqueue(OutboxType.ChatMessage, json.encodeToString(ChatMessageJob.serializer(), ChatMessageJob(localId)))
+        kickOutbox()
+    }
+
     /** chatId -> (userId -> when their typing signal expires). */
     private val typingState = MutableStateFlow<Map<String, Map<String, Long>>>(emptyMap())
 
@@ -335,6 +362,8 @@ class ChatSendHandler(
             ChatPayload(type = ChatPayload.Payment, text = message.text, clientSentAt = sentAt, transferId = message.transferId, amountMinor = message.amountMinor, asset = message.asset, blockchain = message.blockchain)
         } else if (isMediaKind(message.kind)) {
             (MediaDetails.read(message.text) ?: return AppResult.Failure(AppError.Unexpected(null))).toPayload(sentAt)
+        } else if (message.kind == MessageKind.Reaction) {
+            ChatPayload(type = ChatPayload.Reaction, text = message.text, replyTo = message.replyTo, clientSentAt = sentAt)
         } else {
             ChatPayload(type = ChatPayload.Text, text = message.text, replyTo = message.replyTo, clientSentAt = sentAt,
                 moment = message.momentQuote?.let { runCatching { json.decodeFromString(com.circaso.core.crypto.MomentQuote.serializer(), it) }.getOrNull() })
@@ -408,8 +437,15 @@ class InboxProcessor(
     private val now: () -> Long = ::nowMillis,
     /** A payment card arrived: the wallet reads the transfer (W5) so the card can show its state. */
     private val onPaymentReceived: suspend (transferId: String) -> Unit = {},
+    private val reactionsDao: com.circaso.feature.messaging.data.local.ReactionsDao? = null,
 ) {
     private val lock = Mutex()
+
+    /** A reaction that just arrived, by the id of the message that carried it: what a push names ("reacted 👍 to …"). */
+    class ArrivedReaction(val chatId: String, val senderId: String, val emoji: String, val targetMessageId: String)
+    private val recentReactions = mutableMapOf<String, ArrivedReaction>()
+    fun reactionCarriedBy(messageId: String): ArrivedReaction? = recentReactions.remove(messageId)
+
 
     suspend fun sync(): AppResult<Unit> = lock.withLock {
         var after: String? = null
@@ -506,6 +542,14 @@ class InboxProcessor(
                 chats.touch(dto.chatId, at)
             }
             ChatPayload.LiveUpdate, ChatPayload.LiveStop -> moveLiveShare(dto, payload)
+            // Someone's reaction: kept with the message it is on, never shown as a message of its own.
+            ChatPayload.Reaction -> {
+                val target = payload.replyTo ?: return unreadable(dto, "reaction without a target")
+                val emoji = payload.text.orEmpty()
+                if (emoji.isNotEmpty()) recentReactions[dto.messageId] = ArrivedReaction(dto.chatId, dto.senderId, emoji, target)
+                if (emoji.isEmpty()) reactionsDao?.remove(target, dto.senderId)
+                else reactionsDao?.upsert(com.circaso.feature.messaging.data.local.MessageReactionEntity(dto.chatId, target, dto.senderId, emoji.take(16), isoToMillis(dto.sentAt) ?: now()))
+            }
             ChatPayload.SenderKey, ChatPayload.MetaKey, ChatPayload.Control -> {
                 groupKeys.processDistribution(dto.chatId, dto.senderId, payload)
                 // The group's name may be readable now, and messages that waited for this key can open.

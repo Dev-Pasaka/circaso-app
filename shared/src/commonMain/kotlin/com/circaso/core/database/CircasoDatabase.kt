@@ -57,13 +57,14 @@ import kotlinx.coroutines.Dispatchers
         WalletSnapshotEntity::class, TransferEntity::class, ChamaSnapshotEntity::class,
         com.circaso.feature.status.data.local.MomentEntity::class, com.circaso.feature.status.data.local.PendingMomentEntity::class,
         com.circaso.feature.status.data.local.MutedPosterEntity::class, com.circaso.feature.status.data.local.MomentPrivacyEntity::class,
+        com.circaso.feature.messaging.data.local.MessageReactionEntity::class,
     ],
-    version = 14,
+    version = 15,
     autoMigrations = [
         AutoMigration(from = 1, to = 2), AutoMigration(from = 2, to = 3),
         AutoMigration(from = 3, to = 4), AutoMigration(from = 4, to = 5),
         AutoMigration(from = 5, to = 6), AutoMigration(from = 6, to = 7),
-        AutoMigration(from = 7, to = 8), AutoMigration(from = 8, to = 9), AutoMigration(from = 9, to = 10), AutoMigration(from = 10, to = 11), AutoMigration(from = 11, to = 12), AutoMigration(from = 12, to = 13), AutoMigration(from = 13, to = 14),
+        AutoMigration(from = 7, to = 8), AutoMigration(from = 8, to = 9), AutoMigration(from = 9, to = 10), AutoMigration(from = 10, to = 11), AutoMigration(from = 11, to = 12), AutoMigration(from = 12, to = 13), AutoMigration(from = 13, to = 14), AutoMigration(from = 14, to = 15),
     ],
 )
 @ConstructedBy(CircasoDatabaseConstructor::class)
@@ -79,6 +80,7 @@ abstract class CircasoDatabase : RoomDatabase() {
     abstract fun walletDao(): WalletDao
     abstract fun chamaDao(): ChamaDao
     abstract fun momentsDao(): com.circaso.feature.status.data.local.MomentsDao
+    abstract fun reactionsDao(): com.circaso.feature.messaging.data.local.ReactionsDao
 }
 
 // Room generates the actual for each platform.

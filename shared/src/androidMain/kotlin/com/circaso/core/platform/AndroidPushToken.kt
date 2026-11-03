@@ -80,13 +80,22 @@ class CircasoMessagingService : FirebaseMessagingService() {
                         notifications.show(chatId, chatsDao.chat(chatId)?.name ?: "New group", "You were added to a group", null)
                     } else {
                         messages.syncInbox()
+                        // A reaction isn't a message: name it as WhatsApp does, or say nothing when one was taken back.
+                        koin.get<com.circaso.feature.messaging.data.repository.InboxProcessor>().reactionCarriedBy(messageId)?.let { r ->
+                            val who = chatsDao.members(chatId).firstOrNull { it.userId == r.senderId }?.displayName ?: "Someone"
+                            val target = messagesDao.byMessageId(r.targetMessageId)?.text?.takeIf { it.isNotBlank() && !it.startsWith("{") }
+                            notifications.show(chatId, who, "Reacted ${r.emoji}" + (target?.let { " to \"${it.take(60)}\"" } ?: " to your message"), messageId)
+                            return@withTimeoutOrNull
+                        }
                         val row = messagesDao.byMessageId(messageId)
+                        if (row == null) return@withTimeoutOrNull // a taken-back reaction or a control message: nothing to show
                         val chat = chatsDao.chat(chatId)
                         val sender = row?.let { r -> chatsDao.members(chatId).firstOrNull { it.userId == r.senderId }?.displayName }
                         val title = if (chat?.kind == "GROUP") chat.name ?: "Group" else sender ?: "New message"
+                        val said = if (row.momentQuote != null) "Replied to your moment: ${row.text}" else row.text
                         val text = when {
-                            row?.text != null && chat?.kind == "GROUP" && sender != null -> "$sender: ${row.text}"
-                            row?.text != null -> row.text
+                            said != null && chat?.kind == "GROUP" && sender != null -> "$sender: $said"
+                            said != null -> said
                             else -> "New message"
                         }
                         notifications.show(chatId, title, text, messageId)

@@ -22,6 +22,7 @@ class RoomSessionDataCleaner(private val db: CircasoDatabase, private val cursor
         db.messagesDao().clearAll()
         db.walletDao().apply { clearSnapshot(); clearTransfers() }
         db.chamaDao().clearAll()
+        db.reactionsDao().clear()
         db.momentsDao().apply { clearMoments(); clearPending() } // the moments sender keys go with the Signal store above
     }
 }

@@ -110,6 +110,8 @@ data class ChatPayload(
         const val SenderKey = "senderKey"
         const val MetaKey = "metaKey"
         const val Control = "control"
+        /** A reaction (WhatsApp-style): [replyTo] is the message reacted to, [text] the emoji, empty to take it back. */
+        const val Reaction = "reaction"
 
         private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true; explicitNulls = false }
 

@@ -45,6 +45,12 @@ interface MessagesRepository {
     suspend fun send(chatId: String, text: String, replyTo: String? = null)
     /** A reply to someone's moment (V8): an ordinary text that quotes it; it waits offline like any message. */
     suspend fun sendMomentReply(chatId: String, text: String, quote: com.circaso.core.crypto.MomentQuote)
+    /** Reactions by message id: each person's (userId, emoji). */
+    fun reactions(chatId: String): kotlinx.coroutines.flow.Flow<Map<String, List<Pair<String, String>>>> = kotlinx.coroutines.flow.flowOf(emptyMap())
+    /** React to a message; null takes my reaction back. */
+    suspend fun react(chatId: String, messageId: String, emoji: String?) {}
+    /** Who I am, to tell my reactions from others'. */
+    suspend fun myId(): String? = null
 
     /** Queueable like text: the card for a payment already made (or signed) from this chat. */
     suspend fun sendPayment(chatId: String, card: PaymentCard)

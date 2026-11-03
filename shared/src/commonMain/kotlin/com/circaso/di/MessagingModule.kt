@@ -62,6 +62,7 @@ val messagingModule = module {
     single { get<CircasoDatabase>().signalDao() }
     single { get<CircasoDatabase>().chatsDao() }
     single { get<CircasoDatabase>().messagesDao() }
+    single { get<CircasoDatabase>().reactionsDao() }
     single { SealedRecordStore(get(), get()) }
     single<KeysRemote> { KtorKeysRemote(get()) }
     single<ChatsRemote> { KtorChatsRemote(get()) }
@@ -74,8 +75,8 @@ val messagingModule = module {
     single { SessionCipher(get(), get(), get()) }
     single { GroupKeys(get(), get(), get(), get(), get(), get(), get(named("ownUserId"))) }
     single { ChatsRepositoryImpl(get(), get(), get(), get(), get(), get(named("ownUserId"))) } bind ChatsRepository::class
-    single { InboxProcessor(get(), get(), get(), get(), get(), get<RealtimeClient>(), { id -> get<ChatsRepositoryImpl>().refreshChat(id) }, onPaymentReceived = { id -> get<com.circaso.feature.wallet.domain.WalletRepository>().loadTransfer(id) }) }
-    single { MessagesRepositoryImpl(get(), get(), get(), get(), get(), get(named("kickOutbox")), get<RealtimeClient>(), get(), get(named("ownUserId"))) } bind MessagesRepository::class
+    single { InboxProcessor(get(), get(), get(), get(), get(), get<RealtimeClient>(), { id -> get<ChatsRepositoryImpl>().refreshChat(id) }, onPaymentReceived = { id -> get<com.circaso.feature.wallet.domain.WalletRepository>().loadTransfer(id) }, reactionsDao = get()) }
+    single { MessagesRepositoryImpl(get(), get(), get(), get(), get(), get(named("kickOutbox")), get<RealtimeClient>(), get(), get(named("ownUserId")), reactionsDao = get()) } bind MessagesRepository::class
     single { ChatSendHandler(get(), get(), get(), get(), get(), get(), get(named("ownUserId")), { id -> get<ChatsRepositoryImpl>().refreshChat(id) },
             uploadMedia = { id -> get<com.circaso.feature.messaging.data.repository.MediaMessages>().uploadPending(id) }) } bind OutboxHandler::class
     single<com.circaso.feature.messaging.data.repository.AttachmentsRemote> { com.circaso.feature.messaging.data.repository.KtorAttachmentsRemote(get()) }

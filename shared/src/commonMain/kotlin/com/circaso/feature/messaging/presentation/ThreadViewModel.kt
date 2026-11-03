@@ -38,6 +38,9 @@ data class ThreadUiState(
     val chat: Chat? = null,
     /** A direct chat with someone I haven't saved: offer to save them (needed both ways for moments, Pasaka 2026-11-03). */
     val peerUnsaved: Boolean = false,
+    /** messageId -> (userId, emoji); and who I am, to mark my own. */
+    val reactions: Map<String, List<Pair<String, String>>> = emptyMap(),
+    val myId: String? = null,
     val savingPeer: Boolean = false,
     val messages: List<Message> = emptyList(),
     val typing: List<String> = emptyList(),
@@ -126,6 +129,10 @@ class ThreadViewModel(
     private val _state = MutableStateFlow(ThreadUiState())
 
     init {
+        messagesRepository?.let { repo ->
+            viewModelScope.launch { val me = repo.myId(); _state.update { it.copy(myId = me) } }
+            viewModelScope.launch { repo.reactions(chatId).collect { r -> _state.update { it.copy(reactions = r) } } }
+        }
         contacts?.let { repo ->
             viewModelScope.launch {
                 kotlinx.coroutines.flow.combine(observeChat(chatId), repo.contacts) { chat, saved ->
@@ -134,6 +141,13 @@ class ThreadViewModel(
                 }.collect { unsaved -> _state.update { it.copy(peerUnsaved = unsaved) } }
             }
         }
+    }
+
+    /** React to a message (WhatsApp-style); null takes my reaction back. Queued like any message. */
+    fun onReact(m: com.circaso.feature.messaging.domain.Message.Text, emoji: String?) {
+        val id = m.messageId ?: return
+        _state.update { it.copy(selected = null) }
+        viewModelScope.launch { messagesRepository?.react(chatId, id, emoji) }
     }
 
     /** Saves the other person as my contact (their @handle), so we see each other's moments and they can find me. */

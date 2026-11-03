@@ -88,6 +88,8 @@ object MessageStatus {
 
 object MessageKind {
     const val Text = "text"
+    /** My reaction on its way out: hidden from the thread and lists; [MessageEntity.replyTo] is the target, text the emoji. */
+    const val Reaction = "reaction"
     /** A payment made from the chat: the card shows the transfer, the wallet keeps its state. */
     const val Payment = "payment"
     /** "‹Name›'s security code changed" and other notices the phone writes itself. */
@@ -199,19 +201,38 @@ interface ChatsDao {
     @Query("DELETE FROM sender_key_delivery") suspend fun clearDeliveries()
 }
 
+/** One person's reaction to one message (WhatsApp-style); each person has at most one per message. */
+@androidx.room.Entity(tableName = "message_reaction", primaryKeys = ["messageId", "userId"], indices = [androidx.room.Index("chatId")])
+data class MessageReactionEntity(val chatId: String, val messageId: String, val userId: String, val emoji: String, val at: Long)
+
+@Dao
+interface ReactionsDao {
+    @Query("SELECT * FROM message_reaction WHERE chatId = :chatId ORDER BY at")
+    fun observe(chatId: String): Flow<List<MessageReactionEntity>>
+
+    @androidx.room.Insert(onConflict = androidx.room.OnConflictStrategy.REPLACE)
+    suspend fun upsert(row: MessageReactionEntity)
+
+    @Query("DELETE FROM message_reaction WHERE messageId = :messageId AND userId = :userId")
+    suspend fun remove(messageId: String, userId: String)
+
+    @Query("DELETE FROM message_reaction")
+    suspend fun clear()
+}
+
 @Dao
 interface MessagesDao {
-    @Query("SELECT * FROM message WHERE chatId = :chatId ORDER BY orderAt ASC, localId ASC")
+    @Query("SELECT * FROM message WHERE chatId = :chatId AND kind != 'reaction' ORDER BY orderAt ASC, localId ASC")
     fun observeThread(chatId: String): Flow<List<MessageEntity>>
 
     /** The newest [limit] messages of a chat, newest first: a thread opens on these and loads older ones as it scrolls up. */
-    @Query("SELECT * FROM message WHERE chatId = :chatId ORDER BY orderAt DESC, localId DESC LIMIT :limit")
+    @Query("SELECT * FROM message WHERE chatId = :chatId AND kind != 'reaction' ORDER BY orderAt DESC, localId DESC LIMIT :limit")
     fun observeRecent(chatId: String, limit: Int): Flow<List<MessageEntity>>
 
-    @Query("SELECT m.* FROM message m WHERE m.localId = (SELECT localId FROM message WHERE chatId = m.chatId ORDER BY orderAt DESC, localId DESC LIMIT 1)")
+    @Query("SELECT m.* FROM message m WHERE m.localId = (SELECT localId FROM message WHERE chatId = m.chatId AND kind != 'reaction' ORDER BY orderAt DESC, localId DESC LIMIT 1)")
     fun observeLatestPerChat(): Flow<List<MessageEntity>>
 
-    @Query("SELECT c.chatId AS chatId, COUNT(m.localId) AS count FROM chat c JOIN message m ON m.chatId = c.chatId WHERE m.outgoing = 0 AND m.kind != 'system' AND m.orderAt > c.readUpToOrderAt GROUP BY c.chatId")
+    @Query("SELECT c.chatId AS chatId, COUNT(m.localId) AS count FROM chat c JOIN message m ON m.chatId = c.chatId WHERE m.outgoing = 0 AND m.kind != 'system' AND m.kind != 'reaction' AND m.orderAt > c.readUpToOrderAt GROUP BY c.chatId")
     fun observeUnread(): Flow<List<ChatUnread>>
 
     @Query("SELECT * FROM message WHERE localId = :localId")
