@@ -166,13 +166,14 @@ design.** Plan: `references/spaces-plan.md`.
 
 **Phase 1 progress (2026-11-03): Moments built, not yet run end to end.**
 - Backend: `status` module (ST1–ST8, frames, 10-minute retention sweep) on branch `feat/status-moments` in the
-  worktree `circaso-status` (commits `9d0c5e7`, `32b93c9`; `./gradlew build` green). **Not pushed, no PR, not deployed.**
+  worktree `circaso-status` (commits `9d0c5e7`, `32b93c9`; `./gradlew build` green). **PR #26 open (2026-11-03), not yet merged or deployed.**
   Contract: `references/moments-api.md`; the backend guide copy is in that branch's `docs/mobile-integration.md`.
 - App (`fc6779f`, `10f6147`, `aad3d2d`): Spaces tab (4 tabs), Moments data layer (Room v13/v14, outbox posting,
   sender-key encryption in the Signal store, encrypted media), composer (CameraX 1.6.2 on Android, AVFoundation on
   iOS), viewer, privacy (You → Moments), replies that quote a moment in the chat. Android and iOS compile; Android
   host tests pass.
-- To finish: merge and deploy the backend branch, sign in on the emulator, post and view a moment between two
+- App commits pushed to `main` (up to `a30c06b`, 2026-11-03).
+- To finish: merge and deploy backend PR #26, sign in on the emulator, post and view a moment between two
   accounts; design-reviewer pass on the built screens.
 - Design review of the built screens (2026-11-03): its 6 Blockers are fixed (no "sent" before the server has a
   reply; the quote names the poster and goes "no longer available"; media hashed and decrypted off the main thread;
