@@ -168,6 +168,28 @@ fun PreviewScreens(name: String) {
         "spaces-empty" -> com.circaso.feature.status.presentation.SpacesContent(com.circaso.feature.status.presentation.SpacesUiState(myName = "Pasaka Mutuku", loaded = true, refreshed = true), PaddingValues(bottom = 90.dp), noSpacesActions, {}, {})
         "spaces-loading" -> com.circaso.feature.status.presentation.SpacesContent(com.circaso.feature.status.presentation.SpacesUiState(myName = "Pasaka Mutuku", loaded = true), PaddingValues(bottom = 90.dp), noSpacesActions, {}, {})
         "spaces-error" -> com.circaso.feature.status.presentation.SpacesContent(com.circaso.feature.status.presentation.SpacesUiState(myName = "Pasaka Mutuku", loaded = true, refreshed = true, failed = true, requestId = "req_7Hq2kD"), PaddingValues(bottom = 90.dp), noSpacesActions, {}, {})
+        // The Moments viewer (V1, V4, V5) and its reaction picker: sample moments, nothing loads.
+        "moment-text" -> MomentPreview(sampleMoment(com.circaso.feature.status.domain.MomentKind.Text))
+        "moment-photo" -> MomentPreview(sampleMoment(com.circaso.feature.status.domain.MomentKind.Image), photo = true)
+        "moment-video" -> MomentPreview(sampleMoment(com.circaso.feature.status.domain.MomentKind.Video))
+        "moment-mine" -> MomentPreview(sampleMoment(com.circaso.feature.status.domain.MomentKind.Image).copy(mine = true, viewCount = 14, reactionCount = 3), photo = true)
+        // V4: my moment with Seen by open; one viewer reacted with a heart, one with any emoji, one only looked.
+        "moment-mine-viewers" -> MomentPreview(
+            sampleMoment(com.circaso.feature.status.domain.MomentKind.Image).copy(mine = true, viewCount = 3, reactionCount = 2), photo = true,
+            viewers = listOf(
+                com.circaso.feature.status.presentation.ViewerRow(com.circaso.feature.status.domain.MomentViewer("w", now - 5 * 60_000, true, "❤️"), "Wanjiru Kamau", null),
+                com.circaso.feature.status.presentation.ViewerRow(com.circaso.feature.status.domain.MomentViewer("b", now - 18 * 60_000, true, "😂"), "Baraka Mwita", null),
+                com.circaso.feature.status.presentation.ViewerRow(com.circaso.feature.status.domain.MomentViewer("m", now - 31 * 60_000, false), "Mum", null),
+            ),
+        )
+        "moment-react" ->MomentPreview(sampleMoment(com.circaso.feature.status.domain.MomentKind.Text).copy(reaction = "🔥"), picking = true)
+        "reaction-picker", "reaction-picker-expanded" -> androidx.compose.foundation.layout.Box(
+            androidx.compose.ui.Modifier.fillMaxSize().background(com.circaso.designsystem.theme.CircasoTheme.colors.bg),
+            contentAlignment = androidx.compose.ui.Alignment.Center,
+        ) {
+            // Mine is from the long list, so it also shows in the row (to take it back without opening the list).
+            com.circaso.designsystem.components.ReactionBubble(current = "🔥", onPick = {}, onOptions = {}, initiallyExpanded = name.endsWith("expanded"))
+        }
         "spaces-posting" -> com.circaso.feature.status.presentation.SpacesContent(sampleSpaces().copy(pending = listOf(com.circaso.feature.status.domain.PendingMoment("p1", com.circaso.feature.status.domain.MomentKind.Image, com.circaso.feature.status.domain.PendingState.Failed, null, 0))), PaddingValues(bottom = 90.dp), noSpacesActions, {}, {})
         "you" -> YouContent(
             YouUiState(
@@ -423,6 +445,53 @@ private fun CallPreview(call: com.circaso.feature.calls.CallUi, money: String?, 
 
 
 private val noSpacesActions = com.circaso.feature.status.presentation.SpacesActions({}, {}, {}, {})
+
+/** One of Wanjiru's moments, posted 34 minutes ago; the photo and video carry the sample photo as their placeholder. */
+private fun sampleMoment(kind: com.circaso.feature.status.domain.MomentKind): com.circaso.feature.status.domain.Moment {
+    val now = com.circaso.core.sync.nowMillis()
+    val media = kind != com.circaso.feature.status.domain.MomentKind.Text
+    return com.circaso.feature.status.domain.Moment(
+        momentId = "m-$kind", posterId = "w", kind = kind,
+        text = if (media) null else "Sunday market haul: mangoes, sukuma and the best mandazi in town",
+        background = "Ink",
+        caption = if (media) "Evening at Ngong Hills" else null,
+        media = if (media) com.circaso.feature.status.domain.MomentMedia(
+            mediaId = "x", key = "", digest = "", sizeBytes = 0, mime =if (kind == com.circaso.feature.status.domain.MomentKind.Video) "video/mp4" else "image/jpeg", durationMs = if (kind == com.circaso.feature.status.domain.MomentKind.Video) 18_000 else null,
+        ) else null,
+        thumb = if (media) SamplePhoto else null,
+        postedAt = now - 34 * 60_000, expiresAt = now + 3_600_000, mine = false, viewed = false, reacted = false,
+    )
+}
+
+/**
+ * The viewer over one sample moment. A photo shows the sample photo; a video can't play here, so it shows its
+ * placeholder while "loading" (V5).
+ */
+@Composable
+private fun MomentPreview(
+    moment: com.circaso.feature.status.domain.Moment,
+    photo: Boolean = false,
+    picking: Boolean = false,
+    viewers: List<com.circaso.feature.status.presentation.ViewerRow>? = null,
+) {
+    val bytes = androidx.compose.runtime.remember { kotlin.io.encoding.Base64.decode(SamplePhoto) }
+    val ring = com.circaso.feature.status.domain.MomentRing(if (moment.mine) "me" else "w", if (moment.mine) "My moment" else "Wanjiru Kamau", null, listOf(moment, moment.copy(momentId = "next")), muted = false)
+    val media = when {
+        moment.kind == com.circaso.feature.status.domain.MomentKind.Text -> com.circaso.feature.status.presentation.ViewerMedia.None
+        photo -> com.circaso.feature.status.presentation.ViewerMedia.Ready(bytes, null)
+        else -> com.circaso.feature.status.presentation.ViewerMedia.Loading
+    }
+    com.circaso.feature.status.presentation.MomentViewerContent(
+        com.circaso.feature.status.presentation.MomentViewerUiState(
+            rings = listOf(ring), media = media, picking = picking,
+            viewersOpen = viewers != null, viewers = viewers, paused = picking || viewers != null,
+        ),
+        com.circaso.feature.status.presentation.MomentViewerActions.None, onClose = {},
+    )
+}
+
+/** A sunset (72×128 JPEG) standing in for a moment's photo in previews. */
+private const val SamplePhoto = "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"
 
 /** Moments from people in the sample contacts: two new, one seen. */
 private fun sampleSpaces(): com.circaso.feature.status.presentation.SpacesUiState {

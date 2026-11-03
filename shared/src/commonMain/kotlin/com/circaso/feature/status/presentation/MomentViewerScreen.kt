@@ -20,6 +20,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -27,12 +28,23 @@ import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicText
 import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.animate
+import androidx.compose.animation.core.spring
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.input.pointer.util.VelocityTracker
+import com.circaso.designsystem.components.ReactionAnchor
+import com.circaso.designsystem.components.ReactionPicker
+import kotlinx.coroutines.Job
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.blur
@@ -49,6 +61,7 @@ import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.progressBarRangeInfo
 import androidx.compose.ui.semantics.ProgressBarRangeInfo
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.semantics.customActions
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -91,37 +104,183 @@ private const val StillMs = 5_000
 
 @OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class)
 @Composable
-fun MomentViewerScreen(viewModel: MomentViewerViewModel, onClose: () -> Unit, onMessage: (posterId: String) -> Unit = {}) {
+fun MomentViewerScreen(
+    viewModel: MomentViewerViewModel,
+    onClose: () -> Unit,
+    onMessage: (posterId: String) -> Unit = {},
+    /** Closed by dragging it down: the viewer leaves downward, so the navigation shouldn't slide it sideways. */
+    onDragClose: () -> Unit = onClose,
+) {
     val state by viewModel.state.collectAsState()
     LaunchedEffect(state.closed) { if (state.closed) onClose() }
     androidx.compose.ui.backhandler.BackHandler(onBack = onClose)
+    val actions = remember(viewModel) { viewModel.actions() }
+    MomentViewerContent(state, actions, onClose, onMessage, onDragClose)
+}
+
+/** Everything the viewer can do, so the screen draws from state alone (previews pass [None]). */
+class MomentViewerActions(
+    val next: () -> Unit,
+    val previous: () -> Unit,
+    val nextRing: () -> Unit,
+    val setPaused: (Boolean) -> Unit,
+    val toggleMute: () -> Unit,
+    val retryMedia: () -> Unit,
+    val openPicker: () -> Unit,
+    val closePicker: () -> Unit,
+    /** Any emoji; null takes mine back. */
+    val react: (String?) -> Unit,
+    val onReply: (String) -> Unit,
+    val onReplyFocus: (Boolean) -> Unit,
+    val sendReply: () -> Unit,
+    val openMore: (Boolean) -> Unit,
+    val mute: () -> Unit,
+    val openViewers: (Boolean) -> Unit,
+    val askDelete: (Boolean) -> Unit,
+    val delete: () -> Unit,
+    val noticeShown: () -> Unit,
+) {
+    companion object {
+        val None = MomentViewerActions({}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {})
+    }
+}
+
+private fun MomentViewerViewModel.actions() = MomentViewerActions(
+    next = ::next, previous = ::previous, nextRing = ::nextRing, setPaused = ::setPaused, toggleMute = ::toggleMute,
+    retryMedia = ::retryMedia, openPicker = ::openPicker, closePicker = ::closePicker, react = ::react, onReply = ::onReply,
+    onReplyFocus = ::onReplyFocus, sendReply = ::sendReply, openMore = ::openMore, mute = ::mute, openViewers = ::openViewers,
+    askDelete = ::askDelete, delete = ::delete, noticeShown = ::noticeShown,
+)
+
+/** Past this share of the screen's height, letting go closes the viewer (a fast fling closes it from anywhere). */
+private const val DragCloseFraction = 0.22f
+/** A downward fling this fast (dp per second) closes the viewer however far it moved. */
+private val FlingClose = 1_000.dp
+
+@Composable
+fun MomentViewerContent(
+    state: MomentViewerUiState,
+    vm: MomentViewerActions,
+    onClose: () -> Unit,
+    onMessage: (String) -> Unit = {},
+    onDragClose: () -> Unit = onClose,
+) {
     // Always the dark stage, in every theme (design V1): the dark tokens, with the person's high-contrast choice kept.
     CircasoTheme(darkTheme = true, highContrast = CircasoTheme.colors.isHighContrast) {
-        MomentViewerContent(state, viewModel, onClose, onMessage)
+        // A sheet or the picker on top owns the gestures; while a reply is being written, a drag down puts the
+        // keyboard away instead of closing (and throwing the draft away).
+        val enabled = !state.moreOpen && !state.viewersOpen && !state.confirmDelete && !state.picking
+        val typing = androidx.compose.foundation.layout.WindowInsets.ime.getBottom(androidx.compose.ui.platform.LocalDensity.current) > 0 || state.reply.isNotEmpty()
+        DraggableStage(enabled, typing, onDragClose) { dragging -> ViewerBody(state, vm, onClose, onMessage, dragging) }
+    }
+}
+
+/**
+ * Drag down to close (V1): the moment follows the finger, shrinking as it goes; under the threshold it springs back,
+ * past it (or on a fast fling down) it carries on down at the finger's speed while the viewer closes and fades over the
+ * screen underneath. Reduced motion: it still follows the finger, but without the shrink, and lets go without the
+ * spring or the slide.
+ */
+@Composable
+private fun DraggableStage(enabled: Boolean, typing: Boolean, onClose: () -> Unit, content: @Composable (dragging: Boolean) -> Unit) {
+    val c = CircasoTheme.colors
+    val still = CircasoTheme.reduceMotion
+    val scope = rememberCoroutineScope()
+    val focus = androidx.compose.ui.platform.LocalFocusManager.current
+    val close by rememberUpdatedState(onClose)
+    val canDrag by rememberUpdatedState(enabled)
+    val isTyping by rememberUpdatedState(typing)
+    var offset by remember { mutableFloatStateOf(0f) }
+    var dragging by remember { mutableStateOf(false) }
+    var settle by remember { mutableStateOf<Job?>(null) }
+    val back = spring<Float>(dampingRatio = 0.8f, stiffness = Spring.StiffnessMediumLow)
+    Box(
+        // The gesture sits on the box that doesn't move, so the finger's travel is measured on the screen, not the stage.
+        Modifier.fillMaxSize().background(c.bg).pointerInput(still) {
+            val tracker = VelocityTracker()
+            val fling = FlingClose.toPx()
+            var active = false
+            detectVerticalDragGestures(
+                onDragStart = {
+                    active = canDrag && !isTyping
+                    if (canDrag && isTyping) focus.clearFocus()
+                    if (active) { settle?.cancel(); tracker.resetTracking(); dragging = true }
+                },
+                onDragEnd = {
+                    if (active) {
+                        active = false
+                        val velocity = tracker.calculateVelocity().y
+                        val height = size.height.toFloat()
+                        // Past the line and not flicked back up, or flung down from anywhere.
+                        val closing = (offset > height * DragCloseFraction && velocity > -fling) || (velocity > fling && offset > 0f)
+                        if (closing) close()
+                        settle = scope.launch {
+                            when {
+                                closing && still -> Unit
+                                // Carries the finger's speed on, critically damped: no stop-and-go after a fling.
+                                closing -> animate(offset, height, velocity, spring(dampingRatio = 1f, stiffness = Spring.StiffnessMediumLow)) { v, _ -> offset = v }
+                                still -> { offset = 0f; dragging = false }
+                                else -> { animate(offset, 0f, velocity, back) { v, _ -> offset = v }; dragging = false }
+                            }
+                        }
+                    }
+                },
+                onDragCancel = {
+                    if (active) {
+                        active = false
+                        settle = scope.launch {
+                            if (!still) animate(offset, 0f, 0f, back) { v, _ -> offset = v }
+                            offset = 0f; dragging = false
+                        }
+                    }
+                },
+            ) { change, dy ->
+                if (active) {
+                    tracker.addPosition(change.uptimeMillis, change.position)
+                    // Down only: dragging up past the top does nothing.
+                    offset = (offset + dy).coerceAtLeast(0f)
+                    change.consume()
+                }
+            }
+        },
+    ) {
+        Box(
+            Modifier.fillMaxSize().graphicsLayer {
+                val progress = (offset / size.height.coerceAtLeast(1f)).coerceIn(0f, 1f)
+                translationY = offset
+                if (!still) {
+                    val scale = 1f - 0.25f * progress
+                    scaleX = scale; scaleY = scale
+                }
+                if (offset > 0f) { clip = true; shape = CircasoShapes.lg }
+            },
+        ) { content(dragging) }
     }
 }
 
 @Composable
-private fun MomentViewerContent(state: MomentViewerUiState, vm: MomentViewerViewModel, onClose: () -> Unit, onMessage: (String) -> Unit) {
+private fun ViewerBody(state: MomentViewerUiState, vm: MomentViewerActions, onClose: () -> Unit, onMessage: (String) -> Unit, dragging: Boolean) {
     val c = CircasoTheme.colors
     val t = CircasoTheme.typography
     val moment = state.moment
     val ring = state.current
     val toast = rememberToastState()
     LaunchedEffect(state.notice) { state.notice?.let { toast.show(it); vm.noticeShown() } }
+    // The moment waits while it is held, dragged, or the picker or a sheet is open.
+    val paused = state.paused || dragging
     Box(Modifier.fillMaxSize().background(c.bg)) {
         if (moment == null || ring == null) {
             Spinner(c.inkSecondary, Modifier.align(Alignment.Center))
             return@Box
         }
-        Stage(moment, state.media, vm::retryMedia, paused = state.paused, muted = state.muted)
+        Stage(moment, state.media, vm.retryMedia, paused = paused, muted = state.muted)
         // Shade behind the header and the caption/reply, so white text reads on any photo (design shade-top/bot).
         Box(Modifier.fillMaxWidth().height(200.dp).background(Brush.verticalGradient(listOf(c.scrim, Color.Transparent))))
         Box(Modifier.align(Alignment.BottomCenter).fillMaxWidth().height(260.dp).background(Brush.verticalGradient(listOf(Color.Transparent, c.scrim))))
         // V7: gone while open; say so, then move on.
         LaunchedEffect(moment.momentId, state.media) { if (state.media == ViewerMedia.Gone) { kotlinx.coroutines.delay(2_000); vm.next() } }
 
-        // Tap the left third for back, anywhere else for next; hold to pause; swipe down to close, left for the next person.
+        // Tap the left third for back, anywhere else for next; hold to pause; swipe left for the next person (down is above).
         Box(
             Modifier.fillMaxSize()
                 .pointerInput(moment.momentId) {
@@ -130,7 +289,6 @@ private fun MomentViewerContent(state: MomentViewerUiState, vm: MomentViewerView
                         onTap = { pos -> if (pos.x < size.width / 3f) vm.previous() else vm.next() },
                     )
                 }
-                .pointerInput(Unit) { var dy = 0f; detectVerticalDragGestures(onDragEnd = { if (dy > 160) onClose(); dy = 0f }) { _, d -> dy += d } }
                 .pointerInput(Unit) { var dx = 0f; detectHorizontalDragGestures(onDragEnd = { if (dx < -160) vm.nextRing(); dx = 0f }) { _, d -> dx += d } }
                 // The same moves for screen readers, where taps on thirds of the screen and holds can't be performed.
                 .semantics {
@@ -146,14 +304,14 @@ private fun MomentViewerContent(state: MomentViewerUiState, vm: MomentViewerView
 
         // Top: one segment per moment, the person, the time, More and Close.
         Column(Modifier.fillMaxWidth().statusBarsPadding().padding(horizontal = CircasoSpacing.s3, vertical = CircasoSpacing.s2), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            Segments(ring.moments, state.index, moment, paused = state.paused || state.media !is ViewerMedia.Ready && moment.kind != MomentKind.Text, onDone = vm::next)
+            Segments(ring.moments, state.index, moment, paused = paused || state.media !is ViewerMedia.Ready && moment.kind != MomentKind.Text, onDone = vm.next)
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 Avatar(ring.name, size = 36.dp, imageUrl = ring.avatarUrl)
                 Column(Modifier.weight(1f)) {
                     BasicText(if (moment.mine) "My moment" else ring.name, style = t.subhead.copy(color = c.ink, fontWeight = FontWeight.SemiBold), maxLines = 1)
                     BasicText(ago(moment.postedAt), style = t.footnote.copy(color = c.inkSecondary))
                 }
-                if (moment.kind == MomentKind.Video) GlassButton(if (state.muted) CircasoIcon.VolumeOff else CircasoIcon.Speaker, if (state.muted) "Unmute" else "Mute", onClick = vm::toggleMute)
+                if (moment.kind == MomentKind.Video) GlassButton(if (state.muted) CircasoIcon.VolumeOff else CircasoIcon.Speaker, if (state.muted) "Unmute" else "Mute", onClick = vm.toggleMute)
                 GlassButton(CircasoIcon.More, "More") { if (moment.mine) vm.askDelete(true) else vm.openMore(true) }
                 GlassButton(CircasoIcon.Close, "Close", onClick = onClose)
             }
@@ -163,21 +321,6 @@ private fun MomentViewerContent(state: MomentViewerUiState, vm: MomentViewerView
         Column(Modifier.align(Alignment.BottomCenter).fillMaxWidth().navigationBarsPadding().imePadding().padding(CircasoSpacing.s3), verticalArrangement = Arrangement.spacedBy(CircasoSpacing.s3)) {
             moment.caption?.let {
                 BasicText(it, Modifier.fillMaxWidth().padding(horizontal = CircasoSpacing.s5), style = t.body.copy(color = c.ink, textAlign = TextAlign.Center))
-            }
-            // The emoji row (WhatsApp-style), above the reply field.
-            if (!moment.mine && state.picking) {
-                Row(
-                    Modifier.fillMaxWidth().clip(CircasoShapes.pill).background(c.glass).padding(horizontal = CircasoSpacing.s2, vertical = 4.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                ) {
-                    MomentReactions.forEach { e ->
-                        Box(
-                            Modifier.size(CircasoSizes.controlMd).clip(CircasoShapes.circle).background(if (e == moment.reaction) c.fillStrong else Color.Transparent)
-                                .pressable(onClick = { vm.react(e) }).semantics { contentDescription = if (e == moment.reaction) "Remove reaction $e" else "React $e" },
-                            contentAlignment = Alignment.Center,
-                        ) { BasicText(e, style = t.title2) }
-                    }
-                }
             }
             if (moment.mine) {
                 Row(
@@ -196,24 +339,31 @@ private fun MomentViewerContent(state: MomentViewerUiState, vm: MomentViewerView
                     ) {
                         if (state.reply.isEmpty()) BasicText("Reply to ${ring.name.substringBefore(' ')}", style = t.body.copy(color = c.inkSecondary))
                         BasicTextField(
-                            state.reply, vm::onReply, singleLine = true, textStyle = t.body.copy(color = c.ink), cursorBrush = SolidColor(c.ink),
+                            state.reply, vm.onReply, singleLine = true, textStyle = t.body.copy(color = c.ink), cursorBrush = SolidColor(c.ink),
                             modifier = Modifier.fillMaxWidth().semantics { contentDescription = "Reply to ${ring.name}" }
                                 .onFocusChanged { vm.onReplyFocus(it.isFocused) },
                         )
                     }
-                    if (state.reply.isNotBlank()) GlassButton(CircasoIcon.ArrowUp, "Send reply", onClick = vm::sendReply)
-                    else ReactButton(moment.reaction, vm::togglePicker)
+                    if (state.reply.isNotBlank()) GlassButton(CircasoIcon.ArrowUp, "Send reply", onClick = vm.sendReply)
+                    else Box {
+                        ReactButton(moment.reaction, state.online, vm.openPicker)
+                        // The chats' reaction bubble (any emoji), floating just above the button at the screen's end.
+                        if (state.picking) ReactionPicker(
+                            current = moment.reaction, onPick = vm.react, onDismiss = vm.closePicker,
+                            anchor = ReactionAnchor.Above, alignEnd = true, gap = CircasoSpacing.s2,
+                        )
+                    }
                 }
             }
         }
 
         ToastHost(toast, Modifier.align(Alignment.TopCenter).statusBarsPadding().padding(top = 96.dp))
-        MoreSheet(state.moreOpen, ring.name, onMute = vm::mute, onMessage = { vm.openMore(false); onMessage(ring.posterId) }, onDismiss = { vm.openMore(false) })
+        MoreSheet(state.moreOpen, ring.name, onMute = vm.mute, onMessage = { vm.openMore(false); onMessage(ring.posterId) }, onDismiss = { vm.openMore(false) })
         ViewersSheet(state, onDismiss = { vm.openViewers(false) }, onDelete = { vm.openViewers(false); vm.askDelete(true) })
         ConfirmSheet(
             visible = state.confirmDelete, title = "Delete this moment?",
             message = "People who haven’t seen it won’t be able to. This can’t be undone.",
-            confirmLabel = "Delete Moment", onConfirm = vm::delete, onDismiss = { vm.askDelete(false) }, cancelLabel = "Cancel",
+            confirmLabel = "Delete Moment", onConfirm = vm.delete, onDismiss = { vm.askDelete(false) }, cancelLabel = "Cancel",
         )
     }
 }
@@ -378,20 +528,20 @@ private fun BoxScope.ViewersSheet(state: MomentViewerUiState, onDismiss: () -> U
     }
 }
 
-
-/** WhatsApp's quick status reactions, plus a few. */
-private val MomentReactions = listOf("😍", "😂", "😮", "😢", "👏", "🔥", "🙏", "❤️")
-
-/** My reaction to this moment: the emoji I chose, or a heart outline that opens the row. */
+/** My reaction to this moment: the emoji I chose, or a heart outline that opens the reaction picker. */
 @Composable
-private fun ReactButton(reaction: String?, onClick: () -> Unit) {
+private fun ReactButton(reaction: String?, online: Boolean, onClick: () -> Unit) {
     val c = CircasoTheme.colors
+    // Reactions need the server: offline it looks off and says so before the tap (a tap still explains, in a toast).
     Box(
         Modifier.size(CircasoSizes.controlMd).clip(CircasoShapes.circle).background(c.glass)
-            .pressable(onClick = onClick).semantics(mergeDescendants = true) { contentDescription = reaction?.let { "Your reaction $it. Change" } ?: "React to this moment" },
+            .pressable(onClick = onClick).semantics(mergeDescendants = true) {
+                contentDescription = reaction?.let { "Your reaction $it. Change, opens reactions" } ?: "React to this moment, opens reactions"
+                if (!online) stateDescription = "Needs a connection"
+            },
         contentAlignment = Alignment.Center,
     ) {
-        if (reaction != null) BasicText(reaction, style = CircasoTheme.typography.title3)
-        else CircasoIconImage(CircasoIcon.Heart, c.ink, Modifier.size(18.dp))
+        if (reaction != null) BasicText(reaction, Modifier.graphicsLayer { alpha = if (online) 1f else 0.4f }, style = CircasoTheme.typography.title3)
+        else CircasoIconImage(CircasoIcon.Heart, if (online) c.ink else c.inkTertiary, Modifier.size(18.dp))
     }
 }

@@ -46,7 +46,7 @@ data class MomentViewerUiState(
     val paused: Boolean = false,
     /** Video sound off, kept for the rest of this viewing. */
     val muted: Boolean = false,
-    /** The emoji row above the reply field is open. */
+    /** The reaction picker above the react button is open. */
     val picking: Boolean = false,
     val viewersOpen: Boolean = false,
     val viewers: List<ViewerRow>? = null,
@@ -129,7 +129,7 @@ class MomentViewerViewModel(
         if (shownId == m.momentId) return
         shownId = m.momentId
         // A half-typed reply belongs to the moment it was typed on, never the next one.
-        _state.update { it.copy(reply = "", paused = false) }
+        _state.update { it.copy(reply = "", paused = false, picking = false) }
         load?.cancel()
         if (m.media == null || m.kind == MomentKind.Text) {
             _state.update { it.copy(media = ViewerMedia.None) }
@@ -187,16 +187,33 @@ class MomentViewerViewModel(
     fun toggleMute() = _state.update { it.copy(muted = !it.muted) }
     fun onReply(text: String) = _state.update { it.copy(reply = text, paused = text.isNotEmpty()) }
 
-    /** Opens or closes the emoji row (the moment waits while it is open). */
-    fun togglePicker() = _state.update { it.copy(picking = !it.picking, paused = !it.picking) }
+    /** Opens the reaction picker; the moment waits while it is open. Offline it says so instead of opening. */
+    fun openPicker() {
+        if (_state.value.moment?.mine != false) return
+        if (!_state.value.online) { _state.update { it.copy(notice = "Reactions need a connection.") }; return }
+        _state.update { it.copy(picking = true, paused = true) }
+    }
 
-    /** React with [emoji]; the one already chosen takes it back. Online-only, said before the tap does anything. */
-    fun react(emoji: String) {
-        val m = _state.value.moment ?: return
+    /** The picker closed without a pick (tap outside, back, the moment moved on): the moment carries on. */
+    fun closePicker() {
+        if (!_state.value.picking) return
         _state.update { it.copy(picking = false, paused = false) }
+    }
+
+    /**
+     * React with any [emoji]; null, or the one already chosen, takes it back. Online-only, said before the tap does
+     * anything. The phone shows it at once and puts it back if the server doesn't take it.
+     */
+    fun react(emoji: String?) {
+        val m = _state.value.moment ?: return
+        if (m.mine) return
+        _state.update { it.copy(picking = false, paused = false) }
+        val next = emoji?.takeIf { it != m.reaction }
+        // Taking back a reaction I don't have: nothing to tell the server.
+        if (next == null && m.reaction == null) return
         if (!_state.value.online) { _state.update { it.copy(notice = "Reactions need a connection.") }; return }
         viewModelScope.launch {
-            val r = repository.react(m.momentId, if (m.reaction == emoji) null else emoji)
+            val r = repository.react(m.momentId, next)
             if (r is AppResult.Failure) _state.update { it.copy(notice = if (r.error is AppError.Network) "You’re offline. Try again when you’re connected." else "That reaction didn’t go through. Try again.") }
         }
     }

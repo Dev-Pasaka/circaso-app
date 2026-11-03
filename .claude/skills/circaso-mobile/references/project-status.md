@@ -195,6 +195,15 @@ Nothing to show is never an error screen. The first moment was posted through th
   the reply draft should follow the moment; no prefetch of the next moment; drag-to-close and ring transitions;
   a determinate posting ring; accessibility actions in the viewer; proper icons (More, Lock, Heart, People, Mute,
   Forward, ChevronDown); composer, viewer and privacy previews and ViewModel tests.
+- Viewer finished (2026-11-03): **reactions use the chats' WhatsApp-style picker** (now the design-system
+  `ReactionPicker`, shared with ThreadScreen): the heart opens it above the button, any emoji, tapping mine takes it
+  back, the moment pauses while it is open. **Departure from V1, decided by Pasaka:** V1's heart sent a quiet ❤️ in one
+  tap; now a ❤️ is two taps (heart, then ❤️) in exchange for any emoji, as in chats. The heart looks off and says
+  "Needs a connection" offline. **Drag down to close** follows the finger, springs back under 22 % of the height,
+  closes past it or on a fast fling, and pops without the sideways slide (`dropDown()` / `dropTransition`).
+  Previews: `-preview=moment-text|moment-photo|moment-video|moment-mine|moment-mine-viewers|moment-react|reaction-picker|reaction-picker-expanded`.
+  ViewModel tests in `MomentViewerViewModelTest`. Open: a radius/elevation token for the picker bubble (26 dp, 10 dp
+  shadow; ask Pasaka), composer and privacy previews.
 
 ### Backend gaps (design exists, no API yet)
 - W7/W8: statements on the server, PIN change and restore.

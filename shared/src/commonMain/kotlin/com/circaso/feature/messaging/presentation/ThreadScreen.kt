@@ -1587,13 +1587,6 @@ private fun MomentQuoteCard(quote: com.circaso.core.crypto.MomentQuote, outgoing
 }
 
 
-/** The quick reactions (WhatsApp's six) and more behind "+". */
-private val QuickReactions = listOf("👍", "❤️", "😂", "😮", "😢", "🙏")
-private val MoreReactions = listOf(
-    "🔥", "🎉", "👏", "😍", "🥰", "😁", "🤣", "😅", "😊", "😎", "🤔", "😴", "😡", "🙌", "💯", "✅", "💪", "👀", "🤝", "🙈",
-    "😭", "😇", "🤩", "😬", "🥳", "🤗", "😏", "🙄", "😱", "🥺", "💔", "💚", "💙", "💜", "⭐", "🌟", "💰", "💸", "🙏🏽", "👍🏽",
-)
-
 /** What one message needs to show and take reactions: who chose what, and whether its reaction bubble is open. */
 private class ReactUi(
     val reactions: List<Pair<String, String>>,
@@ -1640,7 +1633,9 @@ private fun Reacted(ui: ReactUi, outgoing: Boolean, content: @Composable () -> U
                 }
             }
         }
-        if (ui.picking) ReactionPicker(ui, outgoing, below = 6.dp)
+        if (ui.picking) com.circaso.designsystem.components.ReactionPicker(
+            current = ui.mine, onPick = ui.onPick, onDismiss = ui.onDismiss, onOptions = ui.onOptions, alignEnd = outgoing, gap = 6.dp,
+        )
     }
 }
 
@@ -1676,108 +1671,4 @@ private fun ReactionBadge(ui: ReactUi) {
             )
         }
     }
-}
-
-/** Places the reaction bubble just under the message, on the message's side, inside the window. */
-private class UnderMessage(private val end: Boolean, private val gap: Int, private val margin: Int) : androidx.compose.ui.window.PopupPositionProvider {
-    override fun calculatePosition(
-        anchorBounds: androidx.compose.ui.unit.IntRect,
-        windowSize: androidx.compose.ui.unit.IntSize,
-        layoutDirection: androidx.compose.ui.unit.LayoutDirection,
-        popupContentSize: androidx.compose.ui.unit.IntSize,
-    ): androidx.compose.ui.unit.IntOffset {
-        val wanted = if (end) anchorBounds.right - popupContentSize.width else anchorBounds.left
-        val x = wanted.coerceIn(margin, maxOf(margin, windowSize.width - popupContentSize.width - margin))
-        val below = anchorBounds.bottom + gap
-        // Under the message; near the bottom it slides up only as far as it must, so it never jumps away when it grows.
-        val y = minOf(below, windowSize.height - popupContentSize.height - margin).coerceAtLeast(margin)
-        return androidx.compose.ui.unit.IntOffset(x, y)
-    }
-}
-
-/** The small reaction bubble: the six quick ones, + for the rest (it grows in place), and ⋯ for the message's options. */
-@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
-@Composable
-private fun ReactionPicker(ui: ReactUi, outgoing: Boolean, below: androidx.compose.ui.unit.Dp) {
-    val c = CircasoTheme.colors
-    val density = androidx.compose.ui.platform.LocalDensity.current
-    val provider = androidx.compose.runtime.remember(outgoing, below, density) {
-        with(density) { UnderMessage(outgoing, below.roundToPx(), 8.dp.roundToPx()) }
-    }
-    var more by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(false) }
-    // Scrolled away (the row is gone): close it, so it doesn't come back by itself.
-    androidx.compose.runtime.DisposableEffect(Unit) { onDispose { ui.onDismiss() } }
-    val extra = ui.mine?.takeIf { it !in QuickReactions }
-    val cellsInRow = QuickReactions.size + 1 + (if (extra != null) 1 else 0) + (if (ui.onOptions != null) 1 else 0)
-    val windowWidth = with(density) { androidx.compose.ui.platform.LocalWindowInfo.current.containerSize.width.toDp() }
-    // As big as a comfortable target (44), smaller only when the screen is too narrow for the whole row.
-    val cell = minOf(44.dp, (windowWidth - 16.dp - 20.dp) / maxOf(cellsInRow, 8))
-    val emoji = androidx.compose.ui.text.TextStyle(fontSize = with(density) { (cell * 0.58f).toSp() })
-    val pick: (String) -> Unit = { e -> ui.onPick(if (e == ui.mine) null else e) }
-    androidx.compose.ui.window.Popup(
-        popupPositionProvider = provider,
-        onDismissRequest = ui.onDismiss,
-        properties = androidx.compose.ui.window.PopupProperties(focusable = true),
-    ) {
-        val shown = androidx.compose.runtime.remember { androidx.compose.animation.core.MutableTransitionState(false) }.apply { targetState = true }
-        val still = CircasoTheme.reduceMotion
-        AnimatedVisibility(
-            shown,
-            enter = if (still) fadeIn(tween(CircasoMotion.QuickMs))
-            else fadeIn(tween(CircasoMotion.QuickMs)) + androidx.compose.animation.scaleIn(
-                androidx.compose.animation.core.spring(dampingRatio = 0.75f, stiffness = androidx.compose.animation.core.Spring.StiffnessMediumLow),
-                initialScale = 0.6f,
-                transformOrigin = androidx.compose.ui.graphics.TransformOrigin(if (outgoing) 1f else 0f, 0f),
-            ),
-        ) {
-            val shape = androidx.compose.foundation.shape.RoundedCornerShape(26.dp)
-            Column(
-                Modifier.padding(6.dp)
-                    .shadow(10.dp, shape, ambientColor = androidx.compose.ui.graphics.Color.Black.copy(alpha = 0.2f), spotColor = androidx.compose.ui.graphics.Color.Black.copy(alpha = 0.2f))
-                    .clip(shape).background(c.surfaceRaised)
-                    .then(if (c.isDark || c.isHighContrast) Modifier.border(1.dp, c.separator, shape) else Modifier)
-                    .animateContentSize(tween(if (still) 0 else CircasoMotion.BaseMs))
-                    .padding(horizontal = 4.dp, vertical = 4.dp),
-                verticalArrangement = Arrangement.spacedBy(2.dp),
-            ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    QuickReactions.forEach { e -> ReactionButton(e, e == ui.mine, cell, emoji) { pick(e) } }
-                    // Mine from the long list stays visible in the row, so it can be taken back without opening it.
-                    extra?.let { e -> ReactionButton(e, true, cell, emoji) { pick(e) } }
-                    PickerIcon(if (more) CircasoIcon.ChevronDown else CircasoIcon.Plus, if (more) "Fewer reactions" else "More reactions", cell) { more = !more }
-                    ui.onOptions?.let { PickerIcon(CircasoIcon.More, "Message options", cell, it) }
-                }
-                if (more) {
-                    androidx.compose.foundation.layout.FlowRow(
-                        Modifier.width(cell * 8).padding(bottom = 2.dp),
-                        maxItemsInEachRow = 8,
-                    ) { MoreReactions.forEach { e -> ReactionButton(e, e == ui.mine, cell, emoji) { pick(e) } } }
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun ReactionButton(emoji: String, on: Boolean, cell: androidx.compose.ui.unit.Dp, style: androidx.compose.ui.text.TextStyle, onClick: () -> Unit) {
-    val c = CircasoTheme.colors
-    Box(
-        Modifier.size(cell).clip(com.circaso.designsystem.theme.CircasoShapes.circle)
-            .background(if (on) c.fillStrong else androidx.compose.ui.graphics.Color.Transparent)
-            .pressable(role = androidx.compose.ui.semantics.Role.Button, pressedScale = 0.85f, onClick = onClick)
-            .semantics { contentDescription = if (on) "Remove reaction $emoji" else "React $emoji" },
-        contentAlignment = Alignment.Center,
-    ) { BasicText(emoji, style = style) }
-}
-
-@Composable
-private fun PickerIcon(icon: CircasoIcon, label: String, cell: androidx.compose.ui.unit.Dp, onClick: () -> Unit) {
-    val c = CircasoTheme.colors
-    Box(
-        // The whole cell takes the tap; the grey disc inside it is the look.
-        Modifier.size(cell).pressable(role = androidx.compose.ui.semantics.Role.Button, onClick = onClick)
-            .semantics { contentDescription = label }
-            .padding(4.dp).clip(com.circaso.designsystem.theme.CircasoShapes.circle).background(c.fill),
-        contentAlignment = Alignment.Center,
-    ) { CircasoIconImage(icon, c.inkSecondary, Modifier.size(18.dp)) }
 }

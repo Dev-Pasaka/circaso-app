@@ -118,7 +118,11 @@ fun AppNavigation(forceUpdate: Boolean, home: @Composable () -> Unit) {
         }
     }
 
-    fun pop() { if (backStack.size > 1) backStack.removeAt(backStack.lastIndex) }
+    // The depth a full-screen viewer was dragged down to (Moments): that pop has no sideways slide, the viewer just
+    // fades over the screen underneath while it carries on down by itself. -1 when the last pop was an ordinary one.
+    val droppedTo = remember { IntArray(1) { -1 } }
+    fun pop() { droppedTo[0] = -1; if (backStack.size > 1) backStack.removeAt(backStack.lastIndex) }
+    fun dropDown() { if (backStack.size > 1) { droppedTo[0] = backStack.size - 1; backStack.removeAt(backStack.lastIndex) } }
     // From the list in a split, a chat replaces what the detail pane shows (iPad Messages): Home stays the only
     // thing under it, so Back from the chat returns to the empty pane, not through every chat opened before.
     fun openChatFromList(id: String) {
@@ -149,7 +153,13 @@ fun AppNavigation(forceUpdate: Boolean, home: @Composable () -> Unit) {
         sceneStrategies = listOf(remember(twoPane) { ListDetailSceneStrategy(twoPane) }),
         // The same screen on top before and after (a rotation or resize into or out of the split) only reflows.
         transitionSpec = { if (sameTop()) EnterTransition.None togetherWith ExitTransition.None else pushTransition(still) },
-        popTransitionSpec = { if (sameTop()) EnterTransition.None togetherWith ExitTransition.None else popTransition(still) },
+        popTransitionSpec = {
+            when {
+                sameTop() -> EnterTransition.None togetherWith ExitTransition.None
+                backStack.size == droppedTo[0] -> dropTransition(still)
+                else -> popTransition(still)
+            }
+        },
         predictivePopTransitionSpec = { popTransition(still) },
         entryProvider = entryProvider<NavKey> {
             entry<SplashRoute> { SplashScreen() }
@@ -278,6 +288,7 @@ fun AppNavigation(forceUpdate: Boolean, home: @Composable () -> Unit) {
                 val scope = androidx.compose.runtime.rememberCoroutineScope()
                 com.circaso.feature.status.presentation.MomentViewerScreen(
                     koinViewModel(key = "moments-${key.posterId}-${key.momentId}", parameters = { parametersOf(key.posterId, key.momentId) }), onClose = ::pop,
+                    onDragClose = ::dropDown,
                     // V1b "Message": their chat on this phone if there is one, else opened on the server.
                     onMessage = { posterId ->
                         scope.launch {

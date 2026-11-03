@@ -5,6 +5,8 @@ import androidx.compose.animation.AnimatedContentTransitionScope
 import androidx.compose.animation.ContentTransform
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
+import com.circaso.designsystem.theme.CircasoMotion
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInHorizontally
@@ -248,6 +250,15 @@ fun <S> AnimatedContentTransitionScope<S>.popTransition(still: Boolean): Content
     if (still) fadeIn(spring(stiffness = Spring.StiffnessMedium)) togetherWith fadeOut(spring(stiffness = Spring.StiffnessMedium))
     else (slideInHorizontally(ScreenSpring) { -it / 3 } togetherWith slideOutHorizontally(ScreenSpring) { it })
         .apply { targetContentZIndex = -1f } // the screen leaving stays on top as it slides away
+
+/**
+ * A full-screen viewer dragged down to close (Moments): the screen underneath is simply there, and the viewer, which
+ * keeps moving down on its own spring, fades away over it. No sideways slide after a downward gesture.
+ */
+fun <S> AnimatedContentTransitionScope<S>.dropTransition(still: Boolean): ContentTransform =
+    if (still) popTransition(true)
+    else (EnterTransition.None togetherWith fadeOut(tween(CircasoMotion.BaseMs)))
+        .apply { targetContentZIndex = -1f } // the viewer stays on top while it fades
 
 /** About UIKit's 0.5 s push: critically damped, fast enough to never feel like waiting. */
 private val ScreenSpring = spring(dampingRatio = Spring.DampingRatioNoBouncy, stiffness = 420f, visibilityThreshold = IntOffset(1, 1))
