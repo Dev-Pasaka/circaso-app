@@ -164,7 +164,14 @@ design.** Plan: `references/spaces-plan.md`.
 - Two later corrections from Pasaka are in the frames: money starts in the chat (`#amount`, `@asset`, the note in the
   message) and the sheet only reviews (fee, total, Paying from); `#` in a group with a wallet contributes to it.
 
-**Phase 1 progress (2026-11-03): Moments built, not yet run end to end.**
+**Pasaka's review of the built Moments (2026-11-03), done in `e59fb67`/`b628ab8`:** the plus on my ring opens the
+composer; recents strips from the phone's library in photo, video and voice modes (WhatsApp-style) plus the system
+picker for photos, videos and audio files; text moments get ~40 backgrounds (solids and gradients) and six fonts,
+**replacing the monochrome four** (a moment is the person's content, so its palette is fixed, not theme tokens);
+moment video has no player UI at all (bare surface, hold to pause, one mute button); video tiles show thumbnails.
+Nothing to show is never an error screen. The first moment was posted through the sandbox after PR #26 deployed.
+
+**Phase 1 progress (2026-11-03): Moments built, posting works on the sandbox.**
 - Backend: `status` module (ST1–ST8, frames, 10-minute retention sweep) on branch `feat/status-moments` in the
   worktree `circaso-status` (commits `9d0c5e7`, `32b93c9`; `./gradlew build` green). **PR #26 open (2026-11-03), not yet merged or deployed.**
   Contract: `references/moments-api.md`; the backend guide copy is in that branch's `docs/mobile-integration.md`.
