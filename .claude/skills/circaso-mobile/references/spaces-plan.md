@@ -312,7 +312,7 @@ honest about it: "Only Amina (owner) can send from this wallet; admins approve f
 - **Fully dynamic, in the database**: a `fee_rule` table, seeded with defaults:
   - match on: payment kind (`INTERNAL`, `EXTERNAL`), sender owner type, receiver owner type, chain, asset;
   - values: `rate_bps` (0–200: a database check enforces 0–2 %, and the bounds themselves are configurable),
-    `cap_base_usd` (10,000), optional `min_fee_usd`, `effective_from` / `effective_to`, `version`;
+    `cap_base_usd` (10,000), optional `min_fee_usd` (on top of the gas minimum below), `effective_from` / `effective_to`, `version`;
   - most specific rule wins; every change makes a new version (history kept, nothing overwritten).
   - Edited with SQL or an ops API now, from the admin site later.
 - **The fee is quoted before signing and locked**: W4 returns `fee { amount, rate, ruleId, ruleVersion }` and the
@@ -340,6 +340,21 @@ fee for a payment that failed, never pay without the fee).
 - **Solana:** one transaction can carry two transfer instructions; check what Circle's user-controlled API allows.
 - **Spike first (about 2–3 days):** confirm with Circle's docs and testnet what one user-signed challenge can contain
   on each chain (contract execution, batch, Solana), then choose per chain. Any contract needs an audit before mainnet.
+
+### Gas sponsorship and the 25 % rule (decided 2026-11-03)
+- **Circaso sponsors all network gas** (Circle's **Gas Station** pays it for our smart-contract wallets and bills
+  Circaso monthly). People never see gas; they see one Circaso transaction fee.
+- **Rule: the gas of a payment must not exceed 25 % of the fee we collect on it.** When the percentage fee is too
+  small to cover that (small payments, or expensive networks such as Ethereum), the gas cost is **added to the
+  person's transaction fee** as a minimum:
+  `fee = max(rate × min(amount, 10,000), 4 × estimated gas)`, so gas is always ≤ 25 %. Example: $1 on Base pays about
+  $0.04 instead of $0.005; $1,000 at 0.5 % pays $5 (gas ~$0.01, no change).
+- **Gas is estimated at quote time (W4)** for the exact call that will run (the fee-splitting call costs more than a plain
+  transfer), with a safety margin for price moves; the quote is locked for the 15-minute signing window as before.
+- **0 % rules (promotions) are allowed**: no minimum is added and the gas is booked as promotion cost in the reports.
+- The fee ledger records quoted fee, estimated gas and **actual gas** per payment; reports show the gas-to-fee ratio per
+  chain and rule, and alert when actual gas went above 25 % (e.g. a price spike after the quote).
+- The rule's numbers (25 %, safety margin) live in the database with the fee rules, editable like them.
 
 ### Fee address and accounting
 - One **Circaso fee wallet per chain**, a **Circle developer-controlled wallet** (decided 2026-11-03) in Circaso's own
@@ -371,7 +386,10 @@ fee for a payment that failed, never pay without the fee).
     editable, including to 0 %. The point is the revenue mechanism; the numbers will change.
 13. ~~Group daily limit~~ **Decided:** 10,000 USDC a day by default, adjustable per group in the database; rolling 24 h; payouts to members count.
 19. ~~Members-only entry fee~~ **Decided:** one-time, monthly or yearly, set by the owner; renewals paid manually (§5).
-14. ~~Fee wallet~~ **Decided:** a Circle developer-controlled company wallet per chain, for now.
+14. ~~Fee wallet~~ **Decided:** a Circle developer-controlled company wallet per chain, for now (created once in
+    Circle's developer console: a wallet set and its entity secret, kept in the server's secret store).
+20. ~~Gas~~ **Decided:** Circaso sponsors gas (Circle Gas Station); gas ≤ 25 % of our fee, enforced by adding the gas to
+    the person's fee as a minimum; 0 % promotions allowed with gas as promotion cost.
 
 ## 9. Phases (each ends with a device check, design review and a commit)
 

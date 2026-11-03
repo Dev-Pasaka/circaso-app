@@ -128,7 +128,7 @@ Media3 1.4.1, multiplatform-markdown-renderer 0.46.0.
 ## 5. Pending tasks
 
 ### Blocked on Pasaka
-1. **Cloudflare Workers Paid plan ($5/mo)**: Asha voice and text fail with `429` once the free 10,000 neurons/day are used; Kimi needs the paid plan.
+1. ~~Cloudflare Workers Paid plan~~ **Done by Pasaka (2026-11-03).** Check Asha voice and text work again (they failed with `429` on the free quota).
 2. **Rotate the Tavily API key** (it was pasted in chat).
 3. **iPhone install**: unlock the phone and turn on Developer Mode.
 4. **Calls on the sandbox**: set `INTEGRATIONS_CALLS_PROVIDER=cloudflare`, `CLOUDFLARE_REALTIME_APP_ID`, `CLOUDFLARE_REALTIME_APP_TOKEN` (optional TURN key) if not done yet.
@@ -151,7 +151,7 @@ New **Spaces** tab between Chats and Wallet: WhatsApp-style statuses for mutual 
 (follow = join, live rooms, a space wallet to pay into) below, and **group and space wallets** separate from personal
 ones (chamas and groups merge into Groups; a wallet is optional for groups and required for spaces; biometrics per
 wallet; a target needs a wallet). Shops, paid memberships, fees (0–2 % on the first
-$10,000, sender pays) and group daily caps (10,000 USDC) are part of it. **All decisions are taken; next is phase 0,
+$10,000, sender pays, gas sponsored and kept ≤ 25 % of the fee) and group daily caps (10,000 USDC) are part of it. **All decisions are taken; next is phase 0,
 design.** Plan: `references/spaces-plan.md`.
 
 ### Backend gaps (design exists, no API yet)
@@ -169,7 +169,7 @@ design.** Plan: `references/spaces-plan.md`.
 | Opening a chat crashed (message window read before it was set) | **Fixed** in `acfe332` (2026-10-31). The "iOS app won't start" report afterwards was a stale simulator build; a clean build fixes it. |
 | Blurry first splash logo on Android | Fix written (D-UI9), **not yet verified on a device**. |
 | Android notifications showed stock system icons | Fix written (D-UI10), **not yet verified on a device**. |
-| Asha returns 429 | Cloudflare free quota; needs the paid plan. |
+| Asha returned 429 | Paid plan bought 2026-11-03; re-test Asha text and voice. |
 | iOS gets no pushes and doesn't ring in the background | Not built (see Next work 3 and 4). |
 | Android emulator `Pixel_9_Pro` stuck "offline" in adb after cold boots | Environment issue; try Wipe Data in Device Manager. |
 | Real SMS send via Twilio not confirmed end to end | Backend says to test with a real number and report the `code`. |
