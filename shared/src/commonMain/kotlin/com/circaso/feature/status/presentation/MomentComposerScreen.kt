@@ -176,6 +176,7 @@ private fun ComposerContent(state: MomentComposerUiState, vm: MomentComposerView
                     }
                 }
                 if (state.capture == null) Swatches(state.background, vm::onBackground)
+                if (state.capture is ComposerCapture.Voice) Swatches(state.voiceBackground, vm::onVoiceBackground)
                 Row(Modifier.fillMaxWidth().padding(horizontal = CircasoSpacing.s4), horizontalArrangement = Arrangement.spacedBy(CircasoSpacing.s2), verticalAlignment = Alignment.CenterVertically) {
                     // Compact (Pasaka, 2026-11-04): the people icon and the chevron only, to leave room for the moment. The
                     // audience is still read out in full, and the target stays 48 dp.
@@ -501,13 +502,25 @@ private fun BoxScope.VoiceRecorderStage(state: MomentComposerUiState, vm: Moment
         Blocked("Allow the microphone for voice moments", "Circaso only listens while you hold the mic button.", icon = CircasoIcon.Mic)
         return
     }
-    Box(Modifier.fillMaxSize().background(androidx.compose.ui.graphics.Brush.linearGradient(listOf(LightColors.moneyCardSheen, LightColors.moneyCard, LightColors.moneyCard, LightColors.moneyCardSheen))))
-    Column(Modifier.align(Alignment.Center), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(18.dp)) {
-        com.circaso.designsystem.components.Avatar(state.myName.ifBlank { "Me" }, size = CircasoSizes.avatarXl, imageUrl = state.myAvatarUrl)
-        LevelBars(active = state.recordingVoice)
+    // The background the person chose (M5), the same palette as text moments; the wave and words take its ink.
+    val swatch = MomentPalette.of(state.voiceBackground)
+    Box(Modifier.fillMaxSize().background(brush = swatch.brush))
+    // The viewer's shades (design shade-top/bot), so the controls and lines read on a light background too.
+    VoiceShades()
+    Column(Modifier.align(Alignment.Center).padding(horizontal = CircasoSpacing.s6), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(18.dp)) {
+        com.circaso.designsystem.components.Avatar(state.myName.ifBlank { "Me" }, size = CircasoSizes.avatarXl, imageUrl = state.myAvatarUrl,
+            modifier = Modifier.border(3.dp, swatch.ink.copy(alpha = 0.9f), CircasoShapes.circle))
+        // Live: the microphone's own level, newest on the right; read in the draw phase, so only the wave redraws.
+        // Idle: a quiet line. The timer below speaks for it.
+        val live = vm.liveLevels.collectAsState()
+        val recording = state.recordingVoice
+        VoiceWave(
+            levels = { val l = live.value; if (recording && l.isNotEmpty()) List(MomentComposerViewModel.LiveBars - l.size) { 0f } + l else IdleWave },
+            progress = 1f, playing = false, ink = swatch.ink, bars = MomentComposerViewModel.LiveBars,
+        )
         BasicText(
             if (state.recordingVoice) elapsedLabel(state.recordingSince) else "Hold to record",
-            style = t.title3.copy(color = c.ink, fontFeatureSettings = "tnum"),
+            style = t.title3.copy(color = swatch.ink, fontFeatureSettings = "tnum"),
         )
     }
     var dragX by androidx.compose.runtime.remember { androidx.compose.runtime.mutableFloatStateOf(0f) }
@@ -554,11 +567,22 @@ private fun BoxScope.VoiceStageReview(voice: ComposerCapture.Voice, playing: Boo
     val c = CircasoTheme.colors
     val t = CircasoTheme.typography
     val state by vm.state.collectAsState()
-    Box(Modifier.fillMaxSize().background(androidx.compose.ui.graphics.Brush.linearGradient(listOf(LightColors.moneyCardSheen, LightColors.moneyCard, LightColors.moneyCard, LightColors.moneyCardSheen))))
-    Column(Modifier.align(Alignment.Center), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(18.dp)) {
-        com.circaso.designsystem.components.Avatar(state.myName.ifBlank { "Me" }, size = CircasoSizes.avatarXl, imageUrl = state.myAvatarUrl)
-        LevelBars(active = playing)
-        BasicText("${clock(voice.durationMs)} / 1:00", style = t.title3.copy(color = c.ink, fontFeatureSettings = "tnum"))
+    // The background the person chose (M5), the same palette as text moments; the wave and words take its ink.
+    val swatch = MomentPalette.of(state.voiceBackground)
+    Box(Modifier.fillMaxSize().background(brush = swatch.brush))
+    // The viewer's shades (design shade-top/bot), so the controls and lines read on a light background too.
+    VoiceShades()
+    Column(Modifier.align(Alignment.Center).padding(horizontal = CircasoSpacing.s6), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(18.dp)) {
+        com.circaso.designsystem.components.Avatar(state.myName.ifBlank { "Me" }, size = CircasoSizes.avatarXl, imageUrl = state.myAvatarUrl,
+            modifier = Modifier.border(3.dp, swatch.ink.copy(alpha = 0.9f), CircasoShapes.circle))
+        // Filled as it plays, held where it is when paused, back to the start when it ends.
+        val progress = playbackProgress(playing, voice) { vm.playbackProgress() }
+        val shown = if (playing || state.playbackHeld) progress else 0f
+        VoiceWave(
+            { voice.levels }, progress = shown, playing = playing, ink = swatch.ink,
+            spoken = "${clock((voice.durationMs * shown).toLong())} of ${clock(voice.durationMs)}",
+        )
+        BasicText("${clock(voice.durationMs)} / 1:00", style = t.title3.copy(color = swatch.ink, fontFeatureSettings = "tnum"))
         Row(horizontalArrangement = Arrangement.spacedBy(18.dp)) {
             StageButton(CircasoIcon.Trash, "Delete recording", onClick = vm::discardCapture)
             StageButton(if (playing) CircasoIcon.Pause else CircasoIcon.Play, if (playing) "Pause" else "Play", filled = true, onClick = vm::togglePlayback)
@@ -566,20 +590,15 @@ private fun BoxScope.VoiceStageReview(voice: ComposerCapture.Voice, playing: Boo
     }
 }
 
-/** A level meter while recording or playing. The recorder reports no level, so the bars breathe at a steady pace. */
+/** A silent wave while the mic waits. */
+private val IdleWave = List(MomentComposerViewModel.LiveBars) { 0f }
+
+/** Top and bottom shades over a voice moment's background, as the viewer draws them. */
 @Composable
-private fun LevelBars(active: Boolean) {
+private fun BoxScope.VoiceShades() {
     val c = CircasoTheme.colors
-    val reduce = CircasoTheme.reduceMotion
-    val phase = if (active && !reduce) androidx.compose.animation.core.rememberInfiniteTransition().animateFloat(0f, 1f,
-        androidx.compose.animation.core.infiniteRepeatable(androidx.compose.animation.core.tween(1200, easing = androidx.compose.animation.core.LinearEasing))).value else 0f
-    Row(Modifier.height(48.dp), horizontalArrangement = Arrangement.spacedBy(3.dp), verticalAlignment = Alignment.CenterVertically) {
-        repeat(32) { i ->
-            val base = ((i * 37 + 11) % 97) / 97f
-            val wave = if (active) (kotlin.math.sin((phase + i / 32f) * 6.2832f) + 1f) / 2f else 0.3f
-            Box(Modifier.size(3.dp, (8 + 40 * (0.35f * base + 0.65f * wave)).dp).clip(CircasoShapes.pill).background(c.ink))
-        }
-    }
+    Box(Modifier.align(Alignment.TopCenter).fillMaxWidth().height(160.dp).background(androidx.compose.ui.graphics.Brush.verticalGradient(listOf(c.scrim, androidx.compose.ui.graphics.Color.Transparent))))
+    Box(Modifier.align(Alignment.BottomCenter).fillMaxWidth().height(320.dp).background(androidx.compose.ui.graphics.Brush.verticalGradient(listOf(androidx.compose.ui.graphics.Color.Transparent, c.scrim))))
 }
 
 private fun clock(ms: Long): String { val s = (ms / 1000).coerceIn(0, 60); return "${s / 60}:${(s % 60).toString().padStart(2, '0')}" }

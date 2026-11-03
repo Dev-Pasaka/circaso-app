@@ -61,6 +61,12 @@ class AndroidAudioRecorder(private val context: Context) : AudioRecorder {
 
     override suspend fun cancel() = withContext(Dispatchers.IO) { cancelNow() }
 
+    /** MediaRecorder's peak since the last call (0..32767), on a square-root curve so quiet speech still shows. */
+    override fun level(): Float {
+        val peak = runCatching { recorder?.maxAmplitude ?: 0 }.getOrDefault(0)
+        return kotlin.math.sqrt((peak / 32767f).coerceIn(0f, 1f))
+    }
+
     private fun cancelNow() {
         runCatching { recorder?.stop() }
         runCatching { recorder?.release() }
@@ -71,10 +77,13 @@ class AndroidAudioRecorder(private val context: Context) : AudioRecorder {
 
 class AndroidAudioPlayer(private val context: Context) : AudioPlayer {
     private var player: MediaPlayer? = null
+    /** Held before or while playing: [play] prepares but doesn't start until [resume]. */
+    @Volatile private var held = false
     private var finished: CompletableDeferred<Unit>? = null
 
     override suspend fun play(bytes: ByteArray, contentType: String) {
         stop()
+        held = false
         val done = CompletableDeferred<Unit>().also { finished = it }
         val temp = withContext(Dispatchers.IO) { File.createTempFile("reply", ".m4a", context.cacheDir).also { it.writeBytes(bytes) } }
         try {
@@ -84,13 +93,22 @@ class AndroidAudioPlayer(private val context: Context) : AudioPlayer {
             p.setOnCompletionListener { done.complete(Unit) }
             p.setOnErrorListener { _, _, _ -> done.complete(Unit); true }
             p.prepare()
-            p.start()
+            if (!held) p.start()
             done.await()
         } finally {
             stop()
             temp.delete()
         }
     }
+
+    override fun progress(): Float? = runCatching {
+        val p = player ?: return null
+        val d = p.duration
+        if (d <= 0) null else (p.currentPosition.toFloat() / d).coerceIn(0f, 1f)
+    }.getOrNull()
+
+    override fun pause() { held = true; runCatching { player?.takeIf { it.isPlaying }?.pause() } }
+    override fun resume() { held = false; runCatching { player?.takeIf { !it.isPlaying }?.start() } }
 
     override fun stop() {
         runCatching { player?.stop() }
