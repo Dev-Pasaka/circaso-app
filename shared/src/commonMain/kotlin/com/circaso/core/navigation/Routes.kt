@@ -43,6 +43,18 @@ data object EditProfileRoute : Route
 @Serializable
 data object ContactsRoute : Route
 
+/** Moments composer (M1–M5): camera first, Text and Voice from its mode row. */
+@Serializable
+data object MomentComposerRoute : Route
+
+/** Moments viewer (V1–V8): one person's ring, then on to the next. [posterId] is null for my own moments (V4). */
+@Serializable
+data class MomentViewerRoute(val posterId: String? = null) : Route
+
+/** You → Privacy → Moments (P1–P3). */
+@Serializable
+data object MomentsPrivacyRoute : Route
+
 @Serializable
 data object BlockedRoute : Route
 
@@ -163,6 +175,9 @@ val routeSerializers = SerializersModule {
         subclass(HomeRoute::class)
         subclass(EditProfileRoute::class)
         subclass(ContactsRoute::class)
+        subclass(MomentComposerRoute::class)
+        subclass(MomentViewerRoute::class)
+        subclass(MomentsPrivacyRoute::class)
         subclass(BlockedRoute::class)
         subclass(SecurityRoute::class)
         subclass(SecurityLogRoute::class)

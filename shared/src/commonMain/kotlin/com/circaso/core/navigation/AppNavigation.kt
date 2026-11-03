@@ -1,5 +1,7 @@
 package com.circaso.core.navigation
 
+import com.circaso.feature.status.presentation.SpacesOverlay
+
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
@@ -167,6 +169,13 @@ fun AppNavigation(forceUpdate: Boolean, home: @Composable () -> Unit) {
                 val info: ClientInfo = koinInject()
                 val chatsViewModel = koinViewModel<ChatsViewModel>()
                 val walletViewModel = koinViewModel<WalletViewModel>()
+                val spacesViewModel: com.circaso.feature.status.presentation.SpacesViewModel = koinViewModel()
+                val spacesActions = com.circaso.feature.status.presentation.SpacesActions(
+                    onOpenRing = { id -> backStack.add(MomentViewerRoute(id)) },
+                    onOpenMine = { backStack.add(MomentViewerRoute(null)) },
+                    onCompose = { backStack.add(MomentComposerRoute) },
+                    onFindPeople = { backStack.add(ContactsRoute) },
+                )
                 HomeScreen(
                     chats = { bottomPadding -> ChatsTab(chatsViewModel, bottomPadding, onAsha = { backStack.add(AshaRoute) }, onVoice = { backStack.add(AshaRoute); backStack.add(VoiceRoute) }, onNewChat = { backStack.add(NewChatRoute) }, selectedChatId = if (twoPane) backStack.filterIsInstance<ChatRoute>().lastOrNull()?.chatId else null) { id -> openChatFromList(id) } },
                     chatsActions = {},
@@ -178,6 +187,9 @@ fun AppNavigation(forceUpdate: Boolean, home: @Composable () -> Unit) {
                             ChatsBanner(s)
                         }
                     },
+                    spaces = { bottomPadding -> com.circaso.feature.status.presentation.SpacesTab(spacesViewModel, bottomPadding, spacesActions) },
+                    spacesOverlay = { SpacesOverlay(spacesViewModel, spacesActions) },
+                    spacesBanner = { com.circaso.feature.status.presentation.SpacesBanner() },
                     wallet = { bottomPadding ->
                         WalletTab(
                             walletViewModel, bottomPadding,

@@ -20,6 +20,8 @@ class RealtimeDispatcher(
     private val reloadWallet: suspend () -> Unit = {},
     private val onChamaFrame: suspend (type: String, data: kotlinx.serialization.json.JsonObject?) -> Unit = { _, _ -> },
     private val onCallsFrame: suspend (type: String, data: kotlinx.serialization.json.JsonObject?) -> Unit = { _, _ -> },
+    /** Moments (`status.posted`, `status.deleted`, `status.viewed`); also called on its `resync` with type `resync`. */
+    private val onStatusFrame: suspend (type: String, data: kotlinx.serialization.json.JsonObject?) -> Unit = { _, _ -> },
 ) {
     fun start() {
         scope.launch { frames.collect { handle(it) } }
@@ -31,12 +33,14 @@ class RealtimeDispatcher(
             frame.type == "resync" -> when (frame.module) { // the gap is older than 7 days: reload that module over HTTP
                 "messaging" -> reloadMessaging()
                 "wallet" -> reloadWallet()
+                "status" -> onStatusFrame("resync", null)
                 else -> { refreshContacts(); refreshBlocks(); refreshOwnProfile() }
             }
             frame.module == "messaging" -> onMessagingFrame(frame.type, frame.data)
             frame.module == "wallet" -> onWalletFrame(frame.type, frame.data)
             frame.module == "chama" -> onChamaFrame(frame.type, frame.data)
             frame.module == "calls" -> onCallsFrame(frame.type, frame.data)
+            frame.module == "status" -> onStatusFrame(frame.type, frame.data)
             frame.module == "users" && frame.type in setOf("contact.joined", "connection.added") -> refreshContacts()
             frame.module == "users" && frame.type == "profile.updated" -> {
                 val userId = frame.data?.get("userId")?.jsonPrimitive?.content

@@ -133,7 +133,7 @@ private var started = false
 fun initKoin(platform: Module) {
     if (started) return
     started = true
-    val koin = startKoin { modules(coreModule, authModule, profileModule, contactsModule, accountModule, assistantModule, realtimeModule, messagingModule, walletModule, chamaModule, callsModule, homeModule, platform) }.koin
+    val koin = startKoin { modules(coreModule, authModule, profileModule, contactsModule, accountModule, assistantModule, realtimeModule, messagingModule, walletModule, chamaModule, statusModule, callsModule, homeModule, platform) }.koin
     // Open the stores off the main thread while the first frame is being prepared, and put any write that a
     // crash left half-sent back in line (its Idempotency-Key makes the retry safe).
     val scope = koin.get<CoroutineScope>()

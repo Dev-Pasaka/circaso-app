@@ -142,10 +142,11 @@ private val thread = listOf(
 fun PreviewScreens(name: String) {
     when (name) {
         // Home's real frame with sample tabs: the floating tab bar, or the left rail on a short or wide window.
-        "home", "home-wallet", "home-you" -> com.circaso.feature.home.presentation.HomeScreen(
-            initialTab = when (name) { "home-wallet" -> 1; "home-you" -> 2; else -> 0 },
+        "home", "home-spaces", "home-wallet", "home-you" -> com.circaso.feature.home.presentation.HomeScreen(
+            initialTab = when (name) { "home-spaces" -> 1; "home-wallet" -> 2; "home-you" -> 3; else -> 0 },
             chats = { pad -> ChatsContent(ChatsUiState(chats = chatList, loaded = true), pad, {}, {}, {}) },
             chatsActions = {}, chatsBanner = {},
+            spaces = { pad -> com.circaso.feature.status.presentation.SpacesContent(sampleSpaces(), pad, noSpacesActions, {}, {}) },
             wallet = { pad -> WalletContent(WalletUiState(wallet = sampleWallet(), recent = sampleTransfers()), pad, noWalletActions, {}, {}, {}, {}) },
             walletActions = {},
             you = { pad -> PreviewScreens("you") },
@@ -162,6 +163,12 @@ fun PreviewScreens(name: String) {
                 }
             }
         }
+        // Spaces (S1 and its states): sample rings, no session needed.
+        "spaces" -> com.circaso.feature.status.presentation.SpacesContent(sampleSpaces(), PaddingValues(bottom = 90.dp), noSpacesActions, {}, {})
+        "spaces-empty" -> com.circaso.feature.status.presentation.SpacesContent(com.circaso.feature.status.presentation.SpacesUiState(myName = "Pasaka Mutuku", loaded = true, refreshed = true), PaddingValues(bottom = 90.dp), noSpacesActions, {}, {})
+        "spaces-loading" -> com.circaso.feature.status.presentation.SpacesContent(com.circaso.feature.status.presentation.SpacesUiState(myName = "Pasaka Mutuku", loaded = true), PaddingValues(bottom = 90.dp), noSpacesActions, {}, {})
+        "spaces-error" -> com.circaso.feature.status.presentation.SpacesContent(com.circaso.feature.status.presentation.SpacesUiState(myName = "Pasaka Mutuku", loaded = true, refreshed = true, failed = true, requestId = "req_7Hq2kD"), PaddingValues(bottom = 90.dp), noSpacesActions, {}, {})
+        "spaces-posting" -> com.circaso.feature.status.presentation.SpacesContent(sampleSpaces().copy(pending = listOf(com.circaso.feature.status.domain.PendingMoment("p1", com.circaso.feature.status.domain.MomentKind.Image, com.circaso.feature.status.domain.PendingState.Failed, null, 0))), PaddingValues(bottom = 90.dp), noSpacesActions, {}, {})
         "you" -> YouContent(
             YouUiState(
                 profile = profile, maskedPhone = "+254 7•• ••• 678",
@@ -412,4 +419,23 @@ private fun CallPreview(call: com.circaso.feature.calls.CallUi, money: String?, 
     androidx.compose.foundation.layout.Box(androidx.compose.ui.Modifier.fillMaxSize()) {
         CallOverlay(call, com.circaso.feature.calls.presentation.CallActions({}, {}, {}, {}, {}, {}, {}, {}, {}, {}, if (chama != null) ({ _ -> }) else null), money, chama, sampleWallet().fiat)
     }
+}
+
+
+private val noSpacesActions = com.circaso.feature.status.presentation.SpacesActions({}, {}, {}, {})
+
+/** Moments from people in the sample contacts: two new, one seen. */
+private fun sampleSpaces(): com.circaso.feature.status.presentation.SpacesUiState {
+    val now = com.circaso.core.sync.nowMillis()
+    fun moment(id: String, who: String, viewed: Boolean, minutesAgo: Long) = com.circaso.feature.status.domain.Moment(
+        momentId = id, posterId = who, kind = com.circaso.feature.status.domain.MomentKind.Text, text = "Sunday market haul",
+        postedAt = now - minutesAgo * 60_000, expiresAt = now + 3_600_000, mine = false, viewed = viewed, reacted = false,
+    )
+    fun ring(who: String, name: String, viewed: Boolean, minutesAgo: Long) =
+        com.circaso.feature.status.domain.MomentRing(who, name, null, listOf(moment("m-$who", who, viewed, minutesAgo)), muted = false)
+    return com.circaso.feature.status.presentation.SpacesUiState(
+        myName = "Pasaka Mutuku", loaded = true, refreshed = true,
+        myMoments = listOf(moment("mine", "me", true, 50).copy(mine = true)),
+        rings = listOf(ring("w", "Wanjiru Kamau", false, 34), ring("b", "Baraka Mwita", false, 120), ring("f", "Faith Chebet", false, 200), ring("m", "Mum", true, 300)),
+    )
 }

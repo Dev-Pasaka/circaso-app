@@ -1,0 +1,358 @@
+package com.circaso.feature.status.data.repository
+
+import com.circaso.core.common.AppError
+import com.circaso.core.common.AppResult
+import com.circaso.core.crypto.SignalCrypto
+import com.circaso.core.network.newIdempotencyKey
+import com.circaso.core.platform.MediaFiles
+import com.circaso.core.sync.Outbox
+import com.circaso.core.sync.OutboxEntity
+import com.circaso.core.sync.OutboxHandler
+import com.circaso.core.sync.nowMillis
+import com.circaso.feature.contacts.domain.ContactsRepository
+import com.circaso.feature.status.data.local.MomentEntity
+import com.circaso.feature.status.data.local.MomentPrivacyEntity
+import com.circaso.feature.status.data.local.MomentsDao
+import com.circaso.feature.status.data.local.MutedPosterEntity
+import com.circaso.feature.status.data.local.PendingMomentEntity
+import com.circaso.feature.status.data.remote.MomentDto
+import com.circaso.feature.status.data.remote.MomentsRemote
+import com.circaso.feature.status.data.remote.PostMomentRequest
+import com.circaso.feature.status.domain.Moment
+import com.circaso.feature.status.domain.MomentAudienceMode
+import com.circaso.feature.status.domain.MomentBackground
+import com.circaso.feature.status.domain.MomentDraft
+import com.circaso.feature.status.domain.MomentKind
+import com.circaso.feature.status.domain.MomentMedia
+import com.circaso.feature.status.domain.MomentMediaLoad
+import com.circaso.feature.status.domain.MomentPrivacy
+import com.circaso.feature.status.domain.MomentTextStyle
+import com.circaso.feature.status.domain.MomentViewer
+import com.circaso.feature.status.domain.MomentsRepository
+import com.circaso.feature.status.domain.PendingMoment
+import com.circaso.feature.status.domain.PendingState
+import io.ktor.client.HttpClient
+import io.ktor.client.request.get
+import io.ktor.client.request.header
+import io.ktor.client.request.put
+import io.ktor.client.request.setBody
+import io.ktor.client.statement.readRawBytes
+import io.ktor.http.isSuccess
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.Json
+import kotlin.io.encoding.Base64
+import kotlin.time.Instant
+import kotlin.uuid.ExperimentalUuidApi
+import kotlin.uuid.Uuid
+
+/** The encrypted body of a moment (references/moments-api.md). Both phones must agree on it. */
+@Serializable
+internal data class MomentBody(
+    val v: Int = 1,
+    val kind: String,
+    val text: String? = null,
+    val background: String? = null,
+    val style: String? = null,
+    val caption: String? = null,
+    val media: MomentMediaBody? = null,
+    val thumb: String? = null,
+)
+
+@Serializable
+internal data class MomentMediaBody(
+    val mediaId: String, val key: String, val digest: String, val mime: String, val sizeBytes: Long,
+    val durationMs: Long? = null, val width: Int? = null, val height: Int? = null,
+)
+
+/** The composer's choice for a pending moment; the plain media waits in [MediaFiles] under the pending id. */
+@Serializable
+internal data class PendingDraft(
+    val kind: String, val text: String? = null, val background: String? = null, val style: String? = null, val caption: String? = null,
+    val mime: String? = null, val thumb: String? = null, val durationMs: Long? = null, val width: Int? = null, val height: Int? = null,
+)
+
+@Serializable
+internal data class PrivacyJson(val mode: String = MomentAudienceMode.Contacts.name, val except: List<String> = emptyList(), val only: List<String> = emptyList())
+
+@Serializable internal data class MomentJob(val localId: String)
+
+object MomentOutbox { const val Post = "moment.post" }
+
+/** Posts queued moments ([MomentsRepositoryImpl.send]); the repository is looked up only when there is one to send. */
+class MomentPostHandler(private val repository: () -> MomentsRepositoryImpl) : OutboxHandler {
+    override val type: String = MomentOutbox.Post
+    override suspend fun send(item: OutboxEntity): AppResult<Unit> = repository().send(item)
+}
+
+class MomentsRepositoryImpl(
+    private val dao: MomentsDao,
+    private val remote: MomentsRemote,
+    private val keys: MomentKeys,
+    private val contacts: ContactsRepository,
+    private val crypto: SignalCrypto,
+    private val files: MediaFiles,
+    /** Plain client for the pre-signed storage URLs (no app headers). */
+    private val storage: HttpClient,
+    private val outbox: Outbox,
+    private val kickOutbox: () -> Unit,
+    private val json: Json,
+    private val ownUserId: suspend () -> String?,
+    private val now: () -> Long = ::nowMillis,
+) : MomentsRepository {
+    private val refreshLock = Mutex()
+
+    // Re-read every minute so a moment disappears when its 24 hours end, even with nothing else changing.
+    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+    override val moments: Flow<List<Moment>> = flow { while (true) { emit(now()); kotlinx.coroutines.delay(60_000) } }
+        .flatMapLatest { at -> dao.observe(at) }
+        .map { rows -> rows.mapNotNull { it.toModel() } }
+
+    override val pending: Flow<List<PendingMoment>> = dao.observePending().map { rows ->
+        rows.map { PendingMoment(it.localId, kindOf(it.kind), stateOf(it.state), it.error, it.createdAt) }
+    }
+
+    override val privacy: Flow<MomentPrivacy> = dao.observePrivacy().map { it.toPrivacy() }
+
+    override val muted: Flow<Set<String>> = dao.observeMuted().map { it.toSet() }
+
+    // ---- reading
+
+    override suspend fun refresh(): AppResult<Unit> = refreshLock.withLock {
+        val all = mutableListOf<MomentDto>()
+        var after: String? = null
+        do {
+            when (val page = remote.page(after)) {
+                is AppResult.Failure -> return@withLock page
+                is AppResult.Success -> { all += page.value.moments; after = page.value.next }
+            }
+        } while (after != null)
+        // Key copies first (a poster's first moment may carry the key the others need), then the bodies.
+        all.filter { !it.mine && it.keyCopy != null }.forEach { keys.learn(it.posterId, it.keyCopy!!) }
+        val rows = all.map { dto -> merge(dto, dao.byId(dto.momentId)) }
+        dao.upsert(rows)
+        dao.deleteAllExcept(rows.map { it.momentId })
+        dao.deleteExpired(now())
+        AppResult.Success(Unit)
+    }
+
+    /** A moment from the server, kept readable: a body already opened is never opened again (sender keys move on). */
+    private suspend fun merge(dto: MomentDto, old: MomentEntity?): MomentEntity {
+        val body = old?.body ?: if (dto.mine) null else when (val opened = keys.open(dto.posterId, dto.ciphertext)) {
+            is OpenedMoment.Plain -> opened.bytes.decodeToString()
+            else -> null
+        }
+        return MomentEntity(
+            momentId = dto.momentId, posterId = dto.posterId, body = body,
+            ciphertext = if (body == null) dto.ciphertext else null, keyCopy = if (body == null) dto.keyCopy else null,
+            postedAt = millis(dto.postedAt), expiresAt = millis(dto.expiresAt), mine = dto.mine,
+            viewed = dto.viewed || old?.viewed == true, reacted = dto.reacted, viewCount = dto.viewCount,
+        )
+    }
+
+    override suspend fun onFrame(type: String, momentId: String?, posterId: String?) {
+        when (type) {
+            "status.deleted" -> momentId?.let { dao.delete(it) }
+            "status.viewed" -> momentId?.let { id -> dao.byId(id)?.let { dao.setViewCount(id, it.viewCount + 1) } }
+            else -> refresh() // status.posted: fetch and decrypt it
+        }
+    }
+
+    override suspend fun markViewed(momentId: String, reacted: Boolean?): AppResult<Unit> {
+        val row = dao.byId(momentId) ?: return AppResult.Success(Unit)
+        if (row.mine) return AppResult.Success(Unit)
+        dao.setViewed(momentId, reacted ?: row.reacted)
+        return when (val r = remote.view(momentId, reacted, newIdempotencyKey())) {
+            is AppResult.Success -> AppResult.Success(Unit)
+            is AppResult.Failure -> r
+        }
+    }
+
+    override suspend fun viewers(momentId: String): AppResult<List<MomentViewer>> = when (val r = remote.views(momentId)) {
+        is AppResult.Failure -> r
+        is AppResult.Success -> AppResult.Success(r.value.views.map { MomentViewer(it.userId, millis(it.viewedAt), it.reacted) }.sortedByDescending { it.viewedAt })
+            .also { dao.setViewCount(momentId, r.value.views.size) }
+    }
+
+    override suspend fun delete(momentId: String): AppResult<Unit> = when (val r = remote.delete(momentId, newIdempotencyKey())) {
+        is AppResult.Failure -> if ((r.error as? AppError.Api)?.code == "status.moment_not_found") { dao.delete(momentId); AppResult.Success(Unit) } else r
+        is AppResult.Success -> { dao.delete(momentId); AppResult.Success(Unit) }
+    }
+
+    /** This phone's copy, else ST8, checked against the digest in the body and decrypted; kept for next time. */
+    override suspend fun media(moment: Moment): MomentMediaLoad {
+        val media = moment.media ?: return MomentMediaLoad.Failed(null)
+        files.read(media.mediaId)?.let { return MomentMediaLoad.Loaded(it, files.path(media.mediaId)) }
+        val link = when (val r = remote.download(media.mediaId)) {
+            is AppResult.Success -> r.value
+            is AppResult.Failure -> return if (r.error is AppError.Network) MomentMediaLoad.NeedsConnection else MomentMediaLoad.Failed((r.error as? AppError.Api)?.requestId)
+        }
+        val sealed = runCatching { storage.get(link.downloadUrl).takeIf { it.status.isSuccess() }?.readRawBytes() }.getOrNull()
+            ?: return MomentMediaLoad.NeedsConnection
+        val plain = runCatching {
+            check(crypto.sha256(sealed).contentEquals(Base64.decode(media.digest)))
+            crypto.aesGcmOpen(Base64.decode(media.key), sealed)
+        }.getOrNull() ?: return MomentMediaLoad.Failed(null)
+        files.write(media.mediaId, plain)
+        return MomentMediaLoad.Loaded(plain, files.path(media.mediaId))
+    }
+
+    // ---- posting
+
+    @OptIn(ExperimentalUuidApi::class)
+    override suspend fun post(draft: MomentDraft): AppResult<Unit> {
+        val localId = Uuid.random().toString()
+        val pending = when (draft) {
+            is MomentDraft.Text -> PendingDraft(MomentKind.Text.name, text = draft.text, background = draft.background.name, style = draft.style.name)
+            is MomentDraft.Media -> {
+                files.write(localId, draft.bytes)
+                PendingDraft(draft.kind.name, caption = draft.caption?.takeIf { it.isNotBlank() }, mime = draft.mime, thumb = draft.thumb?.let { Base64.encode(it) },
+                    durationMs = draft.durationMs, width = draft.width, height = draft.height)
+            }
+        }
+        dao.savePending(PendingMomentEntity(localId, pending.kind, json.encodeToString(PendingDraft.serializer(), pending), null, null, null, StatePosting, null, now()))
+        outbox.enqueue(MomentOutbox.Post, json.encodeToString(MomentJob.serializer(), MomentJob(localId)))
+        kickOutbox()
+        return AppResult.Success(Unit)
+    }
+
+    override suspend fun retry(localId: String) {
+        dao.pending(localId) ?: return
+        dao.setPendingState(localId, StatePosting, null)
+        outbox.enqueue(MomentOutbox.Post, json.encodeToString(MomentJob.serializer(), MomentJob(localId)))
+        kickOutbox()
+    }
+
+    override suspend fun discard(localId: String) = dao.deletePending(localId)
+
+    /** The outbox's turn for one pending moment: upload the media once, seal for the audience, post (ST3). */
+    suspend fun send(item: OutboxEntity): AppResult<Unit> {
+        val job = runCatching { json.decodeFromString(MomentJob.serializer(), item.payload) }.getOrNull() ?: return AppResult.Success(Unit)
+        var row = dao.pending(job.localId) ?: return AppResult.Success(Unit) // discarded meanwhile
+        val draft = json.decodeFromString(PendingDraft.serializer(), row.draft)
+        dao.setPendingState(row.localId, StatePosting, null)
+
+        val audience = audience()
+        if (audience.isEmpty()) return failed(row, AppError.Api("status.audience_invalid", 400, null, null, emptyMap()))
+
+        val kind = kindOf(draft.kind)
+        if (kind != MomentKind.Text && row.mediaId == null) {
+            (upload(row, draft) as? AppResult.Failure)?.let { return outcome(row, it.error) }
+            row = dao.pending(row.localId) ?: return AppResult.Success(Unit)
+        }
+        val body = MomentBody(
+            kind = kind.name, text = draft.text, background = draft.background, style = draft.style, caption = draft.caption, thumb = draft.thumb,
+            media = row.mediaId?.let { MomentMediaBody(it, row.mediaKey!!, row.mediaDigest!!, draft.mime ?: "application/octet-stream", files.read(it)?.size?.toLong() ?: 0, draft.durationMs, draft.width, draft.height) },
+        )
+        val plain = json.encodeToString(MomentBody.serializer(), body).encodeToByteArray()
+        val sealed = when (val s = keys.seal(audience, plain)) {
+            is AppResult.Failure -> return outcome(row, s.error)
+            is AppResult.Success -> s.value
+        }
+        val request = PostMomentRequest(row.localId, sealed.ciphertext, audience, sealed.keyCopies, listOfNotNull(row.mediaId))
+        return when (val r = remote.post(request)) {
+            is AppResult.Failure -> outcome(row, r.error)
+            is AppResult.Success -> {
+                keys.delivered(sealed.distributionId, sealed.copiedTo)
+                // My own body is kept as written: I can't decrypt my own sender-key message later.
+                dao.upsert(listOf(MomentEntity(r.value.momentId, ownUserId().orEmpty(), plain.decodeToString(), null, null,
+                    millis(r.value.postedAt), millis(r.value.expiresAt), mine = true, viewed = true, reacted = false, viewCount = 0)))
+                dao.deletePending(row.localId)
+                AppResult.Success(Unit)
+            }
+        }
+    }
+
+    private suspend fun upload(row: PendingMomentEntity, draft: PendingDraft): AppResult<Unit> {
+        val plain = files.read(row.localId) ?: return AppResult.Failure(AppError.Api("status.media_missing", 400, null, null, emptyMap()))
+        val key = crypto.randomBytes(32)
+        val sealed = crypto.aesGcmSeal(key, plain)
+        val kind = when (kindOf(draft.kind)) { MomentKind.Video -> "video"; MomentKind.Voice -> "voice"; else -> "image" }
+        val slot = when (val r = remote.prepareMedia(sealed.size.toLong(), kind, newIdempotencyKey())) {
+            is AppResult.Success -> r.value
+            is AppResult.Failure -> return r
+        }
+        val put = runCatching {
+            storage.put(slot.uploadUrl) { header("Content-Type", slot.uploadHeaders.contentType); setBody(sealed) }
+        }.getOrNull()
+        if (put == null || !put.status.isSuccess()) return AppResult.Failure(AppError.Network)
+        (remote.completeMedia(slot.mediaId, newIdempotencyKey()) as? AppResult.Failure)?.let { return it }
+        // Filed under the media id, the name a viewer's copy gets, so my own viewer opens it without downloading.
+        files.write(slot.mediaId, plain)
+        dao.savePending(row.copy(mediaId = slot.mediaId, mediaKey = Base64.encode(key), mediaDigest = Base64.encode(crypto.sha256(sealed))))
+        return AppResult.Success(Unit)
+    }
+
+    /** Who my next moment is for, decided here on the phone: my Circaso contacts, filtered by the privacy setting. */
+    private suspend fun audience(): List<String> {
+        val me = ownUserId()
+        val people = contacts.contacts.first().map { it.person.userId }.filter { it != me }.distinct()
+        val p = dao.privacy().toPrivacy()
+        return when (p.mode) {
+            MomentAudienceMode.Contacts -> people
+            MomentAudienceMode.ContactsExcept -> people.filter { it !in p.except }
+            MomentAudienceMode.OnlyShareWith -> people.filter { it in p.only }
+        }
+    }
+
+    /** A retryable failure leaves the moment Waiting (the queue pauses); a refusal marks it Failed (M6). */
+    private suspend fun outcome(row: PendingMomentEntity, error: AppError): AppResult<Unit> {
+        val retryable = error is AppError.Network || error is AppError.Unexpected ||
+            (error as AppError.Api).let { it.httpStatus >= 500 || it.httpStatus == 429 || it.code == "request.in_progress" }
+        if (retryable) dao.setPendingState(row.localId, StateWaiting, null) else return failed(row, error)
+        return AppResult.Failure(error)
+    }
+
+    private suspend fun failed(row: PendingMomentEntity, error: AppError): AppResult<Unit> {
+        dao.setPendingState(row.localId, StateFailed, (error as? AppError.Api)?.code ?: "unexpected")
+        return AppResult.Failure(error)
+    }
+
+    // ---- settings
+
+    override suspend fun setPrivacy(privacy: MomentPrivacy) {
+        val before = dao.privacy().toPrivacy()
+        dao.savePrivacy(MomentPrivacyEntity(json = json.encodeToString(PrivacyJson.serializer(), PrivacyJson(privacy.mode.name, privacy.except.toList(), privacy.only.toList()))))
+        // Anyone who could see before but not now must not read what comes next: a new sender key.
+        if (privacy != before) keys.rotate()
+    }
+
+    override suspend fun setMuted(userId: String, muted: Boolean) =
+        if (muted) dao.mute(MutedPosterEntity(userId, now())) else dao.unmute(userId)
+
+    // ---- mapping
+
+    private fun MomentEntity.toModel(): Moment? {
+        val b = body?.let { runCatching { json.decodeFromString(MomentBody.serializer(), it) }.getOrNull() } ?: return null
+        return Moment(
+            momentId = momentId, posterId = posterId, kind = kindOf(b.kind), text = b.text,
+            background = b.background?.let { runCatching { MomentBackground.valueOf(it) }.getOrNull() } ?: MomentBackground.Ink,
+            style = b.style?.let { runCatching { MomentTextStyle.valueOf(it) }.getOrNull() } ?: MomentTextStyle.Bold,
+            caption = b.caption, thumb = b.thumb,
+            media = b.media?.let { MomentMedia(it.mediaId, it.key, it.digest, it.mime, it.sizeBytes, it.durationMs, it.width, it.height) },
+            postedAt = postedAt, expiresAt = expiresAt, mine = mine, viewed = viewed, reacted = reacted, viewCount = viewCount,
+        )
+    }
+
+    private fun MomentPrivacyEntity?.toPrivacy(): MomentPrivacy {
+        val stored = this?.json ?: return MomentPrivacy()
+        val p = runCatching { this@MomentsRepositoryImpl.json.decodeFromString(PrivacyJson.serializer(), stored) }.getOrNull() ?: return MomentPrivacy()
+        return MomentPrivacy(runCatching { MomentAudienceMode.valueOf(p.mode) }.getOrDefault(MomentAudienceMode.Contacts), p.except.toSet(), p.only.toSet())
+    }
+
+    private fun millis(iso: String): Long = runCatching { Instant.parse(iso).toEpochMilliseconds() }.getOrDefault(now())
+
+    private companion object {
+        const val StatePosting = "posting"
+        const val StateWaiting = "waiting"
+        const val StateFailed = "failed"
+        fun kindOf(name: String) = runCatching { MomentKind.valueOf(name) }.getOrDefault(MomentKind.Text)
+        fun stateOf(name: String) = when (name) { StateWaiting -> PendingState.Waiting; StateFailed -> PendingState.Failed; else -> PendingState.Posting }
+    }
+}
