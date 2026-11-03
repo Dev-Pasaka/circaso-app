@@ -81,7 +81,8 @@ sealed interface MomentMediaLoad {
     /** Not on the phone and no connection (V6). */
     data object NeedsConnection : MomentMediaLoad
     /** Download or decryption failed after retries (V5b). */
-    class Failed(val requestId: String?) : MomentMediaLoad
+    /** [gone]: the moment was deleted or expired (V7), not a fault. */
+    class Failed(val requestId: String?, val gone: Boolean = false) : MomentMediaLoad
 }
 
 interface MomentsRepository {

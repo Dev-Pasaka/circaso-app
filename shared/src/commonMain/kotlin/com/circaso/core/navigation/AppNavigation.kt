@@ -3,6 +3,8 @@ package com.circaso.core.navigation
 import com.circaso.feature.status.presentation.SpacesOverlay
 
 import androidx.compose.foundation.layout.Box
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.runtime.Composable
@@ -190,6 +192,7 @@ fun AppNavigation(forceUpdate: Boolean, home: @Composable () -> Unit) {
                     spaces = { bottomPadding -> com.circaso.feature.status.presentation.SpacesTab(spacesViewModel, bottomPadding, spacesActions) },
                     spacesOverlay = { SpacesOverlay(spacesViewModel, spacesActions) },
                     spacesBanner = { com.circaso.feature.status.presentation.SpacesBanner() },
+                    spacesUnread = spacesViewModel.state.collectAsState().value.rings.any { it.unseen && !it.muted },
                     wallet = { bottomPadding ->
                         WalletTab(
                             walletViewModel, bottomPadding,
@@ -262,7 +265,21 @@ fun AppNavigation(forceUpdate: Boolean, home: @Composable () -> Unit) {
             }
             entry<ContactsRoute> { ContactsScreen(koinViewModel(), onBack = ::pop) }
             entry<MomentComposerRoute> { com.circaso.feature.status.presentation.MomentComposerScreen(koinViewModel(), onClose = ::pop, onAudience = { backStack.add(MomentsPrivacyRoute) }, onFindPeople = { backStack.add(ContactsRoute) }) }
-            entry<MomentViewerRoute> { key -> com.circaso.feature.status.presentation.MomentViewerScreen(koinViewModel(key = "moments-${key.posterId}", parameters = { parametersOf(key.posterId) }), onClose = ::pop) }
+            entry<MomentViewerRoute> { key ->
+                val chats = koinInject<com.circaso.feature.messaging.domain.ChatsRepository>()
+                val scope = androidx.compose.runtime.rememberCoroutineScope()
+                com.circaso.feature.status.presentation.MomentViewerScreen(
+                    koinViewModel(key = "moments-${key.posterId}", parameters = { parametersOf(key.posterId) }), onClose = ::pop,
+                    // V1b "Message": their chat on this phone if there is one, else opened on the server.
+                    onMessage = { posterId ->
+                        scope.launch {
+                            val local = chats.chats.first().firstOrNull { it.chat.peerId == posterId }?.chat?.chatId
+                            val chatId = local ?: (chats.openDirect(posterId) as? com.circaso.core.common.AppResult.Success)?.value?.chatId
+                            if (chatId != null) { pop(); openChatFromList(chatId) }
+                        }
+                    },
+                )
+            }
             entry<MomentsPrivacyRoute> { com.circaso.feature.status.presentation.MomentsPrivacyScreen(koinViewModel(), onBack = ::pop, onFindPeople = { backStack.add(ContactsRoute) }) }
             entry<BlockedRoute> { BlockedScreen(koinViewModel(), onBack = ::pop) }
             entry<SecurityRoute> {

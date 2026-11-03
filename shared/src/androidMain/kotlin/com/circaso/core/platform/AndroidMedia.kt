@@ -105,4 +105,5 @@ class AndroidMediaFiles(context: Context) : MediaFiles {
     override suspend fun write(name: String, bytes: ByteArray) = withContext(Dispatchers.IO) { dir.mkdirs(); File(dir, name).writeBytes(bytes) }
     override suspend fun clear() { withContext(Dispatchers.IO) { dir.deleteRecursively() } }
     override suspend fun path(name: String): String? = File(dir, name).takeIf { it.exists() }?.absolutePath
+    override suspend fun delete(name: String) { withContext(Dispatchers.IO) { File(dir, name).delete() } }
 }

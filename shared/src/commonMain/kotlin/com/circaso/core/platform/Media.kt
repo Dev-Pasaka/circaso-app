@@ -53,4 +53,7 @@ interface MediaFiles {
 
     /** Where [name] is on disk, for a player that reads a file; null when it isn't there. */
     suspend fun path(name: String): String? = null
+
+    /** Removes one file (a moment's media once its 24 hours are over). */
+    suspend fun delete(name: String) {}
 }

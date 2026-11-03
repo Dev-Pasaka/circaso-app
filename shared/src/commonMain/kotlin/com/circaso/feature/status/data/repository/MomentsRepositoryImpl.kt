@@ -138,6 +138,10 @@ class MomentsRepositoryImpl(
         all.filter { !it.mine && it.keyCopy != null }.forEach { keys.learn(it.posterId, it.keyCopy!!) }
         val rows = all.map { dto -> merge(dto, dao.byId(dto.momentId)) }
         dao.upsert(rows)
+        // Moments gone from the server (deleted, expired, no longer visible) take their decrypted media with them,
+        // so "gone after 24 hours" is true on this phone too.
+        val keep = rows.map { it.momentId }.toSet()
+        dao.observe(0).first().filter { it.momentId !in keep || it.expiresAt <= now() }.forEach { forgetMedia(it) }
         dao.deleteAllExcept(rows.map { it.momentId })
         dao.deleteExpired(now())
         AppResult.Success(Unit)
@@ -159,7 +163,7 @@ class MomentsRepositoryImpl(
 
     override suspend fun onFrame(type: String, momentId: String?, posterId: String?) {
         when (type) {
-            "status.deleted" -> momentId?.let { dao.delete(it) }
+            "status.deleted" -> momentId?.let { id -> dao.byId(id)?.let { forgetMedia(it) }; dao.delete(id) }
             // ST5 repeats when a heart changes, so the count comes from the server, never by adding one per frame.
             "status.viewed" -> refresh()
             else -> refresh() // status.posted: fetch and decrypt it
@@ -185,7 +189,12 @@ class MomentsRepositoryImpl(
 
     override suspend fun delete(momentId: String): AppResult<Unit> = when (val r = remote.delete(momentId, newIdempotencyKey())) {
         is AppResult.Failure -> if ((r.error as? AppError.Api)?.code == "status.moment_not_found") { dao.delete(momentId); AppResult.Success(Unit) } else r
-        is AppResult.Success -> { dao.delete(momentId); AppResult.Success(Unit) }
+        is AppResult.Success -> { dao.byId(momentId)?.let { forgetMedia(it) }; dao.delete(momentId); AppResult.Success(Unit) }
+    }
+
+    private suspend fun forgetMedia(row: MomentEntity) {
+        val body = row.body?.let { runCatching { json.decodeFromString(MomentBody.serializer(), it) }.getOrNull() } ?: return
+        body.media?.mediaId?.let { files.delete(it) }
     }
 
     /** This phone's copy, else ST8, checked against the digest in the body and decrypted; kept for next time. */
@@ -194,7 +203,11 @@ class MomentsRepositoryImpl(
         files.read(media.mediaId)?.let { return MomentMediaLoad.Loaded(it, files.path(media.mediaId)) }
         val link = when (val r = remote.download(media.mediaId)) {
             is AppResult.Success -> r.value
-            is AppResult.Failure -> return if (r.error is AppError.Network) MomentMediaLoad.NeedsConnection else MomentMediaLoad.Failed((r.error as? AppError.Api)?.requestId)
+            is AppResult.Failure -> return when {
+                r.error is AppError.Network -> MomentMediaLoad.NeedsConnection
+                (r.error as? AppError.Api)?.code in setOf("status.media_not_found", "status.moment_not_found") -> MomentMediaLoad.Failed(null, gone = true)
+                else -> MomentMediaLoad.Failed((r.error as? AppError.Api)?.requestId)
+            }
         }
         val sealed = runCatching { storage.get(link.downloadUrl).takeIf { it.status.isSuccess() }?.readRawBytes() }.getOrNull()
             ?: return MomentMediaLoad.NeedsConnection
@@ -234,7 +247,7 @@ class MomentsRepositoryImpl(
         kickOutbox()
     }
 
-    override suspend fun discard(localId: String) = dao.deletePending(localId)
+    override suspend fun discard(localId: String) { dao.deletePending(localId); files.delete(localId) }
 
     /** The outbox's turn for one pending moment: upload the media once, seal for the audience, post (ST3). */
     suspend fun send(item: OutboxEntity): AppResult<Unit> {
@@ -269,6 +282,7 @@ class MomentsRepositoryImpl(
                 dao.upsert(listOf(MomentEntity(r.value.momentId, ownUserId().orEmpty(), plain.decodeToString(), null, null,
                     millis(r.value.postedAt), millis(r.value.expiresAt), mine = true, viewed = true, reacted = false, viewCount = 0)))
                 dao.deletePending(row.localId)
+                files.delete(row.localId) // the plain copy kept for the upload; the media id's copy stays for my viewer
                 AppResult.Success(Unit)
             }
         }

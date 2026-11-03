@@ -30,7 +30,12 @@ sealed interface ViewerMedia {
     class Ready(val bytes: ByteArray, val path: String?) : ViewerMedia
     data object NeedsConnection : ViewerMedia
     class Failed(val requestId: String?) : ViewerMedia
+    /** V7: deleted or expired while open; the viewer moves on by itself. */
+    data object Gone : ViewerMedia
 }
+
+/** One row of Seen by (V4). */
+data class ViewerRow(val viewer: MomentViewer, val name: String, val avatarUrl: String?)
 
 /** Design V1–V8: one person's ring at a time, then on to the next ring. */
 data class MomentViewerUiState(
@@ -42,7 +47,7 @@ data class MomentViewerUiState(
     /** Video sound off, kept for the rest of this viewing. */
     val muted: Boolean = false,
     val viewersOpen: Boolean = false,
-    val viewers: List<Pair<MomentViewer, String>>? = null,
+    val viewers: List<ViewerRow>? = null,
     val viewersError: String? = null,
     val confirmDelete: Boolean = false,
     val moreOpen: Boolean = false,
@@ -111,6 +116,8 @@ class MomentViewerViewModel(
         val m = _state.value.moment ?: return
         if (shownId == m.momentId) return
         shownId = m.momentId
+        // A half-typed reply belongs to the moment it was typed on, never the next one.
+        _state.update { it.copy(reply = "", paused = false) }
         load?.cancel()
         if (m.media == null || m.kind == MomentKind.Text) {
             _state.update { it.copy(media = ViewerMedia.None) }
@@ -120,7 +127,7 @@ class MomentViewerViewModel(
                 val loaded = when (val r = repository.media(m)) {
                     is MomentMediaLoad.Loaded -> ViewerMedia.Ready(r.bytes, r.path)
                     MomentMediaLoad.NeedsConnection -> ViewerMedia.NeedsConnection
-                    is MomentMediaLoad.Failed -> ViewerMedia.Failed(r.requestId)
+                    is MomentMediaLoad.Failed -> if (r.gone) ViewerMedia.Gone else ViewerMedia.Failed(r.requestId)
                 }
                 _state.update { it.copy(media = loaded) }
             }
@@ -162,6 +169,8 @@ class MomentViewerViewModel(
 
     fun react() {
         val m = _state.value.moment ?: return
+        // Online-only: said before the tap does anything, never undone after it.
+        if (!_state.value.online) { _state.update { it.copy(notice = "A heart needs a connection.") }; return }
         viewModelScope.launch {
             val r = repository.markViewed(m.momentId, reacted = !m.reacted)
             if (r is AppResult.Failure && r.error is AppError.Network) _state.update { it.copy(notice = "You’re offline. Try again when you’re connected.") }
@@ -206,15 +215,21 @@ class MomentViewerViewModel(
         viewModelScope.launch {
             when (val r = repository.viewers(m.momentId)) {
                 is AppResult.Success -> {
-                    val names = observeContacts().first().associate { it.person.userId to it.person.displayName }
-                    _state.update { it.copy(viewers = r.value.map { v -> v to (names[v.userId] ?: "Someone not in your contacts") }) }
+                    val people = observeContacts().first().associateBy { it.person.userId }
+                    _state.update { it.copy(viewers = r.value.map { v -> ViewerRow(v, people[v.userId]?.person?.displayName ?: "Someone not in your contacts", people[v.userId]?.person?.avatarUrl) }) }
                 }
                 is AppResult.Failure -> _state.update { it.copy(viewersError = if (r.error is AppError.Network) "Viewers show when you’re online." else "Viewers didn’t load.") }
             }
         }
     }
 
-    fun askDelete(open: Boolean) = _state.update { it.copy(confirmDelete = open, paused = open) }
+    fun askDelete(open: Boolean) {
+        if (open && !_state.value.online) { _state.update { it.copy(notice = "Deleting a moment needs a connection.") }; return }
+        _state.update { it.copy(confirmDelete = open, paused = open) }
+    }
+
+    /** The reply field took or lost the keyboard: the moment waits while someone writes. */
+    fun onReplyFocus(focused: Boolean) = _state.update { it.copy(paused = focused || it.reply.isNotEmpty()) }
 
     fun delete() {
         val m = _state.value.moment ?: return

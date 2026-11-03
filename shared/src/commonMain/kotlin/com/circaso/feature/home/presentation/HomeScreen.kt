@@ -47,6 +47,8 @@ fun HomeScreen(
     spaces: @Composable (bottomPadding: PaddingValues) -> Unit = {},
     spacesOverlay: @Composable androidx.compose.foundation.layout.BoxScope.() -> Unit = {},
     spacesBanner: @Composable () -> Unit = {},
+    /** New moments from my contacts: a dot on the Spaces tab (S1). */
+    spacesUnread: Boolean = false,
     wallet: @Composable (bottomPadding: PaddingValues) -> Unit,
     walletActions: @Composable androidx.compose.foundation.layout.RowScope.() -> Unit,
     /** Each tab's sheets: drawn in the scaffold's overlay so they cover the floating tab bar, as `cx-sheet` does. */
@@ -81,7 +83,7 @@ fun HomeScreen(
         bottomBar = if (rail) null else {
             {
                 CircasoTabBar(
-                    items = Tab.entries.map { TabItem(it.label, it.icon) },
+                    items = Tab.entries.map { TabItem(it.label, it.icon, unread = it == Tab.Spaces && spacesUnread && tab != Tab.Spaces) },
                     selectedIndex = selected,
                     onSelect = { selected = it },
                 )
@@ -90,7 +92,7 @@ fun HomeScreen(
         sideBar = if (!rail) null else {
             {
                 CircasoTabBar(
-                    items = Tab.entries.map { TabItem(it.label, it.icon) },
+                    items = Tab.entries.map { TabItem(it.label, it.icon, unread = it == Tab.Spaces && spacesUnread && tab != Tab.Spaces) },
                     selectedIndex = selected,
                     onSelect = { selected = it },
                     vertical = true,

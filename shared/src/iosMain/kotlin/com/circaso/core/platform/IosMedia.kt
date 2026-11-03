@@ -86,4 +86,5 @@ class IosMediaFiles : MediaFiles {
     }
 
     override suspend fun path(name: String): String? = filePath(name).takeIf { NSFileManager.defaultManager.fileExistsAtPath(it) }
+    override suspend fun delete(name: String) { NSFileManager.defaultManager.removeItemAtPath(filePath(name), error = null) }
 }

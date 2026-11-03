@@ -17,6 +17,8 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
@@ -88,18 +90,18 @@ private const val StillMs = 5_000
 
 @OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class)
 @Composable
-fun MomentViewerScreen(viewModel: MomentViewerViewModel, onClose: () -> Unit) {
+fun MomentViewerScreen(viewModel: MomentViewerViewModel, onClose: () -> Unit, onMessage: (posterId: String) -> Unit = {}) {
     val state by viewModel.state.collectAsState()
     LaunchedEffect(state.closed) { if (state.closed) onClose() }
     androidx.compose.ui.backhandler.BackHandler(onBack = onClose)
     // Always the dark stage, in every theme (design V1): the dark tokens, with the person's high-contrast choice kept.
     CircasoTheme(darkTheme = true, highContrast = CircasoTheme.colors.isHighContrast) {
-        MomentViewerContent(state, viewModel, onClose)
+        MomentViewerContent(state, viewModel, onClose, onMessage)
     }
 }
 
 @Composable
-private fun MomentViewerContent(state: MomentViewerUiState, vm: MomentViewerViewModel, onClose: () -> Unit) {
+private fun MomentViewerContent(state: MomentViewerUiState, vm: MomentViewerViewModel, onClose: () -> Unit, onMessage: (String) -> Unit) {
     val c = CircasoTheme.colors
     val t = CircasoTheme.typography
     val moment = state.moment
@@ -112,6 +114,11 @@ private fun MomentViewerContent(state: MomentViewerUiState, vm: MomentViewerView
             return@Box
         }
         Stage(moment, state.media, vm::retryMedia, paused = state.paused, muted = state.muted)
+        // Shade behind the header and the caption/reply, so white text reads on any photo (design shade-top/bot).
+        Box(Modifier.fillMaxWidth().height(200.dp).background(Brush.verticalGradient(listOf(c.scrim, Color.Transparent))))
+        Box(Modifier.align(Alignment.BottomCenter).fillMaxWidth().height(260.dp).background(Brush.verticalGradient(listOf(Color.Transparent, c.scrim))))
+        // V7: gone while open; say so, then move on.
+        LaunchedEffect(moment.momentId, state.media) { if (state.media == ViewerMedia.Gone) { kotlinx.coroutines.delay(2_000); vm.next() } }
 
         // Tap the left third for back, anywhere else for next; hold to pause; swipe down to close, left for the next person.
         Box(
@@ -164,7 +171,8 @@ private fun MomentViewerContent(state: MomentViewerUiState, vm: MomentViewerView
                         if (state.reply.isEmpty()) BasicText("Reply to ${ring.name.substringBefore(' ')}", style = t.body.copy(color = c.inkSecondary))
                         BasicTextField(
                             state.reply, vm::onReply, singleLine = true, textStyle = t.body.copy(color = c.ink), cursorBrush = SolidColor(c.ink),
-                            modifier = Modifier.fillMaxWidth().semantics { contentDescription = "Reply to ${ring.name}" },
+                            modifier = Modifier.fillMaxWidth().semantics { contentDescription = "Reply to ${ring.name}" }
+                                .onFocusChanged { vm.onReplyFocus(it.isFocused) },
                         )
                     }
                     if (state.reply.isNotBlank()) GlassButton(CircasoIcon.ArrowUp, "Send reply", onClick = vm::sendReply)
@@ -174,7 +182,7 @@ private fun MomentViewerContent(state: MomentViewerUiState, vm: MomentViewerView
         }
 
         ToastHost(toast, Modifier.align(Alignment.TopCenter).statusBarsPadding().padding(top = 96.dp))
-        MoreSheet(state.moreOpen, ring.name, onMute = vm::mute, onDismiss = { vm.openMore(false) })
+        MoreSheet(state.moreOpen, ring.name, onMute = vm::mute, onMessage = { vm.openMore(false); onMessage(ring.posterId) }, onDismiss = { vm.openMore(false) })
         ViewersSheet(state, onDismiss = { vm.openViewers(false) }, onDelete = { vm.openViewers(false); vm.askDelete(true) })
         ConfirmSheet(
             visible = state.confirmDelete, title = "Delete this moment?",
@@ -218,6 +226,7 @@ private fun BoxScope.Stage(moment: Moment, media: ViewerMedia, onRetry: () -> Un
                     Spinner(c.ink, Modifier.size(28.dp))
                     BasicText("Loading", style = t.subhead.copy(color = c.ink))
                 }
+                ViewerMedia.Gone -> StageMessage(CircasoIcon.Clock, "This moment is no longer available", null)
                 ViewerMedia.NeedsConnection -> StageMessage(CircasoIcon.Offline, "This moment needs a connection", "It opens as soon as you’re back online.")
                 is ViewerMedia.Failed -> StageMessage(CircasoIcon.Warning, "This moment didn’t load", media.requestId?.let { "Ref $it" }, "Try Again" to onRetry)
                 ViewerMedia.None -> Unit
@@ -324,10 +333,11 @@ private fun ago(at: Long): String {
 
 /** V1b: someone else's moment, More. Muting moves their ring to the end; they aren't told. */
 @Composable
-private fun BoxScope.MoreSheet(visible: Boolean, name: String, onMute: () -> Unit, onDismiss: () -> Unit) {
+private fun BoxScope.MoreSheet(visible: Boolean, name: String, onMute: () -> Unit, onMessage: () -> Unit, onDismiss: () -> Unit) {
     CircasoSheet(visible, onDismiss, label = "Moment options") {
         SheetHead(name.substringBefore(' '), onDismiss)
         ListGroup {
+            ListRow("Message ${name.substringBefore(' ')}", onClick = onMessage)
             ListRow("Mute ${name.substringBefore(' ')}’s Moments", sub = "They move to the end of the row. They aren’t told.", onClick = onMute)
         }
     }
@@ -345,10 +355,12 @@ private fun BoxScope.ViewersSheet(state: MomentViewerUiState, onDismiss: () -> U
             state.viewersError != null -> BasicText(state.viewersError, Modifier.padding(CircasoSpacing.s4), style = t.subhead.copy(color = c.inkSecondary))
             state.viewers == null -> Spinner(c.inkSecondary, Modifier.padding(CircasoSpacing.s4))
             state.viewers.isEmpty() -> BasicText("Nobody has seen it yet.", Modifier.padding(CircasoSpacing.s4), style = t.subhead.copy(color = c.inkSecondary))
-            else -> ListGroup {
-                state.viewers.take(50).forEach { (v, name) ->
-                    ListRow(name, sub = formatLocalTime(v.viewedAt, LocalTimeStyle.Clock), leading = { Avatar(name, size = CircasoSizes.avatarMd) },
-                        trailing = { if (v.reacted) HeartGlyph(c.ink) })
+            // Scrolls within the sheet, every viewer, never cut at a number (V4).
+            else -> androidx.compose.foundation.lazy.LazyColumn(Modifier.fillMaxWidth().heightIn(max = 420.dp).clip(CircasoShapes.md).background(c.surfaceRaised)) {
+                items(state.viewers.size) { i ->
+                    val row = state.viewers[i]
+                    ListRow(row.name, sub = formatLocalTime(row.viewer.viewedAt, LocalTimeStyle.Clock), leading = { Avatar(row.name, size = CircasoSizes.avatarMd, imageUrl = row.avatarUrl) },
+                        trailing = { if (row.viewer.reacted) HeartGlyph(c.ink) })
                 }
             }
         }
