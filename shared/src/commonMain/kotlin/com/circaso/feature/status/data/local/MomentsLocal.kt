@@ -65,6 +65,10 @@ interface MomentsDao {
     @Query("SELECT * FROM moment WHERE body IS NULL AND posterId = :posterId")
     suspend fun unreadableFrom(posterId: String): List<MomentEntity>
 
+    /** My live moments whose body this phone holds (the ones posted here), for a key request. */
+    @Query("SELECT * FROM moment WHERE mine = 1 AND body IS NOT NULL AND expiresAt > :now ORDER BY postedAt")
+    suspend fun mineReadable(now: Long): List<MomentEntity>
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsert(rows: List<MomentEntity>)
 

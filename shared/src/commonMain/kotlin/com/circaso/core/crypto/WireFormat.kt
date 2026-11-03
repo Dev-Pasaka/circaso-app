@@ -96,6 +96,8 @@ data class ChatPayload(
     val liveAt: Long? = null,
     /** A video's first frame (type [Video]): a small base64 JPEG, so the bubble shows before the file loads. */
     val thumb: String? = null,
+    /** A moment's body sealed again for one person (type [MomentBody]): which moment; [text] is the body JSON. */
+    val momentId: String? = null,
 ) {
     companion object {
         const val Text = "text"
@@ -109,6 +111,8 @@ data class ChatPayload(
         const val LiveStop = "liveStop"
         const val SenderKey = "senderKey"
         const val MetaKey = "metaKey"
+        /** A moment's body for a new phone of someone in my audience (moments-api.md, key request). Never shown in a chat. */
+        const val MomentBody = "momentBody"
         const val Control = "control"
         /** A reaction (WhatsApp-style): [replyTo] is the message reacted to, [text] the emoji, empty to take it back. */
         const val Reaction = "reaction"

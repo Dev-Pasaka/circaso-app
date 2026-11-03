@@ -66,6 +66,7 @@ class FakeChatsDao : ChatsDao {
     override suspend fun deliveredTo(chatId: String, distributionId: String) = deliveries.filter { it.chatId == chatId && it.distributionId == distributionId }.map { it.userId }
     override suspend fun insertDeliveries(rows: List<SenderKeyDeliveryEntity>) { deliveries += rows }
     override suspend fun deleteDeliveries(chatId: String) { deliveries.removeAll { it.chatId == chatId } }
+    override suspend fun deleteDelivery(chatId: String, userId: String) { deliveries.removeAll { it.chatId == chatId && it.userId == userId } }
     override suspend fun clearChats() { chats.value = emptyMap() }
     override suspend fun clearMembers() { members.value = emptyList() }
     override suspend fun clearMetaKeys() = metaKeys.clear()

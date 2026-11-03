@@ -85,12 +85,24 @@ internal data class PrivacyJson(val mode: String = MomentAudienceMode.Contacts.n
 
 @Serializable internal data class MomentJob(val localId: String)
 
-object MomentOutbox { const val Post = "moment.post" }
+/** Someone in my audience asked for keys to my moments (`status.key_requested`). */
+@Serializable internal data class KeyCopyJob(val requesterId: String)
+
+object MomentOutbox {
+    const val Post = "moment.post"
+    const val KeyCopies = "moment.key_copies"
+}
 
 /** Posts queued moments ([MomentsRepositoryImpl.send]); the repository is looked up only when there is one to send. */
 class MomentPostHandler(private val repository: () -> MomentsRepositoryImpl) : OutboxHandler {
     override val type: String = MomentOutbox.Post
     override suspend fun send(item: OutboxEntity): AppResult<Unit> = repository().send(item)
+}
+
+/** Answers a key request with fresh copies ([MomentsRepositoryImpl.sendKeyCopies]), waiting offline like a post. */
+class MomentKeyCopiesHandler(private val repository: () -> MomentsRepositoryImpl) : OutboxHandler {
+    override val type: String = MomentOutbox.KeyCopies
+    override suspend fun send(item: OutboxEntity): AppResult<Unit> = repository().sendKeyCopies(item)
 }
 
 class MomentsRepositoryImpl(
@@ -111,6 +123,10 @@ class MomentsRepositoryImpl(
     private val uploads: com.circaso.core.platform.BackgroundUploads = com.circaso.core.platform.NoBackgroundUploads,
 ) : MomentsRepository {
     private val refreshLock = Mutex()
+
+    /** The unreadable moments I already asked each poster about, so I ask again only for a new one (with [askedAt]). */
+    private val asked = mutableMapOf<String, Set<String>>()
+    private val askedAt = mutableMapOf<String, Long>()
 
     // Re-read every minute so a moment disappears when its 24 hours end, even with nothing else changing.
     @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
@@ -137,10 +153,15 @@ class MomentsRepositoryImpl(
                 is AppResult.Success -> { all += page.value.moments; after = page.value.next }
             }
         } while (after != null)
-        // Key copies first (a poster's first moment may carry the key the others need), then the bodies.
-        all.filter { !it.mine && it.keyCopy != null }.forEach { keys.learn(it.posterId, it.keyCopy!!) }
-        val rows = all.map { dto -> merge(dto, dao.byId(dto.momentId)) }
+        // Key copies first (a poster's first moment may carry the key the others need), then the bodies. A copy sent
+        // after a key request is that moment's body itself.
+        val resent = mutableMapOf<String, String>()
+        all.filter { !it.mine && it.keyCopy != null && dao.byId(it.momentId)?.body == null }.forEach { dto ->
+            keys.learn(dto.posterId, dto.keyCopy!!, dto.momentId)?.let { resent[dto.momentId] = it.decodeToString() }
+        }
+        val rows = all.map { dto -> merge(dto, dao.byId(dto.momentId), resent[dto.momentId]) }
         dao.upsert(rows)
+        askForKeys(rows)
         // Moments gone from the server (deleted, expired, no longer visible) take their decrypted media with them,
         // so "gone after 24 hours" is true on this phone too.
         val keep = rows.map { it.momentId }.toSet()
@@ -150,9 +171,30 @@ class MomentsRepositoryImpl(
         AppResult.Success(Unit)
     }
 
+    /**
+     * Someone's live moments this phone still can't open (a new phone: the copies were sealed for my old identity):
+     * ask those posters for fresh ones (moments-api.md, key request). Only after a refresh that reached the server,
+     * never for my own (no other phone of mine can answer), and once per unreadable moment; the server also allows one
+     * per poster every 10 minutes. Best effort: after a failure the same moments are asked about again 10 minutes on.
+     */
+    private suspend fun askForKeys(rows: List<MomentEntity>) {
+        val me = ownUserId() ?: return
+        val at = now()
+        val unreadable = rows.filter { it.body == null && !it.mine && it.posterId != me && it.expiresAt > at }
+            .groupBy({ it.posterId }) { it.momentId }.mapValues { it.value.toSet() }
+        val posters = unreadable.filter { (poster, ids) ->
+            !asked[poster].orEmpty().containsAll(ids) && at - (askedAt[poster] ?: 0) >= KeyRequestEveryMillis
+        }.keys.toList()
+        if (posters.isEmpty()) return
+        posters.chunked(KeyRequestBatch).forEach { batch ->
+            val taken = remote.requestKeys(batch, newIdempotencyKey()) is AppResult.Success
+            batch.forEach { if (taken) asked[it] = asked[it].orEmpty() + unreadable.getValue(it); askedAt[it] = at }
+        }
+    }
+
     /** A moment from the server, kept readable: a body already opened is never opened again (sender keys move on). */
-    private suspend fun merge(dto: MomentDto, old: MomentEntity?): MomentEntity {
-        val body = old?.body ?: if (dto.mine) null else when (val opened = keys.open(dto.posterId, dto.ciphertext)) {
+    private suspend fun merge(dto: MomentDto, old: MomentEntity?, resent: String? = null): MomentEntity {
+        val body = old?.body ?: resent ?: if (dto.mine) null else when (val opened = keys.open(dto.posterId, dto.ciphertext)) {
             is OpenedMoment.Plain -> opened.bytes.decodeToString()
             else -> null
         }
@@ -165,13 +207,55 @@ class MomentsRepositoryImpl(
         )
     }
 
-    override suspend fun onFrame(type: String, momentId: String?, posterId: String?) {
+    override suspend fun onFrame(type: String, momentId: String?, posterId: String?, requesterId: String?) {
         when (type) {
             "status.deleted" -> momentId?.let { id -> dao.byId(id)?.let { forgetMedia(it) }; dao.delete(id) }
             // ST5 repeats when a heart changes, so the count comes from the server, never by adding one per frame.
             "status.viewed" -> refresh()
-            else -> refresh() // status.posted: fetch and decrypt it
+            // Someone's new phone can't open my moments: answer through the outbox, so it waits for a connection.
+            "status.key_requested" -> requesterId?.let { queueKeyCopies(it) }
+            // status.posted, status.keys_ready: fetch, and open what couldn't be opened before
+            else -> refresh()
         }
+    }
+
+    private suspend fun queueKeyCopies(requesterId: String) {
+        if (requesterId == ownUserId()) return
+        val payload = json.encodeToString(KeyCopyJob.serializer(), KeyCopyJob(requesterId))
+        // One answer waiting per person is enough: it seals whatever is live when it runs.
+        if (payload in outbox.waitingPayloads(MomentOutbox.KeyCopies)) return
+        outbox.enqueue(MomentOutbox.KeyCopies, payload)
+        kickOutbox()
+    }
+
+    /**
+     * The outbox's turn for a key request: if the person is still in my audience, seal each live moment I posted from
+     * this phone again for their current identity and send the copies. My moments from an earlier phone can't be
+     * sealed (this phone never had their bodies) and are left out. A refusal is dropped quietly (nothing for the
+     * person to retry); a network or server problem waits for the next drain.
+     */
+    suspend fun sendKeyCopies(item: OutboxEntity): AppResult<Unit> {
+        val job = runCatching { json.decodeFromString(KeyCopyJob.serializer(), item.payload) }.getOrNull() ?: return AppResult.Success(Unit)
+        val requester = job.requesterId
+        if (requester == ownUserId() || requester !in audience()) return AppResult.Success(Unit)
+        val live = dao.mineReadable(now()).map { it.momentId to it.body!!.encodeToByteArray() }
+        if (live.isEmpty()) { keys.forgetHolder(requester); return AppResult.Success(Unit) }
+        val copies = when (val r = keys.reseal(requester, live)) {
+            is AppResult.Failure -> return quietUnlessRetryable(r)
+            is AppResult.Success -> r.value
+        }
+        if (copies.isEmpty()) return AppResult.Success(Unit)
+        // A fresh key each try: every try seals anew, and the server just replaces the copies.
+        return when (val sent = remote.shareKeyCopies(copies, newIdempotencyKey())) {
+            is AppResult.Success -> AppResult.Success(Unit)
+            is AppResult.Failure -> quietUnlessRetryable(sent)
+        }
+    }
+
+    private fun quietUnlessRetryable(r: AppResult.Failure): AppResult<Unit> {
+        val e = r.error
+        val retryable = e is AppError.Network || e is AppError.Unexpected || (e as AppError.Api).httpStatus >= 500 || e.httpStatus == 429
+        return if (retryable) r else AppResult.Success(Unit)
     }
 
     override suspend fun markViewed(momentId: String, reacted: Boolean?): AppResult<Unit> {
@@ -399,6 +483,9 @@ class MomentsRepositoryImpl(
     private fun millis(iso: String): Long = runCatching { Instant.parse(iso).toEpochMilliseconds() }.getOrDefault(now())
 
     private companion object {
+        /** The server's own limit per (requester, poster); asking sooner would only be skipped. */
+        const val KeyRequestEveryMillis = 10 * 60 * 1000L
+        const val KeyRequestBatch = 100
         const val StatePosting = "posting"
         const val StateWaiting = "waiting"
         const val StateFailed = "failed"

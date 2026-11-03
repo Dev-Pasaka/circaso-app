@@ -16,6 +16,7 @@ import com.circaso.feature.messaging.data.local.SenderKeyDeliveryEntity
 import com.circaso.feature.messaging.data.repository.Opened
 import com.circaso.feature.messaging.data.repository.SessionCipher
 import com.circaso.feature.status.data.remote.KeyCopyDto
+import com.circaso.feature.status.data.remote.MomentKeyCopyDto
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlin.io.encoding.Base64
@@ -102,17 +103,25 @@ class MomentKeys(
     /** My privacy changed so someone is out: the next moment goes under a new key. */
     suspend fun rotate() = lock.withLock { ownUserId()?.let { fresh(it) } }
 
-    /** A key copy from [posterId] (their 1:1 message): learn their moments key. Already seen copies are harmless. */
-    suspend fun learn(posterId: String, keyCopy: String) = lock.withLock {
-        val frame = runCatching { WireFormat.decode(Base64.decode(keyCopy)) }.getOrNull() ?: return@withLock
+    /**
+     * A key copy from [posterId] on [momentId] (their 1:1 message). Usually their moments key, which is learned; after
+     * a key request it is that moment's body sealed for me alone, which is returned (moments-api.md, key request).
+     * Already seen copies are harmless.
+     */
+    suspend fun learn(posterId: String, keyCopy: String, momentId: String? = null): ByteArray? = lock.withLock {
+        val frame = runCatching { WireFormat.decode(Base64.decode(keyCopy)) }.getOrNull() ?: return@withLock null
         val kind = when (frame.type) {
             WireFormat.Type.PreKeyMessage -> CiphertextKind.PreKey
             WireFormat.Type.WhisperMessage -> CiphertextKind.Whisper
-            else -> return@withLock
+            else -> return@withLock null
         }
-        val opened = sessions.open(posterId, kind, frame.body) as? Opened.Plain ?: return@withLock
-        val payload = ChatPayload.decode(opened.bytes) ?: return@withLock
-        val encoded = payload.senderKey ?: return@withLock
+        val opened = sessions.open(posterId, kind, frame.body) as? Opened.Plain ?: return@withLock null
+        val payload = ChatPayload.decode(opened.bytes) ?: return@withLock null
+        if (payload.type == ChatPayload.MomentBody) {
+            // Only for the moment it names, so a copy can never be shown as another moment.
+            return@withLock payload.text?.takeIf { momentId != null && payload.momentId == momentId }?.encodeToByteArray()
+        }
+        val encoded = payload.senderKey ?: return@withLock null
         runCatching {
             val distribution = Base64.decode(encoded)
             val distributionId = crypto.distributionIdOf(GroupBytes.Distribution, distribution)
@@ -120,7 +129,31 @@ class MomentKeys(
             val learned = crypto.processSenderKeyDistribution(PeerAddress(posterId), distribution, current)
             store.saveSenderKey(Scope, posterId, learned.distributionId, learned.record, now())
         }
+        null
     }
+
+    /**
+     * [userId] asked for keys (a new phone). A sender-key copy made now would only open my later moments (the chain
+     * moves forward), so each live moment's [bodies] (momentId to the body I wrote) is sealed again for them over a
+     * session with their current identity, and they no longer count as holding my key, so the next moment carries
+     * one. Online-only; a network failure is returned so the outbox retries.
+     */
+    suspend fun reseal(userId: String, bodies: List<Pair<String, ByteArray>>): AppResult<List<MomentKeyCopyDto>> = lock.withLock {
+        (sessions.refresh(userId) as? AppResult.Failure)?.let { return@withLock it }
+        deliveries.deleteDelivery(Scope, userId)
+        val copies = mutableListOf<MomentKeyCopyDto>()
+        for ((momentId, body) in bodies) {
+            val payload = ChatPayload.encode(ChatPayload(type = ChatPayload.MomentBody, momentId = momentId, text = body.decodeToString()))
+            when (val sealed = sessions.seal(userId, payload)) {
+                is AppResult.Success -> copies += MomentKeyCopyDto(momentId, userId, Base64.encode(sealed.value.wire))
+                is AppResult.Failure -> return@withLock sealed
+            }
+        }
+        AppResult.Success(copies)
+    }
+
+    /** [userId] has a new identity: they don't hold my moments key any more, so my next moment carries a copy. */
+    suspend fun forgetHolder(userId: String) = deliveries.deleteDelivery(Scope, userId)
 
     suspend fun open(posterId: String, ciphertext: String): OpenedMoment = lock.withLock {
         val frame = runCatching { WireFormat.decode(Base64.decode(ciphertext)) }.getOrNull()

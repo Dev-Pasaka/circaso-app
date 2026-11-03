@@ -4,6 +4,7 @@ import com.circaso.core.database.CircasoDatabase
 import com.circaso.core.sync.OutboxHandler
 import com.circaso.feature.status.data.remote.KtorMomentsRemote
 import com.circaso.feature.status.data.remote.MomentsRemote
+import com.circaso.feature.status.data.repository.MomentKeyCopiesHandler
 import com.circaso.feature.status.data.repository.MomentKeys
 import com.circaso.feature.status.data.repository.MomentPostHandler
 import com.circaso.feature.status.data.repository.MomentsRepositoryImpl
@@ -33,6 +34,7 @@ val statusModule = module {
     // The outbox processor collects every handler while it is built; this one finds the repository only when it
     // sends, so the repository (which kicks the outbox and reads contacts) is never part of that graph.
     single { MomentPostHandler { get<MomentsRepositoryImpl>() } } bind OutboxHandler::class
+    single { MomentKeyCopiesHandler { get<MomentsRepositoryImpl>() } } bind OutboxHandler::class
     single<MomentsRepository> { get<MomentsRepositoryImpl>() }
     viewModel { com.circaso.feature.status.presentation.SpacesViewModel(get(), get(), get(), get(), get()) }
     viewModel { com.circaso.feature.status.presentation.MomentComposerViewModel(get(), get(), get(), get(), get(), get(), get(), get()) }

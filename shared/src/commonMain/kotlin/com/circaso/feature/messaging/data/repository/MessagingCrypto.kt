@@ -46,6 +46,11 @@ class SessionCipher(
     private val crypto: SignalCrypto,
     private val keys: KeysRepository,
     private val now: () -> Long = ::nowMillis,
+    /**
+     * Someone's identity changed (a new phone): whatever I handed their old identity is gone with it. Moments use it
+     * to forget that they hold my moments key, so my next moment carries a fresh copy.
+     */
+    private val identityChanged: suspend (peerId: String) -> Unit = {},
 ) {
     private val locksGuard = Mutex()
     private val locks = mutableMapOf<String, Mutex>()
@@ -65,6 +70,7 @@ class SessionCipher(
                 is AppResult.Success -> r.value
             }
             identityChanged = fetched.identityChanged
+            if (identityChanged) identityChanged(peerId)
             try {
                 crypto.startSession(identity, peer, fetched.bundle, null).session.also { store.saveSession(peerId, it, now()) }
             } catch (e: SignalException) {
@@ -90,7 +96,9 @@ class SessionCipher(
             val result = crypto.decrypt(identity, peer, store.session(peerId), kind, ciphertext, store.ownKeys())
             store.saveSession(peerId, result.session, now())
             result.consumedPreKeyId?.let { store.consumePreKey(it) }
-            Opened.Plain(result.plaintext, store.rememberPeerIdentity(peerId, result.peerIdentityKey, now()))
+            val changed = store.rememberPeerIdentity(peerId, result.peerIdentityKey, now())
+            if (changed) identityChanged(peerId)
+            Opened.Plain(result.plaintext, changed)
         } catch (e: SignalException.Duplicate) {
             Opened.Duplicate
         } catch (e: SignalException) {
@@ -99,7 +107,30 @@ class SessionCipher(
     }
 
     /** `keys.changed`: their old session is dead; the next message to them starts a new one from their new bundle. */
-    suspend fun reset(peerId: String) = lockFor(peerId).withLock { store.deleteSession(peerId) }
+    suspend fun reset(peerId: String) = lockFor(peerId).withLock { store.deleteSession(peerId); identityChanged(peerId) }
+
+    /**
+     * Makes sure my session with [peerId] is with their **current** identity, for when they say they can't read me
+     * (a moments key request) and `keys.changed` may not have reached this phone. With no session there is nothing
+     * to do: the next [seal] starts one from their bundle. Otherwise their bundle is fetched; if the identity in it
+     * is new, the old session is dropped and a new one started from that bundle. True when it changed.
+     */
+    suspend fun refresh(peerId: String): AppResult<Boolean> = lockFor(peerId).withLock {
+        if (store.session(peerId) == null) return AppResult.Success(false)
+        val fetched = when (val r = keys.peerBundle(peerId)) {
+            is AppResult.Failure -> return r
+            is AppResult.Success -> r.value
+        }
+        if (!fetched.identityChanged) return AppResult.Success(false)
+        store.deleteSession(peerId)
+        identityChanged(peerId)
+        try {
+            store.saveSession(peerId, crypto.startSession(identity(), PeerAddress(peerId), fetched.bundle, null).session, now())
+        } catch (e: SignalException) {
+            // No session saved: the next seal fetches a bundle and tries again.
+        }
+        AppResult.Success(true)
+    }
 
     suspend fun securityCode(myId: String, peerId: String): String? {
         val mine = store.identity() ?: return null
