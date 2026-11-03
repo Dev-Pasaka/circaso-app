@@ -39,6 +39,22 @@ import com.circaso.feature.wallet.domain.WalletRepository
 import com.circaso.feature.wallet.domain.WalletSigner
 import com.circaso.feature.wallet.domain.WalletStatus
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import com.circaso.feature.wallet.data.local.WalletActivityEntity
+import com.circaso.feature.wallet.data.local.WalletCacheEntity
+import com.circaso.feature.wallet.data.local.WalletListEntity
+import com.circaso.feature.wallet.data.remote.GroupWalletResponse
+import com.circaso.feature.wallet.data.remote.WalletListingDto
+import com.circaso.feature.wallet.data.remote.WalletOwnerDto
+import com.circaso.feature.wallet.data.remote.WalletsResponse
+import com.circaso.feature.wallet.domain.GroupWallet
+import com.circaso.feature.wallet.domain.SignPurpose
+import com.circaso.feature.wallet.domain.SignSubject
+import com.circaso.feature.wallet.domain.WalletListing
+import com.circaso.feature.wallet.domain.WalletOwner
+import com.circaso.feature.wallet.domain.WalletOwnerType
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -61,11 +77,20 @@ class WalletRepositoryImpl(
     private val currency: suspend () -> String?,
     private val json: Json,
     scope: kotlinx.coroutines.CoroutineScope? = null,
-    onBiometricsLost: suspend () -> Unit = {},
+    /** Circle said one wallet's biometrics are gone ([walletId] null: the personal wallet); only that one falls back to its PIN. */
+    onBiometricsLost: suspend (walletId: String?) -> Unit = {},
     /** Money arrived while the app is open (the frame, not a push): the coins sound, if the person has it on. */
     private val onMoneyReceived: suspend () -> Unit = {},
 ) : WalletRepository {
-    init { scope?.launch { com.circaso.feature.wallet.domain.WalletSignerBridge.biometricsLost.collect { onBiometricsLost() } } }
+    init { scope?.launch { com.circaso.feature.wallet.domain.WalletSignerBridge.biometricsLost.collect { onBiometricsLost(it.walletId) } } }
+
+    /**
+     * One challenge at a time: the SDK is one instance for every wallet (Circle user) on the phone, so a group wallet's
+     * PIN screen must never open over the personal one's, or a second tap start another before the first is done.
+     */
+    private val signing = Mutex()
+
+    private suspend fun sign(session: SdkSession, challengeId: String): SignOutcome = signing.withLock { signer().execute(session, challengeId) }
 
     override val wallet: Flow<Wallet?> = dao.observeSnapshot().map { row -> row?.let { decode(it) } }
     override val transfers: Flow<List<Transfer>> = dao.observeTransfers().map { rows -> rows.map { it.toDomain() } }
@@ -111,7 +136,7 @@ class WalletRepositoryImpl(
         }
         Diagnostics.note("wallet: create ${created.status}, challenge=${created.challengeId != null}, signer=${signer().available}")
         created.challengeId?.let { challenge ->
-            when (val outcome = signer().execute(created.sdk.toDomain(), challenge)) {
+            when (val outcome = sign(created.sdk.toDomain(), challenge)) {
                 SignOutcome.Done -> Unit
                 else -> { Diagnostics.note("wallet: sign ${outcome::class.simpleName}"); return AppResult.Failure(outcome.toError()) }
             }
@@ -122,14 +147,14 @@ class WalletRepositoryImpl(
     }
 
     /** Polls W1 (and listens for `wallet.ready`) until [done] or a minute passes; the status seen last. */
-    private suspend fun awaitStatus(done: (Wallet) -> Boolean): WalletStatus {
+    private suspend fun awaitStatus(walletId: String? = null, done: (Wallet) -> Boolean): WalletStatus {
         var last = WalletStatus.SettingUp
         withTimeoutOrNull(AwaitMillis) {
             while (true) {
-                val w = refresh()
+                val w = refreshWallet(walletId)
                 if (w is AppResult.Success) { last = w.value.status; if (done(w.value)) return@withTimeoutOrNull }
                 val seen = ready.value
-                withTimeoutOrNull(PollMillis) { ready.collect { if (it != seen) throw ReadyArrived } }
+                try { withTimeoutOrNull(PollMillis) { ready.collect { if (it != seen) throw ReadyArrived } } } catch (e: ReadyArrived) { }
             }
         }
         return last
@@ -141,29 +166,36 @@ class WalletRepositoryImpl(
         Chains(r.defaultChain, r.chains.map { ChainOption(it.blockchain, it.assets, when (it.status) { "ENABLED" -> ChainStatus.Enabled; "ADDING" -> ChainStatus.Adding; else -> ChainStatus.Available }, it.receiveEnabled) })
     }
 
-    override suspend fun enableBiometricApproval(): AppResult<Unit> {
-        val sdk = when (val r = remote.session()) { is AppResult.Failure -> return r; is AppResult.Success -> r.value }
-        return when (val outcome = signer().enableBiometrics(sdk.toDomain())) {
+    override suspend fun enableBiometricApproval(): AppResult<Unit> = enableBiometricApproval(SignSubject.Personal)
+
+    override suspend fun enableBiometricApproval(subject: SignSubject): AppResult<Unit> {
+        val sdk = when (val r = remote.session(subject.walletId)) { is AppResult.Failure -> return r; is AppResult.Success -> r.value }
+        val session = sdk.toDomain(subject.copy(purpose = SignPurpose.EnableBiometrics))
+        return when (val outcome = signing.withLock { signer().enableBiometrics(session) }) {
             SignOutcome.Done -> AppResult.Success(Unit)
             else -> AppResult.Failure(outcome.toError())
         }
     }
 
-    private var addMissingKey: String? = null
+    private val addMissingKeys = mutableMapOf<String?, String>()
 
-    override suspend fun addMissingChains(): AppResult<Unit> {
-        val key = addMissingKey ?: newIdempotencyKey().also { addMissingKey = it }
-        val added = when (val r = remote.addMissingChains(key)) { is AppResult.Failure -> return r; is AppResult.Success -> r.value.chains }
+    override suspend fun addMissingChains(): AppResult<Unit> = addMissingChains(SignSubject.Personal)
+
+    override suspend fun addMissingChains(subject: SignSubject): AppResult<Unit> {
+        val walletId = subject.walletId
+        val subjectForPin = subject.copy(purpose = SignPurpose.AddNetworks)
+        val key = addMissingKeys.getOrPut(walletId) { newIdempotencyKey() }
+        val added = when (val r = remote.addMissingChains(key, walletId)) { is AppResult.Failure -> return r; is AppResult.Success -> r.value.chains }
         // Networks that share a challenge carry the same id: each is run once, so the PIN is asked once per group.
         for (entry in added.filter { it.challengeId != null && it.sdk != null }.distinctBy { it.challengeId }) {
-            when (val outcome = signer().execute(entry.sdk!!.toDomain(), entry.challengeId!!)) {
+            when (val outcome = sign(entry.sdk!!.toDomain(subjectForPin), entry.challengeId!!)) {
                 SignOutcome.Done -> Unit
                 else -> { Diagnostics.note("wallet: add networks sign ${outcome.describe()}"); return AppResult.Failure(outcome.toError()) }
             }
         }
-        addMissingKey = null
+        addMissingKeys.remove(walletId)
         val wanted = added.map { it.blockchain }.toSet()
-        awaitStatus { w -> wanted.all { b -> w.chains.any { it.blockchain == b } } }
+        awaitStatus(walletId) { w -> wanted.all { b -> w.chains.any { it.blockchain == b } } }
         return AppResult.Success(Unit)
     }
 
@@ -174,7 +206,7 @@ class WalletRepositoryImpl(
         val challenge = added.challengeId
         val sdk = added.sdk
         if (challenge != null && sdk != null) {
-            when (val outcome = signer().execute(sdk.toDomain(), challenge)) {
+            when (val outcome = sign(sdk.toDomain(), challenge)) {
                 SignOutcome.Done -> Unit
                 else -> { Diagnostics.note("wallet: add $blockchain sign ${outcome.describe()}"); return AppResult.Failure(outcome.toError()) }
             }
@@ -196,9 +228,11 @@ class WalletRepositoryImpl(
     override suspend fun pay(request: PaymentRequest, idempotencyKey: String): AppResult<Transfer> {
         val body = PrepareTransferRequest(
             blockchain = request.blockchain,
-            to = PayeeRequest(userId = request.toUserId, address = request.toAddress),
+            to = PayeeRequest(userId = request.toUserId, address = request.toAddress, groupId = request.toGroupId),
             amount = AmountRequest(request.asset, request.amountMinor),
             chatId = request.chatId,
+            walletId = request.fromWalletId,
+            payoutRequestId = request.payoutRequestId,
         )
         val prepared = when (val r = remote.prepare(body, idempotencyKey)) { is AppResult.Failure -> return r; is AppResult.Success -> r.value }
         val now = nowMillis()
@@ -208,12 +242,15 @@ class WalletRepositoryImpl(
             amountMinor = prepared.amount.amountMinor, amount = prepared.amount.amount, feeMinor = prepared.fee?.amountMinor,
             chatId = request.chatId, txHash = null, failureReason = null, counterpartName = request.counterpartName, note = request.note,
             createdAt = now, updatedAt = now,
+            // A payout lives with the group wallet it leaves, not in the person's own list; a contribution leaves theirs.
+            walletId = request.fromWalletId, toGroupId = request.toGroupId, payoutRequestId = request.payoutRequestId,
+            fromGroupId = request.fromWalletId?.let { request.chatId },
         )
         dao.upsert(row)
         val challenge = prepared.challengeId
         val sdk = prepared.sdk
         if (challenge != null && sdk != null) {
-            when (val outcome = signer().execute(sdk.toDomain(), challenge)) {
+            when (val outcome = sign(sdk.toDomain(request.subject.copy(purpose = SignPurpose.Approve)), challenge)) {
                 SignOutcome.Done -> dao.upsert(row.copy(state = "SUBMITTED", updatedAt = nowMillis()))
                 SignOutcome.Cancelled -> { dao.upsert(row.copy(state = "EXPIRED", failureReason = "cancelled", updatedAt = nowMillis())); return AppResult.Failure(outcome.toError()) }
                 else -> return AppResult.Failure(outcome.toError())
@@ -222,6 +259,87 @@ class WalletRepositoryImpl(
         // The frames carry the rest; one read a moment later covers a socket that is not connected.
         val fresh = loadTransfer(prepared.transferId)
         return if (fresh is AppResult.Success) fresh else AppResult.Success(dao.transfer(prepared.transferId)!!.toDomain())
+    }
+
+    // ---- Group wallets (phase 2)
+
+    override val wallets: Flow<List<WalletListing>> = dao.observeList().map { row ->
+        row?.let { runCatching { json.decodeFromString(WalletsResponse.serializer(), it.json) }.getOrNull() }?.wallets.orEmpty().map { it.toDomain() }
+    }
+
+    override suspend fun refreshWallets(): AppResult<List<WalletListing>> = remote.wallets().map { r ->
+        dao.saveList(WalletListEntity(1, json.encodeToString(WalletsResponse.serializer(), r), nowMillis()))
+        r.wallets.map { it.toDomain() }
+    }
+
+    override fun walletOf(walletId: String?): Flow<Wallet?> =
+        if (walletId == null) wallet else dao.observeCached(walletId).map { row -> row?.let { decodeCached(it) } }
+
+    override suspend fun refreshWallet(walletId: String?): AppResult<Wallet> {
+        if (walletId == null) return refresh()
+        return remote.wallet(currency(), walletId).map { response ->
+            val at = nowMillis()
+            dao.saveCached(WalletCacheEntity(walletId, json.encodeToString(WalletResponse.serializer(), response), at))
+            response.toDomain(at)
+        }
+    }
+
+    override fun activity(walletId: String): Flow<List<Transfer>> =
+        combine(dao.observeActivity(walletId), dao.observeTransfersOf(walletId)) { history, signedHere ->
+            val known = history.mapNotNull { it.transferId }.toSet()
+            (history.map { it.toDomain() } + signedHere.filter { it.transferId !in known }.map { it.toDomain() }).sortedByDescending { it.createdAt }
+        }
+
+    override suspend fun refreshActivity(walletId: String): AppResult<Unit> =
+        remote.transactions(limit = HistoryPage, walletId = walletId).map { page -> dao.saveActivity(page.transactions.map { it.toActivity(walletId) }) }
+
+    override suspend fun groupWallet(chatId: String): AppResult<GroupWallet> = remote.groupWallet(chatId).map { it.toDomain() }
+
+    private val setupKeys = mutableMapOf<String, String>()
+
+    override suspend fun startGroupWallet(chatId: String, name: String): AppResult<GroupWallet> {
+        val key = setupKeys.getOrPut(chatId) { newIdempotencyKey() }
+        val started = when (val r = remote.setUpGroupWallet(chatId, key)) {
+            is AppResult.Failure -> {
+                Diagnostics.note("wallet: group set-up failed (${(r.error as? AppError.Api)?.code ?: r.error::class.simpleName})")
+                // Already active (a second phone finished it, or a retry after the answer was lost): nothing to sign.
+                if ((r.error as? AppError.Api)?.code == "wallet.already_exists") { setupKeys.remove(chatId); return groupWallet(chatId) }
+                return r
+            }
+            is AppResult.Success -> r.value
+        }
+        started.challengeId?.let { challenge ->
+            val subject = SignSubject.group(started.walletId, name, SignPurpose.SetPin)
+            when (val outcome = sign(started.sdk.toDomain(subject), challenge)) {
+                SignOutcome.Done -> Unit
+                else -> { Diagnostics.note("wallet: group PIN ${outcome.describe()}"); setupKeys.remove(chatId); return AppResult.Failure(outcome.toError()) }
+            }
+        }
+        // A new key next time: W14 again while it is setting up gives a fresh challenge (GW6b); it must not replay this one.
+        setupKeys.remove(chatId)
+        val listing = WalletListing(started.walletId, WalletOwner(WalletOwnerType.Group, null, chatId, ""), walletStatus(started.status), true, emptyList())
+        return AppResult.Success(GroupWallet(chatId, walletStatus(started.status), listing))
+    }
+
+    override suspend fun awaitGroupWallet(chatId: String): AppResult<GroupWallet> {
+        var last: AppResult<GroupWallet> = AppResult.Failure(AppError.Network)
+        withTimeoutOrNull(AwaitMillis) {
+            while (true) {
+                val seen = groupWallet(chatId)
+                last = seen
+                if (seen is AppResult.Success && seen.value.status == WalletStatus.Active) return@withTimeoutOrNull
+                // An answer that says it can't be (not in the group, not found) ends the wait at once.
+                if (seen is AppResult.Failure && seen.error is AppError.Api) return@withTimeoutOrNull
+                val tick = ready.value
+                try { withTimeoutOrNull(PollMillis) { ready.collect { if (it != tick) throw ReadyArrived } } } catch (e: ReadyArrived) { }
+            }
+        }
+        val done = last
+        if (done is AppResult.Success) {
+            done.value.wallet?.walletId?.let { refreshWallet(it) }
+            refreshWallets()
+        }
+        return done
     }
 
     override suspend fun loadTransfer(transferId: String): AppResult<Transfer> = remote.transfer(transferId).map { dto ->
@@ -236,13 +354,22 @@ class WalletRepositoryImpl(
         when (type) {
             "transfer.updated" -> {
                 val id = str("transferId") ?: return
+                // A group wallet's frames go to its signer with `walletId`; null is the person's own wallet.
+                val walletId = str("walletId")
                 val existing = dao.transfer(id)
-                if (existing == null) { loadTransfer(id); return }
+                if (existing == null) {
+                    loadTransfer(id)
+                    if (walletId != null) dao.transfer(id)?.let { dao.upsert(it.copy(walletId = walletId)) }
+                    return
+                }
                 dao.upsert(existing.copy(state = str("state") ?: existing.state, txHash = str("txHash") ?: existing.txHash, failureReason = str("failureReason") ?: existing.failureReason, updatedAt = nowMillis()))
-                if (str("state") == "CONFIRMED" || str("state") == "FAILED") refresh()
+                if (str("state") == "CONFIRMED" || str("state") == "FAILED") { refreshWallet(walletId); if (walletId != null) refreshActivity(walletId) }
             }
             "payment.received" -> {
                 val id = str("transactionId") ?: return
+                // Money into a group wallet: its history and balance, not the person's own list.
+                val groupWallet = str("walletId")
+                if (groupWallet != null) { refreshWallet(groupWallet); refreshActivity(groupWallet); return }
                 // Heard once per payment, even if the frame is replayed after a reconnect.
                 if (dao.transfer(id) == null) onMoneyReceived()
                 val amount = data?.get("amount")?.jsonObject
@@ -258,11 +385,19 @@ class WalletRepositoryImpl(
                 )
                 refresh()
             }
-            "wallet.ready" -> { ready.value++; refresh() }
+            "wallet.ready" -> {
+                ready.value++
+                val walletId = str("walletId")
+                if (walletId == null) refresh() else { refreshWallet(walletId); refreshWallets() }
+            }
             "setup.requested" -> _setupRequestedBy.value = str("fromName") ?: "Someone"
             else -> Diagnostics.note("wallet: frame $type ignored")
         }
     }
+
+    private fun decodeCached(row: WalletCacheEntity): Wallet? = try {
+        json.decodeFromString(WalletResponse.serializer(), row.json).toDomain(row.fetchedAt)
+    } catch (e: Exception) { null }
 
     private fun decode(row: WalletSnapshotEntity): Wallet? = try {
         json.decodeFromString(WalletResponse.serializer(), row.json).toDomain(row.fetchedAt)
@@ -281,9 +416,44 @@ internal fun WalletResponse.toDomain(fetchedAt: Long) = Wallet(
     fiat = fiat?.let { FiatValue(it.currency, it.amount, it.rate, it.asOf, it.partial) },
     holdUntil = hold?.until,
     fetchedAt = fetchedAt,
+    walletId = walletId,
+    owner = owner?.toDomain(),
+    canSign = canSign,
 )
 
-internal fun SdkDto.toDomain() = SdkSession(appId, userToken, encryptionKey, expiresAt)
+internal fun SdkDto.toDomain(subject: SignSubject = SignSubject.Personal) = SdkSession(appId, userToken, encryptionKey, expiresAt, subject)
+
+internal fun walletStatus(status: String) = when (status) { "ACTIVE" -> WalletStatus.Active; "SETTING_UP" -> WalletStatus.SettingUp; else -> WalletStatus.None }
+
+internal fun WalletOwnerDto.toDomain() = WalletOwner(
+    type = when (type) { "GROUP" -> WalletOwnerType.Group; "SPACE" -> WalletOwnerType.Space; else -> WalletOwnerType.Person },
+    userId = userId, chatId = chatId, signerUserId = signerUserId,
+)
+
+internal fun WalletListingDto.toDomain() = WalletListing(walletId, owner.toDomain(), walletStatus(status), canSign, blockchains)
+
+internal fun GroupWalletResponse.toDomain() = GroupWallet(chatId, walletStatus(status), wallet?.toDomain())
+
+internal fun TransactionDto.toActivity(walletId: String): WalletActivityEntity = WalletActivityEntity(
+    walletId = walletId, rowId = id, transferId = transferId, direction = direction, state = state, blockchain = blockchain,
+    asset = amount.asset, amountMinor = amount.amountMinor, amount = amount.amount,
+    counterpartName = counterparty?.displayName ?: counterparty?.handle?.let { "@$it" }, counterpartHandle = counterparty?.handle,
+    counterpartAvatar = counterparty?.avatarUrl, counterpartUserId = counterparty?.userId, counterpartAddress = counterparty?.address,
+    counterpartGroupId = counterparty?.groupId, chatId = chatId, txHash = txHash, occurredAt = isoMillis(occurredAt) ?: nowMillis(),
+)
+
+internal fun WalletActivityEntity.toDomain(): Transfer {
+    val incoming = direction == "IN"
+    return Transfer(
+        transferId = transferId ?: rowId, direction = if (incoming) TransferDirection.In else TransferDirection.Out,
+        state = when (state) { "AWAITING_SIGNATURE" -> TransferState.AwaitingSignature; "SUBMITTED" -> TransferState.Submitted; "CONFIRMED" -> TransferState.Confirmed; "FAILED" -> TransferState.Failed; else -> TransferState.Expired },
+        blockchain = blockchain, from = if (incoming) counterpartAddress.orEmpty() else "", toUserId = if (incoming) null else counterpartUserId,
+        toAddress = if (incoming) "" else counterpartAddress.orEmpty(), amount = Amount(asset, amountMinor, amount), fee = null, chatId = chatId,
+        txHash = txHash, failureReason = null, counterpartName = counterpartName, note = null, createdAt = occurredAt, updatedAt = occurredAt,
+        counterpartHandle = counterpartHandle, counterpartAvatar = counterpartAvatar, walletId = walletId, counterpartGroupId = counterpartGroupId,
+    )
+}
+
 
 /** One page of history on each refresh: the Recent list shows five, the Activity screen more. */
 private const val HistoryPage = 50
@@ -310,6 +480,8 @@ internal fun TransferResponse.toEntity(existing: TransferEntity?): TransferEntit
         counterpartName = existing?.counterpartName, note = existing?.note,
         createdAt = existing?.createdAt ?: createdAt?.let { isoMillis(it) } ?: now, updatedAt = updatedAt?.let { isoMillis(it) } ?: now,
         counterpartHandle = existing?.counterpartHandle, counterpartAvatar = existing?.counterpartAvatar,
+        walletId = existing?.walletId, fromGroupId = fromGroupId ?: existing?.fromGroupId, toGroupId = toGroupId ?: existing?.toGroupId,
+        payoutRequestId = payoutRequestId ?: existing?.payoutRequestId,
     )
 }
 
@@ -327,6 +499,7 @@ internal fun TransactionDto.toEntity(key: String, existing: TransferEntity?): Tr
         counterpartName = party?.displayName ?: existing?.counterpartName ?: party?.handle?.let { "@$it" }, note = existing?.note,
         createdAt = existing?.createdAt ?: at, updatedAt = maxOf(existing?.updatedAt ?: 0L, at),
         counterpartHandle = party?.handle ?: existing?.counterpartHandle, counterpartAvatar = party?.avatarUrl ?: existing?.counterpartAvatar,
+        walletId = existing?.walletId, fromGroupId = existing?.fromGroupId, toGroupId = party?.groupId ?: existing?.toGroupId, payoutRequestId = existing?.payoutRequestId,
     )
 }
 
@@ -340,5 +513,6 @@ internal fun TransferEntity.toDomain() = Transfer(
     amount = Amount(asset, amountMinor, amount), fee = feeMinor?.let { Amount(asset, it, "") },
     chatId = chatId, txHash = txHash, failureReason = failureReason, counterpartName = counterpartName, note = note,
     createdAt = createdAt, updatedAt = updatedAt, counterpartHandle = counterpartHandle, counterpartAvatar = counterpartAvatar,
+    walletId = walletId, fromGroupId = fromGroupId, toGroupId = toGroupId, payoutRequestId = payoutRequestId,
 )
 

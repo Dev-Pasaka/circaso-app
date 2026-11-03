@@ -9,7 +9,18 @@ import kotlinx.serialization.Serializable
 @Serializable data class ChainDto(val blockchain: String, val address: String, val state: String, val assets: List<AssetDto> = emptyList(), val receiveEnabled: Boolean = true)
 @Serializable data class FiatDto(val currency: String, val amount: String, val rate: String, val asOf: String, val partial: Boolean = false)
 @Serializable data class HoldDto(val until: String)
-@Serializable data class WalletResponse(val status: String, val chains: List<ChainDto> = emptyList(), val totals: List<AssetTotalDto> = emptyList(), val fiat: FiatDto? = null, val hold: HoldDto? = null)
+@Serializable data class WalletResponse(
+    val status: String, val chains: List<ChainDto> = emptyList(), val totals: List<AssetTotalDto> = emptyList(), val fiat: FiatDto? = null, val hold: HoldDto? = null,
+    // Phase 2 (PR #28): which wallet, whose, and whether you sign for it. Absent from an older server.
+    val walletId: String? = null, val owner: WalletOwnerDto? = null, val canSign: Boolean = true,
+)
+
+// Group wallets (phase 2, guide "Group wallets", W14–W16).
+@Serializable data class WalletOwnerDto(val type: String, val userId: String? = null, val chatId: String? = null, val signerUserId: String)
+@Serializable data class WalletListingDto(val walletId: String, val owner: WalletOwnerDto, val status: String, val canSign: Boolean = false, val blockchains: List<String> = emptyList())
+@Serializable data class WalletsResponse(val wallets: List<WalletListingDto> = emptyList())
+@Serializable data class GroupWalletResponse(val chatId: String, val status: String, val wallet: WalletListingDto? = null)
+@Serializable data class GroupWalletSetupResponse(val walletId: String, val chatId: String, val status: String, val challengeId: String? = null, val sdk: SdkDto)
 
 @Serializable data class SdkDto(val appId: String, val userToken: String, val encryptionKey: String, val expiresAt: String)
 @Serializable data class CreateWalletResponse(val status: String, val challengeId: String? = null, val sdk: SdkDto)
@@ -22,17 +33,24 @@ import kotlinx.serialization.Serializable
 
 @Serializable data class AmountDto(val asset: String, val amountMinor: String, val amount: String)
 @Serializable data class AmountRequest(val asset: String, val amountMinor: String)
-@Serializable data class PayeeRequest(val userId: String? = null, val address: String? = null)
+@Serializable data class PayeeRequest(val userId: String? = null, val address: String? = null, val groupId: String? = null)
 @Serializable data class PayeeDto(val userId: String? = null, val address: String)
-@Serializable data class PrepareTransferRequest(val blockchain: String, val to: PayeeRequest, val amount: AmountRequest, val chatId: String? = null)
+@Serializable data class PrepareTransferRequest(
+    val blockchain: String, val to: PayeeRequest, val amount: AmountRequest, val chatId: String? = null,
+    /** Pay from this group wallet (its signer only); null for your own. Never sent unless the server has group wallets. */
+    val walletId: String? = null,
+    /** From a group wallet: the approved payout (CH4/CH5) this pays, same payee and amount. */
+    val payoutRequestId: String? = null,
+)
 @Serializable data class PrepareTransferResponse(
     val transferId: String, val state: String, val blockchain: String, val amount: AmountDto, val challengeId: String? = null, val sdk: SdkDto? = null,
-    val fee: AmountDto? = null, val expiresAt: String,
+    val fee: AmountDto? = null, val expiresAt: String, val walletId: String? = null,
 )
 @Serializable data class TransferResponse(
     val transferId: String, val direction: String, val state: String, val blockchain: String, val from: String, val to: PayeeDto, val amount: AmountDto,
     val fee: AmountDto? = null, val chatId: String? = null, val origin: String? = null, val txHash: String? = null, val failureReason: String? = null,
     val createdAt: String? = null, val updatedAt: String? = null,
+    val fromGroupId: String? = null, val toGroupId: String? = null, val signerUserId: String? = null, val payoutRequestId: String? = null,
 )
 
 /** W6: the person's money in and out, newest first; [nextCursor] null on the last page. */
@@ -44,6 +62,8 @@ import kotlinx.serialization.Serializable
 )
 @Serializable data class CounterpartyDto(
     val userId: String? = null, val displayName: String? = null, val handle: String? = null, val avatarUrl: String? = null, val address: String? = null,
+    /** The other side is a group's wallet: name it from the group on the phone. */
+    val groupId: String? = null,
 )
 
 @Serializable data class RecipientResponse(val userId: String, val status: String, val canReceive: Boolean, val blockchains: List<String> = emptyList())

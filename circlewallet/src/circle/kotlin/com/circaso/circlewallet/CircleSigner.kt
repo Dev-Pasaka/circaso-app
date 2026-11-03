@@ -53,10 +53,17 @@ private class CircleWalletSigner(private val context: Context, private val curre
         configuredAppId = appId
     }
 
+    /** Names the wallet on Circle's screens for this call (see [CircasoPinTexts]). */
+    private fun nameWallet(session: SdkSession) {
+        CircasoPinTexts.subject = session.subject
+        WalletSdk.setLayoutProvider(CircasoPinTexts(context))
+    }
+
     override suspend fun enableBiometrics(session: SdkSession): SignOutcome = withContext(Dispatchers.Main) {
         val activity = currentActivity() ?: return@withContext SignOutcome.Failed("no_activity", "Nothing to show the PIN screen on.")
         try {
             configure(session.appId)
+            nameWallet(session)
         } catch (e: Throwable) {
             return@withContext SignOutcome.Failed("init_failed", e.message ?: "The PIN screen could not start.")
         }
@@ -85,6 +92,7 @@ private class CircleWalletSigner(private val context: Context, private val curre
         val activity = currentActivity() ?: return@withContext SignOutcome.Failed("no_activity", "Nothing to show the PIN screen on.")
         try {
             configure(session.appId)
+            nameWallet(session)
         } catch (e: Throwable) {
             return@withContext SignOutcome.Failed("init_failed", e.message ?: "The signing screen could not start.")
         }
@@ -94,7 +102,7 @@ private class CircleWalletSigner(private val context: Context, private val curre
                 object : Callback<ExecuteResult> {
                     override fun onResult(result: ExecuteResult) { if (continuation.isActive) continuation.resume(SignOutcome.Done) }
                     override fun onError(error: Throwable): Boolean {
-                        noteBiometrics((error as? ApiError)?.code?.name)
+                        noteBiometrics((error as? ApiError)?.code?.name, session.subject.walletId)
                         val outcome = if (error is ApiError && error.code == ApiError.ErrorCode.userCanceled) SignOutcome.Cancelled
                         else SignOutcome.Failed((error as? ApiError)?.code?.name ?: "sdk", error.message ?: "Signing failed.")
                         if (continuation.isActive) continuation.resume(outcome)
@@ -103,7 +111,7 @@ private class CircleWalletSigner(private val context: Context, private val curre
                     // A biometrics warning (skipped, locked out) can come with the signed result or without one: only a
                     // result means the challenge was signed. Without one it is a failure the person can retry with the PIN.
                     override fun onWarning(warning: ExecuteWarning, result: ExecuteResult?): Boolean {
-                        noteBiometrics(warning.name)
+                        noteBiometrics(warning.name, session.subject.walletId)
                         val outcome = if (result != null) SignOutcome.Done else SignOutcome.Failed(warning.name, warning.warningString ?: "Signing didn't finish.")
                         if (continuation.isActive) continuation.resume(outcome)
                         return false
@@ -113,9 +121,12 @@ private class CircleWalletSigner(private val context: Context, private val curre
         }
     }
 
-    /** Lockouts pass on their own; these mean the biometric key is gone or switched off until it's set up again. */
-    private fun noteBiometrics(code: String?) {
-        if (code in BiometricsGone) WalletSignerBridge.reportBiometricsLost()
+    /**
+     * Lockouts pass on their own; these mean the biometric key is gone or switched off until it's set up again, for
+     * the wallet (Circle user) this call was for only: the others keep theirs (GW8b).
+     */
+    private fun noteBiometrics(code: String?, walletId: String?) {
+        if (code in BiometricsGone) WalletSignerBridge.reportBiometricsLost(walletId)
     }
 
     private companion object {

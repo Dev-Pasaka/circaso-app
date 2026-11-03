@@ -48,6 +48,43 @@ interface WalletRepository {
 
     /** A `wallet` realtime frame. */
     suspend fun onFrame(type: String, data: kotlinx.serialization.json.JsonObject?)
+
+    // ---- Group wallets (phase 2, guide "Group wallets", W14–W16 and `?walletId=`). All online-only; reads from Room.
+
+    /** W16 from the phone's copy: the person's own first, then their groups' (the ones they sign for first). */
+    val wallets: Flow<List<WalletListing>>
+
+    suspend fun refreshWallets(): AppResult<List<WalletListing>>
+
+    /** One wallet from the phone's copy; [walletId] null is the person's own. */
+    fun walletOf(walletId: String?): Flow<Wallet?>
+
+    /** W1 for one wallet (`?walletId=`); null is the person's own. */
+    suspend fun refreshWallet(walletId: String?): AppResult<Wallet>
+
+    /** A group wallet's payments, newest first: W6 `?walletId=` plus what this phone signed from it. */
+    fun activity(walletId: String): Flow<List<Transfer>>
+
+    suspend fun refreshActivity(walletId: String): AppResult<Unit>
+
+    /** W15: a group's wallet as the server's rows say (members). */
+    suspend fun groupWallet(chatId: String): AppResult<GroupWallet>
+
+    /**
+     * W14 then the Circle SDK with **the group wallet's own session**: the owner sets the group wallet's PIN on
+     * Circle's screens, which name the group ([name]; the server never knows it). Calling again while it is still
+     * setting up gives a fresh challenge (Finish Wallet Setup); null challenge means the PIN is already set.
+     */
+    suspend fun startGroupWallet(chatId: String, name: String): AppResult<GroupWallet>
+
+    /** Polls W15 (and listens for `wallet.ready`) until the group's wallet is active, or a minute passes. */
+    suspend fun awaitGroupWallet(chatId: String): AppResult<GroupWallet>
+
+    /** Fingerprint / Face ID for one wallet: each wallet is its own Circle user, so each has its own setting. */
+    suspend fun enableBiometricApproval(subject: SignSubject): AppResult<Unit>
+
+    /** W13 for one wallet: puts it on every supported network (its own PIN, named on the screen). */
+    suspend fun addMissingChains(subject: SignSubject): AppResult<Unit>
 }
 
 data class PaymentRequest(
@@ -60,4 +97,12 @@ data class PaymentRequest(
     /** Shown on the card and kept with the phone's copy; never sent to the wallet API. */
     val note: String? = null,
     val counterpartName: String? = null,
+    /** Pay into this group's wallet (`to: { groupId }`): a contribution when [chatId] is the same group. */
+    val toGroupId: String? = null,
+    /** Pay from this group wallet (its signer only); null is the person's own wallet. */
+    val fromWalletId: String? = null,
+    /** From a group wallet: the approved payout request this pays (same payee, same amount). */
+    val payoutRequestId: String? = null,
+    /** Which wallet signs, as the PIN screen names it. */
+    val subject: SignSubject = SignSubject.Personal,
 )

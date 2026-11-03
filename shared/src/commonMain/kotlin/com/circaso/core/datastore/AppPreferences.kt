@@ -49,7 +49,7 @@ class AppPreferences(private val store: DataStore<Preferences>) : com.circaso.co
 
     override suspend fun clear() {
         store.edit { prefs ->
-            prefs.asMap().keys.filter { it.name.startsWith("rt.seq.") || it.name == "flag.$BiometricApproval" }.forEach { prefs.remove(it) }
+            prefs.asMap().keys.filter { it.name.startsWith("rt.seq.") || it.name == "flag.$BiometricApproval" || it.name.startsWith("flag.$BiometricApproval.") }.forEach { prefs.remove(it) }
         }
     }
 
@@ -72,6 +72,19 @@ class AppPreferences(private val store: DataStore<Preferences>) : com.circaso.co
     fun flag(name: String): Flow<Boolean> = store.data.map { it[booleanPreferencesKey("flag.$name")] ?: false }
     suspend fun setFlag(name: String, value: Boolean) { store.edit { it[booleanPreferencesKey("flag.$name")] = value } }
 
+    /**
+     * Group wallets on or off on this phone, over the build's default (debug on, release off); null follows the build.
+     * Set from the `-group-wallets=on|off|default` launch argument in debug builds. See `GroupWalletsFlag`.
+     */
+    val groupWalletsOverride: Flow<Boolean?> = store.data.map { prefs -> prefs[stringPreferencesKey(GroupWalletsKey)]?.let { it == "on" } }
+    suspend fun setGroupWalletsOverride(value: String?) {
+        store.edit { if (value == "on" || value == "off") it[stringPreferencesKey(GroupWalletsKey)] = value else it.remove(stringPreferencesKey(GroupWalletsKey)) }
+    }
+
+    /** Fingerprint / Face ID approval for one wallet ([walletId] null: the personal wallet). Each wallet has its own. */
+    fun walletBiometrics(walletId: String?): Flow<Boolean> = flag(biometricFlag(walletId))
+    suspend fun setWalletBiometrics(walletId: String?, on: Boolean) = setFlag(biometricFlag(walletId), on)
+
     suspend fun setDark(value: Boolean?) = store.edit { prefs ->
         if (value == null) prefs.remove(darkKey) else prefs[darkKey] = value.toString()
     }
@@ -86,5 +99,10 @@ class AppPreferences(private val store: DataStore<Preferences>) : com.circaso.co
 
         /** The coins sound for money received is off (You → Money sound); it is on unless turned off. */
         const val MoneySoundOff = "money_sound_off"
+
+        private const val GroupWalletsKey = "flag.override.group_wallets"
+
+        /** The flag that says a wallet approves with biometrics: the personal one keeps its old name. */
+        fun biometricFlag(walletId: String?) = if (walletId == null) BiometricApproval else "$BiometricApproval.$walletId"
     }
 }

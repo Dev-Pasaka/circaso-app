@@ -5,6 +5,7 @@ import com.circaso.core.network.CircasoApi
 import com.circaso.core.network.call
 import com.circaso.core.network.idempotencyKey
 import com.circaso.core.network.newIdempotencyKey
+import com.circaso.core.network.NoBody
 import com.circaso.feature.wallet.data.remote.AmountDto
 import io.ktor.client.request.parameter
 import io.ktor.client.request.setBody
@@ -18,7 +19,8 @@ import kotlinx.serialization.Serializable
 
 @Serializable data class ChamaAmountRequest(val asset: String = "USDC", val amountMinor: String)
 @Serializable data class SetGoalRequest(val name: String, val target: ChamaAmountRequest, val deadline: String? = null, val treasurerUserId: String? = null)
-@Serializable data class GoalDto(val chatId: String, val name: String, val target: AmountDto, val deadline: String? = null, val treasurerUserId: String, val createdBy: String, val updatedAt: String, val version: Long)
+/** [treasurerUserId] is the group wallet's signer since phase 2, null on a target that is still waiting for its wallet. */
+@Serializable data class GoalDto(val chatId: String, val name: String, val target: AmountDto, val deadline: String? = null, val treasurerUserId: String? = null, val createdBy: String, val updatedAt: String, val version: Long)
 @Serializable data class ContributorDto(val userId: String, val contributed: AmountDto)
 @Serializable data class ApprovalDto(val userId: String, val decision: String, val at: String)
 @Serializable data class RequestDto(
@@ -36,6 +38,17 @@ import kotlinx.serialization.Serializable
 @Serializable data class CreateRequestRequest(val to: ChamaPayeeRequest, val amount: ChamaAmountRequest, val note: String? = null)
 @Serializable data class AttachPaymentRequest(val transferId: String)
 
+// Phase 2, group wallets (guide "Group money routes", CH7–CH9).
+@Serializable data class GroupWalletDto(val walletId: String, val status: String, val signerUserId: String)
+/** CH7: a group's money, target or not. [wallet] null means no money actions in the group at all. */
+@Serializable data class GroupMoneyResponse(
+    val chatId: String, val wallet: GroupWalletDto? = null, val approvalPolicy: String = "TWO_ADMINS", val goal: GoalDto? = null, val memberCount: Int = 0,
+    val contributed: AmountDto, val myContribution: AmountDto, val contributors: List<ContributorDto> = emptyList(), val paidOut: AmountDto,
+    val openRequests: List<RequestDto> = emptyList(), val isAdmin: Boolean = false, val isOwner: Boolean = false, val isSigner: Boolean = false,
+)
+@Serializable data class GroupSettingsRequest(val approvalPolicy: String)
+@Serializable data class GroupSettingsDto(val chatId: String, val approvalPolicy: String, val updatedAt: String? = null)
+
 interface ChamaRemote {
     suspend fun chama(chatId: String): AppResult<ChamaResponse>
     suspend fun setGoal(chatId: String, request: SetGoalRequest): AppResult<GoalDto>
@@ -43,6 +56,15 @@ interface ChamaRemote {
     suspend fun createRequest(chatId: String, request: CreateRequestRequest, idempotencyKey: String): AppResult<RequestDto>
     suspend fun decide(requestId: String, approve: Boolean): AppResult<RequestDto>
     suspend fun attachPayment(requestId: String, transferId: String): AppResult<RequestDto>
+
+    /** CH7. */
+    suspend fun money(chatId: String): AppResult<GroupMoneyResponse>
+
+    /** CH8 (admins). */
+    suspend fun removeGoal(chatId: String): AppResult<NoBody>
+
+    /** CH9 (the group's owner). */
+    suspend fun setSettings(chatId: String, request: GroupSettingsRequest, idempotencyKey: String): AppResult<GroupSettingsDto>
 }
 
 class KtorChamaRemote(private val api: CircasoApi) : ChamaRemote {
@@ -83,5 +105,21 @@ class KtorChamaRemote(private val api: CircasoApi) : ChamaRemote {
         idempotencyKey(newIdempotencyKey())
         contentType(ContentType.Application.Json)
         setBody(AttachPaymentRequest(transferId))
+    }
+
+    override suspend fun money(chatId: String) = api.call<GroupMoneyResponse> { method = HttpMethod.Get; url("/v1/chama/chats/$chatId/money") }
+
+    override suspend fun removeGoal(chatId: String) = api.call<NoBody> {
+        method = HttpMethod.Delete
+        url("/v1/chama/chats/$chatId/goal")
+        idempotencyKey(newIdempotencyKey())
+    }
+
+    override suspend fun setSettings(chatId: String, request: GroupSettingsRequest, idempotencyKey: String) = api.call<GroupSettingsDto> {
+        method = HttpMethod.Put
+        url("/v1/chama/chats/$chatId/settings")
+        idempotencyKey(idempotencyKey)
+        contentType(ContentType.Application.Json)
+        setBody(request)
     }
 }

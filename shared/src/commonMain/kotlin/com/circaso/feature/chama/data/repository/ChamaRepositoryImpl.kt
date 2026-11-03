@@ -23,6 +23,12 @@ import com.circaso.feature.chama.domain.Contributor
 import com.circaso.feature.chama.domain.LedgerDirection
 import com.circaso.feature.chama.domain.LedgerEntry
 import com.circaso.feature.chama.domain.RequestState
+import com.circaso.feature.chama.domain.ApprovalPolicy
+import com.circaso.feature.chama.domain.GroupMoney
+import com.circaso.feature.chama.domain.GroupWalletRef
+import com.circaso.feature.chama.data.local.GroupMoneyEntity
+import com.circaso.feature.chama.data.remote.GroupMoneyResponse
+import com.circaso.feature.chama.data.remote.GroupSettingsRequest
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 import kotlinx.serialization.json.Json
@@ -44,6 +50,8 @@ class ChamaRepositoryImpl(
     private val links: PendingLinks,
     /** The app's scope: a link in flight outlives the screen that started it. */
     private val scope: CoroutineScope,
+    /** Group wallets are on (phase 2): frames reload the group's money (CH7) instead of the treasurer-model goal (CH1). */
+    private val groupWallets: () -> Boolean = { false },
 ) : ChamaRepository {
     private val linking = Mutex()
 
@@ -107,14 +115,44 @@ class ChamaRepositoryImpl(
     override suspend fun onFrame(type: String, data: JsonObject?) {
         val chatId = data?.get("chatId")?.jsonPrimitive?.contentOrNull ?: return
         when (type) {
-            "goal.updated", "contribution.added", "request.updated" -> { refresh(chatId); retryPendingLinks() }
+            "goal.updated", "contribution.added", "request.updated" -> {
+                if (groupWallets()) refreshMoney(chatId) else { refresh(chatId); retryPendingLinks() }
+            }
+            // Phase 2: who approves payouts changed, or the target was removed.
+            "group.updated" -> if (groupWallets()) refreshMoney(chatId)
         }
     }
+
+    override fun money(chatId: String): Flow<GroupMoney?> = dao.observeMoney(chatId).map { row ->
+        row?.let { runCatching { json.decodeFromString(GroupMoneyResponse.serializer(), it.json).toDomain(it.fetchedAt) }.getOrNull() }
+    }
+
+    override suspend fun refreshMoney(chatId: String): AppResult<GroupMoney> = remote.money(chatId).map { r ->
+        val at = nowMillis()
+        dao.saveMoney(GroupMoneyEntity(chatId, json.encodeToString(GroupMoneyResponse.serializer(), r), at))
+        r.toDomain(at)
+    }
+
+    override suspend fun setApprovalPolicy(chatId: String, policy: ApprovalPolicy, idempotencyKey: String): AppResult<ApprovalPolicy> =
+        remote.setSettings(chatId, GroupSettingsRequest(policy.wire), idempotencyKey).map { approvalPolicy(it.approvalPolicy) }.also { if (it is AppResult.Success) refreshMoney(chatId) }
+
+    override suspend fun removeGoal(chatId: String): AppResult<Unit> =
+        remote.removeGoal(chatId).map { }.also { if (it is AppResult.Success) refreshMoney(chatId) }
 
     private fun decode(row: ChamaSnapshotEntity): Chama? = try { json.decodeFromString(ChamaResponse.serializer(), row.json).toDomain(row.fetchedAt) } catch (e: Exception) { null }
 }
 
 internal fun GoalDto.toDomain() = ChamaGoal(chatId, name, target.amountMinor, deadline, treasurerUserId, version)
+
+internal val ApprovalPolicy.wire get() = if (this == ApprovalPolicy.AnyAdmin) "ANY_ADMIN" else "TWO_ADMINS"
+internal fun approvalPolicy(wire: String) = if (wire == "ANY_ADMIN") ApprovalPolicy.AnyAdmin else ApprovalPolicy.TwoAdmins
+
+internal fun GroupMoneyResponse.toDomain(fetchedAt: Long) = GroupMoney(
+    chatId = chatId, wallet = wallet?.let { GroupWalletRef(it.walletId, it.status == "ACTIVE", it.signerUserId) }, approvalPolicy = approvalPolicy(approvalPolicy),
+    goal = goal?.toDomain(), memberCount = memberCount, contributedMinor = contributed.amountMinor, myContributedMinor = myContribution.amountMinor,
+    contributors = contributors.map { Contributor(it.userId, it.contributed.amountMinor) }, paidOutMinor = paidOut.amountMinor,
+    openRequests = openRequests.map { it.toDomain() }, isAdmin = isAdmin, isOwner = isOwner, isSigner = isSigner, fetchedAt = fetchedAt,
+)
 
 internal fun RequestDto.toDomain() = ChamaRequest(
     requestId, chatId, requestedBy, payeeUserId, payeeAddress, payeeName, amount.amountMinor, note,

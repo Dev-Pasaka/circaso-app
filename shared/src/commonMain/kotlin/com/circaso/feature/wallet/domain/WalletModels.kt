@@ -10,7 +10,15 @@ data class Wallet(
     val holdUntil: String?,
     /** When this copy was read from the server (epoch ms); shown as "as of" when offline. */
     val fetchedAt: Long,
+    /** Which wallet (W1 `walletId`): the person's user id for their own, a group wallet's id otherwise; null from an older server. */
+    val walletId: String? = null,
+    /** Whose it is; null from an older server (then it is the person's own). */
+    val owner: WalletOwner? = null,
+    /** Whether this person signs for it (their own wallet, or a group wallet whose PIN they set). */
+    val canSign: Boolean = true,
 ) {
+    val isGroup get() = owner?.type == WalletOwnerType.Group
+
     /** The stablecoin total everything is priced in. */
     val usdc: AssetTotal? get() = totals.firstOrNull { it.symbol == Usdc }
     val chainsReceiving get() = chains.filter { it.receiveEnabled && it.state == "ACTIVE" }
@@ -63,6 +71,14 @@ data class Transfer(
     /** The other person's @handle (without the @) and photo when the payment was between two Circaso people. */
     val counterpartHandle: String? = null,
     val counterpartAvatar: String? = null,
+    /** The group wallet this row belongs to; null for the person's own. */
+    val walletId: String? = null,
+    /** The group whose wallet it left (a payout) or paid into (a contribution), from W5. */
+    val fromGroupId: String? = null,
+    val toGroupId: String? = null,
+    val payoutRequestId: String? = null,
+    /** The other side is a group's wallet (W6 `counterparty.groupId`): name it from the group. */
+    val counterpartGroupId: String? = null,
 ) {
     val outgoing get() = direction == TransferDirection.Out
     val settled get() = state == TransferState.Confirmed
@@ -73,8 +89,40 @@ enum class RecipientStatus { CanReceive, NoWallet, NoWalletOnChain }
 data class Recipient(val userId: String, val status: RecipientStatus, val blockchains: List<String>)
 enum class RemindOutcome { Sent, AlreadySent, HasWallet }
 
-/** What the Circle SDK needs to run a challenge; kept in memory only, never logged. */
-data class SdkSession(val appId: String, val userToken: String, val encryptionKey: String, val expiresAt: String)
+/**
+ * What the Circle SDK needs to run a challenge; kept in memory only, never logged. Each wallet is its own Circle user,
+ * so a session belongs to one wallet: [subject] says which, so the SDK module can name it on its screens and keep
+ * biometrics apart per wallet.
+ */
+data class SdkSession(val appId: String, val userToken: String, val encryptionKey: String, val expiresAt: String, val subject: SignSubject = SignSubject.Personal)
+
+/** Whose money a wallet holds (W1 / W16 `owner`). A group wallet's name is the group's sealed name: the phone supplies it. */
+enum class WalletOwnerType { Person, Group, Space }
+
+data class WalletOwner(val type: WalletOwnerType, val userId: String?, val chatId: String?, val signerUserId: String)
+
+/** One wallet the person can see (W15, W16). */
+data class WalletListing(val walletId: String, val owner: WalletOwner, val status: WalletStatus, val canSign: Boolean, val blockchains: List<String>) {
+    val personal get() = owner.type == WalletOwnerType.Person
+}
+
+/** W15: a group's wallet as the server's rows say (cheap to poll during set-up). */
+data class GroupWallet(val chatId: String, val status: WalletStatus, val wallet: WalletListing?)
+
+/**
+ * Which wallet a challenge signs for, as the person reads it on every PIN, biometric and review screen ("Approve
+ * from Kilimani Chama"). [walletId] null is the personal wallet. [name] comes from the phone (a group's name is sealed).
+ */
+data class SignSubject(val walletId: String?, val name: String?, val kind: WalletOwnerType = WalletOwnerType.Person, val purpose: SignPurpose = SignPurpose.Approve) {
+    val personal get() = walletId == null
+    companion object {
+        val Personal = SignSubject(null, null)
+        fun group(walletId: String, name: String, purpose: SignPurpose = SignPurpose.Approve) = SignSubject(walletId, name, WalletOwnerType.Group, purpose)
+    }
+}
+
+/** What the challenge does, so the PIN screen says the right thing ("Set a PIN for Kilimani Chama" vs "Approve from"). */
+enum class SignPurpose { SetPin, Approve, AddNetworks, EnableBiometrics }
 
 /** Whole-unit and smallest-unit arithmetic on decimal strings, so no amount ever goes through a float. */
 object MinorUnits {
