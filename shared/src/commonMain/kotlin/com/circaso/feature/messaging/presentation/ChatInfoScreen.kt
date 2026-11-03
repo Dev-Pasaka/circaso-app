@@ -51,6 +51,11 @@ import com.circaso.designsystem.theme.CircasoSizes
 import com.circaso.designsystem.theme.CircasoSpacing
 import com.circaso.designsystem.theme.CircasoTheme
 import com.circaso.feature.messaging.domain.MemberRole
+import com.circaso.feature.chama.presentation.ApprovalPolicyContent
+import com.circaso.feature.chama.presentation.ChangePinComingContent
+import com.circaso.feature.chama.presentation.GroupMoneyRows
+import com.circaso.feature.chama.presentation.LeaveBlockedContent
+import com.circaso.feature.chama.presentation.TargetNeedsWalletContent
 
 /** Members and roles (groups), or the safety number (direct chats). Not in the canvas yet; built from the D2 header's "Group info". */
 @Composable
@@ -65,6 +70,10 @@ fun ChatInfoScreen(
     onOpenLocation: (Message.Media) -> Unit = {},
     /** Back to the chat, at this message (a search result, a shared video). */
     onOpenMessage: (localId: Long) -> Unit = {},
+    /** Group wallets: set up (or finish) the group's wallet (GW2–GW5); [thenTarget] ends on the target form (GW7). */
+    onSetUpWallet: (thenTarget: Boolean) -> Unit = {},
+    /** Group wallets: add or change the target (GW7b). */
+    onTarget: () -> Unit = {},
 ) {
     var viewing by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf<ByteArray?>(null) }
     val state by viewModel.state.collectAsState()
@@ -138,6 +147,23 @@ fun ChatInfoScreen(
                 CircasoButton("Save", viewModel::onRenameConfirm, size = ButtonSize.Large, block = true, enabled = state.canChange && state.nameDraft.isNotBlank())
                 CircasoButton("Cancel", { viewModel.onRename(false) }, style = ButtonStyle.Plain, size = ButtonSize.Large, block = true)
             }
+            // Group wallets (GW7, CH9, §11.9, W8).
+            val sheet = state.moneySheet
+            CircasoSheet(visible = sheet == MoneySheet.TargetNeedsWallet, onDismiss = { viewModel.onMoneySheet(null) }, label = "A target needs a group wallet") {
+                TargetNeedsWalletContent(chat, onSetUp = { viewModel.onMoneySheet(null); onSetUpWallet(true) }, onNotNow = { viewModel.onMoneySheet(null) })
+            }
+            CircasoSheet(visible = sheet == MoneySheet.Approvals, onDismiss = { viewModel.onMoneySheet(null) }, label = "Who approves payouts") {
+                ApprovalPolicyContent(
+                    current = state.money.money?.approvalPolicy ?: com.circaso.feature.chama.domain.ApprovalPolicy.TwoAdmins, choice = state.policyChoice,
+                    busy = state.busy, online = state.online, onChoose = viewModel::onPolicyChoice, onSave = viewModel::onSavePolicy, onCancel = { viewModel.onMoneySheet(null) },
+                )
+            }
+            CircasoSheet(visible = sheet == MoneySheet.LeaveBlocked, onDismiss = { viewModel.onMoneySheet(null) }, label = "You can't leave yet") {
+                LeaveBlockedContent(chat, state.moneyBalanceText, onPayout = { viewModel.onMoneySheet(null); onGroupWallet() }, onClose = { viewModel.onMoneySheet(null) })
+            }
+            CircasoSheet(visible = sheet == MoneySheet.ChangePin, onDismiss = { viewModel.onMoneySheet(null) }, label = "Change PIN") {
+                ChangePinComingContent(chat?.title ?: "the group wallet", onClose = { viewModel.onMoneySheet(null) })
+            }
             CircasoSheet(visible = state.adding, onDismiss = { viewModel.onAdding(false) }, label = "Add members") {
                 BasicText("Add members", style = t.title2.copy(color = c.ink))
                 if (state.addable.isEmpty()) BasicText("Everyone from your contacts is already here.", style = t.body.copy(color = c.inkSecondary))
@@ -159,7 +185,7 @@ fun ChatInfoScreen(
                 Column(Modifier.fillMaxWidth().padding(vertical = CircasoSpacing.s6), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(CircasoSpacing.s2)) {
                     Avatar(chat?.title ?: "", size = CircasoSizes.avatarXl, imageUrl = chat?.avatarUrl)
                     BasicText(chat?.title ?: "", style = t.title1.copy(color = c.ink, textAlign = TextAlign.Center))
-                    if (state.isGroup) BasicText("${chat?.members?.size ?: 0} members", style = t.subhead.copy(color = c.inkSecondary))
+                    if (state.isGroup) BasicText("${chat?.members?.size ?: 0} members" + if (state.money.enabled && state.money.money?.hasWallet == true) " · Group wallet" else "", style = t.subhead.copy(color = c.inkSecondary))
                     else chat?.members?.firstOrNull { it.userId == chat.peerId }?.handle?.let { BasicText("@$it", style = t.body.copy(color = c.inkSecondary)) }
                 }
             }
@@ -183,8 +209,23 @@ fun ChatInfoScreen(
                     }
                     ListRow("Add members", onClick = if (state.canAdd) ({ viewModel.onAdding(true) }) else null)
                     RowDivider()
-                    // Designs D4 and D1: the shared goal lives behind the group; admins set it there, everyone can read it.
-                    ListRow("Group wallet", sub = if (state.amAdmin) "Goal, contributions and payments. Set or change the goal here." else "Goal, contributions and payments", trailing = { RowValueChevron(null) }, onClick = onGroupWallet)
+                    if (state.money.enabled) {
+                        // GW6–GW8b: the group's own wallet, its target and its security (group wallets, phase 2).
+                        Column {
+                            GroupMoneyRows(
+                                state.money, chat, state.myUserId, state.online, state.busy,
+                                com.circaso.feature.chama.presentation.GroupMoneyActions(
+                                    onSetUpWallet = onSetUpWallet, onOpenWallet = onGroupWallet, onTarget = onTarget,
+                                    onTargetNeedsWallet = { viewModel.onMoneySheet(MoneySheet.TargetNeedsWallet) },
+                                    onBiometrics = viewModel::onWalletBiometrics, onChangePin = { viewModel.onMoneySheet(MoneySheet.ChangePin) },
+                                    onApprovals = { viewModel.onMoneySheet(MoneySheet.Approvals) }, onRetry = viewModel::onRetryMoney,
+                                ),
+                            )
+                        }
+                    } else {
+                        // Designs D4 and D1: the shared goal lives behind the group; admins set it there, everyone can read it.
+                        ListRow("Group wallet", sub = if (state.amAdmin) "Goal, contributions and payments. Set or change the goal here." else "Goal, contributions and payments", trailing = { RowValueChevron(null) }, onClick = onGroupWallet)
+                    }
                     SectionHeader("Members", Modifier.padding(top = CircasoSpacing.s4))
                 }
                 items(chat?.members.orEmpty(), key = { it.userId }) { member ->

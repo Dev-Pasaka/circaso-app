@@ -17,7 +17,7 @@ import com.circaso.designsystem.platform.PlatformStyle
 import com.circaso.designsystem.theme.CircasoTheme
 
 /** Semantic icon names. Each is drawn per platform (chevron back on iOS, arrow back on Android). */
-enum class CircasoIcon { Back, Close, Check, Delete, Backspace, Offline, Clock, Chat, Wallet, Person, ChevronRight, Plus, Search, Send, Mic, MicOff, Speaker, Stop, Waveform, ArrowUp, ArrowDown, Bank, Eye, EyeOff, Copy, Share, Clipboard, Network, Money, Warning, Scan, Phone, Video, VideoOff, FlipCamera, Minimise, Pin, Play, Pause, Photo, Camera, Spaces, Flash, More, Lock, Heart, HeartFilled, People, VolumeOff, ChevronDown, Trash }
+enum class CircasoIcon { Back, Close, Check, Delete, Backspace, Offline, Clock, Chat, Wallet, Person, ChevronRight, Plus, Search, Send, Mic, MicOff, Speaker, Stop, Waveform, ArrowUp, ArrowDown, Bank, Eye, EyeOff, Copy, Share, Clipboard, Network, Money, Warning, Scan, Phone, Video, VideoOff, FlipCamera, Minimise, Pin, Play, Pause, Photo, Camera, Spaces, Flash, More, Lock, Heart, HeartFilled, People, VolumeOff, ChevronDown, Trash, Target, Fingerprint, FaceId }
 
 /** Strokes drawn on a 24x24 grid, same as the design's inline SVGs. */
 @Composable
@@ -97,6 +97,26 @@ fun CircasoIconImage(icon: CircasoIcon, tint: Color, modifier: Modifier = Modifi
                 }
                 CircasoIcon.VolumeOff -> { p.moveTo(4f, 9.5f); p.lineTo(8f, 9.5f); p.lineTo(13f, 5.5f); p.lineTo(13f, 18.5f); p.lineTo(8f, 14.5f); p.lineTo(4f, 14.5f); p.close(); p.moveTo(16.5f, 9.5f); p.lineTo(21.5f, 14.5f); p.moveTo(21.5f, 9.5f); p.lineTo(16.5f, 14.5f) }
                 CircasoIcon.ChevronDown -> { p.moveTo(7f, 10f); p.lineTo(12f, 15f); p.lineTo(17f, 10f) }
+                // The design's `target` (GW6): two rings and a centre mark.
+                CircasoIcon.Target -> { p.addOval(Rect(3.5f, 3.5f, 20.5f, 20.5f)); p.addOval(Rect(7.5f, 7.5f, 16.5f, 16.5f)); p.moveTo(12f, 11.5f); p.lineTo(12f, 12.5f) }
+                // The design's `fingerprint` (GW4, GW8): the ridges as arcs.
+                CircasoIcon.Fingerprint -> {
+                    p.moveTo(7.5f, 19.5f); p.cubicTo(9f, 17.5f, 9.5f, 15f, 9.5f, 12f); p.cubicTo(9.5f, 10.6f, 10.6f, 9.5f, 12f, 9.5f); p.cubicTo(13.4f, 9.5f, 14.5f, 10.6f, 14.5f, 12f); p.cubicTo(14.5f, 13.2f, 14.4f, 14.4f, 14.2f, 15.5f)
+                    p.moveTo(12f, 12f); p.cubicTo(12f, 15.5f, 11.2f, 18.3f, 9.5f, 20.5f)
+                    p.moveTo(5f, 16f); p.cubicTo(5.6f, 14.8f, 6f, 13.4f, 6f, 12f); p.cubicTo(6f, 8.7f, 8.7f, 6f, 12f, 6f); p.cubicTo(15.3f, 6f, 18f, 8.7f, 18f, 12f); p.cubicTo(18f, 14.6f, 17.6f, 17f, 16.8f, 19f)
+                    p.moveTo(4.5f, 9f); p.cubicTo(6.5f, 4.6f, 17.4f, 4.5f, 19.4f, 8.9f)
+                    p.moveTo(17.5f, 19.8f); p.lineTo(17.9f, 18.8f)
+                }
+                // The design's `faceid` (GW4b): corners, eyes, nose and smile.
+                CircasoIcon.FaceId -> {
+                    p.moveTo(4f, 8f); p.lineTo(4f, 6f); p.quadraticTo(4f, 4f, 6f, 4f); p.lineTo(8f, 4f)
+                    p.moveTo(16f, 4f); p.lineTo(18f, 4f); p.quadraticTo(20f, 4f, 20f, 6f); p.lineTo(20f, 8f)
+                    p.moveTo(20f, 16f); p.lineTo(20f, 18f); p.quadraticTo(20f, 20f, 18f, 20f); p.lineTo(16f, 20f)
+                    p.moveTo(8f, 20f); p.lineTo(6f, 20f); p.quadraticTo(4f, 20f, 4f, 18f); p.lineTo(4f, 16f)
+                    p.moveTo(9f, 9f); p.lineTo(9f, 10.5f); p.moveTo(15f, 9f); p.lineTo(15f, 10.5f)
+                    p.moveTo(12f, 9f); p.lineTo(12f, 13.5f); p.lineTo(11f, 13.5f)
+                    p.moveTo(9.5f, 16f); p.quadraticTo(12f, 17.8f, 14.5f, 16f)
+                }
                 CircasoIcon.Trash -> { p.moveTo(5f, 7f); p.lineTo(19f, 7f); p.moveTo(10f, 11f); p.lineTo(10f, 17f); p.moveTo(14f, 11f); p.lineTo(14f, 17f); p.moveTo(6.5f, 7f); p.lineTo(7.5f, 19.5f); p.lineTo(16.5f, 19.5f); p.lineTo(17.5f, 7f); p.moveTo(9.5f, 7f); p.lineTo(9.5f, 4.5f); p.lineTo(14.5f, 4.5f); p.lineTo(14.5f, 7f) }
                 CircasoIcon.Spaces -> {
                     p.addOval(Rect(7.2f, 7.2f, 16.8f, 16.8f))

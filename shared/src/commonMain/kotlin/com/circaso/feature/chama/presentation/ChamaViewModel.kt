@@ -63,7 +63,7 @@ data class ChamaUiState(
     /** The server said this group has no goal. Until then, an empty copy only means it hasn't been read yet. */
     val noGoal: Boolean = false,
 ) {
-    val memberName: (String) -> String get() = { id -> chat?.members?.firstOrNull { it.userId == id }?.displayName ?: "Someone" }
+    val memberName: (String?) -> String get() = { id -> chat?.members?.firstOrNull { it.userId == id }?.displayName ?: "Someone" }
     val shownLedger get() = ledger.filter { if (tab == LedgerTab.Payments) it.direction == com.circaso.feature.chama.domain.LedgerDirection.Out else it.direction == com.circaso.feature.chama.domain.LedgerDirection.In }
     val draftAmountMinor: String? get() = draft?.let { d -> if (d.inFiat && fiat != null) fiatToUsdcMinor(d.amountText, fiat.rate) else MinorUnits.fromDisplay(d.amountText, 6) }
     val canAsk: Boolean get() = online && !busy && draft != null && draftAmountMinor?.let { !MinorUnits.isZero(it) } == true &&

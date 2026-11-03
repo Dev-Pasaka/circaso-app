@@ -124,7 +124,10 @@ class NewChatViewModel(
     }
 }
 
-/** Design D1 (the chat part; the shared wallet arrives with the wallet). Creating needs the server. */
+/**
+ * Designs D1 and GW1: a name, the people, and (group wallets on) the "Group wallet" switch with an optional target and
+ * who approves payouts. Creating is online-only; the wallet is set up right after (GW2–GW5).
+ */
 data class NewGroupUiState(
     val name: String = "",
     val contacts: List<Contact> = emptyList(),
@@ -134,8 +137,27 @@ data class NewGroupUiState(
     val creating: Boolean = false,
     val error: String? = null,
     val notAdded: List<String> = emptyList(),
+    /** Group wallets are on (the flag, and a server that has them): GW1's switch shows. */
+    val walletsAvailable: Boolean = false,
+    /** GW1's "Group wallet" switch: off by default. */
+    val walletOn: Boolean = false,
+    /** The optional target, typed in the person's currency when a rate is known, else in USDC. */
+    val targetText: String = "",
+    val by: com.circaso.feature.chama.presentation.GoalDeadline = com.circaso.feature.chama.presentation.GoalDeadline.None,
+    val approvalPolicy: com.circaso.feature.chama.domain.ApprovalPolicy = com.circaso.feature.chama.domain.ApprovalPolicy.TwoAdmins,
+    val fiat: com.circaso.feature.wallet.domain.FiatValue? = null,
+    /** GW1d: the create call failed after its retries. Nothing was made; Try Again reuses the same key. */
+    val failed: Boolean = false,
+    val reference: String? = null,
 ) {
     val canCreate get() = online && !creating && name.trim().isNotEmpty() && selected.isNotEmpty()
+
+    /** The target in USDC minor units, null when none was typed (or it isn't an amount). */
+    val targetMinor: String? get() {
+        val text = targetText.trim().ifEmpty { return null }
+        val minor = fiat?.let { com.circaso.feature.wallet.domain.fiatToUsdcMinor(text, it.rate) } ?: com.circaso.feature.wallet.domain.MinorUnits.fromDisplay(text, 6)
+        return minor?.takeIf { !com.circaso.feature.wallet.domain.MinorUnits.isZero(it) }
+    }
     val shownContacts get() = if (query.isBlank()) contacts else contacts.filter { it.person.displayName.contains(query.trim(), true) }
     val selectedContacts get() = contacts.filter { it.person.userId in selected }
 }
@@ -144,6 +166,8 @@ class NewGroupViewModel(
     observeContacts: ObserveContactsUseCase,
     private val createGroup: CreateGroupUseCase,
     connection: ConnectionState,
+    groupWallets: com.circaso.core.flags.GroupWalletsFlag = com.circaso.core.flags.GroupWalletsFlag.off(),
+    observeWallet: com.circaso.feature.wallet.domain.ObserveWalletUseCase? = null,
 ) : ViewModel() {
     private val _state = MutableStateFlow(NewGroupUiState())
     val state: StateFlow<NewGroupUiState> = _state.asStateFlow()
@@ -154,6 +178,27 @@ class NewGroupViewModel(
     init {
         viewModelScope.launch { observeContacts().collect { list -> _state.update { it.copy(contacts = list) } } }
         viewModelScope.launch { connection.status.collect { s -> _state.update { it.copy(online = s == ConnectionStatus.Online) } } }
+        viewModelScope.launch { groupWallets.enabled.collect { on -> _state.update { it.copy(walletsAvailable = on, walletOn = it.walletOn && on) } } }
+        observeWallet?.let { w -> viewModelScope.launch { w().collect { wallet -> _state.update { it.copy(fiat = wallet?.fiat) } } } }
+    }
+
+    fun onWalletSwitch(on: Boolean) = _state.update { it.copy(walletOn = on && it.walletsAvailable && it.online) }
+    fun onTarget(text: String) {
+        val clean = text.filter { it.isDigit() || it == '.' }
+        if (clean.count { it == '.' } > 1) return
+        _state.update { it.copy(targetText = clean) }
+    }
+    fun onBy(by: com.circaso.feature.chama.presentation.GoalDeadline) = _state.update { it.copy(by = by) }
+    fun onApprovalPolicy(policy: com.circaso.feature.chama.domain.ApprovalPolicy) = _state.update { it.copy(approvalPolicy = policy) }
+
+    /** What the set-up carries on with once the group exists (GW2–GW5), or null without a wallet. */
+    fun walletPlan(): com.circaso.feature.chama.presentation.GroupWalletPlan? {
+        val s = _state.value
+        if (!s.walletOn) return null
+        return com.circaso.feature.chama.presentation.GroupWalletPlan(
+            approvalPolicy = s.approvalPolicy, targetMinor = s.targetMinor, targetName = s.name.trim().takeIf { s.targetMinor != null },
+            deadline = if (s.targetMinor != null) com.circaso.feature.chama.presentation.deadlineIso(s.by) else null,
+        )
     }
 
     fun onName(text: String) { _state.update { it.copy(name = text, error = null) }; attemptKey = null }
@@ -164,11 +209,12 @@ class NewGroupViewModel(
         val s = _state.value
         if (!s.canCreate) return
         val key = attemptKey ?: newIdempotencyKey().also { attemptKey = it }
-        _state.update { it.copy(creating = true, error = null) }
+        _state.update { it.copy(creating = true, error = null, failed = false, reference = null) }
         viewModelScope.launch {
             when (val r = createGroup(GroupDraft(s.name.trim(), s.selected.toList()), key)) {
                 is AppResult.Success -> { _state.update { it.copy(creating = false, notAdded = r.value.notAdded) }; attemptKey = null; onCreated(r.value.chat.chatId) }
-                is AppResult.Failure -> _state.update { it.copy(creating = false, error = ErrorMessages.forError(r.error)) }
+                // GW1d: the form is kept and the key too, so Try Again can't make a second group.
+                is AppResult.Failure -> _state.update { it.copy(creating = false, error = ErrorMessages.forError(r.error), failed = true, reference = ErrorMessages.reference(r.error)) }
             }
         }
     }

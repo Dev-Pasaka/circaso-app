@@ -116,7 +116,7 @@ val messagingModule = module {
 
     viewModel { ChatsViewModel(get(), get(), get(), get(), get(), get(), get(), getOrNull()) }
     viewModel { NewChatViewModel(get(), get(), get()) }
-    viewModel { NewGroupViewModel(get(), get(), get()) }
+    viewModel { NewGroupViewModel(get(), get(), get(), groupWallets = get(), observeWallet = get()) }
     single { com.circaso.feature.messaging.data.repository.MapPictures(get()) }
     single { com.circaso.feature.messaging.data.repository.ChatSealer(get(), get(), get(), get(), get(named("ownUserId"))) }
     single {
@@ -136,5 +136,10 @@ val messagingModule = module {
     viewModel { params ->
         com.circaso.feature.messaging.presentation.map.LocationMapViewModel(params.get(), params.get(), get(), get(), getOrNull())
     }
-    viewModel { params -> ChatInfoViewModel(params.get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), observeThread = get(), media = getOrNull()) }
+    viewModel { params ->
+        ChatInfoViewModel(
+            params.get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), observeThread = get(), media = getOrNull(),
+            groupMoney = get(), myUserId = get<com.circaso.core.session.AuthManager>().userId,
+        )
+    }
 }

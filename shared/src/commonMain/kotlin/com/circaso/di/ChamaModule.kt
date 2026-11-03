@@ -21,7 +21,7 @@ import org.koin.dsl.module
 val chamaModule = module {
     single { get<CircasoDatabase>().chamaDao() }
     single<ChamaRemote> { KtorChamaRemote(get()) }
-    single { ChamaRepositoryImpl(get(), get(), get(), links = get<com.circaso.core.datastore.AppPreferences>(), scope = get()) }
+    single { ChamaRepositoryImpl(get(), get(), get(), links = get<com.circaso.core.datastore.AppPreferences>(), scope = get(), groupWallets = { get<com.circaso.core.flags.GroupWalletsFlag>().isOn }) }
     single<ChamaRepository> { get<ChamaRepositoryImpl>() }
     factory { ObserveChamaUseCase(get()) }
     factory { RefreshChamaUseCase(get()) }
@@ -30,6 +30,23 @@ val chamaModule = module {
     factory { CreateChamaRequestUseCase(get()) }
     factory { DecideChamaRequestUseCase(get()) }
     factory { AttachChamaPaymentUseCase(get()) }
-    factory { ThreadChama(get(), get(), get(), get(), get(), get()) }
+    factory { com.circaso.feature.chama.domain.ObserveGroupMoneyUseCase(get()) }
+    factory { com.circaso.feature.chama.domain.RefreshGroupMoneyUseCase(get()) }
+    factory { com.circaso.feature.chama.domain.SetApprovalPolicyUseCase(get()) }
+    factory { com.circaso.feature.chama.domain.RemoveGoalUseCase(get()) }
+    factory { ThreadChama(get(), get(), get(), get(), get(), get(), groupWallets = get(), observeMoney = get(), refreshMoney = get()) }
+    // Group wallets (phase 2): group info's money rows, the wallet set-up (GW2–GW5) and the target form (GW7b).
+    factory {
+        val bio = get<com.circaso.core.platform.Biometrics>()
+        com.circaso.feature.chama.presentation.GroupInfoMoneySource(get(), get(), get(), get(), get(), get(), get(), get(), biometricLabel = bio.name.takeIf { bio.available() })
+    }
+    viewModel { (chatId: String, plan: com.circaso.feature.chama.presentation.GroupWalletPlan) ->
+        val bio = get<com.circaso.core.platform.Biometrics>()
+        com.circaso.feature.chama.presentation.GroupWalletSetupViewModel(
+            chatId, plan, get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), biometricLabel = bio.name.takeIf { bio.available() },
+        )
+    }
+    viewModel { (chatId: String) -> com.circaso.feature.chama.presentation.GroupWalletViewModel(chatId, get(), get(), get(), get(), get(), get(), get(), get(), get(), get()) }
+    viewModel { (chatId: String, walletReady: Boolean) -> com.circaso.feature.chama.presentation.TargetViewModel(chatId, walletReady, get(), get(), get(), get(), get(), get(), get()) }
     viewModel { (chatId: String) -> ChamaViewModel(chatId, get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get()) }
 }
