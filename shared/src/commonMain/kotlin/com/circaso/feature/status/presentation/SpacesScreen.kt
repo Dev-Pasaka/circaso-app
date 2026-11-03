@@ -117,10 +117,10 @@ fun SpacesContent(
             }
             item { SectionLabel("Moments") }
             item { MomentsRow(state, actions) }
-            when {
-                state.failed -> item { LoadError(state.requestId, onRetry) }
-                state.empty && !state.loading -> item { NoMoments(state.hasContacts, actions) }
-            }
+            // Nothing to show is never an error screen (Pasaka, 2026-11-03): the empty state stays, and a failed check
+            // is one quiet line under it with Try Again and the reference for support.
+            if (state.failed || (state.empty && !state.loading)) item { NoMoments(state.hasContacts, actions) }
+            if (state.failed) item { CheckFailed(state.requestId, onRetry) }
             item {
                 Column(Modifier.padding(top = CircasoSpacing.s5)) {
                     SectionLabel("Spaces")
@@ -298,21 +298,17 @@ private fun NoMoments(hasContacts: Boolean, actions: SpacesActions) {
     }
 }
 
-/** S1f: nothing stored and the server failed after its retries. */
+/** S1f, quiet form: the check for new moments failed; the empty state above stays as it is. */
 @Composable
-private fun LoadError(requestId: String?, onRetry: () -> Unit) {
+private fun CheckFailed(requestId: String?, onRetry: () -> Unit) {
     val c = CircasoTheme.colors
     val t = CircasoTheme.typography
-    Column(
-        Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 28.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(10.dp),
-    ) {
-        CircasoIconImage(CircasoIcon.Warning, c.inkSecondary, Modifier.size(32.dp))
-        BasicText("Moments didn’t load", style = t.headline.copy(color = c.ink))
-        BasicText("Something went wrong on our side. Your own moments are safe.", style = t.footnote.copy(color = c.inkSecondary, textAlign = TextAlign.Center))
-        CircasoButton("Try Again", onRetry, style = ButtonStyle.Secondary, size = ButtonSize.Small)
-        requestId?.let { BasicText("Ref $it", style = t.caption1.copy(color = c.inkTertiary)) }
+    Column(Modifier.fillMaxWidth().padding(top = CircasoSpacing.s4), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(CircasoSpacing.s1)) {
+            BasicText("Couldn’t check for new moments.", style = t.footnote.copy(color = c.inkSecondary))
+            CircasoButton("Try Again", onRetry, style = ButtonStyle.Plain, size = ButtonSize.Small)
+        }
+        requestId?.let { BasicText("Ref $it", style = t.caption2.copy(color = c.inkTertiary)) }
     }
 }
 
