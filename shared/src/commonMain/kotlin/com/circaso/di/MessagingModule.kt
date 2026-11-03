@@ -78,12 +78,14 @@ val messagingModule = module {
     single { InboxProcessor(get(), get(), get(), get(), get(), get<RealtimeClient>(), { id -> get<ChatsRepositoryImpl>().refreshChat(id) }, onPaymentReceived = { id -> get<com.circaso.feature.wallet.domain.WalletRepository>().loadTransfer(id) }, reactionsDao = get()) }
     single { MessagesRepositoryImpl(get(), get(), get(), get(), get(), get(named("kickOutbox")), get<RealtimeClient>(), get(), get(named("ownUserId")), reactionsDao = get()) } bind MessagesRepository::class
     single { ChatSendHandler(get(), get(), get(), get(), get(), get(), get(named("ownUserId")), { id -> get<ChatsRepositoryImpl>().refreshChat(id) },
-            uploadMedia = { id -> get<com.circaso.feature.messaging.data.repository.MediaMessages>().uploadPending(id) }) } bind OutboxHandler::class
+            uploadMedia = { id -> get<com.circaso.feature.messaging.data.repository.MediaMessages>().uploadPending(id) },
+            uploads = getOrNull<com.circaso.core.platform.BackgroundUploads>() ?: com.circaso.core.platform.NoBackgroundUploads) } bind OutboxHandler::class
     single<com.circaso.feature.messaging.data.repository.AttachmentsRemote> { com.circaso.feature.messaging.data.repository.KtorAttachmentsRemote(get()) }
     single {
         com.circaso.feature.messaging.data.repository.MediaMessages(
             get(), get(), get(), get(named("kickOutbox")), get(), get(), get(), get(named("plain")), get(), get(named("ownUserId")),
             now = { com.circaso.core.sync.nowMillis() },
+            uploads = getOrNull<com.circaso.core.platform.BackgroundUploads>() ?: com.circaso.core.platform.NoBackgroundUploads,
         )
     }
     single { MessagingFrameHandler(get(), get(), get(), get(), get(), get()) }

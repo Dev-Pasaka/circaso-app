@@ -10,6 +10,7 @@ import com.circaso.core.network.idempotencyKey
 import com.circaso.core.network.newIdempotencyKey
 import com.circaso.core.platform.GeoPoint
 import com.circaso.core.platform.MediaFiles
+import com.circaso.core.platform.putFile
 import com.circaso.core.sync.Outbox
 import com.circaso.core.sync.OutboxType
 import com.circaso.feature.messaging.data.local.ChatsDao
@@ -167,6 +168,8 @@ class MediaMessages(
     private val json: Json,
     private val ownUserId: suspend () -> String?,
     private val now: () -> Long,
+    /** The PUT goes through the platform's background uploader where there is one (iOS), so it outlives the app. */
+    private val uploads: com.circaso.core.platform.BackgroundUploads = com.circaso.core.platform.NoBackgroundUploads,
 ) {
     suspend fun sendLocation(chatId: String, point: GeoPoint, label: String?) {
         val details = MediaDetails(MediaDetails.Location, latitude = point.latitude, longitude = point.longitude, accuracy = point.accuracyMeters, label = label)
@@ -228,14 +231,10 @@ class MediaMessages(
             is AppResult.Success -> r.value
             is AppResult.Failure -> return r
         }
-        val put = runCatching {
-            storage.put(slot.uploadUrl) {
-                slot.uploadHeaders.forEach { (k, v) -> header(k, v) }
-                if (slot.uploadHeaders.keys.none { it.equals("Content-Type", true) }) header("Content-Type", "application/octet-stream")
-                setBody(sealed)
-            }
-        }.getOrNull()
-        if (put == null || !put.status.isSuccess()) return AppResult.Failure(AppError.Network)
+        val headers = slot.uploadHeaders.toMutableMap()
+        if (headers.keys.none { it.equals("Content-Type", true) }) headers["Content-Type"] = "application/octet-stream"
+        val put = uploads.putFile(storage, slot.uploadUrl, headers, sealed)
+        if (!put) return AppResult.Failure(AppError.Network)
         when (val r = attachments.complete(slot.attachmentId)) {
             is AppResult.Success -> Unit
             is AppResult.Failure -> return r

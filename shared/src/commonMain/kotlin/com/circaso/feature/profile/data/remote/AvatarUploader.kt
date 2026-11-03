@@ -15,8 +15,13 @@ interface AvatarUploader {
     suspend fun put(url: String, bytes: ByteArray, contentType: String): AppResult<Unit>
 }
 
-class KtorAvatarUploader(private val plainClient: HttpClient) : AvatarUploader {
+class KtorAvatarUploader(
+    private val plainClient: HttpClient,
+    /** The platform's background uploader where there is one (iOS), so the photo outlives the app. */
+    private val uploads: com.circaso.core.platform.BackgroundUploads = com.circaso.core.platform.NoBackgroundUploads,
+) : AvatarUploader {
     override suspend fun put(url: String, bytes: ByteArray, contentType: String): AppResult<Unit> = try {
+        uploads.put(url, mapOf("Content-Type" to contentType), bytes)?.let { ok -> return if (ok) AppResult.Success(Unit) else AppResult.Failure(AppError.Network) }
         val response = plainClient.put(url) {
             contentType(ContentType.parse(contentType))
             setBody(bytes)

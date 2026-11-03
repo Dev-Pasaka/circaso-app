@@ -29,6 +29,8 @@ class ProfileRepositoryImpl(
     private val json: Json,
     /** Asks the outbox to send now (does nothing if offline). */
     private val kickOutbox: () -> Unit,
+    /** Keeps a new profile photo going when the person leaves Circaso mid-upload. */
+    private val uploads: com.circaso.core.platform.BackgroundUploads = com.circaso.core.platform.NoBackgroundUploads,
 ) : ProfileRepository {
 
     override val profile: Flow<Profile?> = dao.observe().map { it?.toDomain() }
@@ -77,7 +79,14 @@ class ProfileRepositoryImpl(
 
     override suspend fun claimHandle(handle: String): AppResult<Unit> = saved(remote.claimHandle(ClaimHandleRequest(handle)))
 
-    override suspend fun uploadAvatar(image: AvatarImage): AppResult<Unit> {
+    override suspend fun uploadAvatar(image: AvatarImage): AppResult<Unit> =
+        uploads.keep(com.circaso.core.platform.UploadKind.ProfilePhoto) { putAvatar(image) }.also { result ->
+            // Told only if it can't go by itself: a lost connection is the screen's to show when they're back.
+            val error = (result as? AppResult.Failure)?.error
+            if (error is AppError.Api && error.httpStatus < 500 && error.httpStatus != 429) uploads.failed(com.circaso.core.platform.UploadKind.ProfilePhoto)
+        }
+
+    private suspend fun putAvatar(image: AvatarImage): AppResult<Unit> {
         if (image.contentType !in AllowedImageTypes || image.bytes.size > MaxAvatarBytes || image.bytes.isEmpty()) {
             return AppResult.Failure(AppError.Api("users.avatar_invalid", 400, null, null, emptyMap()))
         }

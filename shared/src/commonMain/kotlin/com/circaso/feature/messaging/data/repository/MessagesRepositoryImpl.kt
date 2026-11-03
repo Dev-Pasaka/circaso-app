@@ -299,12 +299,32 @@ class ChatSendHandler(
     private val now: () -> Long = ::nowMillis,
     /** Uploads a photo or voice note's encrypted file before its message goes (MediaMessages.uploadPending). */
     private val uploadMedia: (suspend (localId: Long) -> AppResult<Unit>)? = null,
+    /** Keeps a photo, video or voice note going when the person leaves Circaso mid-upload. */
+    private val uploads: com.circaso.core.platform.BackgroundUploads = com.circaso.core.platform.NoBackgroundUploads,
 ) : OutboxHandler {
     override val type = OutboxType.ChatMessage
     private val sealer = ChatSealer(dao, chats, sessions, groupKeys, ownUserId, now)
 
+    /**
+     * A photo, video or voice note (upload and send) runs as background work, so it finishes when the person leaves
+     * Circaso mid-upload; if it fails for good while they're away, they're told.
+     */
     override suspend fun send(item: OutboxEntity): AppResult<Unit> {
         val job = runCatching { json.decodeFromString(ChatMessageJob.serializer(), item.payload) }.getOrNull() ?: return AppResult.Success(Unit)
+        val first = dao.byLocalId(job.localId) ?: return AppResult.Success(Unit)
+        val kind = if (isMediaKind(first.kind)) when (MediaDetails.read(first.text)?.kind) {
+            MediaDetails.Image -> com.circaso.core.platform.UploadKind.Photo
+            MediaDetails.Video -> com.circaso.core.platform.UploadKind.Video
+            MediaDetails.Voice -> com.circaso.core.platform.UploadKind.VoiceNote
+            else -> null
+        } else null
+        if (kind == null) return sendNow(item, job)
+        return uploads.keep(kind) { sendNow(item, job) }.also {
+            if (dao.byLocalId(job.localId)?.status == MessageStatus.Failed) uploads.failed(kind)
+        }
+    }
+
+    private suspend fun sendNow(item: OutboxEntity, job: ChatMessageJob): AppResult<Unit> {
         var message = dao.byLocalId(job.localId) ?: return AppResult.Success(Unit) // discarded meanwhile
         if (message.status == MessageStatus.Deleted || message.messageId != null) return AppResult.Success(Unit)
         dao.setStatus(message.localId, MessageStatus.Sending, null)

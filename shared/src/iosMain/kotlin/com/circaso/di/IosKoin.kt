@@ -69,6 +69,7 @@ fun initKoinIos() {
         single<com.circaso.core.calls.CallEngine> { com.circaso.core.calls.IosCallEngine() }
         single<com.circaso.core.platform.LocationProvider> { com.circaso.core.platform.IosLocation() }
         single<com.circaso.feature.messaging.data.repository.LiveTracker> { com.circaso.core.platform.IosLiveTracker() }
+        single<com.circaso.core.platform.BackgroundUploads> { com.circaso.core.platform.IosBackgroundUploads() }
         single<com.circaso.core.sync.BackgroundSync> { com.circaso.core.sync.IosBackgroundSync() }
         single<com.circaso.core.platform.MediaFiles> { com.circaso.core.platform.IosMediaFiles() }
         single<LiveMicrophone> { IosLiveMicrophone() } // AVAudioEngine and Apple's Opus encoder live on the Swift side; see LiveAudioBridge

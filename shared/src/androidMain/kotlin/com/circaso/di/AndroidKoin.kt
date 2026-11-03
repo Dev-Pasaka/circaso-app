@@ -75,6 +75,7 @@ fun initKoinAndroid(context: Context) {
             single<com.circaso.core.platform.LocationProvider> { com.circaso.core.platform.AndroidLocation(app) }
             single<com.circaso.feature.messaging.data.repository.LiveTracker> { com.circaso.core.platform.AndroidLiveTracker(app) }
             single<com.circaso.core.sync.BackgroundSync> { com.circaso.core.sync.AndroidBackgroundSync(app) }
+            single<com.circaso.core.platform.BackgroundUploads> { com.circaso.core.platform.AndroidBackgroundUploads(app) }
             single<com.circaso.core.platform.MediaFiles> { com.circaso.core.platform.AndroidMediaFiles(app) }
             single<LiveSpeaker> { AndroidLiveSpeaker(app) }
             single<ImagePicker> { AndroidImagePicker(app) }

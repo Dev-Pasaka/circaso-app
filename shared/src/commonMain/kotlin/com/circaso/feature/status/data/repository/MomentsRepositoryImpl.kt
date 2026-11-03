@@ -31,6 +31,7 @@ import com.circaso.feature.status.domain.MomentsRepository
 import com.circaso.feature.status.domain.PendingMoment
 import com.circaso.feature.status.domain.PendingState
 import io.ktor.client.HttpClient
+import com.circaso.core.platform.putFile
 import io.ktor.client.request.get
 import io.ktor.client.request.header
 import io.ktor.client.request.put
@@ -106,6 +107,8 @@ class MomentsRepositoryImpl(
     private val json: Json,
     private val ownUserId: suspend () -> String?,
     private val now: () -> Long = ::nowMillis,
+    /** Keeps a media post going when the person leaves Circaso mid-upload. */
+    private val uploads: com.circaso.core.platform.BackgroundUploads = com.circaso.core.platform.NoBackgroundUploads,
 ) : MomentsRepository {
     private val refreshLock = Mutex()
 
@@ -262,9 +265,21 @@ class MomentsRepositoryImpl(
 
     override suspend fun discard(localId: String) { dao.deletePending(localId); files.delete(localId) }
 
-    /** The outbox's turn for one pending moment: upload the media once, seal for the audience, post (ST3). */
+    /**
+     * The outbox's turn for one pending moment. A photo, video or voice moment runs as background work, so it
+     * finishes when the person leaves Circaso mid-upload; if it fails for good while they're away, they're told.
+     */
     suspend fun send(item: OutboxEntity): AppResult<Unit> {
         val job = runCatching { json.decodeFromString(MomentJob.serializer(), item.payload) }.getOrNull() ?: return AppResult.Success(Unit)
+        val row = dao.pending(job.localId) ?: return AppResult.Success(Unit)
+        if (row.kind == MomentKind.Text.name) return sendNow(job)
+        return uploads.keep(com.circaso.core.platform.UploadKind.Moment) { sendNow(job) }.also {
+            if (dao.pending(job.localId)?.state == StateFailed) uploads.failed(com.circaso.core.platform.UploadKind.Moment)
+        }
+    }
+
+    /** Upload the media once, seal for the audience, post (ST3). */
+    private suspend fun sendNow(job: MomentJob): AppResult<Unit> {
         var row = dao.pending(job.localId) ?: return AppResult.Success(Unit) // discarded meanwhile
         val draft = json.decodeFromString(PendingDraft.serializer(), row.draft)
         dao.setPendingState(row.localId, StatePosting, null)
@@ -310,10 +325,8 @@ class MomentsRepositoryImpl(
             is AppResult.Success -> r.value
             is AppResult.Failure -> return r
         }
-        val put = runCatching {
-            storage.put(slot.uploadUrl) { header("Content-Type", slot.uploadHeaders.contentType); setBody(sealed) }
-        }.getOrNull()
-        if (put == null || !put.status.isSuccess()) return AppResult.Failure(AppError.Network)
+        val put = uploads.putFile(storage, slot.uploadUrl, mapOf("Content-Type" to slot.uploadHeaders.contentType), sealed)
+        if (!put) return AppResult.Failure(AppError.Network)
         (remote.completeMedia(slot.mediaId, newIdempotencyKey()) as? AppResult.Failure)?.let { return it }
         // Filed under the media id, the name a viewer's copy gets, so my own viewer opens it without downloading.
         files.write(slot.mediaId, plain)

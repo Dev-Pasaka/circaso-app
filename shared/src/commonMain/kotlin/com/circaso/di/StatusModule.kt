@@ -27,6 +27,7 @@ val statusModule = module {
             dao = get(), remote = get(), keys = get(), contacts = get(), crypto = get(), files = get(),
             storage = get(named("plain")), outbox = get(), kickOutbox = get(named("kickOutbox")), json = get(),
             ownUserId = get(named("ownUserId")),
+            uploads = getOrNull<com.circaso.core.platform.BackgroundUploads>() ?: com.circaso.core.platform.NoBackgroundUploads,
         )
     }
     // The outbox processor collects every handler while it is built; this one finds the repository only when it

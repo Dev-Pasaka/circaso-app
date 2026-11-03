@@ -80,7 +80,7 @@ class ProfileRepositoryTest {
     private val remote = FakeRemote()
     private val uploader = FakeUploader()
     private var kicks = 0
-    private val repo = ProfileRepositoryImpl(remote, dao, outbox, uploader, json) { kicks++ }
+    private val repo = ProfileRepositoryImpl(remote, dao, outbox, uploader, json, kickOutbox = { kicks++ })
     private val handler = ProfileUpdateHandler(remote, dao, outbox, json)
 
     private suspend fun loaded() { repo.refresh() }

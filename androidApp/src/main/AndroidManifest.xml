@@ -34,6 +34,8 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CAMERA" />
     <!-- Live location keeps updating while Circaso is in the background, with an ongoing notification (Stop sharing). -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
+    <!-- Uploads (photos, videos, voice notes, moments) carry on after Circaso is left: a dataSync foreground service. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
 
     <application
         android:name=".CircasoApplication"
@@ -77,6 +79,11 @@
             android:name="com.circaso.core.platform.LiveLocationService"
             android:exported="false"
             android:foregroundServiceType="location" />
+        <!-- Keeps uploads going when Circaso is left mid-upload; stops itself when nothing is sending. -->
+        <service
+            android:name="com.circaso.core.platform.UploadService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync" />
         <!-- Receives a new push token from Firebase and hands it to the app. -->
         <service
             android:name="com.circaso.core.platform.CircasoMessagingService"

@@ -24,9 +24,9 @@ import org.koin.dsl.module
 val profileModule = module {
     single { get<com.circaso.core.database.CircasoDatabase>().profileDao() }
     single<ProfileRemote> { KtorProfileRemote(get()) }
-    single<AvatarUploader> { KtorAvatarUploader(get(named("plain"))) }
+    single<AvatarUploader> { KtorAvatarUploader(get(named("plain")), getOrNull<com.circaso.core.platform.BackgroundUploads>() ?: com.circaso.core.platform.NoBackgroundUploads) }
     single { ProfileUpdateHandler(get(), get(), get(), get()) } bind OutboxHandler::class
-    single<ProfileRepository> { ProfileRepositoryImpl(get(), get(), get(), get(), get(), kickOutbox = get(named("kickOutbox"))) }
+    single<ProfileRepository> { ProfileRepositoryImpl(get(), get(), get(), get(), get(), kickOutbox = get(named("kickOutbox")), uploads = getOrNull<com.circaso.core.platform.BackgroundUploads>() ?: com.circaso.core.platform.NoBackgroundUploads) }
     factory { ObserveProfileUseCase(get()) }
     factory { RefreshProfileUseCase(get()) }
     factory { UpdateProfileUseCase(get()) }
