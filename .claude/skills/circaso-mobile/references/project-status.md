@@ -175,11 +175,11 @@ design.** Plan: `references/spaces-plan.md`.
 | Issue | State |
 | --- | --- |
 | Opening a chat crashed (message window read before it was set) | **Fixed** in `acfe332` (2026-10-31). The "iOS app won't start" report afterwards was a stale simulator build; a clean build fixes it. |
-| Blurry first splash logo on Android | Fix written (D-UI9), **not yet verified on a device**. |
-| Android notifications showed stock system icons | Fix written (D-UI10), **not yet verified on a device**. |
+| Blurry first splash logo on Android | **Fixed and verified** on an API 37 emulator (2026-11-03): the cold-start mark is sharp at full resolution. |
+| Android notifications showed stock system icons | Fix written (D-UI10) and the drawable is in the APK (`drawable/ic_stat_circaso`); **not yet seen on a notification**: every app notification and the FCM token need a signed-in account. |
 | Asha returned 429 | **Fixed** by the paid plan (2026-11-03): all three models answer 200 when called directly. |
 | iOS gets no pushes and doesn't ring in the background | Not built (see Next work 3 and 4). |
-| Android emulator `Pixel_9_Pro` stuck "offline" in adb after cold boots | Environment issue. Two adbs are installed (Homebrew 37.0.0 and SDK 37.0.1); use the SDK one. API 37 headless falls back to software rendering (swangle) and never finished booting on 2026-11-03; next tries are `-gpu host`, then Wipe Data (this loses the signed-in test account). |
+| Android emulator `Pixel_9_Pro` stuck "offline" in adb after cold boots | Environment issue. Two adbs are installed (Homebrew 37.0.0 and SDK 37.0.1); use the SDK one. On 2026-11-03 `Pixel_9_Pro` stayed offline with both software and `-gpu host`, while a fresh AVD from the same image (`Circaso_Check`, made by copying its config.ini) booted in 50 s and connected. So the fault is in `Pixel_9_Pro`'s data: Wipe Data fixes it, but it signs the test account out (asked Pasaka). |
 | Real SMS send via Twilio not confirmed end to end | Backend says to test with a real number and report the `code`. |
 | ID-13 shows a masked number but the server needs the full number | The returning person types it. |
 | Welcome screen's terms line has no links | Needs the terms and privacy URLs. |
