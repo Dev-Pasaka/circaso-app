@@ -11,6 +11,7 @@ struct iOSApp: App {
         LocationBridge.shared.provider = LocationImpl() // "Share location" in chats; see Media.kt
         CallEngineBridge.shared.provider = CallEngineImpl() // WebRTC calls through Cloudflare Realtime; see CallEngine.kt
         QrScannerBridge.shared.provider = QrScannerImpl() // VisionKit QR scanning (design E4/E5); see Qr.kt
+        MomentCameraBridge.shared.provider = MomentCameraImpl() // AVFoundation camera for Moments (M1); see MomentCamera.kt
         WalletSignerBridge.shared.signer = CircleWalletImpl() // the Circle SDK behind the wallet; see WalletSigner.kt and the Podfile
         BackgroundSyncImpl.install() // sends the offline queue in the background once there's a network; see BackgroundSync.kt
         MapImpl.install() // Google Maps for live location, when this build has a key; see PlatformMap.ios.kt

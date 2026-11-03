@@ -28,7 +28,7 @@
 	<key>GIDServerClientID</key>
 	<string>177338416308-v1adcpuoj7cn8ofid7rj89gr7a9dqp97.apps.googleusercontent.com</string>
 	<key>NSCameraUsageDescription</key>
-	<string>Circaso uses the camera for video calls you start or answer, and to scan a QR code you point it at.</string>
+	<string>Circaso uses the camera for video calls you start or answer, to scan a QR code you point it at, and only while you take a moment.</string>
 	<key>NSContactsUsageDescription</key>
 	<string>Circaso checks your contacts' phone numbers to show who is already on Circaso. Only numbers are sent, never names.</string>
 	<key>NSFaceIDUsageDescription</key>
@@ -36,7 +36,7 @@
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>Circaso uses your location only when you choose to share it in a chat.</string>
 	<key>NSMicrophoneUsageDescription</key>
-	<string>Circaso uses the microphone during calls you start or answer, and while you talk to Asha. Voice to Asha is turned into text and not kept.</string>
+	<string>Circaso uses the microphone during calls you start or answer, while you talk to Asha, and for the sound of a video moment you record. Voice to Asha is turned into text and not kept.</string>
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>Circaso shows your recent photos and videos when you attach them to a chat. Nothing leaves your phone until you send it.</string>
 	<key>UIBackgroundModes</key>
