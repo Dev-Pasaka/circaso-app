@@ -128,7 +128,7 @@ Media3 1.4.1, multiplatform-markdown-renderer 0.46.0.
 ## 5. Pending tasks
 
 ### Blocked on Pasaka
-1. ~~Cloudflare Workers Paid plan~~ **Done by Pasaka (2026-11-03).** Check Asha voice and text work again (they failed with `429` on the free quota).
+1. ~~Cloudflare Workers Paid plan~~ **Done by Pasaka (2026-11-03).** Checked the same day: Asha's three Workers AI models answer `200` with the paid plan: Kimi K2.6 (text, about 4.9 s), Aura-2 (speech) and Nova-3 (transcription; Aura's audio came back word for word). The `429` is gone. Not yet run end to end through the app (the emulator wouldn't connect over adb).
 2. **Rotate the Tavily API key** (it was pasted in chat).
 3. **iPhone install**: unlock the phone and turn on Developer Mode.
 4. **Calls on the sandbox**: set `INTEGRATIONS_CALLS_PROVIDER=cloudflare`, `CLOUDFLARE_REALTIME_APP_ID`, `CLOUDFLARE_REALTIME_APP_TOKEN` (optional TURN key) if not done yet.
@@ -154,6 +154,14 @@ wallet; a target needs a wallet). Shops, paid memberships, fees (0–2 % on the 
 $10,000, sender pays, gas sponsored and kept ≤ 25 % of the fee) and group daily caps (10,000 USDC) are part of it. **All decisions are taken; next is phase 0,
 design.** Plan: `references/spaces-plan.md`.
 
+**Phase 0 progress (2026-11-03):**
+- Fee spike done (`references/fee-spike.md`): **batch** (`executeBatch` on the sender's SCA, one challenge, atomic) on
+  Base, Polygon and Ethereum; **Solana waits** (0 % rule) until a second spike.
+- Phase 0a frames: `Circaso-Spaces.html` at the root (copy in `assets/`, 74 frames, built by
+  `scripts/build_spaces_canvas.py`): Spaces tab, Moments composer, viewer and privacy, groups with wallets, Paying from,
+  the fee line, daily caps, and after-signing states. The design-reviewer's first pass found 3 Blockers, now fixed. The
+  frames are **waiting for Pasaka's review**; phase 1 (Moments, backend and both apps) starts once he approves them.
+
 ### Backend gaps (design exists, no API yet)
 - W7/W8: statements on the server, PIN change and restore.
 - Server notification inbox (F4 is built locally), KYC, add money, cash out, business groups (D7).
@@ -169,9 +177,9 @@ design.** Plan: `references/spaces-plan.md`.
 | Opening a chat crashed (message window read before it was set) | **Fixed** in `acfe332` (2026-10-31). The "iOS app won't start" report afterwards was a stale simulator build; a clean build fixes it. |
 | Blurry first splash logo on Android | Fix written (D-UI9), **not yet verified on a device**. |
 | Android notifications showed stock system icons | Fix written (D-UI10), **not yet verified on a device**. |
-| Asha returned 429 | Paid plan bought 2026-11-03; re-test Asha text and voice. |
+| Asha returned 429 | **Fixed** by the paid plan (2026-11-03): all three models answer 200 when called directly. |
 | iOS gets no pushes and doesn't ring in the background | Not built (see Next work 3 and 4). |
-| Android emulator `Pixel_9_Pro` stuck "offline" in adb after cold boots | Environment issue; try Wipe Data in Device Manager. |
+| Android emulator `Pixel_9_Pro` stuck "offline" in adb after cold boots | Environment issue. Two adbs are installed (Homebrew 37.0.0 and SDK 37.0.1); use the SDK one. API 37 headless falls back to software rendering (swangle) and never finished booting on 2026-11-03; next tries are `-gpu host`, then Wipe Data (this loses the signed-in test account). |
 | Real SMS send via Twilio not confirmed end to end | Backend says to test with a real number and report the `code`. |
 | ID-13 shows a masked number but the server needs the full number | The returning person types it. |
 | Welcome screen's terms line has no links | Needs the terms and privacy URLs. |

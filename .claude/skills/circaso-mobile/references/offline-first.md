@@ -25,9 +25,9 @@ Classify every action before building its screen. Record the class next to the u
 | Class | Rule | Examples |
 | --- | --- | --- |
 | **Read** | Always works from cache. | Profile, contacts, connections, blocks, Asha history, security log |
-| **Queueable write** | Safe to apply later, idempotent, low stakes. Goes in the outbox, shows "Waiting to send". | Edit profile, block/unblock, remove a contact, contact sync batches, push token update, avatar upload (two steps) |
-| **Online-only** | Needs a live answer. Disable the control with "Needs a connection" before the tap, never fail after it. | Sign-in, phone verification, device registration, handle availability and claim, connecting through invite/QR, linking logins, account deletion, recovery request, Asha chat/voice/speech |
-| **Money (future)** | **Never queued, never optimistic.** Needs live confirmation; if the send did not reach the server the screen says "Not sent" and nothing is taken. | Sending, receiving, cash-out, chama contributions |
+| **Queueable write** | Safe to apply later, idempotent, low stakes. Goes in the outbox, shows "Waiting to send". | Edit profile, block/unblock, remove a contact, contact sync batches, push token update, avatar upload (two steps), post a moment, moment reply (a chat message), mute someone's moments, moments privacy (a phone setting) |
+| **Online-only** | Needs a live answer. Disable the control with "Needs a connection" before the tap, never fail after it. | Sign-in, phone verification, device registration, handle availability and claim, connecting through invite/QR, linking logins, account deletion, recovery request, Asha chat/voice/speech, create a group, set up a group or space wallet (Circle PIN), add a target, request or approve a payout |
+| **Money (future)** | **Never queued, never optimistic.** Needs live confirmation; if the send did not reach the server the screen says "Not sent" and nothing is taken. | Sending, receiving, cash-out, group contributions and payouts, paid space entry; the fee quote is live and held 15 minutes |
 
 ## The outbox (queueable writes)
 - A Room table in `core/sync`: action type, payload, `idempotencyKey`, createdAt, state (`pending`, `sending`, `failed`, `done`), attempts, last error `code`.
