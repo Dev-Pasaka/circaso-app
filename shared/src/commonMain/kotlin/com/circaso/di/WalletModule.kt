@@ -34,13 +34,18 @@ import org.koin.dsl.module
 /** The wallet (guide W1–W5, W9–W12): reads from Room, money moves only online and signed in the Circle SDK. */
 val walletModule = module {
     single { get<CircasoDatabase>().walletDao() }
-    single<WalletRemote> { KtorWalletRemote(get()) }
+    single<WalletRemote> { KtorWalletRemote(get(), get()) }
     single { WalletRepositoryImpl(get(), get(), signer = { WalletSignerBridge.signer ?: NoWalletSigner }, currency = { get<com.circaso.core.datastore.AppPreferences>().currency.first() ?: localCurrencyCode() }, json = get(),
         scope = get(),
         onMoneyReceived = {
             if (!get<com.circaso.core.datastore.AppPreferences>().flag(com.circaso.core.datastore.AppPreferences.MoneySoundOff).first()) com.circaso.core.platform.playMoneySound()
         },
-        onBiometricsLost = { get<com.circaso.core.datastore.AppPreferences>().setFlag(com.circaso.core.datastore.AppPreferences.BiometricApproval, false) },
+        onBiometricsLost = { walletId ->
+            val prefs = get<com.circaso.core.datastore.AppPreferences>()
+            prefs.setWalletBiometrics(walletId, false)
+            // Only that wallet falls back to its PIN; its row says why (GW8b).
+            prefs.setFlag(com.circaso.feature.chama.presentation.GroupInfoMoneySource.lostFlag(walletId), true)
+        },
     ) }
     single<WalletRepository> { get<WalletRepositoryImpl>() }
     factory { ObserveWalletUseCase(get()) }
@@ -56,8 +61,19 @@ val walletModule = module {
     factory { ValidateAddressUseCase(get()) }
     factory { PayUseCase(get()) }
     factory { com.circaso.feature.wallet.domain.AddMissingChainsUseCase(get()) }
+    factory { com.circaso.feature.wallet.domain.ObserveWalletsUseCase(get()) }
+    factory { com.circaso.feature.wallet.domain.RefreshWalletsUseCase(get()) }
+    factory { com.circaso.feature.wallet.domain.ObserveWalletOfUseCase(get()) }
+    factory { com.circaso.feature.wallet.domain.RefreshWalletOfUseCase(get()) }
+    factory { com.circaso.feature.wallet.domain.ObserveWalletActivityUseCase(get()) }
+    factory { com.circaso.feature.wallet.domain.RefreshWalletActivityUseCase(get()) }
+    factory { com.circaso.feature.wallet.domain.GetGroupWalletUseCase(get()) }
+    factory { com.circaso.feature.wallet.domain.StartGroupWalletUseCase(get()) }
+    factory { com.circaso.feature.wallet.domain.AwaitGroupWalletUseCase(get()) }
+    factory { com.circaso.feature.wallet.domain.EnableWalletBiometricsUseCase(get()) }
+    factory { com.circaso.feature.wallet.domain.AddWalletNetworksUseCase(get()) }
     viewModel { com.circaso.feature.account.presentation.BiometricApprovalViewModel(get(), get(), get(), get()) }
-    viewModel { WalletViewModel(get(), get(), get(), get(), get(), get(), get(), getChains = get(), addMissingChains = get()) }
+    viewModel { WalletViewModel(get(), get(), get(), get(), get(), get(), get(), getChains = get(), addMissingChains = get(), groupWallets = get(), sources = get()) }
     viewModel { com.circaso.feature.wallet.presentation.CurrencyViewModel(get(), get()) }
     viewModel { (blockchain: String?, symbol: String?) -> ActivityViewModel(get(), get(), blockchain, symbol) }
     viewModel { (blockchain: String) -> com.circaso.feature.wallet.presentation.NetworkAssetsViewModel(get(), blockchain) }
@@ -65,7 +81,8 @@ val walletModule = module {
     viewModel { NetworksViewModel(get(), get(), get()) }
     viewModel { (intent: PayIntent) ->
         val profiles = get<com.circaso.feature.profile.domain.ProfileRepository>()
-        PayViewModel(intent, get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), scanner = get(), findHandle = { profiles.findByHandle(it) })
+        PayViewModel(intent, get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), scanner = get(), findHandle = { profiles.findByHandle(it) }, groupWallets = get(), wallets = get())
     }
+    factory { com.circaso.feature.wallet.presentation.GroupWalletSources(get(), get(), get(), get(), get(), get(), get(), get(), get()) }
     viewModel { SendToWalletViewModel(get(), get(), get(), get(), scanner = get()) }
 }

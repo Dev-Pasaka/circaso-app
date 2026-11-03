@@ -46,7 +46,16 @@ data class WalletUiState(
     val addingNetworks: Boolean = false,
     /** The wallet was just made on this phone: offer Face ID / fingerprint approval once, while the PIN is fresh. */
     val offerBiometrics: Boolean = false,
+    /** Group wallets (GW16): every wallet the person can see, named; the switcher shows when there is more than one. */
+    val wallets: List<NamedWallet> = emptyList(),
+    /** The wallet the tab shows; null is the person's own. */
+    val selectedWalletId: String? = null,
+    val switching: Boolean = false,
 ) {
+    val selected: NamedWallet get() = wallets.firstOrNull { it.walletId == selectedWalletId } ?: NamedWallet.Personal
+    /** The chosen group's chat, when the tab shows a group wallet. */
+    val selectedGroupChat: String? get() = selected.chatId.takeIf { !selected.personal }
+    val showSwitcher get() = wallets.size > 1
     val status get() = wallet?.status ?: WalletStatus.None
     val active get() = status == WalletStatus.Active
     val canSend get() = active && online && wallet?.holdUntil == null
@@ -63,8 +72,23 @@ class WalletViewModel(
     repository: WalletRepositoryImpl,
     private val getChains: com.circaso.feature.wallet.domain.GetChainsUseCase? = null,
     private val addMissingChains: com.circaso.feature.wallet.domain.AddMissingChainsUseCase? = null,
+    private val groupWallets: com.circaso.core.flags.GroupWalletsFlag = com.circaso.core.flags.GroupWalletsFlag.off(),
+    private val sources: GroupWalletSources? = null,
 ) : ViewModel() {
     private val local = MutableStateFlow(WalletUiState())
+
+    init {
+        // GW16: the title becomes a switcher once the person can see another wallet (W16, named from their chats).
+        sources?.let { src ->
+            viewModelScope.launch {
+                kotlinx.coroutines.flow.combine(groupWallets.enabled, src.named) { on, named -> if (on) named else emptyList() }
+                    .collect { named -> local.update { s -> s.copy(wallets = named, selectedWalletId = s.selectedWalletId?.takeIf { id -> named.any { it.walletId == id } }) } }
+            }
+        }
+    }
+
+    fun onSwitching(open: Boolean) = local.update { it.copy(switching = open && it.showSwitcher) }
+    fun onSelectWallet(wallet: NamedWallet) = local.update { it.copy(selectedWalletId = wallet.walletId, switching = false) }
 
     val state: StateFlow<WalletUiState> = combine(local, observeWallet(), observeTransfers(), connection.status, observeProfile(), repository.setupRequestedBy) { values ->
         @Suppress("UNCHECKED_CAST")
@@ -87,6 +111,7 @@ class WalletViewModel(
         local.update { it.copy(loading = true, error = null) }
         viewModelScope.launch {
             val result = refreshWallet()
+            if (groupWallets.isOn) sources?.refresh(null, null)
             loadMissingNetworks()
             local.update { it.copy(loading = false, error = (result as? AppResult.Failure)?.let { f -> ErrorMessages.forError(f.error) }?.takeIf { _ -> fromPull || state.value.wallet == null }) }
         }
