@@ -164,6 +164,21 @@ private fun MomentViewerContent(state: MomentViewerUiState, vm: MomentViewerView
             moment.caption?.let {
                 BasicText(it, Modifier.fillMaxWidth().padding(horizontal = CircasoSpacing.s5), style = t.body.copy(color = c.ink, textAlign = TextAlign.Center))
             }
+            // The emoji row (WhatsApp-style), above the reply field.
+            if (!moment.mine && state.picking) {
+                Row(
+                    Modifier.fillMaxWidth().clip(CircasoShapes.pill).background(c.glass).padding(horizontal = CircasoSpacing.s2, vertical = 4.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                ) {
+                    MomentReactions.forEach { e ->
+                        Box(
+                            Modifier.size(CircasoSizes.controlMd).clip(CircasoShapes.circle).background(if (e == moment.reaction) c.fillStrong else Color.Transparent)
+                                .pressable(onClick = { vm.react(e) }).semantics { contentDescription = if (e == moment.reaction) "Remove reaction $e" else "React $e" },
+                            contentAlignment = Alignment.Center,
+                        ) { BasicText(e, style = t.title2) }
+                    }
+                }
+            }
             if (moment.mine) {
                 Row(
                     Modifier.align(Alignment.CenterHorizontally).clip(CircasoShapes.pill).background(c.glass).pressable(onClick = { vm.openViewers(true) })
@@ -171,7 +186,7 @@ private fun MomentViewerContent(state: MomentViewerUiState, vm: MomentViewerView
                     verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(CircasoSpacing.s2),
                 ) {
                     CircasoIconImage(CircasoIcon.Eye, c.ink, Modifier.size(18.dp))
-                    BasicText("Seen by ${moment.viewCount}", style = t.subhead.copy(color = c.ink, fontWeight = FontWeight.SemiBold))
+                    BasicText("Seen by ${moment.viewCount}" + if (moment.reactionCount > 0) " · ${moment.reactionCount} reaction${if (moment.reactionCount == 1) "" else "s"}" else "", style = t.subhead.copy(color = c.ink, fontWeight = FontWeight.SemiBold))
                 }
             } else {
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -187,7 +202,7 @@ private fun MomentViewerContent(state: MomentViewerUiState, vm: MomentViewerView
                         )
                     }
                     if (state.reply.isNotBlank()) GlassButton(CircasoIcon.ArrowUp, "Send reply", onClick = vm::sendReply)
-                    else GlassButton(if (moment.reacted) CircasoIcon.HeartFilled else CircasoIcon.Heart, if (moment.reacted) "Loved. Tap to undo" else "Love this moment", onClick = vm::react)
+                    else ReactButton(moment.reaction, vm::togglePicker)
                 }
             }
         }
@@ -355,10 +370,28 @@ private fun BoxScope.ViewersSheet(state: MomentViewerUiState, onDismiss: () -> U
                 items(state.viewers.size) { i ->
                     val row = state.viewers[i]
                     ListRow(row.name, sub = formatLocalTime(row.viewer.viewedAt, LocalTimeStyle.Clock), leading = { Avatar(row.name, size = CircasoSizes.avatarMd, imageUrl = row.avatarUrl) },
-                        trailing = { if (row.viewer.reacted) CircasoIconImage(CircasoIcon.HeartFilled, c.ink, Modifier.size(18.dp)) })
+                        trailing = { row.viewer.reaction?.let { BasicText(it, style = t.title3) } })
                 }
             }
         }
         CircasoButton("Delete", onDelete, style = ButtonStyle.Destructive, icon = CircasoIcon.Trash)
+    }
+}
+
+
+/** WhatsApp's quick status reactions, plus a few. */
+private val MomentReactions = listOf("😍", "😂", "😮", "😢", "👏", "🔥", "🙏", "❤️")
+
+/** My reaction to this moment: the emoji I chose, or a heart outline that opens the row. */
+@Composable
+private fun ReactButton(reaction: String?, onClick: () -> Unit) {
+    val c = CircasoTheme.colors
+    Box(
+        Modifier.size(CircasoSizes.controlMd).clip(CircasoShapes.circle).background(c.glass)
+            .pressable(onClick = onClick).semantics(mergeDescendants = true) { contentDescription = reaction?.let { "Your reaction $it. Change" } ?: "React to this moment" },
+        contentAlignment = Alignment.Center,
+    ) {
+        if (reaction != null) BasicText(reaction, style = CircasoTheme.typography.title3)
+        else CircasoIconImage(CircasoIcon.Heart, c.ink, Modifier.size(18.dp))
     }
 }

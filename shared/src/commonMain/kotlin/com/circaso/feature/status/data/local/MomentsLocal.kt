@@ -25,6 +25,8 @@ data class MomentEntity(
     val viewed: Boolean,
     val reacted: Boolean,
     val viewCount: Int,
+    @androidx.room.ColumnInfo(defaultValue = "NULL") val reaction: String? = null,
+    @androidx.room.ColumnInfo(defaultValue = "0") val reactionCount: Int = 0,
 )
 
 /**
@@ -68,6 +70,9 @@ interface MomentsDao {
 
     @Query("UPDATE moment SET viewed = 1, reacted = :reacted WHERE momentId = :id")
     suspend fun setViewed(id: String, reacted: Boolean)
+
+    @Query("UPDATE moment SET reaction = :emoji, reacted = :emoji IS NOT NULL WHERE momentId = :id")
+    suspend fun setReaction(id: String, emoji: String?)
 
     @Query("UPDATE moment SET viewCount = :count WHERE momentId = :id")
     suspend fun setViewCount(id: String, count: Int)

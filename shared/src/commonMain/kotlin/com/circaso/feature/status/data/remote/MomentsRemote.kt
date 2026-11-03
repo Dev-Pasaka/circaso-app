@@ -42,14 +42,18 @@ import kotlinx.serialization.Serializable
     val mine: Boolean = false,
     val viewed: Boolean = false,
     val reacted: Boolean = false,
+    /** My emoji on someone else's moment. */
+    val reaction: String? = null,
     /** Only on my own moments; null (or absent) on everyone else's. */
     val viewCount: Int? = null,
+    val reactionCount: Int? = null,
 )
 @Serializable data class MomentsPageDto(val moments: List<MomentDto> = emptyList(), val next: String? = null)
 
-@Serializable data class ViewMomentRequest(val reacted: Boolean? = null)
+/** `reaction` sets my emoji; `reacted = false` takes it back (nulls are left out of the JSON). */
+@Serializable data class ViewMomentRequest(val reacted: Boolean? = null, val reaction: String? = null)
 @Serializable data class ViewedDto(val viewed: Boolean)
-@Serializable data class MomentViewDto(val userId: String, val viewedAt: String, val reacted: Boolean = false)
+@Serializable data class MomentViewDto(val userId: String, val viewedAt: String, val reacted: Boolean = false, val reaction: String? = null)
 @Serializable data class MomentViewsDto(val views: List<MomentViewDto> = emptyList())
 @Serializable data class MomentDeletedDto(val deleted: Boolean)
 
@@ -58,7 +62,7 @@ interface MomentsRemote {
     suspend fun completeMedia(mediaId: String, idempotencyKey: String): AppResult<MomentMediaCompletedDto>
     suspend fun post(request: PostMomentRequest): AppResult<PostedMomentDto>
     suspend fun page(after: String?, limit: Int = 200): AppResult<MomentsPageDto>
-    suspend fun view(momentId: String, reacted: Boolean?, idempotencyKey: String): AppResult<ViewedDto>
+    suspend fun view(momentId: String, reacted: Boolean?, idempotencyKey: String, reaction: String? = null): AppResult<ViewedDto>
     suspend fun views(momentId: String): AppResult<MomentViewsDto>
     suspend fun delete(momentId: String, idempotencyKey: String): AppResult<MomentDeletedDto>
     suspend fun download(mediaId: String): AppResult<MomentMediaDownloadDto>
@@ -84,9 +88,9 @@ class KtorMomentsRemote(private val api: CircasoApi) : MomentsRemote {
         method = HttpMethod.Get; url("/v1/moments"); after?.let { parameter("after", it) }; parameter("limit", limit)
     }
 
-    override suspend fun view(momentId: String, reacted: Boolean?, idempotencyKey: String) = api.call<ViewedDto> {
+    override suspend fun view(momentId: String, reacted: Boolean?, idempotencyKey: String, reaction: String?) = api.call<ViewedDto> {
         method = HttpMethod.Post; url("/v1/moments/$momentId/view"); idempotencyKey(idempotencyKey)
-        contentType(ContentType.Application.Json); setBody(ViewMomentRequest(reacted))
+        contentType(ContentType.Application.Json); setBody(ViewMomentRequest(reacted, reaction))
     }
 
     override suspend fun views(momentId: String) = api.call<MomentViewsDto> { method = HttpMethod.Get; url("/v1/moments/$momentId/views") }

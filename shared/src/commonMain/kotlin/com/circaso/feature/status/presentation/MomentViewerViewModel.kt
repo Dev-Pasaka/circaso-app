@@ -46,6 +46,8 @@ data class MomentViewerUiState(
     val paused: Boolean = false,
     /** Video sound off, kept for the rest of this viewing. */
     val muted: Boolean = false,
+    /** The emoji row above the reply field is open. */
+    val picking: Boolean = false,
     val viewersOpen: Boolean = false,
     val viewers: List<ViewerRow>? = null,
     val viewersError: String? = null,
@@ -185,13 +187,17 @@ class MomentViewerViewModel(
     fun toggleMute() = _state.update { it.copy(muted = !it.muted) }
     fun onReply(text: String) = _state.update { it.copy(reply = text, paused = text.isNotEmpty()) }
 
-    fun react() {
+    /** Opens or closes the emoji row (the moment waits while it is open). */
+    fun togglePicker() = _state.update { it.copy(picking = !it.picking, paused = !it.picking) }
+
+    /** React with [emoji]; the one already chosen takes it back. Online-only, said before the tap does anything. */
+    fun react(emoji: String) {
         val m = _state.value.moment ?: return
-        // Online-only: said before the tap does anything, never undone after it.
-        if (!_state.value.online) { _state.update { it.copy(notice = "A heart needs a connection.") }; return }
+        _state.update { it.copy(picking = false, paused = false) }
+        if (!_state.value.online) { _state.update { it.copy(notice = "Reactions need a connection.") }; return }
         viewModelScope.launch {
-            val r = repository.markViewed(m.momentId, reacted = !m.reacted)
-            if (r is AppResult.Failure && r.error is AppError.Network) _state.update { it.copy(notice = "You’re offline. Try again when you’re connected.") }
+            val r = repository.react(m.momentId, if (m.reaction == emoji) null else emoji)
+            if (r is AppResult.Failure) _state.update { it.copy(notice = if (r.error is AppError.Network) "You’re offline. Try again when you’re connected." else "That reaction didn’t go through. Try again.") }
         }
     }
 

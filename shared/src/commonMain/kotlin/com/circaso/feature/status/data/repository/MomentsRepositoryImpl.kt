@@ -158,6 +158,7 @@ class MomentsRepositoryImpl(
             ciphertext = if (body == null) dto.ciphertext else null, keyCopy = if (body == null) dto.keyCopy else null,
             postedAt = millis(dto.postedAt), expiresAt = millis(dto.expiresAt), mine = dto.mine,
             viewed = dto.viewed || old?.viewed == true, reacted = dto.reacted, viewCount = dto.viewCount ?: 0,
+            reaction = dto.reaction ?: if (dto.reacted) "\u2764\uFE0F" else null, reactionCount = dto.reactionCount ?: 0,
         )
     }
 
@@ -181,9 +182,21 @@ class MomentsRepositoryImpl(
         }
     }
 
+    override suspend fun react(momentId: String, emoji: String?): AppResult<Unit> {
+        val row = dao.byId(momentId) ?: return AppResult.Success(Unit)
+        if (row.mine) return AppResult.Success(Unit)
+        dao.setReaction(momentId, emoji)
+        val r = if (emoji == null) remote.view(momentId, false, newIdempotencyKey()) else remote.view(momentId, null, newIdempotencyKey(), reaction = emoji)
+        return when (r) {
+            is AppResult.Success -> AppResult.Success(Unit)
+            // Not taken: back as it was, so the screen never shows a reaction the poster won't see.
+            is AppResult.Failure -> { dao.setReaction(momentId, row.reaction); r }
+        }
+    }
+
     override suspend fun viewers(momentId: String): AppResult<List<MomentViewer>> = when (val r = remote.views(momentId)) {
         is AppResult.Failure -> r
-        is AppResult.Success -> AppResult.Success(r.value.views.map { MomentViewer(it.userId, millis(it.viewedAt), it.reacted) }.sortedByDescending { it.viewedAt })
+        is AppResult.Success -> AppResult.Success(r.value.views.map { MomentViewer(it.userId, millis(it.viewedAt), it.reacted, it.reaction ?: if (it.reacted) "\u2764\uFE0F" else null) }.sortedByDescending { it.viewedAt })
             .also { dao.setViewCount(momentId, r.value.views.size) }
     }
 
@@ -360,6 +373,7 @@ class MomentsRepositoryImpl(
             caption = b.caption, thumb = b.thumb,
             media = b.media?.let { MomentMedia(it.mediaId, it.key, it.digest, it.mime, it.sizeBytes, it.durationMs, it.width, it.height) },
             postedAt = postedAt, expiresAt = expiresAt, mine = mine, viewed = viewed, reacted = reacted, viewCount = viewCount,
+            reaction = reaction, reactionCount = reactionCount,
         )
     }
 

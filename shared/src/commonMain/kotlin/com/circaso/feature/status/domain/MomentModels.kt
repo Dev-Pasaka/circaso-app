@@ -40,6 +40,9 @@ data class Moment(
     val viewed: Boolean,
     val reacted: Boolean,
     val viewCount: Int = 0,
+    /** My emoji on someone else's moment; on mine, how many viewers reacted. */
+    val reaction: String? = null,
+    val reactionCount: Int = 0,
 )
 
 /** My moment that hasn't reached the server yet (M6): posting, waiting for a connection, or failed. */
@@ -58,7 +61,7 @@ enum class MomentAudienceMode { Contacts, ContactsExcept, OnlyShareWith }
 
 data class MomentPrivacy(val mode: MomentAudienceMode = MomentAudienceMode.Contacts, val except: Set<String> = emptySet(), val only: Set<String> = emptySet())
 
-data class MomentViewer(val userId: String, val viewedAt: Long, val reacted: Boolean)
+data class MomentViewer(val userId: String, val viewedAt: Long, val reacted: Boolean, val reaction: String? = null)
 
 /** What the composer hands over to post. Media is the plain file on this phone; it is encrypted before it leaves. */
 sealed interface MomentDraft {
@@ -102,6 +105,8 @@ interface MomentsRepository {
 
     /** ST5. A view is recorded once; [reacted] changes the heart. */
     suspend fun markViewed(momentId: String, reacted: Boolean? = null): AppResult<Unit>
+    /** My emoji on someone's moment (any emoji); null takes it back. Online-only. */
+    suspend fun react(momentId: String, emoji: String?): AppResult<Unit>
     suspend fun viewers(momentId: String): AppResult<List<MomentViewer>>
     suspend fun delete(momentId: String): AppResult<Unit>
     suspend fun media(moment: Moment): MomentMediaLoad
