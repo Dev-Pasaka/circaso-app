@@ -2,7 +2,8 @@
 
 Lives in the `circaso-mobile` skill (`references/spaces-plan.md`).
 
-Status: **all decisions taken (2026-11-03); next is phase 0, design.** Nothing is built yet. Decisions marked **(proposed)** need a yes
+Status: **all decisions taken (2026-11-03). Phase 0 underway:** the fee spike is done (§7b); the phase 0a frames for phases 1 and 2
+are in `assets/Circaso-Spaces.html` (built by `scripts/build_spaces_canvas.py`), waiting for Pasaka's review. Nothing is built in code yet. Decisions marked **(proposed)** need a yes
 or a change; open questions are in §8.
 
 **Decided by Pasaka (2026-11-03):** statuses are called **Moments**; group and space wallets use **option A** (owner signs,
@@ -338,8 +339,17 @@ fee for a payment that failed, never pay without the fee).
   **batched call** (two transfers in one user operation) may do the same without our own contract; Circle Gas
   Station keeps paying gas.
 - **Solana:** one transaction can carry two transfer instructions; check what Circle's user-controlled API allows.
-- **Spike first (about 2–3 days):** confirm with Circle's docs and testnet what one user-signed challenge can contain
-  on each chain (contract execution, batch, Solana), then choose per chain. Any contract needs an audit before mainnet.
+- **Spike done (2026-11-03), full report in `references/fee-spike.md`.** Per chain:
+
+  | Network | One user-signed challenge can hold | Choice |
+  | --- | --- | --- |
+  | Base, Polygon, Ethereum | `executeBatch((address,uint256,bytes)[])` on the **sender's own SCA** through `POST /v1/w3s/user/transactions/contractExecution`: two USDC `transfer` calls (receiver, fee wallet), all or nothing. Accepted by Circle on all three testnets (not yet signed on a phone). No USDC approval, no contract of ours. | **Batch** |
+  | Solana | Contract execution is unsupported and the transfer API takes one destination. Only a raw two-instruction transaction through `sign/transaction` works, and then we broadcast it ourselves, get no Gas Station, and the blockhash expires in about 60–90 s (a durable nonce is needed). | **Wait**: Solana payments carry a 0 % rule until a second spike (only if Solana fees are needed at launch) |
+
+  So **no payment contract for now** (nothing to audit). The server builds the batch, and the fee address comes from
+  server configuration, never from the request. The `pay()` contract above stays an option if we ever need an on-chain
+  `transferId` event. Ethereum works but its SCA gas makes the minimum fee about $15–40 under the 25 % rule (Circle itself
+  advises EOAs on Ethereum mainnet): decide before mainnet whether to keep ETH, cap it or give it a high `min_fee_usd`.
 
 ### Gas sponsorship and the 25 % rule (decided 2026-11-03)
 - **Circaso sponsors all network gas** (Circle's **Gas Station** pays it for our smart-contract wallets and bills
@@ -409,8 +419,9 @@ and video), across backend and both apps.
 
 ## 10. Risks
 
-- **Fee collection on user-signed payments** depends on what Circle lets one challenge contain; if a chain can't do it
-  atomically, that chain waits rather than charging in two separate steps.
+- **Fee collection on user-signed payments**: settled by the spike for EVM (batch); Solana waits with a 0 % rule rather than
+  charging in two separate steps. Still unproven: signing a batch on a phone, and what Circle's SDK shows the person for a
+  contract-execution challenge (if it shows anything, it must not look like a strange contract call).
 - **Contract risk:** a payment contract holds approvals over people's USDC; it must be minimal, audited and not upgradeable by one key.
 
 - **One-signer group wallets** concentrate trust in the owner (mitigated by in-app approvals, clear copy, and option B later).
