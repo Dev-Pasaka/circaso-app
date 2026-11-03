@@ -159,7 +159,7 @@ class GroupWalletViewModel(
         local.update { it.copy(busy = true) }
         viewModelScope.launch {
             val r = decide(request.requestId, approve)
-            local.update { it.copy(busy = false, message = (r as? AppResult.Failure)?.let { f -> ErrorMessages.forError(f.error) }) }
+            local.update { it.copy(busy = false, message = (r as? AppResult.Failure)?.let { f -> ErrorMessages.forError(f.error) + (ErrorMessages.reference(f.error)?.let { " Ref $it" } ?: "") }) }
         }
     }
 
@@ -286,11 +286,14 @@ private fun Header(state: GroupWalletUiState, actions: GroupWalletActions, onRec
             else -> "Group wallet · only ${state.signerName} can send, after approval"
         }
         val held = usdc?.let { amountText(it.amountMinor, fiat) } ?: "—"
-        AmountDisplay(
-            currency = held.substringBefore(' ', ""), number = held.substringAfter(' '),
-            sub = listOfNotNull(caption, usdc?.takeIf { fiat != null }?.let { MinorUnits.toDisplay(it.amountMinor, 6) + " USDC" }).joinToString("\n"),
-            size = AmountSize.Hero, centred = false,
-        )
+        Column(verticalArrangement = Arrangement.spacedBy(CircasoSpacing.s1)) {
+            BasicText(caption, style = t.subhead.copy(color = if (state.locked) c.warning else c.inkSecondary))
+            AmountDisplay(
+                currency = held.substringBefore(' ', ""), number = held.substringAfter(' '),
+                sub = usdc?.takeIf { fiat != null }?.let { MinorUnits.toDisplay(it.amountMinor, 6) + " USDC" },
+                size = AmountSize.Hero, centred = false,
+            )
+        }
         Row(Modifier.fillMaxWidth().padding(horizontal = CircasoSpacing.s6), horizontalArrangement = Arrangement.SpaceAround) {
             ActionButton(CircasoIcon.Plus, "Add", actions.onAdd, enabled = active && state.online)
             ActionButton(CircasoIcon.Send, "Payout", actions.onPayout, enabled = active && state.online && !state.locked)

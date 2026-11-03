@@ -49,7 +49,7 @@ class AppPreferences(private val store: DataStore<Preferences>) : com.circaso.co
 
     override suspend fun clear() {
         store.edit { prefs ->
-            prefs.asMap().keys.filter { it.name.startsWith("rt.seq.") || it.name == "flag.$BiometricApproval" || it.name.startsWith("flag.$BiometricApproval.") }.forEach { prefs.remove(it) }
+            prefs.asMap().keys.filter { it.name.startsWith("rt.seq.") || it.name == "flag.$BiometricApproval" || it.name.startsWith("flag.$BiometricApproval.") || it.name.startsWith("flag.biometric_lost.") }.forEach { prefs.remove(it) }
         }
     }
 

@@ -13,6 +13,9 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.background
+import androidx.compose.ui.draw.clip
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -50,7 +53,8 @@ import com.circaso.feature.wallet.presentation.WalletAvatar
 fun GroupWalletSetupScreen(viewModel: GroupWalletSetupViewModel, onOpenGroup: () -> Unit, onDone: () -> Unit) {
     val state by viewModel.state.collectAsState()
     LaunchedEffect(Unit) { viewModel.onStart() }
-    LaunchedEffect(state.step) { if (state.step == SetupStep.Done) onDone() }
+    // Every tick stays in view a moment ("wallet is ready" is seen), then the group.
+    LaunchedEffect(state.step) { if (state.step == SetupStep.Done) { kotlinx.coroutines.delay(CircasoMotion.BaseMs * 3L); onDone() } }
     GroupWalletSetupContent(state, viewModel::onTryAgain, onOpenGroup, viewModel::onTurnOnBiometrics, viewModel::onNotNow)
 }
 
@@ -74,8 +78,11 @@ fun GroupWalletSetupContent(
             else -> "steps"
         }
         AnimatedContent(phase, transitionSpec = { fadeIn(tween(CircasoMotion.BaseMs)) togetherWith fadeOut(tween(CircasoMotion.QuickMs)) }, label = "setup") { p ->
+            // Buttons sit at the bottom (GW4, GW5b, GW5c) and the page still scrolls at large text sizes.
+            androidx.compose.foundation.layout.BoxWithConstraints(Modifier.fillMaxSize()) {
+            val tall = maxHeight
             Column(
-                Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = CircasoSpacing.s6)
+                Modifier.fillMaxSize().verticalScroll(rememberScrollState()).heightIn(min = tall).padding(horizontal = CircasoSpacing.s6)
                     .padding(bottom = padding.calculateBottomPadding() + CircasoSpacing.s6),
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
@@ -84,6 +91,7 @@ fun GroupWalletSetupContent(
                     "problem" -> Problem(state, name, onTryAgain, onOpenGroup)
                     else -> Steps(state, name)
                 }
+            }
             }
         }
     }
@@ -102,7 +110,7 @@ private fun Steps(state: GroupWalletSetupState, name: String) {
             StepLine(if (state.pinSet) "PIN set" else "Set the wallet’s PIN", done = state.pinSet, running = state.step == SetupStep.Pin)
             StepLine(if (state.created) "Wallet created" else "Creating the wallet", done = state.created, running = state.step == SetupStep.Creating)
             StepLine(if (state.step.ordinal > SetupStep.Networks.ordinal) "Networks added" else "Adding networks", done = state.step.ordinal > SetupStep.Networks.ordinal, running = state.step == SetupStep.Networks)
-            if (state.step == SetupStep.Rules) StepLine("Saving the group’s rules", done = false, running = true)
+            if (state.step == SetupStep.Rules || state.step == SetupStep.Done) StepLine(if (state.step == SetupStep.Done) "$name’s wallet is ready" else "Saving the group’s rules", done = state.step == SetupStep.Done, running = state.step == SetupStep.Rules)
         }
     }
 }
@@ -125,7 +133,7 @@ private fun StepLine(text: String, done: Boolean, running: Boolean) {
 
 /** GW4 / GW4b: biometrics for this wallet only; the group's picture sits on the mark so it's clear which wallet. */
 @Composable
-private fun BiometricsOffer(state: GroupWalletSetupState, name: String, onTurnOn: () -> Unit, onNotNow: () -> Unit) {
+private fun androidx.compose.foundation.layout.ColumnScope.BiometricsOffer(state: GroupWalletSetupState, name: String, onTurnOn: () -> Unit, onNotNow: () -> Unit) {
     val c = CircasoTheme.colors
     val t = CircasoTheme.typography
     val label = state.biometricLabel ?: "Fingerprint"
@@ -134,8 +142,9 @@ private fun BiometricsOffer(state: GroupWalletSetupState, name: String, onTurnOn
     Spacer(Modifier.height(96.dp))
     Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(26.dp)) {
         Box {
-            CircasoIconImage(if (faceId) CircasoIcon.FaceId else CircasoIcon.Fingerprint, c.ink, Modifier.size(84.dp))
-            Box(Modifier.align(Alignment.BottomEnd).offset(x = 14.dp, y = 10.dp)) {
+            CircasoIconImage(if (faceId) CircasoIcon.FaceId else CircasoIcon.Fingerprint, c.ink, Modifier.size(84.dp), strokeWidth = 1.4f)
+            // A ring of the page's colour, so the glyph's strokes don't run into the photo.
+            Box(Modifier.align(Alignment.BottomEnd).offset(x = 14.dp, y = 10.dp).clip(androidx.compose.foundation.shape.CircleShape).background(c.bg).padding(3.dp)) {
                 com.circaso.designsystem.components.Avatar(name, size = CircasoSizes.avatarMd, imageUrl = state.avatarUrl)
             }
         }
@@ -144,9 +153,10 @@ private fun BiometricsOffer(state: GroupWalletSetupState, name: String, onTurnOn
             BasicText("Only for this group wallet. Your personal wallet keeps its own setting. If it doesn’t work, the group PIN takes over.", style = t.body.copy(color = c.inkSecondary, textAlign = TextAlign.Center))
         }
     }
-    Spacer(Modifier.height(CircasoSpacing.s8))
+    Spacer(Modifier.height(CircasoSpacing.s8).weight(1f))
     Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         CircasoButton("Turn On ${if (faceId) label else "Fingerprint"}", onTurnOn, size = ButtonSize.Large, block = true, busy = state.turningOnBiometrics, enabled = state.online && !state.turningOnBiometrics)
+        if (!state.online) BasicText("Needs a connection", Modifier.fillMaxWidth(), style = t.footnote.copy(color = c.inkSecondary, textAlign = TextAlign.Center))
         CircasoButton("Not Now", onNotNow, style = ButtonStyle.Plain, size = ButtonSize.Large, block = true, enabled = !state.turningOnBiometrics)
         BasicText("You can change this in $name’s group info.", Modifier.fillMaxWidth().padding(top = 8.dp), style = t.footnote.copy(color = c.inkSecondary, textAlign = TextAlign.Center))
     }
@@ -154,14 +164,14 @@ private fun BiometricsOffer(state: GroupWalletSetupState, name: String, onTurnOn
 
 /** GW5b, GW5c, and a PIN the owner backed out of. The group exists in every case; nothing was lost. */
 @Composable
-private fun Problem(state: GroupWalletSetupState, name: String, onTryAgain: () -> Unit, onOpenGroup: () -> Unit) {
+private fun androidx.compose.foundation.layout.ColumnScope.Problem(state: GroupWalletSetupState, name: String, onTryAgain: () -> Unit, onOpenGroup: () -> Unit) {
     val c = CircasoTheme.colors
     val t = CircasoTheme.typography
     Spacer(Modifier.height(120.dp))
     Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(14.dp)) {
         when (state.problem) {
             SetupProblem.Offline -> {
-                CircasoIconImage(CircasoIcon.Offline, c.inkSecondary, Modifier.size(44.dp))
+                CircasoIconImage(CircasoIcon.Offline, c.inkSecondary, Modifier.size(44.dp), strokeWidth = 1.6f)
                 BasicText("The connection dropped", Modifier.semantics { heading() }, style = t.title2.copy(color = c.ink, textAlign = TextAlign.Center))
                 BasicText(
                     if (state.created) "$name’s wallet is made, but it isn’t finished. You can finish it from the group when you’re back online."
@@ -190,7 +200,7 @@ private fun Problem(state: GroupWalletSetupState, name: String, onTryAgain: () -
             }
         }
     }
-    Spacer(Modifier.height(CircasoSpacing.s8))
+    Spacer(Modifier.height(CircasoSpacing.s8).weight(1f))
     Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         when (state.problem) {
             SetupProblem.Offline -> CircasoButton("Open the Group", onOpenGroup, style = ButtonStyle.Secondary, size = ButtonSize.Large, block = true)

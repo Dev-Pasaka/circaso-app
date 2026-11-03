@@ -259,6 +259,49 @@ The **treasurer model** (backend decision 2026-10-29, for Pasaka to confirm): a 
 - **Tests** (`commonTest/feature/chama/ChamaTest.kt`, 13): the repository with fakes (refresh, no_goal, failures keep the copy, frames refresh, writes with idempotency key, ledger mapping, a link that fails stays and shows as paying, a landed link is forgotten), deadlines, payout draft rules, amount helpers.
 - **Review**: `.claude/agents/design-reviewer` checks any screen against its frame and the premium bar (fidelity, no shortcuts, fast and fluid); run it before calling a screen done.
 
+## Group wallets (Spaces phase 2, 2026-11-04; guide "Group wallets", W14–W16, CH7–CH9; designs GW1–GW19)
+
+Chamas and groups are one Group; a group may have its own wallet (option A: the owner sets its PIN and is its only
+signer, admins approve payouts). The treasurer model above stays only for a server without group wallets.
+
+- **The flag** (`core/flags/GroupWalletsFlag`, a Koin single): **wanted** is on in debug builds and off in release
+  builds (`ClientInfo.debugBuild`), overridable on the phone (`AppPreferences.groupWalletsOverride`; in a debug build
+  launch with `-group-wallets=on|off|default`, Android `--es group-wallets off`). **Server**: the first answer from W15
+  or W16 settles it; `404 request.not_found` turns it off for the run. `enabled` drives the screens; `canSendWalletId`
+  guards the wire: `KtorWalletRemote` refuses (`wallet.group_wallets_unavailable`, nothing sent) any `walletId`,
+  `payoutRequestId` or `to.groupId` until a group-wallet route has answered, because an older server ignores those
+  fields and would pay from the personal wallet. Turn the release default on once production has PR #28.
+- **Wallet model** (`feature/wallet`): `Wallet` gains `walletId`, `owner` (`WalletOwner`: person or group, `chatId`,
+  `signerUserId`) and `canSign`; `WalletListing` (W15/W16), `GroupWallet` (W15). Every remote call takes
+  `walletId` (null = personal, so personal calls are byte-for-byte as before). Room (DB v17, auto-migration): the
+  personal W1 stays in `wallet_snapshot`; group wallets' W1 in `wallet_cache` (per `walletId`); W16 in `wallet_list`;
+  a group wallet's W6 history in `wallet_activity` (its own table, because a contribution is one transfer that is OUT
+  of a personal wallet and IN to the group's); a payout signed on this phone is a `transfer` row with `walletId` set,
+  kept out of the personal lists. CH7 per group in `group_money`.
+- **One Circle SDK, many Circle users.** Each wallet is its own Circle user. `SdkSession.subject` (`SignSubject`:
+  `walletId`, the name the phone gives it, what the challenge does) travels with every session, so `:circlewallet`
+  names the wallet on Circle's screens ("Set a PIN for Kilimani Chama", "Approve from Kilimani Chama": Android's
+  `CircasoPinTexts`, set before each call) and reports biometrics lost for that wallet only
+  (`WalletSignerBridge.reportBiometricsLost(walletId)`; per-wallet flags `biometric_approval.<walletId>` and
+  `biometric_lost.<walletId>`). `WalletRepositoryImpl` runs one challenge at a time (a `Mutex`), so one wallet's PIN
+  screen never opens over another's. iOS: Circle's texts come from `CirclePWLocalizable.strings` and can't name the
+  wallet; the app's own screen behind the PIN does (GW12b's approach). `WalletSigner` is unchanged, so swapping in
+  Circle Modular Wallets (option B) later stays inside the module.
+- **Screens**: New Group (GW1–GW1d) → `GroupWalletSetupRoute` (W14 + PIN → W15 → GW4 biometrics → W13 → CH9 → CH2;
+  GW5b/GW5c and a cancelled PIN; Try Again resumes without a second PIN) → the chat. Group info (`GroupMoneyRows`,
+  GW6–GW8b; locked wallet when the signer left; leaving blocked while the wallet holds money, §11.9; Change PIN is a
+  coming sheet, no W8 route). `TargetRoute` (GW7b, CH2/CH8). `GroupWalletRoute` (balance and who sends, Add / Payout
+  / Receive, target, requests, history), also the Wallet tab's view when a group wallet is picked in its title
+  switcher (GW16). Pay (`PayIntent.groupId` contribute, `fromWalletId` + `requestId` pay payout, `fromWalletId`
+  alone request payout; Paying from chip and GW10 sheet; GW19 Not sent). In a group, `#1000` is a contribution
+  (GW9a2) and the preview's arrow opens the review; in a direct chat it does too when there is another wallet to pay
+  from, otherwise the PIN as before (GW11b).
+- **Money never queues**: every write here is online-only and disabled offline before the tap; reads come from Room.
+- **Fees and caps (2F)**: not built. The seams: the review's "Fee" row, `PrepareTransferResponse.fee`, `PayFailure`.
+- **Tests**: `commonTest/feature/wallet/GroupWalletTest.kt` (flag, repository), `commonTest/feature/chama/ChamaTest.kt`
+  `GroupMoneyTest`, `androidHostTest/feature/wallet/GroupWalletViewModelsTest.kt` (Pay, set-up, group info rules).
+- **Previews**: `gw-*` in `gallery/GroupWalletPreviews.kt` (listed in `project-status.md`).
+
 ## Phase 1 design gaps closed in the app (2026-10-29)
 
 - **ID-23 hold banner** (`HoldBanner`): after a restore, the Chats tab banner says payments are paused and for how long, with a sheet explaining why.

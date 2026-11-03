@@ -43,7 +43,7 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
 /** Where the payment is (designs C4 → C5 → C6). */
-enum class PayStep { Pick, Amount, Signing, Done }
+enum class PayStep { Pick, Amount, Signing, Sending, Done }
 
 /**
  * Who is being paid and why: a person (C4), a person or an address from a chat, a contribution to a group's goal
@@ -152,6 +152,8 @@ data class PayUiState(
     val payoutRequest get() = requestId?.let { id -> groupMoney?.openRequests?.firstOrNull { it.requestId == id } }
     /** The wallet's name as the approval says it ("Approve from Kilimani Chama"). */
     val walletName get() = payingFrom.name
+    /** Who sends from the group wallet, for a member who asks (GW9c). */
+    val signerName get() = memberNames[payingFrom.signerUserId ?: groupMoney?.wallet?.signerUserId]?.substringBefore(' ') ?: "its signer"
     /** The held asset the tag names ("@btc" also matches wrapped BTC), on the chain that holds the most of it; null for USDC. */
     val tagged: Pair<String, com.circaso.feature.wallet.domain.Asset>?
         get() {
@@ -236,6 +238,8 @@ class PayViewModel(
     // Group wallets (phase 2); off and absent in the treasurer model, tests and previews.
     private val groupWallets: com.circaso.core.flags.GroupWalletsFlag = com.circaso.core.flags.GroupWalletsFlag.off(),
     private val wallets: GroupWalletSources? = null,
+    /** The phone's copy of one transfer: GW17 waits on it, so a group payment says Paid only once the chain has it. */
+    private val observeTransfer: com.circaso.feature.wallet.domain.ObserveTransferUseCase? = null,
 ) : ViewModel() {
     private val userId = intent.userId
     private val chatId = intent.chatId
@@ -469,7 +473,12 @@ class PayViewModel(
                     val transfer = r.value
                     val target = chatId ?: if (toAddress == null && !s.toGroup) (openDirectChat(payee.userId) as? AppResult.Success)?.value?.chatId else null
                     if (target != null) sendCard(target, PaymentCard(transfer.transferId, transfer.amount.amountMinor, transfer.amount.asset, transfer.blockchain, note))
-                    local.update { it.copy(step = PayStep.Done, result = transfer, chatId = it.chatId ?: target) }
+                    val follow = observeTransfer
+                    if ((s.groupPayout || s.toGroup) && follow != null && !transfer.settled) {
+                        // GW17: signed, not yet on chain. The review stays, named; nothing says paid until the server does.
+                        local.update { it.copy(step = PayStep.Sending, result = transfer, chatId = it.chatId ?: target) }
+                        followTransfer(follow, transfer.transferId, s)
+                    } else local.update { it.copy(step = PayStep.Done, result = transfer, chatId = it.chatId ?: target) }
                     // Treasurer model only: with group wallets, W4's payoutRequestId ties the payment to the request.
                     if (!s.groupWallets) s.requestId?.let { attach(it, transfer.transferId) }
                 }
@@ -498,6 +507,23 @@ class PayViewModel(
     }
 
     fun onFailureShown() = local.update { it.copy(failure = null) }
+
+    /** Confirmed: Done says it. Failed or expired: GW19 (nothing was taken). Leaving keeps it going; the chat card updates. */
+    private fun followTransfer(follow: com.circaso.feature.wallet.domain.ObserveTransferUseCase, transferId: String, s: PayUiState) {
+        viewModelScope.launch {
+            follow(transferId).collect { t ->
+                if (t == null) return@collect
+                when (t.state) {
+                    com.circaso.feature.wallet.domain.TransferState.Confirmed -> { local.update { it.copy(step = PayStep.Done, result = t) }; return@collect }
+                    com.circaso.feature.wallet.domain.TransferState.Failed, com.circaso.feature.wallet.domain.TransferState.Expired -> {
+                        idempotencyKey = newIdempotencyKey()
+                        local.update { it.copy(step = PayStep.Amount, result = null, failure = PayFailure(s.walletName.takeIf { s.fromGroupWallet } ?: "your wallet", ErrorMessages.forError(AppError.Api("wallet.sdk_failed", 400, null, null, emptyMap())), null)) }
+                    }
+                    else -> local.update { it.copy(result = t) }
+                }
+            }
+        }
+    }
 
     /**
      * CH6: tell the chama which transfer paid the request. The repository writes the link down before sending it and

@@ -508,7 +508,11 @@ private fun androidx.compose.foundation.layout.BoxScope.CallLayer(backStack: Mut
     val call by controller.state.collectAsState()
     val chatId = call?.chatId
     val chamas = koinInject<com.circaso.feature.chama.domain.ChamaRepository>()
-    val chama by remember(chatId) { if (chatId != null) chamas.chama(chatId) else kotlinx.coroutines.flow.flowOf(null) }.collectAsState(null)
+    // Group wallets: a group call's contribute preset pays into the group's own wallet (CH7), not a treasurer (CH1).
+    val groupWalletsOn by koinInject<com.circaso.core.flags.GroupWalletsFlag>().enabled.collectAsState()
+    val treasurerChama by remember(chatId) { if (chatId != null) chamas.chama(chatId) else kotlinx.coroutines.flow.flowOf(null) }.collectAsState(null)
+    val groupMoney by remember(chatId, groupWalletsOn) { if (chatId != null && groupWalletsOn) chamas.money(chatId) else kotlinx.coroutines.flow.flowOf(null) }.collectAsState(null)
+    val chama = if (groupWalletsOn) groupMoney?.asChama() else treasurerChama
     val wallet by koinInject<com.circaso.feature.wallet.domain.WalletRepository>().wallet.collectAsState(null)
     val messages = koinInject<com.circaso.feature.messaging.domain.MessagesRepository>()
     val thread by remember(chatId) { if (chatId != null) messages.thread(chatId) else kotlinx.coroutines.flow.flowOf(emptyList()) }.collectAsState(emptyList())
@@ -544,7 +548,8 @@ private fun androidx.compose.foundation.layout.BoxScope.CallLayer(backStack: Mut
                 if (c.phase == com.circaso.feature.calls.CallPhase.Incoming) controller.decline() else controller.minimise(true)
                 backStack.add(PayRoute(userId = peer.userId, chatId = c.chatId, displayName = peer.name))
             }) else null,
-            onContribute = chama?.goal?.let { g -> { amount: String? -> controller.minimise(true); backStack.add(PayRoute(userId = g.treasurerUserId, chatId = g.chatId, displayName = c?.people?.firstOrNull { it.userId == g.treasurerUserId }?.name, amount = amount, goalName = g.name)) } },
+            onContribute = if (groupWalletsOn) groupMoney?.takeIf { it.walletActive }?.let { m -> { amount: String? -> controller.minimise(true); backStack.add(PayRoute(groupId = m.chatId, chatId = m.chatId, amount = amount, goalName = m.goal?.name)) } }
+                else chama?.goal?.let { g -> { amount: String? -> controller.minimise(true); backStack.add(PayRoute(userId = g.treasurerUserId, chatId = g.chatId, displayName = c?.people?.firstOrNull { it.userId == g.treasurerUserId }?.name, amount = amount, goalName = g.name)) } },
         ),
         money = money,
         chama = chama,

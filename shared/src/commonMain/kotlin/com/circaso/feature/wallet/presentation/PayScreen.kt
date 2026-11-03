@@ -114,7 +114,7 @@ fun PayContent(
     val title = when {
         // Group wallets (GW9, GW9c, GW9d): the review says what kind of money this is.
         state.toGroup -> if (state.step == PayStep.Done) "Added" else "Contribute"
-        state.groupPayout -> if (state.step == PayStep.Done) "Paid" else "Pay Payout"
+        state.groupPayout -> if (state.step == PayStep.Done && state.result?.settled == true) "Paid" else if (state.step == PayStep.Done) "Sent" else "Pay Payout"
         state.requestPayout -> if (state.step == PayStep.Done) "Requested" else "Request Payout"
         state.contribution -> if (state.step == PayStep.Done) "Added" else "Add to ${state.goalName}"
         state.payout -> when { state.step != PayStep.Done -> "Pay from the Group"; state.linked -> "Paid"; else -> "Sent" }
@@ -140,7 +140,7 @@ fun PayContent(
     ) { padding ->
         when (state.step) {
             PayStep.Pick -> PickPerson(state, padding, onQuery, onPick)
-            PayStep.Amount, PayStep.Signing -> AmountStep(state, padding, onAmount, onToggleUnit, onNote, onChain, onRemind, onPay, onChoosing)
+            PayStep.Amount, PayStep.Signing, PayStep.Sending -> AmountStep(state, padding, onAmount, onToggleUnit, onNote, onChain, onRemind, onPay, onChoosing)
             PayStep.Done -> DoneStep(state, padding, onBack, onOpenTransfer, onOpenChat, onAttachAgain)
         }
     }
@@ -179,6 +179,14 @@ private fun AmountStep(state: PayUiState, padding: PaddingValues, onAmount: (Str
                 when {
                     // GW9d: into the group's own wallet, not anyone's personal one.
                     state.toGroup -> BasicText("the group’s own wallet", style = t.footnote.copy(color = c.inkSecondary))
+                }
+                // The signer left (spaces-plan §11.8): paying in is allowed, but say nothing can leave it for now.
+                val signer = state.groupMoney?.wallet?.signerUserId
+                if (state.toGroup && signer != null && state.memberNames.isNotEmpty() && signer !in state.memberNames) {
+                    BasicText("Nothing can be sent from this wallet until the person who signs for it is back in the group.", style = t.footnote.copy(color = c.warning, textAlign = TextAlign.Center))
+                }
+                when {
+                    state.toGroup -> Unit
                     state.groupPayout -> BasicText("approved by the group’s admins", style = t.footnote.copy(color = c.inkSecondary))
                     // Design D3: a contribution goes to the treasurer's wallet; design D5: a payout leaves it.
                     state.contribution -> BasicText("holds the money for ${state.goalName}", style = t.footnote.copy(color = c.inkSecondary))
@@ -211,7 +219,9 @@ private fun AmountStep(state: PayUiState, padding: PaddingValues, onAmount: (Str
         // G2 / GW19: the payment didn't go; nothing was taken, and the approval (if any) still stands.
         state.failure?.let { f ->
             com.circaso.designsystem.chrome.Banner(
-                "Not sent. Nothing was taken from ${f.wallet}." + (if (state.payout) " The approval still stands." else "") + (f.message.takeIf { it != com.circaso.core.common.ErrorMessages.SomethingWrong }?.let { " $it" } ?: "") + (f.reference?.let { " Ref $it" } ?: ""),
+                "Not sent. Nothing was taken from ${f.wallet}." + (if (state.payout) " The approval still stands." else "") +
+                    // The code's own words only when they add something ("Nothing was sent" would repeat the line).
+                    (f.message.takeIf { it != com.circaso.core.common.ErrorMessages.SomethingWrong && !it.contains("Nothing was sent") && !it.contains("Nothing was taken") }?.let { " $it" } ?: ""),
                 CircasoIcon.Warning, tone = com.circaso.designsystem.chrome.BannerTone.Critical,
             )
         }
@@ -293,6 +303,8 @@ private fun AmountStep(state: PayUiState, padding: PaddingValues, onAmount: (Str
         val amount = if (state.inFiat && state.fiatText != null) state.fiatText else state.usdcText
         CircasoButton(
             text = when {
+                state.step == PayStep.Sending -> "Sending from ${if (state.fromGroupWallet) state.walletName else "your wallet"}…"
+                state.failure != null -> "Try Again"
                 state.step == PayStep.Signing && state.requestPayout -> "Asking the admins…"
                 state.step == PayStep.Signing && state.fromGroupWallet -> "Waiting for the PIN…"
                 state.step == PayStep.Signing -> "Waiting for your PIN…"
@@ -307,13 +319,15 @@ private fun AmountStep(state: PayUiState, padding: PaddingValues, onAmount: (Str
                 amount != null -> "Send $amount"
                 else -> "Send"
             },
-            onClick = onPay, size = ButtonSize.Large, block = true, enabled = state.canPay, busy = state.step == PayStep.Signing,
+            onClick = onPay, size = ButtonSize.Large, block = true, enabled = state.canPay, busy = state.step == PayStep.Signing || state.step == PayStep.Sending,
         )
+        if (state.step == PayStep.Sending) BasicText("This takes a few seconds. You can close this; the card in the chat updates.", Modifier.semantics { liveRegion = androidx.compose.ui.semantics.LiveRegionMode.Polite }, style = t.footnote.copy(color = c.inkSecondary, textAlign = TextAlign.Center))
+        state.failure?.reference?.let { BasicText("Ref $it", style = t.caption1.copy(color = c.inkTertiary, fontFeatureSettings = "tnum")) }
         // GW11: the approval names its wallet; behind Circle's PIN (and iOS's bare Face ID glyph) this stays on screen.
         if (state.step == PayStep.Signing && state.fromGroupWallet && !state.requestPayout) {
             BasicText("Approve from ${state.walletName} · ${state.walletName}’s PIN, not your personal one.", Modifier.semantics { liveRegion = androidx.compose.ui.semantics.LiveRegionMode.Polite }, style = t.footnote.copy(color = c.inkSecondary, textAlign = TextAlign.Center))
         }
-        if (state.requestPayout) BasicText("Admins approve in the group chat. Then you pay it with ${state.walletName}’s PIN.", style = t.footnote.copy(color = c.inkSecondary, textAlign = TextAlign.Center))
+        if (state.requestPayout) BasicText(if (state.payingFrom.canSign) "Admins approve in the group chat. Then you pay it with ${state.walletName}’s PIN." else "Admins approve in the group chat. Then ${state.signerName} pays it from ${state.walletName}’s wallet.", style = t.footnote.copy(color = c.inkSecondary, textAlign = TextAlign.Center))
         state.rate?.let { BasicText("1 USDC = ${state.currency} ${formatRate(it)}", style = t.caption1.copy(color = c.inkTertiary)) }
         if (!state.online) BasicText("You need a connection to send money.", style = t.footnote.copy(color = c.inkSecondary))
         if (state.onHold) BasicText("Sending is paused for a short while after your account was recovered. You can still receive money.", style = t.footnote.copy(color = c.warning, textAlign = TextAlign.Center))
@@ -350,14 +364,14 @@ private fun DoneStep(state: PayUiState, padding: PaddingValues, onDone: () -> Un
             when {
                 state.requestPayout -> "Payout requested"
                 state.toGroup -> "Added to ${state.payee?.displayName ?: "the group"}"
-                state.groupPayout -> "Paid from ${state.walletName}"
+                state.groupPayout -> if (state.result?.settled == true) "Paid from ${state.walletName}" else "On its way from ${state.walletName}"
                 state.contribution -> "Added to ${state.goalName}"; state.linked -> "Paid from the group"; state.payout -> "The money went"; else -> "On its way"
             },
             style = t.title2.copy(color = c.ink, textAlign = TextAlign.Center),
         )
         BasicText(
             when {
-                state.requestPayout -> "The admins of ${state.walletName} decide in the group chat. Once it’s approved, you pay it with ${state.walletName}’s PIN."
+                state.requestPayout -> "The admins of ${state.walletName} decide in the group chat. Once it’s approved, " + if (state.payingFrom.canSign) "you pay it with ${state.walletName}’s PIN." else "${state.signerName} pays it from the group wallet."
                 state.toGroup -> "It’s in the group’s own wallet, and everyone in the group sees it. It settles on chain in a moment."
                 state.groupPayout -> "${state.payee?.displayName ?: "They"} will have it in a moment, and the request in the chat turns to Paid."
                 state.contribution -> "Everyone in the group sees it on the goal. It settles on chain in a moment."
@@ -370,7 +384,7 @@ private fun DoneStep(state: PayUiState, padding: PaddingValues, onDone: () -> Un
         )
         if (transfer != null) {
             MoneyCard(
-                head = when { state.groupPayout -> "Paid from ${state.walletName}"; state.contribution -> "Contribution"; else -> "Sent" }, amount = state.fiatText ?: state.usdcText ?: "", foot = "${MinorUnits.toDisplay(transfer.amount.amountMinor, 6)} USDC · on its way", outgoing = true,
+                head = when { state.groupPayout && transfer.settled -> "Paid from ${state.walletName}"; state.groupPayout -> "From ${state.walletName}"; state.contribution -> "Contribution"; else -> "Sent" }, amount = state.fiatText ?: state.usdcText ?: "", foot = "${MinorUnits.toDisplay(transfer.amount.amountMinor, 6)} USDC · " + if (transfer.settled) "settled" else "on its way", outgoing = true,
                 note = state.note.trim().takeIf { it.isNotEmpty() }, onClick = { onOpenTransfer(transfer.transferId) },
             )
         }

@@ -168,22 +168,23 @@ class ChatInfoViewModel(
         _state.update { it.copy(busy = true) }
         viewModelScope.launch {
             val r = source.setApprovalPolicy(chatId, s.policyChoice, policyKey)
-            _state.update { it.copy(busy = false, moneySheet = if (r is AppResult.Success) null else it.moneySheet, message = (r as? AppResult.Failure)?.let { f -> ErrorMessages.forError(f.error) }) }
+            _state.update { it.copy(busy = false, moneySheet = if (r is AppResult.Success) null else it.moneySheet, message = (r as? AppResult.Failure)?.let { f -> withRef(f.error) }) }
             if (r is AppResult.Success) policyKey = com.circaso.core.network.newIdempotencyKey()
         }
     }
 
-    /** GW8: this wallet's fingerprint / Face ID, through Circle with the wallet's own PIN. */
-    fun onWalletBiometrics() {
+    /** GW8: this wallet's fingerprint / Face ID: on through Circle with the wallet's own PIN; off back to its PIN. */
+    fun onWalletBiometrics(on: Boolean) {
         val source = groupMoney ?: return
         val s = _state.value
         val walletId = s.money.money?.wallet?.walletId ?: return
+        if (!on) { viewModelScope.launch { source.turnOffBiometrics(walletId) }; return }
         if (!s.canChange) return
         _state.update { it.copy(busy = true) }
         viewModelScope.launch {
             val r = source.turnOnBiometrics(walletId, s.chat?.title ?: "the group")
             val cancelled = ((r as? AppResult.Failure)?.error as? com.circaso.core.common.AppError.Api)?.code == "wallet.cancelled"
-            _state.update { it.copy(busy = false, message = (r as? AppResult.Failure)?.takeIf { !cancelled }?.let { f -> ErrorMessages.forError(f.error) }) }
+            _state.update { it.copy(busy = false, message = (r as? AppResult.Failure)?.takeIf { !cancelled }?.let { f -> withRef(f.error) }) }
         }
     }
 
@@ -240,4 +241,7 @@ class ChatInfoViewModel(
     }
 
     fun onMessageShown() = _state.update { it.copy(message = null) }
+
+    /** The error's words, with its reference for support. */
+    private fun withRef(error: com.circaso.core.common.AppError) = ErrorMessages.forError(error) + (ErrorMessages.reference(error)?.let { " Ref $it" } ?: "")
 }

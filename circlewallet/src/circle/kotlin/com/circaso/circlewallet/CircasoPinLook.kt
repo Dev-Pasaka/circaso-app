@@ -57,7 +57,8 @@ internal class CircasoPinTexts(private val context: Context) : LayoutProvider() 
     private fun headline(lead: String, strong: String): Array<TextConfig?> = arrayOf(TextConfig(lead, ink, bold), TextConfig(strong, ink, bold))
 
     override fun getTextConfigs(key: Resource.TextsKey): Array<TextConfig?>? {
-        val named = subject.name?.takeIf { !subject.personal }
+        // Named whenever the app names it: a group wallet, and Personal when the person has others (GW11b).
+        val named = subject.name
         return when (key) {
             Resource.TextsKey.newPinCodeHeadline -> if (named != null) headline("Set a PIN for ", named) else headline("Choose your ", "wallet PIN")
             Resource.TextsKey.enterPinCodeHeadline -> if (named != null) headline("Approve from ", named) else headline("Enter your ", "wallet PIN")

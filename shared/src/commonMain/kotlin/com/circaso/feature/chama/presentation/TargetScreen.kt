@@ -34,6 +34,7 @@ import com.circaso.core.sync.ConnectionBanner
 import com.circaso.core.sync.ConnectionState
 import com.circaso.designsystem.chrome.CircasoNavBar
 import com.circaso.designsystem.chrome.CircasoScaffold
+import com.circaso.designsystem.chrome.ConfirmSheet
 import com.circaso.designsystem.components.ButtonSize
 import com.circaso.designsystem.components.ButtonStyle
 import com.circaso.designsystem.components.CircasoButton
@@ -76,7 +77,13 @@ data class TargetUiState(
     val done: Boolean = false,
     /** Arrived from the wallet set-up (GW7 → GW5 → here): GW7b's "wallet is ready" line. */
     val walletJustReady: Boolean = false,
+    /** The saved target's date: kept unless the person picks another (or No date). */
+    val existingDeadline: String? = null,
+    val keepDate: Boolean = true,
+    val confirmingRemove: Boolean = false,
 ) {
+    /** What Save sends as the date. */
+    val deadlineToSave: String? get() = if (by == GoalDeadline.None && keepDate) existingDeadline else deadlineIso(by)
     val amountMinor: String? get() = (fiat?.let { fiatToUsdcMinor(amountText, it.rate) } ?: MinorUnits.fromDisplay(amountText, 6))?.takeIf { !MinorUnits.isZero(it) }
     val usdcHint: String? get() = if (fiat != null) amountMinor?.let { "≈ " + MinorUnits.toDisplay(it, 6) + " USDC" } else null
     val editing get() = money?.goal != null
@@ -106,17 +113,16 @@ class TargetViewModel(
     init {
         viewModelScope.launch { observeChat(chatId).collect { chat -> _state.update { it.copy(groupName = chat?.title.orEmpty()) } } }
         viewModelScope.launch { connection.status.collect { s -> _state.update { it.copy(online = s == ConnectionStatus.Online) } } }
-        viewModelScope.launch { observeWallet().collect { w -> _state.update { it.copy(fiat = w?.fiat) } } }
         viewModelScope.launch {
-            observeMoney(chatId).collect { m ->
-                _state.update { it.copy(money = m) }
-                // Changing a target starts from what it is now.
+            // Money and rate together, so a changed target is filled in the unit its field shows (never USDC under KES).
+            kotlinx.coroutines.flow.combine(observeMoney(chatId), observeWallet()) { m, w -> m to w?.fiat }.collect { (m, fiat) ->
+                _state.update { it.copy(money = m, fiat = fiat) }
+                // Changing a target starts from what it is now, its date included.
                 val g = m?.goal
                 if (!filled && g != null) {
                     filled = true
-                    val fiat = _state.value.fiat
-                    val text = fiat?.let { usdcToFiat(g.targetMinor, it.rate)?.substringBefore('.') } ?: MinorUnits.toDisplay(g.targetMinor, 6).replace(",", "")
-                    _state.update { it.copy(name = g.name, amountText = text) }
+                    val text = fiat?.let { usdcToFiat(g.targetMinor, it.rate)?.let(::whole)?.substringBefore('.') } ?: MinorUnits.toDisplay(g.targetMinor, 6).replace(",", "")
+                    _state.update { it.copy(name = g.name, amountText = text, existingDeadline = g.deadline) }
                 }
             }
         }
@@ -129,7 +135,9 @@ class TargetViewModel(
         if (clean.count { it == '.' } > 1) return
         _state.update { it.copy(amountText = clean, error = null) }
     }
-    fun onBy(by: GoalDeadline) = _state.update { it.copy(by = by) }
+    fun onBy(by: GoalDeadline) = _state.update { it.copy(by = by, keepDate = false) }
+    fun onKeepDate() = _state.update { it.copy(by = GoalDeadline.None, keepDate = true) }
+    fun onConfirmRemove(open: Boolean) = _state.update { it.copy(confirmingRemove = open) }
 
     fun onSave() {
         val s = _state.value
@@ -137,7 +145,7 @@ class TargetViewModel(
         if (!s.canSave) return
         _state.update { it.copy(saving = true, error = null, reference = null) }
         viewModelScope.launch {
-            when (val r = setGoal(chatId, s.name.trim(), minor, deadlineIso(s.by))) {
+            when (val r = setGoal(chatId, s.name.trim(), minor, s.deadlineToSave)) {
                 is AppResult.Success -> { refreshMoney(chatId); _state.update { it.copy(saving = false, done = true) } }
                 is AppResult.Failure -> _state.update { it.copy(saving = false, error = ErrorMessages.forError(r.error), reference = ErrorMessages.reference(r.error)) }
             }
@@ -147,7 +155,7 @@ class TargetViewModel(
     fun onRemove() {
         val s = _state.value
         if (!s.online || s.removing || !s.editing) return
-        _state.update { it.copy(removing = true, error = null) }
+        _state.update { it.copy(removing = true, error = null, confirmingRemove = false) }
         viewModelScope.launch {
             when (val r = removeGoal(chatId)) {
                 is AppResult.Success -> _state.update { it.copy(removing = false, done = true) }
@@ -161,17 +169,27 @@ class TargetViewModel(
 fun TargetScreen(viewModel: TargetViewModel, onBack: () -> Unit) {
     val state by viewModel.state.collectAsState()
     LaunchedEffect(state.done) { if (state.done) onBack() }
-    TargetContent(state, onBack, viewModel::onName, viewModel::onAmount, viewModel::onBy, viewModel::onSave, viewModel::onRemove)
+    TargetContent(state, onBack, viewModel::onName, viewModel::onAmount, viewModel::onBy, viewModel::onSave, { viewModel.onConfirmRemove(true) }, viewModel::onKeepDate, viewModel::onRemove, { viewModel.onConfirmRemove(false) })
 }
 
 @Composable
-fun TargetContent(state: TargetUiState, onBack: () -> Unit, onName: (String) -> Unit, onAmount: (String) -> Unit, onBy: (GoalDeadline) -> Unit, onSave: () -> Unit, onRemove: () -> Unit) {
+fun TargetContent(
+    state: TargetUiState, onBack: () -> Unit, onName: (String) -> Unit, onAmount: (String) -> Unit, onBy: (GoalDeadline) -> Unit, onSave: () -> Unit, onRemove: () -> Unit,
+    onKeepDate: () -> Unit = {}, onConfirmRemove: () -> Unit = {}, onCancelRemove: () -> Unit = {},
+) {
     val c = CircasoTheme.colors
     val t = CircasoTheme.typography
     CircasoScaffold(
         grouped = true,
         topBar = { CircasoNavBar(title = if (state.editing) "Change Target" else "Add a Target", onBack = onBack) },
         banner = { ConnectionBanner(showing = "Saving a target needs a connection") },
+        // The whole group sees the target: removing it is confirmed first.
+        overlay = {
+            ConfirmSheet(
+                visible = state.confirmingRemove, title = "Remove the target?", message = "The wallet, its money and any open requests stay.",
+                confirmLabel = "Remove", onConfirm = onConfirmRemove, onDismiss = onCancelRemove, destructive = true,
+            )
+        },
     ) { padding ->
         Column(
             Modifier.fillMaxSize().verticalScroll(rememberScrollState()).imePadding().padding(horizontal = CircasoSpacing.s4)
@@ -200,7 +218,12 @@ fun TargetContent(state: TargetUiState, onBack: () -> Unit, onName: (String) -> 
             Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 BasicText("By (optional)", style = t.footnote.copy(color = c.inkSecondary))
                 LazyRow(horizontalArrangement = Arrangement.spacedBy(CircasoSpacing.s2)) {
-                    items(GoalDeadline.entries) { d -> SuggestionChip(d.label, { onBy(d) }, selected = d == state.by) }
+                    // A target's own date stays unless another is picked (the choices count from today).
+                    state.existingDeadline?.let { at ->
+                        val label = runCatching { com.circaso.core.platform.formatLocalTime(kotlin.time.Instant.parse(at).toEpochMilliseconds(), com.circaso.core.platform.LocalTimeStyle.ShortDate) }.getOrNull()
+                        if (label != null) item { SuggestionChip("Keep $label", onKeepDate, selected = state.keepDate && state.by == GoalDeadline.None) }
+                    }
+                    items(GoalDeadline.entries) { d -> SuggestionChip(d.label, { onBy(d) }, selected = d == state.by && !(state.keepDate && state.existingDeadline != null && d == GoalDeadline.None)) }
                 }
             }
             BasicText(

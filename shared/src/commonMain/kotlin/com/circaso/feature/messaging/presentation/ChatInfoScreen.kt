@@ -198,18 +198,9 @@ fun ChatInfoScreen(
                     SharedMediaStrip(state.media, viewModel.media, onPhoto = { viewing = it }, onLocation = onOpenLocation, onVideo = { onOpenMessage(it.localId) })
                 }
             }
-            if (state.isGroup) {
+            // GW6–GW8: the group's money sits right under the header, before its settings and members.
+            if (state.isGroup && state.money.enabled) {
                 item {
-                    SectionHeader("Group")
-                    if (state.amAdmin) {
-                        ListRow("Rename group", onClick = if (state.canChange) ({ viewModel.onRename(true) }) else null)
-                        RowDivider()
-                        ListRow("Members can add people", trailing = { RowValue(if (chat?.membersCanAdd == true) "On" else "Off") }, onClick = if (state.canChange) ({ viewModel.onMembersCanAdd(chat?.membersCanAdd != true) }) else null)
-                        RowDivider()
-                    }
-                    ListRow("Add members", onClick = if (state.canAdd) ({ viewModel.onAdding(true) }) else null)
-                    RowDivider()
-                    if (state.money.enabled) {
                         // GW6–GW8b: the group's own wallet, its target and its security (group wallets, phase 2).
                         Column {
                             GroupMoneyRows(
@@ -222,7 +213,20 @@ fun ChatInfoScreen(
                                 ),
                             )
                         }
-                    } else {
+                }
+            }
+            if (state.isGroup) {
+                item {
+                    SectionHeader("Group")
+                    if (state.amAdmin) {
+                        ListRow("Rename group", onClick = if (state.canChange) ({ viewModel.onRename(true) }) else null)
+                        RowDivider()
+                        ListRow("Members can add people", trailing = { RowValue(if (chat?.membersCanAdd == true) "On" else "Off") }, onClick = if (state.canChange) ({ viewModel.onMembersCanAdd(chat?.membersCanAdd != true) }) else null)
+                        RowDivider()
+                    }
+                    ListRow("Add members", onClick = if (state.canAdd) ({ viewModel.onAdding(true) }) else null)
+                    if (!state.money.enabled) RowDivider()
+                    if (!state.money.enabled) {
                         // Designs D4 and D1: the shared goal lives behind the group; admins set it there, everyone can read it.
                         ListRow("Group wallet", sub = if (state.amAdmin) "Goal, contributions and payments. Set or change the goal here." else "Goal, contributions and payments", trailing = { RowValueChevron(null) }, onClick = onGroupWallet)
                     }

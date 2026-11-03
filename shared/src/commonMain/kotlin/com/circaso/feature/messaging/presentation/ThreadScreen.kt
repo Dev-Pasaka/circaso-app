@@ -223,7 +223,7 @@ fun ThreadContent(
     val chipHaptics = androidx.compose.ui.platform.LocalHapticFeedback.current
     fun clearPay() { payChip = null; onDraft(""); quickPay?.onReset?.invoke() }
     // "#5" while still typing (before the space makes it a chip): the preview is up at once and follows each digit.
-    val payable = quickPay != null && !state.isGroup && !state.isSupport
+    val payable = quickPay != null && (!state.isGroup || state.groupMoney?.walletActive == true) && !state.isSupport
     val typingAmount = if (payChip == null && payable) typingAmount(state.draft) else null
     LaunchedEffect(typingAmount) {
         if (typingAmount != null) quickPay?.onAmount?.invoke(typingAmount) else if (payChip == null) quickPay?.onReset?.invoke()
@@ -644,7 +644,8 @@ fun ThreadContent(
                 showSend = paying || media == null || state.draft.isNotBlank(),
                 trailing = if (payChip == null && media != null && state.draft.isBlank()) ({ VoiceButton(state.recording, media.onVoiceStart, media.onVoiceEnd) }) else null,
                 canSend = if (paying) quickPay?.state?.canPay == true else state.canSend,
-                onSend = if (paying) ({ quickPay?.onPay?.invoke(); Unit }) else onSend,
+                // A review (group wallets) leaves the chat with what was typed: the chip goes, as after a payment.
+                onSend = if (paying) ({ quickPay?.onPay?.invoke(); if (quickPay?.reviews == true) clearPay(); Unit }) else onSend,
                 chip = payChip,
                 onChipEdit = { val back = payChip.orEmpty(); payChip = null; quickPay?.onReset?.invoke(); onDraft(back + if (state.draft.isNotEmpty()) " " + state.draft else "") },
                 floating = {
@@ -667,7 +668,7 @@ fun ThreadContent(
                         (payChip != null || typingAmount != null) && quickPay != null,
                         enter = if (CircasoTheme.reduceMotion) fadeIn(tween(CircasoMotion.QuickMs)) else fadeIn(tween(CircasoMotion.QuickMs)) + androidx.compose.animation.slideInVertically(tween(CircasoMotion.QuickMs)) { it / 2 },
                         exit = fadeOut(tween(CircasoMotion.QuickMs)),
-                    ) { quickPay?.let { QuickPayPreview(it.state, it.onPay, it.reviews) } }
+                    ) { quickPay?.let { q -> QuickPayPreview(q.state, { q.onPay(); if (q.reviews) clearPay() }, q.reviews) } }
                 },
                 above = {
                     // Support never takes money (so nobody pretending to be Circaso can ask for it): say so the moment

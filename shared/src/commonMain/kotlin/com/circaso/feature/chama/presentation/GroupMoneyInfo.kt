@@ -126,6 +126,9 @@ class GroupInfoMoneySource(
 
     suspend fun setApprovalPolicy(chatId: String, policy: ApprovalPolicy, key: String) = setPolicy(chatId, policy, key)
 
+    /** Back to the wallet's PIN on this phone (the personal Security switch does the same). */
+    suspend fun turnOffBiometrics(walletId: String) = prefs.setWalletBiometrics(walletId, false)
+
     companion object {
         /** Set when Circle reports a wallet's biometrics gone, so its row says why it's off (GW8b). */
         fun lostFlag(walletId: String?) = "biometric_lost.${walletId ?: "personal"}"
@@ -167,7 +170,8 @@ class GroupMoneyActions(
     val onOpenWallet: () -> Unit,
     val onTarget: () -> Unit,
     val onTargetNeedsWallet: () -> Unit,
-    val onBiometrics: () -> Unit,
+    /** GW8: this wallet's biometrics on (Circle's set-up with its PIN) or off (back to its PIN). */
+    val onBiometrics: (Boolean) -> Unit,
     val onChangePin: () -> Unit,
     val onApprovals: () -> Unit,
     val onRetry: () -> Unit,
@@ -190,7 +194,7 @@ fun ColumnScope.GroupMoneyRows(info: GroupInfoMoney, chat: Chat?, myUserId: Stri
     fun sub(text: String) = if (off) "Needs a connection" else text
     when {
         money == null && info.loadError != null -> {
-            ListRow("Couldn’t load the group’s money", sub = info.loadError + (info.loadReference?.let { " · Ref $it" } ?: ""), leading = { RowIcon(CircasoIcon.Warning, c.warning) },
+            ListRow("Couldn’t load the group’s money", sub = info.loadError + (info.loadReference?.let { "\nRef $it" } ?: ""), leading = { RowIcon(CircasoIcon.Warning, c.warning) },
                 trailing = { if (online) CircasoButton("Try Again", actions.onRetry, style = ButtonStyle.Secondary, size = ButtonSize.Small) })
         }
         money == null -> ListRow("Group money", sub = "Loading…", leading = { RowIcon(CircasoIcon.Wallet) }, trailing = { Spinner(c.inkSecondary, Modifier.size(16.dp)) })
@@ -218,7 +222,7 @@ fun ColumnScope.GroupMoneyRows(info: GroupInfoMoney, chat: Chat?, myUserId: Stri
                 else -> listOfNotNull(balance, "$who, after ${policyWords(money.approvalPolicy)}").joinToString(" · ")
             }
             ListRow("Group Wallet", sub = walletSub, leading = { RowIcon(if (locked) CircasoIcon.Lock else CircasoIcon.Wallet, if (locked) c.warning else c.ink) }, trailing = { RowChevron() }, onClick = actions.onOpenWallet)
-            RowDivider(Modifier.padding(start = 64.dp))
+            if (money.goal != null || money.isAdmin) RowDivider(Modifier.padding(start = 64.dp))
             if (money.goal != null) {
                 ListRow("Target", sub = targetLine(money, info.balance?.fiat), leading = { RowIcon(CircasoIcon.Target) }, trailing = { RowChevron() },
                     onClick = if (money.isAdmin) (if (online) actions.onTarget else null) else actions.onOpenWallet)
@@ -226,7 +230,7 @@ fun ColumnScope.GroupMoneyRows(info: GroupInfoMoney, chat: Chat?, myUserId: Stri
                 ListRow("Add a Target", sub = sub("Save towards a goal together"), leading = { RowIcon(CircasoIcon.Target, dim = off) }, trailing = { RowChevron() },
                     onClick = if (online && !busy) actions.onTarget else null)
             }
-            RowDivider(Modifier.padding(start = 64.dp))
+            if (money.goal != null || money.isAdmin) RowDivider(Modifier.padding(start = 64.dp))
             ListRow(
                 "Who approves payouts", leading = { RowIcon(CircasoIcon.People) },
                 trailing = { RowValue(if (money.approvalPolicy == ApprovalPolicy.AnyAdmin) "Any admin" else "2 admins") },
@@ -244,7 +248,8 @@ fun ColumnScope.GroupMoneyRows(info: GroupInfoMoney, chat: Chat?, myUserId: Stri
                         },
                         leading = { RowIcon(if (label.endsWith(" ID")) CircasoIcon.FaceId else CircasoIcon.Fingerprint, if (info.biometricsLost) c.warning else c.ink) },
                         // Turning it on runs Circle's set-up with this wallet's PIN; it stays on until Circle says it stopped.
-                        trailing = { CircasoSwitch(info.biometricsOn, { if (it) actions.onBiometrics() }, enabled = online && !busy && !info.biometricsOn, modifier = Modifier.semantics { contentDescription = "$label for $name" }) },
+                        // Off needs no server: the wallet goes back to its PIN on this phone. On needs Circle (online).
+                        trailing = { CircasoSwitch(info.biometricsOn, actions.onBiometrics, enabled = !busy && (online || info.biometricsOn), modifier = Modifier.semantics { contentDescription = "$label for $name" }) },
                     )
                     RowDivider(Modifier.padding(start = 64.dp))
                 }
@@ -316,6 +321,6 @@ fun ColumnScope.ChangePinComingContent(name: String, onClose: () -> Unit) {
     val c = CircasoTheme.colors
     val t = CircasoTheme.typography
     BasicText("Changing $name’s PIN is coming", Modifier.semantics { heading() }, style = t.title2.copy(color = c.ink))
-    BasicText("For now the PIN you set stays. If you forget it, the security questions you answered when you set it are the way back.", style = t.subhead.copy(color = c.inkSecondary))
+    BasicText("For now the PIN you set stays.", style = t.subhead.copy(color = c.inkSecondary))
     CircasoButton("OK", onClose, size = ButtonSize.Large, block = true)
 }

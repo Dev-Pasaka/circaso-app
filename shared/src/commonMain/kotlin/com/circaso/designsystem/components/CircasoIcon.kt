@@ -21,11 +21,11 @@ enum class CircasoIcon { Back, Close, Check, Delete, Backspace, Offline, Clock, 
 
 /** Strokes drawn on a 24x24 grid, same as the design's inline SVGs. */
 @Composable
-fun CircasoIconImage(icon: CircasoIcon, tint: Color, modifier: Modifier = Modifier) {
+fun CircasoIconImage(icon: CircasoIcon, tint: Color, modifier: Modifier = Modifier, strokeWidth: Float = 2f) {
     val platform = CircasoTheme.platform
     Canvas(modifier) {
         scale(size.width / 24f, pivot = Offset.Zero) {
-            val stroke = Stroke(2f, cap = StrokeCap.Round, join = StrokeJoin.Round)
+            val stroke = Stroke(strokeWidth, cap = StrokeCap.Round, join = StrokeJoin.Round)
             val p = Path()
             when (icon) {
                 CircasoIcon.Back -> if (platform == PlatformStyle.Ios) {

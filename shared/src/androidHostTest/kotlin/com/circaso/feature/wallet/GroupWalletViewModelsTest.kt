@@ -181,9 +181,11 @@ class GroupWalletPayViewModelTest {
             "refreshWallet" -> AppResult.Success(groupBalance)
             "recipient" -> AppResult.Success(Recipient(args[0] as String, RecipientStatus.CanReceive, listOf("BASE-SEPOLIA")))
             "pay" -> { val r = args[0] as PaymentRequest; payments += r; payAnswer(r) }
+            "transfer" -> followed
             else -> null
         }
     }
+    private val followed = MutableStateFlow<Transfer?>(null)
     private val contacts = fake<ContactsRepository> { name, _ -> if (name == "getContacts") flowOf(emptyList<Any>()) else null }
     private val messages = fake<MessagesRepository> { name, args -> if (name == "sendPayment") { cards += (args[0] as String) to (args[1] as PaymentCard); Unit } else null }
     private val chats = fake<ChatsRepository> { name, _ ->
@@ -213,6 +215,7 @@ class GroupWalletPayViewModelTest {
         intent, ObserveWalletUseCase(walletRepo), CheckRecipientUseCase(walletRepo), RemindRecipientUseCase(walletRepo), PayUseCase(walletRepo),
         ObserveContactsUseCase(contacts), connection, SendPaymentCardUseCase(messages), OpenDirectChatUseCase(chats),
         AttachChamaPaymentUseCase(chamas), ObserveChamaUseCase(chamas), groupWallets = GroupWalletsFlag.on(), wallets = sources(),
+        observeTransfer = com.circaso.feature.wallet.domain.ObserveTransferUseCase(walletRepo),
     )
 
     private fun TestScope.keep(vm: PayViewModel) { backgroundScope.launch(dispatcher) { vm.state.collect { } } }
@@ -233,6 +236,8 @@ class GroupWalletPayViewModelTest {
         assertEquals("g1", p.toGroupId); assertNull(p.toUserId); assertNull(p.fromWalletId)
         assertEquals("Added to Holiday Fund · November", p.note)
         assertEquals("g1", cards.single().first, "the card lands in the group")
+        assertEquals(PayStep.Sending, vm.state.value.step)
+        followed.value = transfer("t1", "7751937").copy(state = TransferState.Confirmed)
         assertEquals(PayStep.Done, vm.state.value.step)
     }
 
@@ -250,6 +255,25 @@ class GroupWalletPayViewModelTest {
         assertEquals(SignSubject.group("gw-1", "Kilimani Chama"), p.subject)
         assertEquals("Paid from Kilimani Chama", p.note)
         assertTrue(attaches.isEmpty(), "W4's payoutRequestId links it: no CH6")
+    }
+
+    @Test fun aPayoutSaysPaidOnlyOnceTheChainHasIt() = runTest(dispatcher) {
+        val vm = vm(PayIntent(userId = "achieng", chatId = "g1", amount = "12", requestId = "r1", fromWalletId = "gw-1"))
+        keep(vm)
+        vm.onPay()
+        assertEquals(PayStep.Sending, vm.state.value.step, "GW17: signed, not settled")
+        followed.value = transfer("t1", "12000000").copy(state = TransferState.Confirmed)
+        assertEquals(PayStep.Done, vm.state.value.step)
+        assertTrue(vm.state.value.result!!.settled)
+    }
+
+    @Test fun aPayoutThatFailsOnChainIsNotSent() = runTest(dispatcher) {
+        val vm = vm(PayIntent(userId = "achieng", chatId = "g1", amount = "12", requestId = "r1", fromWalletId = "gw-1"))
+        keep(vm)
+        vm.onPay()
+        followed.value = transfer("t1", "12000000").copy(state = TransferState.Failed)
+        assertEquals(PayStep.Amount, vm.state.value.step)
+        assertEquals("Kilimani Chama", vm.state.value.failure?.wallet)
     }
 
     @Test fun aPayoutThatDidntGoSaysNothingWasTakenAndKeepsTheApproval() = runTest(dispatcher) {
@@ -399,5 +423,34 @@ class GroupInfoRulesTest {
         val gone = group.copy(members = members.filter { it.userId != "me" })
         assertTrue(com.circaso.feature.chama.presentation.signerLeft(gone, money()))
         assertFalse(com.circaso.feature.chama.presentation.signerLeft(group, money()))
+    }
+}
+
+@OptIn(ExperimentalCoroutinesApi::class)
+class TargetViewModelTest {
+    private val dispatcher = UnconfinedTestDispatcher()
+    private val saved = mutableListOf<List<Any?>>()
+    private val walletRepo = fake<WalletRepository> { name, _ -> if (name == "getWallet") flowOf(personal) else null }
+    private val chats = fake<ChatsRepository> { name, _ -> if (name == "chat") flowOf(group) else null }
+    private val chamas = fake<ChamaRepository> { name, args ->
+        when (name) {
+            "money" -> flowOf(money().copy(goal = money().goal!!.copy(targetMinor = "387596899", deadline = "2026-12-14T00:00:00Z")))
+            "refreshMoney" -> AppResult.Success(money())
+            "setGoal" -> { saved.add(args); AppResult.Success(money().goal!!) }
+            else -> null
+        }
+    }
+
+    @BeforeTest fun setUp() = Dispatchers.setMain(dispatcher)
+    @AfterTest fun tearDown() = Dispatchers.resetMain()
+
+    @Test fun changingATargetKeepsItsAmountInTheShownCurrencyAndItsDate() = runTest(dispatcher) {
+        val vm = com.circaso.feature.chama.presentation.TargetViewModel(
+            "g1", false, ObserveChatUseCase(chats), ObserveGroupMoneyUseCase(chamas), SetGoalUseCase(chamas), com.circaso.feature.chama.domain.RemoveGoalUseCase(chamas),
+            ObserveWalletUseCase(walletRepo), ConnectionState(GwMonitor(), NetworkHealth(), CoroutineScope(dispatcher), offlineDelayMs = 0), RefreshGroupMoneyUseCase(chamas),
+        )
+        assertEquals("50000", vm.state.value.amountText, "387.596899 USDC at 129 shown in KES (rounded), not as USDC")
+        vm.onSave()
+        assertEquals("2026-12-14T00:00:00Z", saved.single()[3], "the saved date stays unless another is picked")
     }
 }
