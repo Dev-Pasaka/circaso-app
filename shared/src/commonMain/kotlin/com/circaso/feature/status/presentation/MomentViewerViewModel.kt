@@ -133,6 +133,14 @@ class MomentViewerViewModel(
             }
         }
         if (!m.mine && !m.viewed) viewModelScope.launch { repository.markViewed(m.momentId) }
+        // Fetch and decrypt the next one while this plays, so tapping on rarely stops at Loading.
+        upNext()?.takeIf { it.media != null && _state.value.online }?.let { next -> viewModelScope.launch { repository.media(next) } }
+    }
+
+    private fun upNext(): Moment? {
+        val s = _state.value
+        val ring = s.current ?: return null
+        return ring.moments.getOrNull(s.index + 1) ?: s.rings.getOrNull(s.ring + 1)?.moments?.firstOrNull()
     }
 
     fun next() {

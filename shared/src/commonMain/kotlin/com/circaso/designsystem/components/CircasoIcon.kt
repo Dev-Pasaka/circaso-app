@@ -17,7 +17,7 @@ import com.circaso.designsystem.platform.PlatformStyle
 import com.circaso.designsystem.theme.CircasoTheme
 
 /** Semantic icon names. Each is drawn per platform (chevron back on iOS, arrow back on Android). */
-enum class CircasoIcon { Back, Close, Check, Delete, Backspace, Offline, Clock, Chat, Wallet, Person, ChevronRight, Plus, Search, Send, Mic, MicOff, Speaker, Stop, Waveform, ArrowUp, ArrowDown, Bank, Eye, EyeOff, Copy, Share, Clipboard, Network, Money, Warning, Scan, Phone, Video, VideoOff, FlipCamera, Minimise, Pin, Play, Pause, Photo, Camera, Spaces, Flash }
+enum class CircasoIcon { Back, Close, Check, Delete, Backspace, Offline, Clock, Chat, Wallet, Person, ChevronRight, Plus, Search, Send, Mic, MicOff, Speaker, Stop, Waveform, ArrowUp, ArrowDown, Bank, Eye, EyeOff, Copy, Share, Clipboard, Network, Money, Warning, Scan, Phone, Video, VideoOff, FlipCamera, Minimise, Pin, Play, Pause, Photo, Camera, Spaces, Flash, More, Lock, Heart, HeartFilled, People, VolumeOff, ChevronDown, Trash }
 
 /** Strokes drawn on a 24x24 grid, same as the design's inline SVGs. */
 @Composable
@@ -84,6 +84,20 @@ fun CircasoIconImage(icon: CircasoIcon, tint: Color, modifier: Modifier = Modifi
                 }
                 // A ring around a centre (the Circaso mark's idea) with two small circles: people around a place.
                 CircasoIcon.Flash -> { p.moveTo(13f, 3f); p.lineTo(5.5f, 13.5f); p.lineTo(12f, 13.5f); p.lineTo(11f, 21f); p.lineTo(18.5f, 10.5f); p.lineTo(12f, 10.5f); p.close() }
+                CircasoIcon.More -> { p.moveTo(6f, 12f); p.lineTo(6.01f, 12f); p.moveTo(12f, 12f); p.lineTo(12.01f, 12f); p.moveTo(18f, 12f); p.lineTo(18.01f, 12f) }
+                CircasoIcon.Lock -> { p.moveTo(7f, 11f); p.lineTo(7f, 8f); p.cubicTo(7f, 1.5f, 17f, 1.5f, 17f, 8f); p.lineTo(17f, 11f); p.addRoundRect(RoundRect(5.5f, 11f, 18.5f, 20f, 2f, 2f)) }
+                CircasoIcon.Heart, CircasoIcon.HeartFilled -> {
+                    p.moveTo(12f, 19.5f); p.cubicTo(5f, 15f, 4.5f, 11f, 4.5f, 9.5f); p.cubicTo(4.5f, 6.5f, 7f, 5f, 8.8f, 5f)
+                    p.cubicTo(10.4f, 5f, 11.4f, 5.9f, 12f, 7f); p.cubicTo(12.6f, 5.9f, 13.6f, 5f, 15.2f, 5f)
+                    p.cubicTo(17f, 5f, 19.5f, 6.5f, 19.5f, 9.5f); p.cubicTo(19.5f, 11f, 19f, 15f, 12f, 19.5f); p.close()
+                }
+                CircasoIcon.People -> {
+                    p.addOval(Rect(5.5f, 4f, 12.5f, 11f)); p.moveTo(2.5f, 19.5f); p.cubicTo(2.8f, 16f, 5.5f, 14.3f, 9f, 14.3f); p.cubicTo(12.5f, 14.3f, 15.2f, 16f, 15.5f, 19.5f)
+                    p.moveTo(16f, 4.3f); p.cubicTo(18.5f, 5f, 18.5f, 10f, 16f, 10.7f); p.moveTo(18f, 14.6f); p.cubicTo(20f, 15.2f, 21.3f, 16.8f, 21.5f, 19.5f)
+                }
+                CircasoIcon.VolumeOff -> { p.moveTo(4f, 9.5f); p.lineTo(8f, 9.5f); p.lineTo(13f, 5.5f); p.lineTo(13f, 18.5f); p.lineTo(8f, 14.5f); p.lineTo(4f, 14.5f); p.close(); p.moveTo(16.5f, 9.5f); p.lineTo(21.5f, 14.5f); p.moveTo(21.5f, 9.5f); p.lineTo(16.5f, 14.5f) }
+                CircasoIcon.ChevronDown -> { p.moveTo(7f, 10f); p.lineTo(12f, 15f); p.lineTo(17f, 10f) }
+                CircasoIcon.Trash -> { p.moveTo(5f, 7f); p.lineTo(19f, 7f); p.moveTo(10f, 11f); p.lineTo(10f, 17f); p.moveTo(14f, 11f); p.lineTo(14f, 17f); p.moveTo(6.5f, 7f); p.lineTo(7.5f, 19.5f); p.lineTo(16.5f, 19.5f); p.lineTo(17.5f, 7f); p.moveTo(9.5f, 7f); p.lineTo(9.5f, 4.5f); p.lineTo(14.5f, 4.5f); p.lineTo(14.5f, 7f) }
                 CircasoIcon.Spaces -> {
                     p.addOval(Rect(7.2f, 7.2f, 16.8f, 16.8f))
                     p.addOval(Rect(10.6f, 10.6f, 13.4f, 13.4f))
@@ -176,7 +190,7 @@ fun CircasoIconImage(icon: CircasoIcon, tint: Color, modifier: Modifier = Modifi
                     p.moveTo(12f, 10f); p.lineTo(12f, 14.5f); p.moveTo(12f, 17f); p.lineTo(12f, 17.1f)
                 }
             }
-            if (icon == CircasoIcon.Play || icon == CircasoIcon.Pause) drawPath(p, tint) else drawPath(p, tint, style = stroke)
+            if (icon == CircasoIcon.Play || icon == CircasoIcon.Pause || icon == CircasoIcon.HeartFilled) drawPath(p, tint) else drawPath(p, tint, style = stroke)
         }
     }
 }

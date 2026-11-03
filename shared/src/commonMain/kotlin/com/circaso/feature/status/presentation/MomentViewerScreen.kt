@@ -49,6 +49,7 @@ import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.progressBarRangeInfo
 import androidx.compose.ui.semantics.ProgressBarRangeInfo
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.customActions
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -130,7 +131,17 @@ private fun MomentViewerContent(state: MomentViewerUiState, vm: MomentViewerView
                     )
                 }
                 .pointerInput(Unit) { var dy = 0f; detectVerticalDragGestures(onDragEnd = { if (dy > 160) onClose(); dy = 0f }) { _, d -> dy += d } }
-                .pointerInput(Unit) { var dx = 0f; detectHorizontalDragGestures(onDragEnd = { if (dx < -160) vm.nextRing(); dx = 0f }) { _, d -> dx += d } },
+                .pointerInput(Unit) { var dx = 0f; detectHorizontalDragGestures(onDragEnd = { if (dx < -160) vm.nextRing(); dx = 0f }) { _, d -> dx += d } }
+                // The same moves for screen readers, where taps on thirds of the screen and holds can't be performed.
+                .semantics {
+                    contentDescription = "Moment ${state.index + 1} of ${ring.moments.size} from ${ring.name}"
+                    customActions = listOf(
+                        androidx.compose.ui.semantics.CustomAccessibilityAction("Next moment") { vm.next(); true },
+                        androidx.compose.ui.semantics.CustomAccessibilityAction("Previous moment") { vm.previous(); true },
+                        androidx.compose.ui.semantics.CustomAccessibilityAction(if (state.paused) "Resume" else "Pause") { vm.setPaused(!state.paused); true },
+                        androidx.compose.ui.semantics.CustomAccessibilityAction("Next person") { vm.nextRing(); true },
+                    )
+                },
         )
 
         // Top: one segment per moment, the person, the time, More and Close.
@@ -142,8 +153,8 @@ private fun MomentViewerContent(state: MomentViewerUiState, vm: MomentViewerView
                     BasicText(if (moment.mine) "My moment" else ring.name, style = t.subhead.copy(color = c.ink, fontWeight = FontWeight.SemiBold), maxLines = 1)
                     BasicText(ago(moment.postedAt), style = t.footnote.copy(color = c.inkSecondary))
                 }
-                if (moment.kind == MomentKind.Video) GlassButton(if (state.muted) CircasoIcon.MicOff else CircasoIcon.Speaker, if (state.muted) "Unmute" else "Mute", onClick = vm::toggleMute)
-                GlassButton(CircasoIcon.ChevronRight, "More", rotate = 90f) { if (moment.mine) vm.askDelete(true) else vm.openMore(true) }
+                if (moment.kind == MomentKind.Video) GlassButton(if (state.muted) CircasoIcon.VolumeOff else CircasoIcon.Speaker, if (state.muted) "Unmute" else "Mute", onClick = vm::toggleMute)
+                GlassButton(CircasoIcon.More, "More") { if (moment.mine) vm.askDelete(true) else vm.openMore(true) }
                 GlassButton(CircasoIcon.Close, "Close", onClick = onClose)
             }
         }
@@ -176,7 +187,7 @@ private fun MomentViewerContent(state: MomentViewerUiState, vm: MomentViewerView
                         )
                     }
                     if (state.reply.isNotBlank()) GlassButton(CircasoIcon.ArrowUp, "Send reply", onClick = vm::sendReply)
-                    else GlassButton(if (moment.reacted) CircasoIcon.Check else CircasoIcon.Plus, if (moment.reacted) "Loved. Tap to undo" else "Love this moment", heart = true, filled = moment.reacted, onClick = vm::react)
+                    else GlassButton(if (moment.reacted) CircasoIcon.HeartFilled else CircasoIcon.Heart, if (moment.reacted) "Loved. Tap to undo" else "Love this moment", onClick = vm::react)
                 }
             }
         }
@@ -292,33 +303,17 @@ private fun Segments(moments: List<Moment>, index: Int, current: Moment, paused:
 }
 
 @Composable
-private fun GlassButton(icon: CircasoIcon, label: String, rotate: Float = 0f, heart: Boolean = false, filled: Boolean = false, onClick: () -> Unit) {
+private fun GlassButton(icon: CircasoIcon, label: String, filled: Boolean = false, onClick: () -> Unit) {
     val c = CircasoTheme.colors
     Box(
         Modifier.size(CircasoSizes.controlMd).clip(CircasoShapes.circle).background(if (filled) c.ink else c.glass)
             .pressable(onClick = onClick).semantics(mergeDescendants = true) { contentDescription = label },
         contentAlignment = Alignment.Center,
     ) {
-        if (heart) HeartGlyph(if (filled) c.bg else c.ink) else CircasoIconImage(icon, c.ink, Modifier.size(18.dp).graphicsLayer { rotationZ = rotate })
+        CircasoIconImage(icon, if (filled) c.bg else c.ink, Modifier.size(18.dp))
     }
 }
 
-/** The quiet reaction (V1): a heart outline, filled once sent. */
-@Composable
-private fun HeartGlyph(color: Color) {
-    androidx.compose.foundation.Canvas(Modifier.size(20.dp)) {
-        val w = size.width
-        val path = androidx.compose.ui.graphics.Path().apply {
-            moveTo(w * 0.5f, w * 0.85f)
-            cubicTo(w * 0.1f, w * 0.6f, w * 0.05f, w * 0.3f, w * 0.27f, w * 0.18f)
-            cubicTo(w * 0.4f, w * 0.12f, w * 0.48f, w * 0.2f, w * 0.5f, w * 0.28f)
-            cubicTo(w * 0.52f, w * 0.2f, w * 0.6f, w * 0.12f, w * 0.73f, w * 0.18f)
-            cubicTo(w * 0.95f, w * 0.3f, w * 0.9f, w * 0.6f, w * 0.5f, w * 0.85f)
-            close()
-        }
-        drawPath(path, color, style = androidx.compose.ui.graphics.drawscope.Stroke(2.dp.toPx()))
-    }
-}
 
 
 private fun ago(at: Long): String {
@@ -360,10 +355,10 @@ private fun BoxScope.ViewersSheet(state: MomentViewerUiState, onDismiss: () -> U
                 items(state.viewers.size) { i ->
                     val row = state.viewers[i]
                     ListRow(row.name, sub = formatLocalTime(row.viewer.viewedAt, LocalTimeStyle.Clock), leading = { Avatar(row.name, size = CircasoSizes.avatarMd, imageUrl = row.avatarUrl) },
-                        trailing = { if (row.viewer.reacted) HeartGlyph(c.ink) })
+                        trailing = { if (row.viewer.reacted) CircasoIconImage(CircasoIcon.HeartFilled, c.ink, Modifier.size(18.dp)) })
                 }
             }
         }
-        CircasoButton("Delete", onDelete, style = ButtonStyle.Destructive, icon = CircasoIcon.Delete)
+        CircasoButton("Delete", onDelete, style = ButtonStyle.Destructive, icon = CircasoIcon.Trash)
     }
 }

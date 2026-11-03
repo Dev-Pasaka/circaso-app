@@ -128,8 +128,9 @@ private fun ComposerContent(state: MomentComposerUiState, vm: MomentComposerView
                             .semantics(mergeDescendants = true) { contentDescription = "Who can see this: ${state.audienceLabel}. Change" },
                         verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp),
                     ) {
-                        CircasoIconImage(CircasoIcon.Person, c.ink, Modifier.size(16.dp))
+                        CircasoIconImage(CircasoIcon.People, c.ink, Modifier.size(16.dp))
                         BasicText(state.audienceLabel, style = CircasoTheme.typography.subhead.copy(color = c.ink, fontWeight = FontWeight.SemiBold), maxLines = 1)
+                        CircasoIconImage(CircasoIcon.ChevronDown, c.ink, Modifier.size(14.dp))
                     }
                     Box(Modifier.weight(1f))
                     Box(
@@ -149,7 +150,7 @@ private fun ComposerContent(state: MomentComposerUiState, vm: MomentComposerView
                     }
                 } else if (state.capture != null) {
                     Row(Modifier.align(Alignment.CenterHorizontally), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
-                        CircasoIconImage(CircasoIcon.Check, c.inkSecondary, Modifier.size(13.dp))
+                        CircasoIconImage(CircasoIcon.Lock, c.inkSecondary, Modifier.size(13.dp))
                         BasicText("End-to-end encrypted. Gone after 24 hours.", style = CircasoTheme.typography.footnote.copy(color = c.inkSecondary))
                     }
                 }
@@ -387,7 +388,7 @@ private fun BoxScope.VoiceStageReview(voice: ComposerCapture.Voice, playing: Boo
         LevelBars(active = playing)
         BasicText("${clock(voice.durationMs)} / 1:00", style = t.title3.copy(color = c.ink, fontFeatureSettings = "tnum"))
         Row(horizontalArrangement = Arrangement.spacedBy(18.dp)) {
-            StageButton(CircasoIcon.Delete, "Delete recording", onClick = vm::discardCapture)
+            StageButton(CircasoIcon.Trash, "Delete recording", onClick = vm::discardCapture)
             StageButton(if (playing) CircasoIcon.Pause else CircasoIcon.Play, if (playing) "Pause" else "Play", filled = true, onClick = vm::togglePlayback)
         }
     }

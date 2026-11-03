@@ -119,7 +119,7 @@ fun SpacesContent(
             item { MomentsRow(state, actions) }
             // Nothing to show is never an error screen (Pasaka, 2026-11-03): the empty state stays, and a failed check
             // is one quiet line under it with Try Again and the reference for support.
-            if (state.failed || (state.empty && !state.loading)) item { NoMoments(state.hasContacts, actions) }
+            if (state.failed || (state.empty && !state.loading)) item { NoMoments(state.hasContacts, actions, offline = !state.online) }
             if (state.failed) item { CheckFailed(state.requestId, onRetry) }
             item {
                 Column(Modifier.padding(top = CircasoSpacing.s5)) {
@@ -291,7 +291,7 @@ private fun SkeletonRing() {
 
 /** S1c: nobody has posted; the line says who mine will reach. */
 @Composable
-private fun NoMoments(hasContacts: Boolean, actions: SpacesActions) {
+private fun NoMoments(hasContacts: Boolean, actions: SpacesActions, offline: Boolean = false) {
     val c = CircasoTheme.colors
     val t = CircasoTheme.typography
     Column(
@@ -300,9 +300,9 @@ private fun NoMoments(hasContacts: Boolean, actions: SpacesActions) {
         verticalArrangement = Arrangement.spacedBy(CircasoSpacing.s3),
     ) {
         CircasoIconImage(CircasoIcon.Spaces, c.inkTertiary, Modifier.size(44.dp))
-        BasicText(if (hasContacts) "No moments yet" else "Find your people to see their moments", style = t.headline.copy(color = c.ink, textAlign = TextAlign.Center))
+        BasicText(when { offline -> "Moments load when you’re back online"; hasContacts -> "No moments yet"; else -> "Find your people to see their moments" }, style = t.headline.copy(color = c.ink, textAlign = TextAlign.Center))
         BasicText(
-            "When your contacts share a moment, it shows here for 24 hours. Yours go to people who have your number saved, and whose number you have saved.",
+            if (offline) "You can still share one now: it posts as soon as you’re connected." else "When your contacts share a moment, it shows here for 24 hours. Yours go to people who have your number saved, and whose number you have saved.",
             style = t.subhead.copy(color = c.inkSecondary, textAlign = TextAlign.Center),
         )
         if (hasContacts) CircasoButton("Share a Moment", actions.onCompose, icon = CircasoIcon.Camera)
