@@ -17,8 +17,9 @@ personal business wallet is **not in v1** (the group or space is the business).
 3. **Spaces** below the statuses: communities and small shops (public, members only or invite only) with a space chat,
    private chat with the space, a shop catalog like WhatsApp Business, a live room members can join, and a wallet
    members pay into.
-4. **Group wallets**: every group and every space gets **its own wallet**, separate from anyone's personal wallet,
-   with its own PIN and multiple networks and assets, and it works everywhere personal money works (pay, receive, QR,
+4. **Group and space wallets**: every **space must have** its own wallet; a **group may** have one (chosen when the
+   group is created, or added later). Each is separate from anyone's personal wallet, with its own PIN (and optional
+   biometrics) and multiple networks and assets, and it works everywhere personal money works (pay, receive, QR,
    history, cards in chat).
 5. **Business identity** (later, to brainstorm): the group or space is the business. A personal "business wallet" for
    one person is parked until §8 Q6 is answered.
@@ -215,22 +216,36 @@ A personal wallet per person (Circle user-controlled wallet; the person signs wi
 model**: group money sits in the treasurer's personal wallet.
 
 ### Proposed
-- Wallets get an **owner**: `PERSON`, `GROUP` or `SPACE`. Every group and space can have **its own wallet**, created
-  when an admin taps "Set up group wallet". It has its own addresses on every supported network and its own assets.
+- Wallets get an **owner**: `PERSON`, `GROUP` or `SPACE`. It has its own addresses on every supported network and its
+  own assets.
+- **Spaces: a wallet is required** (decided 2026-11-03; spaces are for business). Creating a space ends with the owner
+  setting the space wallet's PIN; the space goes live only once the wallet is set up.
+- **Groups: a wallet is optional** (decided 2026-11-03). Creating a group has a switch "Group wallet" (off by default,
+  proposed); on, the owner sets its PIN at the end of creation. A group without a wallet is an ordinary encrypted group
+  chat: no money actions, no target. The owner can add a wallet later from group info. A **target needs a wallet**, so
+  adding a target to a group without one walks the owner through setting the wallet up first.
+- **Biometrics per wallet** (decided 2026-11-03): after setting a group or space wallet's PIN, the owner is offered
+  fingerprint / Face ID approval for that wallet, exactly as for the personal wallet (Circle's biometric PIN is per
+  Circle user, and each group or space wallet is its own Circle user, so `WalletSigner.enableBiometrics(session)` runs
+  with that wallet's session). Each wallet's biometrics can be turned on or off on its own (Security, and the wallet's
+  settings); if Circle reports biometrics lost for one wallet, only that one falls back to its PIN.
+- **Signing always names the wallet**: a person may hold several wallets (personal plus every group or space they
+  own). Every approval screen (PIN, biometrics prompt, review) shows the wallet's name and picture ("Approve from
+  Kilimani Chama"), and the server issues the challenge for that wallet's Circle user only.
 - **Paying works the same**: pay a group or space from its chat or page, scan its QR, or send to its address; payments
   show as cards in the group chat and in the space; history and statements per wallet.
 - **Wallet switcher**: wherever you pay *from* (Pay screen, Wallet tab), a person who administers group or space
   wallets can switch "Paying from: Personal ▾ / Kilimani Chama / Sneaker Drop". Personal stays the default; business
   money never mixes with it.
-- **Chamas and groups become one thing: a Group** (decided 2026-11-03). Every group has **its own wallet** and all the
-  features of today's groups and chamas. A **target** (goal) is optional: add one and the group works like a chama
+- **Chamas and groups become one thing: a Group** (decided 2026-11-03), with all the features of today's groups and
+  chamas. A group with a wallet can have a **target** (goal), optional: add one and the group works like a chama
   (goal strip, contributions, payout requests and approvals); without one it is a group with a wallet. Creating a group
   is the same flow either way; the target can be added or removed later.
   - Contributions go to the group wallet; payouts are requested and approved by admins (the CH4–CH6 flow), then the
     owner signs from the group wallet. The goal strip, requests and group wallet screen stay; "held by Otieno"
     becomes "in the group wallet". The treasurer model is retired (dev is testnet, so no money to migrate).
-  - The owner sets the group wallet's PIN when the group is created, or later from group info; until then money
-    actions in the group ask the owner to set it up.
+  - The owner sets the group wallet's PIN when the group is created (if the wallet switch is on), or later from group
+    info. Members of a group without a wallet see no money actions in it.
 
 ### Who holds the keys: the decision that shapes everything (§8 Q1)
 Circle user-controlled wallets belong to one Circle user with one PIN. For a shared wallet there are three ways:
@@ -364,7 +379,7 @@ fee for a payment that failed, never pay without the fee).
 | --- | --- | --- |
 | 0. Design | Frames for the Spaces tab, Moments composer and viewer, space page, create space, live room, group wallet set-up and switcher, in Circaso's system (the canvas has none of these). Reviewed with Pasaka before code. | Answers to §8 |
 | 1. Tab + Moments | Spaces tab shell (Moments row + empty spaces section), Moments end to end (backend `status` + app). | Phase 0 |
-| 2. Groups with wallets | Wallet owner model, group wallet set-up (owner PIN), wallet switcher, pay to a group, chamas merged into groups with an optional target. | — |
+| 2. Groups with wallets | Wallet owner model, optional group wallet at creation or later (owner PIN, biometrics per wallet), wallet names on every approval, wallet switcher, pay to a group, chamas merged into groups with an optional target. | — |
 | 2F. Fees and limits | Spike on what one signed challenge can hold per chain; `fee_rule` and limit-rule tables with seeds; quote and lock at W4; payment contract (EVM) or batch; fee wallet and ledger; group daily limits; app shows fee and limits before signing. | Phase 2, Q11–Q14 |
 | 3. Spaces core | Create (public / members only / invite only), discover, search, follow and join requests, paid entry for members-only spaces (one-time, monthly or yearly, renewal reminders and grace period), invites by contact or @username, space chat, private chat with the owner, roles, moderation and reports, space wallet (reuses phase 2), send money to the space. | Phase 2 |
 | 3S. Shop | Catalog (products and services, photos, USDC price, optional stock shown or hidden), cart, buy with reservation, orders and refunds, order cards, share items. | Phase 3, 2F |
@@ -384,4 +399,5 @@ and video), across backend and both apps.
 - **Moderation load** of public spaces; App Store review will check report/block exist before release.
 - **Regulation:** businesses taking payments may need KYB; keep limits low on testnet and plan with partners.
 - **Live scale:** Cloudflare Realtime costs per participant-minute; set listener caps until measured.
-- **Two PINs** (personal and group) can confuse; the PIN screens must always name whose wallet it is.
+- **Several PINs** (personal plus each group or space wallet) can confuse; every PIN and biometric screen names whose
+  wallet it is, and biometrics per wallet keep PIN entry rare.

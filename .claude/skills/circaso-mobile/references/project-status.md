@@ -149,7 +149,8 @@ Media3 1.4.1, multiplatform-markdown-renderer 0.46.0.
 ### New feature in planning: Spaces (added 2026-11-03)
 New **Spaces** tab between Chats and Wallet: WhatsApp-style statuses for mutual contacts on top, public spaces
 (follow = join, live rooms, a space wallet to pay into) below, and **group and space wallets** separate from personal
-ones (chamas and groups merge into Groups with an optional target). Shops, paid memberships, fees (0–2 % on the first
+ones (chamas and groups merge into Groups; a wallet is optional for groups and required for spaces; biometrics per
+wallet; a target needs a wallet). Shops, paid memberships, fees (0–2 % on the first
 $10,000, sender pays) and group daily caps (10,000 USDC) are part of it. **All decisions are taken; next is phase 0,
 design.** Plan: `references/spaces-plan.md`.
 
