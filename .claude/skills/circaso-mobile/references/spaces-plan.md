@@ -2,7 +2,7 @@
 
 Lives in the `circaso-mobile` skill (`references/spaces-plan.md`).
 
-Status: **all decisions taken (2026-11-03). Phase 0 underway:** the fee spike is done (§7b); the phase 0a frames for phases 1 and 2
+Status: **phase 0 done and approved (2026-11-03); phase 1 (Moments) built in the backend branch and both apps, not yet run end to end.** Details in `project-status.md`. Earlier: the fee spike is done (§7b); the phase 0a frames for phases 1 and 2
 are in `assets/Circaso-Spaces.html` (built by `scripts/build_spaces_canvas.py`), waiting for Pasaka's review. Nothing is built in code yet. Decisions marked **(proposed)** need a yes
 or a change; open questions are in §8.
 

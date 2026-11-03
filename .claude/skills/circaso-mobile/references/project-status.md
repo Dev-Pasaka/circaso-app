@@ -160,7 +160,22 @@ design.** Plan: `references/spaces-plan.md`.
 - Phase 0a frames: `Circaso-Spaces.html` at the root (copy in `assets/`, 74 frames, built by
   `scripts/build_spaces_canvas.py`): Spaces tab, Moments composer, viewer and privacy, groups with wallets, Paying from,
   the fee line, daily caps, and after-signing states. The design-reviewer's first pass found 3 Blockers, now fixed. The
-  frames are **waiting for Pasaka's review**; phase 1 (Moments, backend and both apps) starts once he approves them.
+  frames were **approved by Pasaka (2026-11-03)**.
+- Two later corrections from Pasaka are in the frames: money starts in the chat (`#amount`, `@asset`, the note in the
+  message) and the sheet only reviews (fee, total, Paying from); `#` in a group with a wallet contributes to it.
+
+**Phase 1 progress (2026-11-03): Moments built, not yet run end to end.**
+- Backend: `status` module (ST1–ST8, frames, 10-minute retention sweep) on branch `feat/status-moments` in the
+  worktree `circaso-status` (commits `9d0c5e7`, `32b93c9`; `./gradlew build` green). **Not pushed, no PR, not deployed.**
+  Contract: `references/moments-api.md`; the backend guide copy is in that branch's `docs/mobile-integration.md`.
+- App (`fc6779f`, `10f6147`, `aad3d2d`): Spaces tab (4 tabs), Moments data layer (Room v13/v14, outbox posting,
+  sender-key encryption in the Signal store, encrypted media), composer (CameraX 1.6.2 on Android, AVFoundation on
+  iOS), viewer, privacy (You → Moments), replies that quote a moment in the chat. Android and iOS compile; Android
+  host tests pass.
+- To finish: merge and deploy the backend branch, sign in on the emulator, post and view a moment between two
+  accounts; design-reviewer pass on the built screens.
+- Follow-ups: video moments travel to the outbox fully in memory (about 45 MB for 60 s); gallery picks one photo
+  (design shows up to 10) and no video trimmer yet (M3b); moment media files on the phone aren't swept after 24 h.
 
 ### Backend gaps (design exists, no API yet)
 - W7/W8: statements on the server, PIN change and restore.
@@ -179,7 +194,7 @@ design.** Plan: `references/spaces-plan.md`.
 | Android notifications showed stock system icons | Fix written (D-UI10) and the drawable is in the APK (`drawable/ic_stat_circaso`); **not yet seen on a notification**: every app notification and the FCM token need a signed-in account. |
 | Asha returned 429 | **Fixed** by the paid plan (2026-11-03): all three models answer 200 when called directly. |
 | iOS gets no pushes and doesn't ring in the background | Not built (see Next work 3 and 4). |
-| Android emulator `Pixel_9_Pro` stuck "offline" in adb after cold boots | Environment issue. Two adbs are installed (Homebrew 37.0.0 and SDK 37.0.1); use the SDK one. On 2026-11-03 `Pixel_9_Pro` stayed offline with both software and `-gpu host`, while a fresh AVD from the same image (`Circaso_Check`, made by copying its config.ini) booted in 50 s and connected. So the fault is in `Pixel_9_Pro`'s data: Wipe Data fixes it, but it signs the test account out (asked Pasaka). |
+| Android emulator `Pixel_9_Pro` stuck "offline" in adb after cold boots | **Fixed** 2026-11-03 by Wipe Data (approved by Pasaka); the test account must sign in again. Use the SDK's adb, not Homebrew's. A spare AVD `Circaso_Check` also exists. |
 | Real SMS send via Twilio not confirmed end to end | Backend says to test with a real number and report the `code`. |
 | ID-13 shows a masked number but the server needs the full number | The returning person types it. |
 | Welcome screen's terms line has no links | Needs the terms and privacy URLs. |
