@@ -154,6 +154,8 @@ private fun MomentViewerViewModel.actions() = MomentViewerActions(
 
 /** Past this share of the screen's height, letting go closes the viewer (a fast fling closes it from anywhere). */
 private const val DragCloseFraction = 0.22f
+/** Longer than this is a hold (pause), not a tap (skip). */
+private const val HoldMillis = 250L
 /** A downward fling this fast (dp per second) closes the viewer however far it moved. */
 private val FlingClose = 1_000.dp
 
@@ -284,9 +286,18 @@ private fun ViewerBody(state: MomentViewerUiState, vm: MomentViewerActions, onCl
         Box(
             Modifier.fillMaxSize()
                 .pointerInput(moment.momentId) {
+                    // A hold pauses and lifting resumes, never skips (Pasaka, 2026-11-04): only a quick tap moves on.
+                    var pressedAt = 0L
                     detectTapGestures(
-                        onPress = { vm.setPaused(true); tryAwaitRelease(); vm.setPaused(false) },
-                        onTap = { pos -> if (pos.x < size.width / 3f) vm.previous() else vm.next() },
+                        onPress = {
+                            pressedAt = com.circaso.core.sync.nowMillis()
+                            vm.setPaused(true); tryAwaitRelease(); vm.setPaused(false)
+                        },
+                        onTap = { pos ->
+                            if (com.circaso.core.sync.nowMillis() - pressedAt < HoldMillis) {
+                                if (pos.x < size.width / 3f) vm.previous() else vm.next()
+                            }
+                        },
                     )
                 }
                 .pointerInput(Unit) { var dx = 0f; detectHorizontalDragGestures(onDragEnd = { if (dx < -160) vm.nextRing(); dx = 0f }) { _, d -> dx += d } }
