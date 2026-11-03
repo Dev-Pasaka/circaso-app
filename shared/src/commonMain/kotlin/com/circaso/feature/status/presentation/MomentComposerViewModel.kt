@@ -51,13 +51,16 @@ data class MomentComposerUiState(
     val style: MomentTextStyle = MomentTextStyle.Bold,
     /** The audience chip: "My contacts · 48 people". */
     val audienceLabel: String = "My contacts",
+    /** How many people the next moment would reach; 0 means nobody yet (no contacts on Circaso, or nobody chosen). */
+    val audienceCount: Int = -1,
     val myName: String = "",
     val myAvatarUrl: String? = null,
     val sharing: Boolean = false,
     val shared: Boolean = false,
     val error: String? = null,
 ) {
-    val canShare: Boolean get() = !sharing && when {
+    val nobody: Boolean get() = audienceCount == 0
+    val canShare: Boolean get() = !sharing && !nobody && when {
         capture != null -> true
         mode == ComposerMode.Text -> text.isNotBlank()
         else -> false
@@ -95,7 +98,7 @@ class MomentComposerViewModel(
                     MomentAudienceMode.ContactsExcept -> "My contacts except ${p.except.count { it in ids }}" to ids.count { it !in p.except }
                     MomentAudienceMode.OnlyShareWith -> "Only share with" to p.only.count { it in ids }
                 }
-            }.collect { (label, n) -> _state.update { it.copy(audienceLabel = "$label · $n ${if (n == 1) "person" else "people"}") } }
+            }.collect { (label, n) -> _state.update { it.copy(audienceCount = n, audienceLabel = if (n == 0) "Nobody can see this yet" else "$label · $n ${if (n == 1) "person" else "people"}") } }
         }
     }
 

@@ -298,7 +298,11 @@ class MomentsRepositoryImpl(
     /** Who my next moment is for, decided here on the phone: my Circaso contacts, filtered by the privacy setting. */
     private suspend fun audience(): List<String> {
         val me = ownUserId()
-        val people = contacts.contacts.first().map { it.person.userId }.filter { it != me }.distinct()
+        var stored = contacts.contacts.first()
+        // A fresh sign-in (or a wiped phone) has no contacts saved yet though the server has them: fetch before
+        // deciding that nobody can see this moment.
+        if (stored.isEmpty() && contacts.refreshContacts() is AppResult.Success) stored = contacts.contacts.first()
+        val people = stored.map { it.person.userId }.filter { it != me }.distinct()
         val p = dao.privacy().toPrivacy()
         return when (p.mode) {
             MomentAudienceMode.Contacts -> people

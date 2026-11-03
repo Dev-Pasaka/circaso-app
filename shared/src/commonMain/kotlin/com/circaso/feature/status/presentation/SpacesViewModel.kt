@@ -63,6 +63,7 @@ class SpacesViewModel(
     observeContacts: ObserveContactsUseCase,
     observeProfile: ObserveProfileUseCase,
     connection: ConnectionState,
+    private val refreshContacts: com.circaso.feature.contacts.domain.RefreshContactsUseCase? = null,
 ) : ViewModel() {
     private val _state = MutableStateFlow(SpacesUiState())
     val state: StateFlow<SpacesUiState> = _state.asStateFlow()
@@ -89,6 +90,8 @@ class SpacesViewModel(
     }
 
     fun refresh() {
+        // Rings are named from my contacts, and only people in them are shown: keep them current too.
+        refreshContacts?.let { r -> viewModelScope.launch { r() } }
         viewModelScope.launch {
             val r = moments.refresh()
             _state.update {

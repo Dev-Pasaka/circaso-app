@@ -33,7 +33,7 @@ val statusModule = module {
     // sends, so the repository (which kicks the outbox and reads contacts) is never part of that graph.
     single { MomentPostHandler { get<MomentsRepositoryImpl>() } } bind OutboxHandler::class
     single<MomentsRepository> { get<MomentsRepositoryImpl>() }
-    viewModel { com.circaso.feature.status.presentation.SpacesViewModel(get(), get(), get(), get()) }
+    viewModel { com.circaso.feature.status.presentation.SpacesViewModel(get(), get(), get(), get(), get()) }
     viewModel { com.circaso.feature.status.presentation.MomentComposerViewModel(get(), get(), get(), get(), get(), get(), get()) }
     viewModel { com.circaso.feature.status.presentation.MomentsPrivacyViewModel(get(), get()) }
     viewModel { params ->

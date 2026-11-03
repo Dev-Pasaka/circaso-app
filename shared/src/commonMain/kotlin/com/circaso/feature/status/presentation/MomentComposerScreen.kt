@@ -67,18 +67,18 @@ import com.circaso.feature.status.domain.MomentTextStyle
 
 @OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class)
 @Composable
-fun MomentComposerScreen(viewModel: MomentComposerViewModel, onClose: () -> Unit, onAudience: () -> Unit) {
+fun MomentComposerScreen(viewModel: MomentComposerViewModel, onClose: () -> Unit, onAudience: () -> Unit, onFindPeople: () -> Unit = {}) {
     val state by viewModel.state.collectAsState()
     LaunchedEffect(state.shared) { if (state.shared) onClose() }
     androidx.compose.ui.backhandler.BackHandler { if (state.capture != null) viewModel.discardCapture() else onClose() }
     // The dark stage in every theme (design M1), from the dark tokens.
     CircasoTheme(darkTheme = true, highContrast = CircasoTheme.colors.isHighContrast) {
-        ComposerContent(state, viewModel, onClose, onAudience)
+        ComposerContent(state, viewModel, onClose, onAudience, onFindPeople)
     }
 }
 
 @Composable
-private fun ComposerContent(state: MomentComposerUiState, vm: MomentComposerViewModel, onClose: () -> Unit, onAudience: () -> Unit) {
+private fun ComposerContent(state: MomentComposerUiState, vm: MomentComposerViewModel, onClose: () -> Unit, onAudience: () -> Unit, onFindPeople: () -> Unit) {
     val c = CircasoTheme.colors
     val toast = rememberToastState()
     LaunchedEffect(state.error) { state.error?.let { toast.show(it); vm.errorShown() } }
@@ -138,7 +138,16 @@ private fun ComposerContent(state: MomentComposerUiState, vm: MomentComposerView
                         contentAlignment = Alignment.Center,
                     ) { CircasoIconImage(CircasoIcon.ArrowUp, if (state.canShare) c.bg else c.inkTertiary, Modifier.size(22.dp)) }
                 }
-                if (state.capture != null) {
+                if (state.nobody) {
+                    // Caught before Share, not after: a moment with nobody to see it is never posted.
+                    Row(
+                        Modifier.fillMaxWidth().padding(horizontal = CircasoSpacing.s4).clip(CircasoShapes.md).background(c.glass).padding(horizontal = 14.dp, vertical = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    ) {
+                        BasicText("Moments go to your contacts on Circaso. None are here yet.", Modifier.weight(1f), style = CircasoTheme.typography.footnote.copy(color = c.ink))
+                        CircasoButton("Find People", onFindPeople, style = ButtonStyle.Secondary, size = ButtonSize.Small)
+                    }
+                } else if (state.capture != null) {
                     Row(Modifier.align(Alignment.CenterHorizontally), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
                         CircasoIconImage(CircasoIcon.Check, c.inkSecondary, Modifier.size(13.dp))
                         BasicText("End-to-end encrypted. Gone after 24 hours.", style = CircasoTheme.typography.footnote.copy(color = c.inkSecondary))
