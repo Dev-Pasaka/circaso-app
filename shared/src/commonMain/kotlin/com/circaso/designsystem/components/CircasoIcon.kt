@@ -17,7 +17,7 @@ import com.circaso.designsystem.platform.PlatformStyle
 import com.circaso.designsystem.theme.CircasoTheme
 
 /** Semantic icon names. Each is drawn per platform (chevron back on iOS, arrow back on Android). */
-enum class CircasoIcon { Back, Close, Check, Delete, Backspace, Offline, Clock, Chat, Wallet, Person, ChevronRight, Plus, Search, Send, Mic, MicOff, Speaker, Stop, Waveform, ArrowUp, ArrowDown, Bank, Eye, EyeOff, Copy, Share, Clipboard, Network, Money, Warning, Scan, Phone, Video, VideoOff, FlipCamera, Minimise, Pin, Play, Pause, Photo, Camera, Spaces, Flash, More, Lock, Heart, HeartFilled, People, VolumeOff, ChevronDown, Trash }
+enum class CircasoIcon { Back, Close, Check, Delete, Backspace, Offline, Clock, Chat, Wallet, Person, ChevronRight, Plus, Search, Send, Mic, MicOff, Speaker, Stop, Waveform, ArrowUp, ArrowDown, Bank, Eye, EyeOff, Copy, Share, Clipboard, Network, Money, Warning, Scan, Phone, Video, VideoOff, FlipCamera, Minimise, Pin, Play, Pause, Photo, Camera, Spaces, Flash, More, Lock, Heart, HeartFilled, People, VolumeOff, ChevronDown, Trash, Forward, Scissors }
 
 /** Strokes drawn on a 24x24 grid, same as the design's inline SVGs. */
 @Composable
@@ -98,6 +98,12 @@ fun CircasoIconImage(icon: CircasoIcon, tint: Color, modifier: Modifier = Modifi
                 CircasoIcon.VolumeOff -> { p.moveTo(4f, 9.5f); p.lineTo(8f, 9.5f); p.lineTo(13f, 5.5f); p.lineTo(13f, 18.5f); p.lineTo(8f, 14.5f); p.lineTo(4f, 14.5f); p.close(); p.moveTo(16.5f, 9.5f); p.lineTo(21.5f, 14.5f); p.moveTo(21.5f, 9.5f); p.lineTo(16.5f, 14.5f) }
                 CircasoIcon.ChevronDown -> { p.moveTo(7f, 10f); p.lineTo(12f, 15f); p.lineTo(17f, 10f) }
                 CircasoIcon.Trash -> { p.moveTo(5f, 7f); p.lineTo(19f, 7f); p.moveTo(10f, 11f); p.lineTo(10f, 17f); p.moveTo(14f, 11f); p.lineTo(14f, 17f); p.moveTo(6.5f, 7f); p.lineTo(7.5f, 19.5f); p.lineTo(16.5f, 19.5f); p.lineTo(17.5f, 7f); p.moveTo(9.5f, 7f); p.lineTo(9.5f, 4.5f); p.lineTo(14.5f, 4.5f); p.lineTo(14.5f, 7f) }
+                // The design's "forward" (Spaces canvas): an arrow turning right off a curved stem.
+                CircasoIcon.Forward -> { p.moveTo(14f, 5f); p.lineTo(20f, 11f); p.lineTo(14f, 17f); p.moveTo(20f, 11f); p.lineTo(9f, 11f); p.cubicTo(6.24f, 11f, 4f, 13.24f, 4f, 16f); p.lineTo(4f, 19f) }
+                CircasoIcon.Scissors -> {
+                    p.addOval(Rect(3f, 3f, 9f, 9f)); p.addOval(Rect(3f, 15f, 9f, 21f))
+                    p.moveTo(20f, 4f); p.lineTo(8.1f, 15.9f); p.moveTo(14.5f, 14.5f); p.lineTo(20f, 20f); p.moveTo(8.1f, 8.1f); p.lineTo(12f, 12f)
+                }
                 CircasoIcon.Spaces -> {
                     p.addOval(Rect(7.2f, 7.2f, 16.8f, 16.8f))
                     p.addOval(Rect(10.6f, 10.6f, 13.4f, 13.4f))

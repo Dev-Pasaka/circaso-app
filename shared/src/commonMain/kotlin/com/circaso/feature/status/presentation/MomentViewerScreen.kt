@@ -33,6 +33,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.blur
@@ -94,15 +95,31 @@ private const val StillMs = 5_000
 fun MomentViewerScreen(viewModel: MomentViewerViewModel, onClose: () -> Unit, onMessage: (posterId: String) -> Unit = {}) {
     val state by viewModel.state.collectAsState()
     LaunchedEffect(state.closed) { if (state.closed) onClose() }
+    var forward by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf<ForwardMedia?>(null) }
     androidx.compose.ui.backhandler.BackHandler(onBack = onClose)
-    // Always the dark stage, in every theme (design V1): the dark tokens, with the person's high-contrast choice kept.
-    CircasoTheme(darkTheme = true, highContrast = CircasoTheme.colors.isHighContrast) {
-        MomentViewerContent(state, viewModel, onClose, onMessage)
+    Box(Modifier.fillMaxSize()) {
+        // Always the dark stage, in every theme (design V1): the dark tokens, with the person's high-contrast choice kept.
+        CircasoTheme(darkTheme = true, highContrast = CircasoTheme.colors.isHighContrast) {
+            MomentViewerContent(state, viewModel, onClose, onMessage, onForward = { m -> viewModel.openViewers(false); viewModel.setPaused(true); forward = m })
+        }
+        // V4 Forward: a list screen in the person's own theme, over the stage; the moment waits paused behind it.
+        forward?.let { m ->
+            val done = { forward = null; viewModel.setPaused(false) }
+            MomentForwardScreen(org.koin.compose.viewmodel.koinViewModel(key = "forward-viewer"), m, onClose = done, onSent = { names -> done(); viewModel.notice(forwardedNotice(names)) })
+        }
     }
 }
 
+/** My moment as something to send to a chat; null while its media isn't on the phone yet. */
+private fun forwardOf(moment: Moment, media: ViewerMedia): ForwardMedia? {
+    if (moment.kind == MomentKind.Text) return ForwardMedia(MomentKind.Text, null, null, "text/plain", null, null, null, null, null, text = moment.text)
+    val ready = media as? ViewerMedia.Ready ?: return null
+    val m = moment.media ?: return null
+    return ForwardMedia(moment.kind, ready.bytes, ready.path, m.mime, m.width, m.height, m.durationMs, moment.thumb?.let { runCatching { Base64.decode(it) }.getOrNull() }, moment.caption)
+}
+
 @Composable
-private fun MomentViewerContent(state: MomentViewerUiState, vm: MomentViewerViewModel, onClose: () -> Unit, onMessage: (String) -> Unit) {
+private fun MomentViewerContent(state: MomentViewerUiState, vm: MomentViewerViewModel, onClose: () -> Unit, onMessage: (String) -> Unit, onForward: (ForwardMedia) -> Unit) {
     val c = CircasoTheme.colors
     val t = CircasoTheme.typography
     val moment = state.moment
@@ -209,7 +226,11 @@ private fun MomentViewerContent(state: MomentViewerUiState, vm: MomentViewerView
 
         ToastHost(toast, Modifier.align(Alignment.TopCenter).statusBarsPadding().padding(top = 96.dp))
         MoreSheet(state.moreOpen, ring.name, onMute = vm::mute, onMessage = { vm.openMore(false); onMessage(ring.posterId) }, onDismiss = { vm.openMore(false) })
-        ViewersSheet(state, onDismiss = { vm.openViewers(false) }, onDelete = { vm.openViewers(false); vm.askDelete(true) })
+        val forwardable = remember(moment.momentId, state.media) { forwardOf(moment, state.media) }
+        ViewersSheet(
+            state, onDismiss = { vm.openViewers(false) }, onDelete = { vm.openViewers(false); vm.askDelete(true) },
+            onForward = forwardable?.let { f -> { onForward(f) } },
+        )
         ConfirmSheet(
             visible = state.confirmDelete, title = "Delete this moment?",
             message = "People who haven’t seen it won’t be able to. This can’t be undone.",
@@ -245,7 +266,7 @@ private fun BoxScope.Stage(moment: Moment, media: ViewerMedia, onRetry: () -> Un
                 is ViewerMedia.Ready -> when (moment.kind) {
                     MomentKind.Image -> coil3.compose.AsyncImage(media.bytes, moment.caption ?: "Photo", Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
                     // No player controls (Pasaka, 2026-11-03): hold anywhere to pause, the speaker at the top mutes.
-                    MomentKind.Video -> media.path?.let { MomentVideo(it, playing = !paused, muted = muted, modifier = Modifier.fillMaxSize()) }
+                    MomentKind.Video -> media.path?.let { MomentVideo(it, playing = !paused, muted = muted, modifier = Modifier.fillMaxSize(), poster = thumb) }
                     else -> VoiceStage(moment, media.bytes)
                 }
                 ViewerMedia.Loading -> Column(Modifier.align(Alignment.Center), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -355,12 +376,17 @@ private fun BoxScope.MoreSheet(visible: Boolean, name: String, onMute: () -> Uni
 
 /** V4: who saw my moment, with their reaction; Delete from here too. */
 @Composable
-private fun BoxScope.ViewersSheet(state: MomentViewerUiState, onDismiss: () -> Unit, onDelete: () -> Unit) {
+private fun BoxScope.ViewersSheet(state: MomentViewerUiState, onDismiss: () -> Unit, onDelete: () -> Unit, onForward: (() -> Unit)?) {
     val c = CircasoTheme.colors
     val t = CircasoTheme.typography
     val count = state.viewers?.size ?: state.moment?.viewCount ?: 0
     CircasoSheet(state.viewersOpen, onDismiss, label = "Viewers") {
         SheetHead("Seen by $count", onDismiss)
+        // Forward and Delete side by side (design V4). Forward waits until the media is on the phone.
+        Row(horizontalArrangement = Arrangement.spacedBy(CircasoSpacing.s2)) {
+            CircasoButton("Forward", { onForward?.invoke() }, style = ButtonStyle.Secondary, size = com.circaso.designsystem.components.ButtonSize.Small, icon = CircasoIcon.Forward, enabled = onForward != null)
+            CircasoButton("Delete", onDelete, style = ButtonStyle.Destructive, size = com.circaso.designsystem.components.ButtonSize.Small, icon = CircasoIcon.Trash)
+        }
         when {
             state.viewersError != null -> BasicText(state.viewersError, Modifier.padding(CircasoSpacing.s4), style = t.subhead.copy(color = c.inkSecondary))
             state.viewers == null -> Spinner(c.inkSecondary, Modifier.padding(CircasoSpacing.s4))
@@ -374,7 +400,6 @@ private fun BoxScope.ViewersSheet(state: MomentViewerUiState, onDismiss: () -> U
                 }
             }
         }
-        CircasoButton("Delete", onDelete, style = ButtonStyle.Destructive, icon = CircasoIcon.Trash)
     }
 }
 

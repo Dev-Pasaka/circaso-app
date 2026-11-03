@@ -45,6 +45,8 @@ data class SpacesUiState(
     val checkFailedWithData: Boolean = false,
     val requestId: String? = null,
     val newSheet: Boolean = false,
+    /** How many moments the current run of posting started with (several picked at once fill one ring); 0 when none. */
+    val postingBatch: Int = 0,
 ) {
     val myRing: MyRing
         get() = when {
@@ -55,6 +57,21 @@ data class SpacesUiState(
             else -> MyRing.Add
         }
     val failedPost: PendingMoment? get() = pending.firstOrNull { it.state == PendingState.Failed }
+
+    /**
+     * How far my moments on their way have got (0..1) over the whole batch: the ones already posted count in full,
+     * so the ring only ever moves forward as several picked at once go up one after another. Null while nothing has
+     * started uploading or posted yet (a text moment, or the queue just began), which shows the turning arc.
+     */
+    val postingProgress: Float?
+        get() {
+            val posting = pending.filter { it.state == PendingState.Posting }
+            val batch = maxOf(postingBatch, posting.size)
+            if (batch == 0) return null
+            val done = batch - posting.size
+            if (done == 0 && posting.none { it.progress != null }) return null
+            return ((done + posting.sumOf { (it.progress ?: 0f).toDouble() }.toFloat()) / batch).coerceIn(0f, 1f)
+        }
     /** S1d: skeleton rings only on the very first open, before anything is stored or answered. */
     val loading: Boolean get() = !refreshed && rings.isEmpty() && myMoments.isEmpty() && online
     val empty: Boolean get() = refreshed && rings.isEmpty() && (!failed || checkFailedWithData)
@@ -86,7 +103,12 @@ class SpacesViewModel(
                 }
             }
         }
-        viewModelScope.launch { moments.pending.collect { p -> _state.update { it.copy(pending = p) } } }
+        viewModelScope.launch {
+            moments.pending.collect { p ->
+                val posting = p.count { it.state == PendingState.Posting }
+                _state.update { it.copy(pending = p, postingBatch = if (posting == 0) 0 else maxOf(it.postingBatch, posting)) }
+            }
+        }
         viewModelScope.launch {
             connection.status.collect { s ->
                 val back = s == ConnectionStatus.Online && !_state.value.online

@@ -5,6 +5,7 @@ import android.content.ContentUris
 import android.content.Context
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.media.MediaMetadataRetriever
 import android.net.Uri
 import android.os.Build
@@ -13,36 +14,71 @@ import androidx.activity.ComponentActivity
 import androidx.activity.result.ActivityResultLauncher
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.annotation.OptIn
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.remember
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
-import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.blur
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
 import androidx.media3.common.MediaItem
+import androidx.media3.common.MimeTypes
+import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
+import androidx.media3.common.util.UnstableApi
+import androidx.media3.effect.Presentation
+import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.mediacodec.MediaCodecDecoderException
+import androidx.media3.exoplayer.mediacodec.MediaCodecSelector
+import androidx.media3.exoplayer.mediacodec.MediaCodecUtil
+import androidx.media3.transformer.Composition
+import androidx.media3.transformer.DefaultEncoderFactory
+import androidx.media3.transformer.EditedMediaItem
+import androidx.media3.transformer.Effects
+import androidx.media3.transformer.ExportException
+import androidx.media3.transformer.ExportResult
+import androidx.media3.transformer.Transformer
+import androidx.media3.transformer.VideoEncoderSettings
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import java.io.ByteArrayOutputStream
 import java.io.File
+import java.util.Collections
+import kotlin.coroutines.resume
 import kotlin.math.max
 import kotlin.math.roundToInt
 
 /** The system pickers for moments, registered by the activity like [ImagePickerBridge]; neither needs a permission. */
 object MomentPickerBridge {
     private var visual: ActivityResultLauncher<PickVisualMediaRequest>? = null
+    private var visualMany: ActivityResultLauncher<PickVisualMediaRequest>? = null
     private var audio: ActivityResultLauncher<String>? = null
     private var pending: CompletableDeferred<Uri?>? = null
+    private var pendingMany: CompletableDeferred<List<Uri>>? = null
 
     fun register(activity: ComponentActivity) {
         visual = activity.registerForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri -> pending?.complete(uri) }
+        visualMany = activity.registerForActivityResult(ActivityResultContracts.PickMultipleVisualMedia(MomentPickMax)) { uris -> pendingMany?.complete(uris) }
         audio = activity.registerForActivityResult(ActivityResultContracts.GetContent()) { uri -> pending?.complete(uri) }
     }
 
@@ -55,10 +91,25 @@ object MomentPickerBridge {
         }
         return answer.await()
     }
+
+    /** Photos and videos together, up to [MomentPickMax], in the order they were ticked. */
+    suspend fun pickMany(): List<Uri> {
+        val answer = CompletableDeferred<List<Uri>>().also { pendingMany = it }
+        visualMany?.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageAndVideo)) ?: return emptyList()
+        return answer.await()
+    }
 }
 
-/** MediaStore for the recents strip (WhatsApp-style), the system pickers for the rest. */
+/**
+ * MediaStore for the recents strip and the gallery (WhatsApp-style), the system pickers for the rest.
+ *
+ * Each kind has its own permission on Android 13+ (photos, videos, audio), so access to photos says nothing about
+ * videos: each kind is asked the first time it shows. On Android 14 the person may allow only "selected photos and
+ * videos" (READ_MEDIA_VISUAL_USER_SELECTED); that is [LibraryAccess.Limited] and Manage asks again, which shows the
+ * system's own selection sheet. Whether a kind was asked is kept, so a limited choice isn't asked again on every open.
+ */
 class AndroidMediaLibrary(private val context: Context) : MediaLibrary {
+    private val prefs by lazy { context.getSharedPreferences("moments_library", Context.MODE_PRIVATE) }
 
     private fun permissionFor(kind: LibraryKind) = if (Build.VERSION.SDK_INT >= 33) when (kind) {
         LibraryKind.Photo -> Manifest.permission.READ_MEDIA_IMAGES
@@ -66,43 +117,97 @@ class AndroidMediaLibrary(private val context: Context) : MediaLibrary {
         LibraryKind.Audio -> Manifest.permission.READ_MEDIA_AUDIO
     } else Manifest.permission.READ_EXTERNAL_STORAGE
 
+    /** What one prompt for [kind] asks: on Android 14 the partial "selected" access goes with photos and videos. */
+    private fun requestFor(kind: LibraryKind): Array<String> =
+        if (Build.VERSION.SDK_INT >= 34 && kind != LibraryKind.Audio) arrayOf(permissionFor(kind), Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED)
+        else arrayOf(permissionFor(kind))
+
     private fun granted(p: String) = ContextCompat.checkSelfPermission(context, p) == PackageManager.PERMISSION_GRANTED
 
-    override suspend fun access(): LibraryAccess = when {
-        granted(permissionFor(LibraryKind.Photo)) -> LibraryAccess.Granted
-        Build.VERSION.SDK_INT >= 34 && granted(Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED) -> LibraryAccess.Limited
+    /**
+     * Full access to this kind wins. Android 14 also reports the partial permission as granted alongside full access
+     * to another kind, so "selected" counts only once this kind has been asked: before that it is unknown, not limited.
+     */
+    private fun accessFor(kind: LibraryKind): LibraryAccess = when {
+        granted(permissionFor(kind)) -> LibraryAccess.Granted
+        Build.VERSION.SDK_INT >= 34 && kind != LibraryKind.Audio && asked(kind) && granted(Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED) -> LibraryAccess.Limited
         else -> LibraryAccess.Denied
     }
 
-    override suspend fun recent(kind: LibraryKind, limit: Int): List<LibraryItem> {
-        val permission = permissionFor(kind)
-        val partial = Build.VERSION.SDK_INT >= 34 && kind != LibraryKind.Audio && granted(Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED)
-        if (!granted(permission) && !partial && !PermissionBridge.request(permission)) return emptyList()
-        return withContext(Dispatchers.IO) {
-            val collection = when (kind) {
-                LibraryKind.Photo -> MediaStore.Images.Media.EXTERNAL_CONTENT_URI
-                LibraryKind.Video -> MediaStore.Video.Media.EXTERNAL_CONTENT_URI
-                LibraryKind.Audio -> MediaStore.Audio.Media.EXTERNAL_CONTENT_URI
-            }
-            val columns = buildList {
-                add(MediaStore.MediaColumns._ID)
-                if (kind != LibraryKind.Photo) add(MediaStore.MediaColumns.DURATION)
-                if (kind == LibraryKind.Audio) add(MediaStore.MediaColumns.TITLE)
-            }.toTypedArray()
-            val items = mutableListOf<LibraryItem>()
-            runCatching {
-                context.contentResolver.query(collection, columns, null, null, "${MediaStore.MediaColumns.DATE_ADDED} DESC")?.use { c ->
-                    val idCol = c.getColumnIndexOrThrow(MediaStore.MediaColumns._ID)
-                    val durCol = if (kind != LibraryKind.Photo) c.getColumnIndex(MediaStore.MediaColumns.DURATION) else -1
-                    val titleCol = if (kind == LibraryKind.Audio) c.getColumnIndex(MediaStore.MediaColumns.TITLE) else -1
-                    while (c.moveToNext() && items.size < limit) {
-                        val uri = ContentUris.withAppendedId(collection, c.getLong(idCol))
-                        items += LibraryItem(uri.toString(), kind, durationMs = if (durCol >= 0) c.getLong(durCol) else null, title = if (titleCol >= 0) c.getString(titleCol) else null)
-                    }
+    private fun asked(kind: LibraryKind) = prefs.getBoolean("asked_${kind.name}", false)
+    private fun markAsked(kind: LibraryKind) = prefs.edit().putBoolean("asked_${kind.name}", true).apply()
+
+    override suspend fun access(): LibraryAccess = accessFor(LibraryKind.Photo)
+
+    override suspend fun recents(kind: LibraryKind, limit: Int, ask: Boolean): LibraryRecents {
+        var access = accessFor(kind)
+        if (access == LibraryAccess.Denied && ask && !asked(kind)) {
+            PermissionBridge.requestAll(requestFor(kind))
+            markAsked(kind)
+            access = accessFor(kind)
+        }
+        if (access == LibraryAccess.Denied) return LibraryRecents(emptyList(), access)
+        return LibraryRecents(query(kind, limit), access)
+    }
+
+    /** One system prompt for photos and videos together (the gallery shows both), not two in a row. */
+    override suspend fun recentsVisual(limit: Int, ask: Boolean): Pair<LibraryRecents, LibraryRecents> {
+        val kinds = listOf(LibraryKind.Photo, LibraryKind.Video)
+        val unasked = kinds.filter { accessFor(it) == LibraryAccess.Denied && !asked(it) }
+        if (ask && unasked.isNotEmpty()) {
+            PermissionBridge.requestAll(unasked.flatMap { requestFor(it).toList() }.distinct().toTypedArray())
+            unasked.forEach(::markAsked)
+        }
+        return recents(LibraryKind.Photo, limit, ask = false) to recents(LibraryKind.Video, limit, ask = false)
+    }
+
+    override suspend fun manage(kind: LibraryKind): LibraryAccess {
+        val before = accessFor(kind)
+        if (before == LibraryAccess.Granted) return before
+        // Limited, or never asked: the system prompt (on Android 14 its selection sheet). Denied after being asked:
+        // Android won't prompt again, so the app's settings, where the person can allow it.
+        val started = System.currentTimeMillis()
+        if (before == LibraryAccess.Limited || !asked(kind)) {
+            PermissionBridge.requestAll(requestFor(kind))
+            markAsked(kind)
+        }
+        val after = accessFor(kind)
+        // A refusal Android answers at once (no prompt shown, "don't ask again"): send the person to settings.
+        if (after == LibraryAccess.Denied && System.currentTimeMillis() - started < 400) openAppSettings()
+        return after
+    }
+
+    private suspend fun query(kind: LibraryKind, limit: Int): List<LibraryItem> = withContext(Dispatchers.IO) {
+        val collection = when (kind) {
+            LibraryKind.Photo -> MediaStore.Images.Media.EXTERNAL_CONTENT_URI
+            LibraryKind.Video -> MediaStore.Video.Media.EXTERNAL_CONTENT_URI
+            LibraryKind.Audio -> MediaStore.Audio.Media.EXTERNAL_CONTENT_URI
+        }
+        val columns = buildList {
+            add(MediaStore.MediaColumns._ID)
+            add(MediaStore.MediaColumns.DATE_ADDED)
+            if (kind != LibraryKind.Photo) add(MediaStore.MediaColumns.DURATION)
+            if (kind == LibraryKind.Audio) add(MediaStore.MediaColumns.TITLE)
+        }.toTypedArray()
+        val items = mutableListOf<LibraryItem>()
+        runCatching {
+            context.contentResolver.query(collection, columns, null, null, "${MediaStore.MediaColumns.DATE_ADDED} DESC")?.use { c ->
+                val idCol = c.getColumnIndexOrThrow(MediaStore.MediaColumns._ID)
+                val addedCol = c.getColumnIndex(MediaStore.MediaColumns.DATE_ADDED)
+                val durCol = if (kind != LibraryKind.Photo) c.getColumnIndex(MediaStore.MediaColumns.DURATION) else -1
+                val titleCol = if (kind == LibraryKind.Audio) c.getColumnIndex(MediaStore.MediaColumns.TITLE) else -1
+                while (c.moveToNext() && items.size < limit) {
+                    val uri = ContentUris.withAppendedId(collection, c.getLong(idCol))
+                    items += LibraryItem(
+                        uri.toString(), kind,
+                        durationMs = if (durCol >= 0) c.getLong(durCol) else null,
+                        title = if (titleCol >= 0) c.getString(titleCol) else null,
+                        addedAt = if (addedCol >= 0) c.getLong(addedCol) * 1000 else 0,
+                    )
                 }
             }
-            items
         }
+        items
     }
 
     override suspend fun load(item: LibraryItem): CapturedMedia? = load(Uri.parse(item.id), item.kind)
@@ -112,6 +217,18 @@ class AndroidMediaLibrary(private val context: Context) : MediaLibrary {
         return load(uri, kind)
     }
 
+    override suspend fun pickMany(max: Int): List<CapturedMedia> {
+        val uris = MomentPickerBridge.pickMany().take(max)
+        return uris.mapNotNull { uri ->
+            val video = withContext(Dispatchers.IO) { context.contentResolver.getType(uri) }?.startsWith("video") == true
+            load(uri, if (video) LibraryKind.Video else LibraryKind.Photo)
+        }
+    }
+
+    /**
+     * A video is copied to the cache and handed over by [CapturedMedia.path] with empty bytes: ten picked videos held
+     * in memory at once would not fit. [read] brings each one in only when it is posted.
+     */
     private suspend fun load(uri: Uri, kind: LibraryKind): CapturedMedia? = withContext(Dispatchers.IO) {
         runCatching {
             when (kind) {
@@ -120,24 +237,104 @@ class AndroidMediaLibrary(private val context: Context) : MediaLibrary {
                     CapturedMedia(bitmap.toJpeg(90), "image/jpeg", bitmap.width, bitmap.height, thumb = bitmap.thumb())
                 }
                 LibraryKind.Video, LibraryKind.Audio -> {
-                    val retriever = MediaMetadataRetriever()
-                    try {
-                        retriever.setDataSource(context, uri)
-                        val duration = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull() ?: 0L
-                        val mime = context.contentResolver.getType(uri) ?: if (kind == LibraryKind.Video) "video/mp4" else "audio/mpeg"
-                        // A copy in the cache, so the review player can read it as a file.
-                        val ext = if (kind == LibraryKind.Video) "mp4" else "m4a"
-                        val file = File(context.cacheDir, "moment-pick-${System.currentTimeMillis()}.$ext")
-                        context.contentResolver.openInputStream(uri)?.use { input -> file.outputStream().use { input.copyTo(it) } } ?: return@runCatching null
-                        val frame = if (kind == LibraryKind.Video) retriever.getFrameAtTime(0) else null
-                        CapturedMedia(file.readBytes(), mime, frame?.width, frame?.height, durationMs = duration, thumb = frame?.thumb(), path = file.absolutePath)
-                    } finally {
-                        retriever.release()
+                    val ext = if (kind == LibraryKind.Video) "mp4" else "m4a"
+                    // A copy in the cache, so the review player and the trimmer can read it as a file.
+                    val file = File(context.cacheDir, "moment-pick-${System.nanoTime()}.$ext")
+                    context.contentResolver.openInputStream(uri)?.use { input -> file.outputStream().use { input.copyTo(it) } } ?: return@runCatching null
+                    val mime = context.contentResolver.getType(uri) ?: if (kind == LibraryKind.Video) "video/mp4" else "audio/mpeg"
+                    if (kind == LibraryKind.Audio) {
+                        val duration = metadata(file.absolutePath)?.durationMs ?: 0L
+                        CapturedMedia(file.readBytes(), mime, null, null, durationMs = duration, path = file.absolutePath)
+                    } else {
+                        val meta = metadata(file.absolutePath)
+                        CapturedMedia(ByteArray(0), mime, meta?.width, meta?.height, durationMs = meta?.durationMs ?: 0L, thumb = meta?.frame?.thumb(), path = file.absolutePath)
                     }
                 }
             }
         }.getOrNull()
     }
+
+    override suspend fun read(path: String): ByteArray? = withContext(Dispatchers.IO) { runCatching { File(path).takeIf { it.exists() }?.readBytes() }.getOrNull() }
+
+    override suspend fun filmstrip(path: String, count: Int): List<ByteArray> = withContext(Dispatchers.IO) {
+        val retriever = MediaMetadataRetriever()
+        try {
+            retriever.setDataSource(path)
+            val durationUs = (retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull() ?: 0L) * 1000
+            if (durationUs <= 0 || count <= 0) return@withContext emptyList()
+            (0 until count).mapNotNull { i ->
+                val at = durationUs * (2 * i + 1) / (2 * count) // the middle of each slice
+                val frame = if (Build.VERSION.SDK_INT >= 27) retriever.getScaledFrameAtTime(at, MediaMetadataRetriever.OPTION_CLOSEST_SYNC, 160, 160)
+                else retriever.getFrameAtTime(at, MediaMetadataRetriever.OPTION_CLOSEST_SYNC)
+                frame?.toJpeg(60)
+            }
+        } catch (_: Throwable) {
+            emptyList()
+        } finally {
+            runCatching { retriever.release() }
+        }
+    }
+
+    /**
+     * Media3 Transformer (already in the app for chat videos): the clip from [startMs] to [endMs], re-encoded as
+     * H.264 at [MomentVideoBitRate] (720 on the short side at most), so a minute always fits the 32 MiB limit.
+     */
+    @OptIn(UnstableApi::class)
+    override suspend fun trim(path: String, startMs: Long, endMs: Long): CapturedMedia? {
+        val out = File(context.cacheDir, "moment-trim-${System.nanoTime()}.mp4")
+        val meta = withContext(Dispatchers.IO) { metadata(path) }
+        val (inW, inH) = (meta?.width ?: 720) to (meta?.height ?: 1280)
+        val scale = 720f / minOf(inW, inH).coerceAtLeast(1)
+        val (outW, outH) = if (scale >= 1f) (inW / 2 * 2) to (inH / 2 * 2) else ((inW * scale).toInt() / 2 * 2) to ((inH * scale).toInt() / 2 * 2)
+        val item = MediaItem.Builder().setUri(Uri.fromFile(File(path)))
+            .setClippingConfiguration(MediaItem.ClippingConfiguration.Builder().setStartPositionMs(startMs).setEndPositionMs(endMs).build())
+            .build()
+        val edited = EditedMediaItem.Builder(item)
+            .setEffects(Effects(emptyList(), listOf(Presentation.createForWidthAndHeight(outW, outH, Presentation.LAYOUT_SCALE_TO_FIT))))
+            .build()
+        val encoder = DefaultEncoderFactory.Builder(context)
+            .setRequestedVideoEncoderSettings(VideoEncoderSettings.Builder().setBitrate(MomentVideoBitRate).build())
+            .build()
+        // Transformer runs on a thread with a Looper: the main one.
+        val ok = withContext(Dispatchers.Main) {
+            suspendCancellableCoroutine { cont ->
+                val transformer = Transformer.Builder(context)
+                    .setVideoMimeType(MimeTypes.VIDEO_H264).setAudioMimeType(MimeTypes.AUDIO_AAC)
+                    .setEncoderFactory(encoder)
+                    .addListener(object : Transformer.Listener {
+                        override fun onCompleted(composition: Composition, result: ExportResult) { if (cont.isActive) cont.resume(true) }
+                        override fun onError(composition: Composition, result: ExportResult, exception: ExportException) { if (cont.isActive) cont.resume(false) }
+                    })
+                    .build()
+                transformer.start(edited, out.absolutePath)
+                cont.invokeOnCancellation { transformer.cancel(); out.delete() }
+            }
+        }
+        if (!ok || !out.exists()) { out.delete(); return null }
+        return withContext(Dispatchers.IO) {
+            val m = metadata(out.absolutePath)
+            CapturedMedia(ByteArray(0), "video/mp4", m?.width, m?.height, durationMs = m?.durationMs ?: (endMs - startMs), thumb = m?.frame?.thumb(), path = out.absolutePath)
+        }
+    }
+
+    private class Meta(val width: Int?, val height: Int?, val durationMs: Long, val frame: Bitmap?)
+
+    /** Size as shown (rotation applied), length and the first frame. */
+    private fun metadata(path: String): Meta? = runCatching {
+        val r = MediaMetadataRetriever()
+        try {
+            r.setDataSource(path)
+            val w = r.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH)?.toIntOrNull()
+            val h = r.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT)?.toIntOrNull()
+            val rotation = r.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_ROTATION)?.toIntOrNull() ?: 0
+            val duration = r.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull() ?: 0L
+            val sideways = rotation == 90 || rotation == 270
+            val frame = if (w != null) r.getFrameAtTime(0) else null
+            Meta(if (sideways) h else w, if (sideways) w else h, duration, frame)
+        } finally {
+            r.release()
+        }
+    }.getOrNull()
 }
 
 private fun Bitmap.toJpeg(quality: Int): ByteArray = ByteArrayOutputStream().also { compress(Bitmap.CompressFormat.JPEG, quality, it) }.toByteArray()
@@ -162,48 +359,90 @@ actual fun LibraryThumbnail(item: LibraryItem, modifier: Modifier) {
             }.getOrNull()?.asImageBitmap()
         }
     }.value
-    if (bitmap != null) androidx.compose.foundation.Image(bitmap, contentDescription = null, contentScale = ContentScale.Crop, modifier = modifier)
+    if (bitmap != null) Image(bitmap, contentDescription = null, contentScale = ContentScale.Crop, modifier = modifier)
 }
 
+/**
+ * Decoders that failed on this phone while playing a moment. The emulator's `c2.goldfish.h264.decoder` (API 37)
+ * accepts a file and then fails on its first buffer (Codec2 "Failed to send buffer with BufferPool", 2026-11-03); some
+ * phones' hardware decoders refuse odd sizes. A player that hits one starts again without it (the software decoder),
+ * and every later player in this run skips it from the start.
+ */
+private val failedDecoders: MutableSet<String> = Collections.synchronizedSet(mutableSetOf())
+
+@OptIn(UnstableApi::class)
 @Composable
-actual fun MomentVideo(path: String, playing: Boolean, muted: Boolean, modifier: Modifier, loop: Boolean) {
+actual fun MomentVideo(path: String, playing: Boolean, muted: Boolean, modifier: Modifier, loop: Boolean, poster: ByteArray?, onUnplayable: () -> Unit) {
     val context = LocalContext.current
-    val player = remember(path) {
-        ExoPlayer.Builder(context).build().apply {
+    val unplayableNow by rememberUpdatedState(onUnplayable)
+    var attempt by remember(path) { mutableIntStateOf(0) }
+    var firstFrame by remember(path) { mutableStateOf(false) }
+    val player = remember(path, attempt) {
+        val selector = MediaCodecSelector { mime, secure, tunneling ->
+            MediaCodecUtil.getDecoderInfos(mime, secure, tunneling).filterNot { it.name in failedDecoders }
+        }
+        val renderers = DefaultRenderersFactory(context).setEnableDecoderFallback(true).setMediaCodecSelector(selector)
+        ExoPlayer.Builder(context, renderers).build().apply {
             setMediaItem(MediaItem.fromUri(Uri.fromFile(File(path))))
             repeatMode = if (loop) Player.REPEAT_MODE_ONE else Player.REPEAT_MODE_OFF
             prepare()
         }
     }
+    DisposableEffect(player) {
+        val listener = object : Player.Listener {
+            override fun onRenderedFirstFrame() { firstFrame = true }
+            override fun onPlayerError(error: PlaybackException) {
+                val failed = generateSequence<Throwable>(error) { it.cause }.filterIsInstance<MediaCodecDecoderException>().firstOrNull()?.codecInfo?.name
+                if (failed != null && failedDecoders.add(failed) && attempt < 3) attempt++ // again, without that decoder
+                else unplayableNow()
+            }
+        }
+        player.addListener(listener)
+        onDispose { player.removeListener(listener); player.release() }
+    }
     LaunchedEffect(player, playing) { player.playWhenReady = playing }
     LaunchedEffect(player, muted) { player.volume = if (muted) 0f else 1f }
-    DisposableEffect(player) { onDispose { player.release() } }
-    // A bare TextureView, no PlayerView: nothing of Media3's own UI can ever show (Pasaka, 2026-11-03). The video
-    // is scaled to fill and cropped, centred, as a short-form clip should be.
-    AndroidView(
-        factory = { ctx ->
-            android.view.TextureView(ctx).also { view ->
-                player.setVideoTextureView(view)
-                fun crop(videoW: Int, videoH: Int) {
-                    if (videoW == 0 || videoH == 0 || view.width == 0 || view.height == 0) return
-                    val vw = view.width.toFloat(); val vh = view.height.toFloat()
-                    val scale = max(vw / videoW, vh / videoH)
-                    view.setTransform(android.graphics.Matrix().apply {
-                        setScale(videoW * scale / vw, videoH * scale / vh)
-                        postTranslate((vw - videoW * scale) / 2f, (vh - videoH * scale) / 2f)
-                    })
-                }
-                player.addListener(object : Player.Listener {
-                    override fun onVideoSizeChanged(videoSize: androidx.media3.common.VideoSize) {
-                        val w = (videoSize.width * videoSize.pixelWidthHeightRatio).roundToInt()
-                        crop(w, videoSize.height)
+    val posterImage = remember(poster) { poster?.let { runCatching { BitmapFactory.decodeByteArray(it, 0, it.size)?.asImageBitmap() }.getOrNull() } }
+    Box(modifier) {
+        // A bare TextureView, no PlayerView: nothing of Media3's own UI can ever show (Pasaka, 2026-11-03). The video
+        // is scaled to fill and cropped, centred, as a short-form clip should be. A new player gets a new view.
+        key(player) {
+            AndroidView(
+                factory = { ctx ->
+                    android.view.TextureView(ctx).also { view ->
+                        player.setVideoTextureView(view)
+                        fun crop(videoW: Int, videoH: Int) {
+                            if (videoW == 0 || videoH == 0 || view.width == 0 || view.height == 0) return
+                            val vw = view.width.toFloat(); val vh = view.height.toFloat()
+                            val scale = max(vw / videoW, vh / videoH)
+                            view.setTransform(android.graphics.Matrix().apply {
+                                setScale(videoW * scale / vw, videoH * scale / vh)
+                                postTranslate((vw - videoW * scale) / 2f, (vh - videoH * scale) / 2f)
+                            })
+                        }
+                        player.addListener(object : Player.Listener {
+                            override fun onVideoSizeChanged(videoSize: androidx.media3.common.VideoSize) {
+                                crop((videoSize.width * videoSize.pixelWidthHeightRatio).roundToInt(), videoSize.height)
+                            }
+                        })
+                        view.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ ->
+                            val v = player.videoSize; crop((v.width * v.pixelWidthHeightRatio).roundToInt(), v.height)
+                        }
                     }
-                })
-                view.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ ->
-                    val v = player.videoSize; crop((v.width * v.pixelWidthHeightRatio).roundToInt(), v.height)
-                }
+                },
+                modifier = Modifier.fillMaxSize(),
+            )
+        }
+        // Until the first frame is on screen (or for good, if this phone can't play it): the poster, never black.
+        // The same blur as the viewer's loading placeholder (V5), fading out as the first frame lands.
+        if (posterImage != null) {
+            androidx.compose.animation.AnimatedVisibility(
+                !firstFrame, Modifier.fillMaxSize(),
+                enter = androidx.compose.animation.EnterTransition.None,
+                exit = androidx.compose.animation.fadeOut(androidx.compose.animation.core.tween(com.circaso.designsystem.theme.CircasoMotion.QuickMs)),
+            ) {
+                Image(posterImage, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize().blur(24.dp).graphicsLayer { scaleX = 1.2f; scaleY = 1.2f })
             }
-        },
-        modifier = modifier,
-    )
+        }
+    }
 }

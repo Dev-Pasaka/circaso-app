@@ -37,6 +37,24 @@ val statusModule = module {
     viewModel { com.circaso.feature.status.presentation.SpacesViewModel(get(), get(), get(), get(), get()) }
     viewModel { com.circaso.feature.status.presentation.MomentComposerViewModel(get(), get(), get(), get(), get(), get(), get(), get()) }
     viewModel { com.circaso.feature.status.presentation.MomentsPrivacyViewModel(get(), get()) }
+    // V4 Forward: a moment into chats through the chat's own media path (encrypted, queued, sent by the outbox).
+    single<com.circaso.feature.status.presentation.MomentForwarder> {
+        val media = get<com.circaso.feature.messaging.data.repository.MediaMessages>()
+        val messages = get<com.circaso.feature.messaging.domain.MessagesRepository>()
+        val library = get<com.circaso.core.platform.MediaLibrary>()
+        com.circaso.feature.status.presentation.MomentForwarder { chatId, m ->
+            if (m.kind == com.circaso.feature.status.domain.MomentKind.Text) { messages.send(chatId, m.text.orEmpty()); return@MomentForwarder true }
+            val bytes = m.bytes ?: m.path?.let { library.read(it) } ?: return@MomentForwarder false
+            val r = when (m.kind) {
+                com.circaso.feature.status.domain.MomentKind.Image -> media.sendImage(chatId, bytes, m.mime, m.width, m.height, m.caption)
+                com.circaso.feature.status.domain.MomentKind.Video -> media.sendVideo(chatId, bytes, m.mime, m.width, m.height, m.durationMs,
+                    m.thumb?.let { kotlin.io.encoding.Base64.encode(it) }, m.caption)
+                else -> media.sendVoice(chatId, bytes, m.mime, m.durationMs ?: 0)
+            }
+            r is com.circaso.core.common.AppResult.Success
+        }
+    }
+    viewModel { com.circaso.feature.status.presentation.MomentForwardViewModel(get(), get()) }
     viewModel { params ->
         val chats = get<com.circaso.feature.messaging.domain.ChatsRepository>()
         val messages = get<com.circaso.feature.messaging.domain.MessagesRepository>()

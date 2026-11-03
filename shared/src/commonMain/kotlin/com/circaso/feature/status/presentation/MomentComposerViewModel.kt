@@ -6,15 +6,22 @@ import com.circaso.core.platform.AudioRecorder
 import com.circaso.core.platform.CameraStart
 import com.circaso.core.platform.CapturedMedia
 import com.circaso.core.platform.ImagePicker
+import com.circaso.core.platform.LibraryAccess
+import com.circaso.core.platform.LibraryItem
+import com.circaso.core.platform.LibraryKind
+import com.circaso.core.platform.MediaLibrary
 import com.circaso.core.platform.MomentCamera
+import com.circaso.core.platform.MomentMediaMaxBytes
+import com.circaso.core.platform.MomentMediaMaxMs
+import com.circaso.core.platform.MomentPickMax
 import com.circaso.core.platform.RecordingStart
-import com.circaso.core.platform.momentThumbnail
 import com.circaso.feature.contacts.domain.ObserveContactsUseCase
 import com.circaso.feature.status.domain.MomentAudienceMode
 import com.circaso.feature.status.domain.MomentDraft
 import com.circaso.feature.status.domain.MomentKind
 import com.circaso.feature.status.domain.MomentTextStyle
 import com.circaso.feature.status.domain.MomentsRepository
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -31,6 +38,51 @@ sealed interface ComposerCapture {
     class Voice(val bytes: ByteArray, val mime: String, val durationMs: Long) : ComposerCapture
 }
 
+/**
+ * One picked or captured item before sharing (M4). Several picked at once each become their own moment, posted in
+ * order; each keeps its own caption. [unplayable]: this phone couldn't preview the video (it still posts).
+ */
+data class ComposerItem(val capture: ComposerCapture, val caption: String = "", val unplayable: Boolean = false) {
+    val video: CapturedMedia? get() = (capture as? ComposerCapture.Shot)?.takeIf { it.kind == MomentKind.Video }?.media
+    /** Longer than a minute: it opens the trimmer, and can't be shared until it has been trimmed (M3b). */
+    val tooLong: Boolean get() = (video?.durationMs ?: 0) > MomentMediaMaxMs + 500
+}
+
+/** The gallery's tabs (M3). */
+enum class GalleryTab { All, Photos, Videos }
+
+/** M3: the full gallery grid, opened from Gallery beside the shutter. */
+data class GalleryState(
+    val tab: GalleryTab = GalleryTab.All,
+    val photos: List<LibraryItem> = emptyList(),
+    val videos: List<LibraryItem> = emptyList(),
+    /** Null until the phone has answered (asking for access can take a while). */
+    val access: LibraryAccess? = null,
+) {
+    val items: List<LibraryItem>
+        get() = when (tab) {
+            GalleryTab.All -> (photos + videos).sortedByDescending { it.addedAt }
+            GalleryTab.Photos -> photos
+            GalleryTab.Videos -> videos
+        }
+    val loading: Boolean get() = access == null
+}
+
+/** M3b: trimming one video to a minute or less. Times are in milliseconds from the start of the original. */
+data class TrimState(
+    val index: Int,
+    val durationMs: Long,
+    val startMs: Long,
+    val endMs: Long,
+    /** The filmstrip under the handles: small JPEGs spread through the video. */
+    val frames: List<ByteArray> = emptyList(),
+    /** The video was over a minute: Cancel takes it out instead of keeping the long one. */
+    val required: Boolean,
+    val working: Boolean = false,
+) {
+    val selectedMs: Long get() = endMs - startMs
+}
+
 /** Designs M1–M6. */
 data class MomentComposerUiState(
     val mode: ComposerMode = ComposerMode.Photo,
@@ -44,10 +96,22 @@ data class MomentComposerUiState(
     /** Listening back to a recorded voice before sharing (M5). */
     val playingBack: Boolean = false,
     /** The recents strip for the current mode (WhatsApp-style), newest first; empty without library access. */
-    val recents: List<com.circaso.core.platform.LibraryItem> = emptyList(),
+    val recents: List<LibraryItem> = emptyList(),
+    /** What the phone lets the strip show for this mode; null until it has answered. */
+    val recentsAccess: LibraryAccess? = null,
+    /** Several at once (M3): a long press on the strip starts it, the gallery always picks this way. In order. */
+    val selection: List<LibraryItem> = emptyList(),
+    val selecting: Boolean = false,
+    val gallery: GalleryState? = null,
     val loadingPick: Boolean = false,
-    val capture: ComposerCapture? = null,
-    val caption: String = "",
+    val items: List<ComposerItem> = emptyList(),
+    /** The item on the stage when several were picked (M4's strip). */
+    val current: Int = 0,
+    val trim: TrimState? = null,
+    /** Re-encoding a video that is too large to post as it is. */
+    val preparing: Boolean = false,
+    /** The forward picker is open for the item on the stage (V4, from the review). */
+    val forwarding: Boolean = false,
     val text: String = "",
     val background: String = "Ink",
     val style: MomentTextStyle = MomentTextStyle.Bold,
@@ -61,9 +125,12 @@ data class MomentComposerUiState(
     val shared: Boolean = false,
     val error: String? = null,
 ) {
+    val item: ComposerItem? get() = items.getOrNull(current)
+    val capture: ComposerCapture? get() = item?.capture
+    val caption: String get() = item?.caption.orEmpty()
     val nobody: Boolean get() = audienceCount == 0
-    val canShare: Boolean get() = !sharing && !nobody && when {
-        capture != null -> true
+    val canShare: Boolean get() = !sharing && !preparing && !nobody && trim == null && when {
+        items.isNotEmpty() -> items.none { it.tooLong }
         mode == ComposerMode.Text -> text.isNotBlank()
         else -> false
     }
@@ -72,14 +139,17 @@ data class MomentComposerUiState(
 class MomentComposerViewModel(
     private val repository: MomentsRepository,
     val camera: MomentCamera,
-    private val picker: ImagePicker,
+    @Suppress("unused") private val picker: ImagePicker,
     private val recorder: AudioRecorder,
     observeContacts: ObserveContactsUseCase,
     private val player: com.circaso.core.platform.AudioPlayer,
-    private val library: com.circaso.core.platform.MediaLibrary,
+    private val library: MediaLibrary,
     observeProfile: com.circaso.feature.profile.domain.ObserveProfileUseCase,
+    private val now: () -> Long = { com.circaso.core.sync.nowMillis() },
+    /** Where the composer starts; previews start it on a given screen (the gallery, the trimmer, several picked). */
+    initial: MomentComposerUiState = MomentComposerUiState(),
 ) : ViewModel() {
-    private val _state = MutableStateFlow(MomentComposerUiState())
+    private val _state = MutableStateFlow(initial)
     val state: StateFlow<MomentComposerUiState> = _state.asStateFlow()
     private var voiceStartedAt = 0L
     // Holds (M1b video, M5b voice): a release can arrive while the start is still in progress (a permission prompt,
@@ -88,10 +158,12 @@ class MomentComposerViewModel(
     private var videoReleaseAsked = false
     private var voiceStarting = false
     private var voiceReleaseAsked = false
-    private var voiceCap: kotlinx.coroutines.Job? = null
+    private var voiceCap: Job? = null
+    private var recentsJob: Job? = null
+    private var trimJob: Job? = null
 
     init {
-        viewModelScope.launch { _state.update { it.copy(camera = camera.open()) }; loadRecents(ComposerMode.Photo) }
+        viewModelScope.launch { _state.update { it.copy(camera = camera.open()) }; loadRecents(initial.mode) }
         viewModelScope.launch { observeProfile().collect { p -> _state.update { it.copy(myName = p?.displayName.orEmpty(), myAvatarUrl = p?.avatarUrl) } } }
         viewModelScope.launch {
             combine(observeContacts(), repository.privacy) { contacts, p ->
@@ -106,59 +178,223 @@ class MomentComposerViewModel(
     }
 
     fun setMode(mode: ComposerMode) {
-        _state.update { it.copy(mode = mode, error = null, recents = emptyList()) }
+        _state.update { it.copy(mode = mode, error = null, recents = emptyList(), recentsAccess = null, selecting = false, selection = emptyList()) }
         loadRecents(mode)
     }
 
-    private var recentsJob: kotlinx.coroutines.Job? = null
-
-    /** The strip under the camera: recent photos, videos or audio from the phone (asks for access the first time). */
-    private fun loadRecents(mode: ComposerMode) {
+    /**
+     * The strip under the camera: recent photos, videos or audio from the phone. Each kind asks for its own access the
+     * first time it shows (on Android photo access says nothing about videos), so a strip is never silently empty:
+     * without access it says so and offers to allow it.
+     */
+    private fun loadRecents(mode: ComposerMode, ask: Boolean = true) {
         val kind = libraryKind(mode) ?: return
         recentsJob?.cancel()
         recentsJob = viewModelScope.launch {
-            val items = library.recent(kind, 30)
-            if (_state.value.mode == mode) _state.update { it.copy(recents = items) }
+            val r = library.recents(kind, 30, ask)
+            if (_state.value.mode == mode) _state.update { it.copy(recents = r.items, recentsAccess = r.access) }
         }
     }
 
     private fun libraryKind(mode: ComposerMode) = when (mode) {
-        ComposerMode.Photo -> com.circaso.core.platform.LibraryKind.Photo
-        ComposerMode.Video -> com.circaso.core.platform.LibraryKind.Video
-        ComposerMode.Voice -> com.circaso.core.platform.LibraryKind.Audio
+        ComposerMode.Photo -> LibraryKind.Photo
+        ComposerMode.Video -> LibraryKind.Video
+        ComposerMode.Voice -> LibraryKind.Audio
         ComposerMode.Text -> null
     }
 
-    /** One tile from the strip. */
-    fun useRecent(item: com.circaso.core.platform.LibraryItem) = use { library.load(item) }
+    /**
+     * Limited access (M3c Manage) or none: the system's own way to allow more. The strip and the gallery read the
+     * library again afterwards.
+     */
+    fun manageAccess() {
+        val kind = libraryKind(_state.value.mode) ?: LibraryKind.Photo
+        viewModelScope.launch {
+            library.manage(kind)
+            loadRecents(_state.value.mode, ask = false)
+            if (_state.value.gallery != null) loadGallery()
+        }
+    }
 
-    /** Gallery (or Files for audio): the phone's own picker for everything not in the strip. */
-    fun pickFromLibrary() { val kind = libraryKind(_state.value.mode) ?: com.circaso.core.platform.LibraryKind.Photo; use { library.pick(kind) } }
+    // ---- picking from the library
 
-    private fun use(load: suspend () -> CapturedMedia?) {
+    /** One tile from the strip: used at once, or ticked when several are being picked. */
+    fun useRecent(item: LibraryItem) {
+        if (_state.value.selecting) toggle(item) else use { listOfNotNull(library.load(item)) }
+    }
+
+    /** A long press on a strip tile: start picking several (WhatsApp-style), this one first. */
+    fun startSelecting(item: LibraryItem) {
+        if (item.kind == LibraryKind.Audio) { useRecent(item); return }
+        _state.update { it.copy(selecting = true, selection = if (it.selection.any { s -> s.id == item.id }) it.selection else it.selection + item) }
+    }
+
+    /** Tick or untick; the numbers are the order the moments post in. At most [MomentPickMax]. */
+    fun toggle(item: LibraryItem) {
+        val s = _state.value
+        when {
+            s.selection.any { it.id == item.id } -> _state.update { it.copy(selection = it.selection.filterNot { x -> x.id == item.id }, selecting = it.gallery != null || it.selection.size > 1) }
+            s.selection.size >= MomentPickMax -> _state.update { it.copy(error = "You can pick up to $MomentPickMax at a time.") }
+            else -> _state.update { it.copy(selection = it.selection + item, selecting = true) }
+        }
+    }
+
+    fun clearSelection() = _state.update { it.copy(selection = emptyList(), selecting = false) }
+
+    /** Next (M3): each ticked photo or video, in order, onto the review. */
+    fun useSelection() {
+        val picked = _state.value.selection
+        if (picked.isEmpty()) return
+        use { picked.mapNotNull { library.load(it) } }
+    }
+
+    /** Gallery beside the shutter (M3); for audio, the Files picker. */
+    fun pickFromLibrary() {
+        if (_state.value.mode == ComposerMode.Voice) { use { listOfNotNull(library.pick(LibraryKind.Audio)) }; return }
+        openGallery()
+    }
+
+    fun pickFromGallery() = pickFromLibrary()
+
+    /** The phone's own picker, several at once and no permission needed (from the gallery when access is off). */
+    fun pickWithSystem() {
+        val left = MomentPickMax - _state.value.items.size
+        if (left <= 0) return
+        use { library.pickMany(left) }
+    }
+
+    fun openGallery() {
+        _state.update { it.copy(gallery = GalleryState(), selecting = true) }
+        loadGallery()
+    }
+
+    private fun loadGallery() {
+        viewModelScope.launch {
+            val (photos, videos) = library.recentsVisual(120, ask = true)
+            // The wider of the two answers decides what the screen says (one kind allowed is still a gallery).
+            val access = listOf(photos.access, videos.access).minBy { it.ordinal }
+            _state.update { s -> s.gallery?.let { s.copy(gallery = it.copy(photos = photos.items, videos = videos.items, access = access)) } ?: s }
+        }
+    }
+
+    fun galleryTab(tab: GalleryTab) = _state.update { s -> s.copy(gallery = s.gallery?.copy(tab = tab)) }
+
+    fun closeGallery() = _state.update { it.copy(gallery = null, selecting = false, selection = emptyList()) }
+
+    /** Loads picks and puts them on the review, after anything already there; a long video opens the trimmer. */
+    private fun use(load: suspend () -> List<CapturedMedia>) {
         if (_state.value.loadingPick) return
         _state.update { it.copy(loadingPick = true) }
         viewModelScope.launch {
             val media = load()
+            val audio = media.firstOrNull { it.mime.startsWith("audio") }
             _state.update { s ->
-                val long = (media?.durationMs ?: 0) > com.circaso.core.platform.MomentMediaMaxMs + 500
                 when {
-                    media == null -> s.copy(loadingPick = false)
-                    long -> s.copy(loadingPick = false, error = "Moments are up to a minute long. Pick a shorter one.")
-                    media.mime.startsWith("audio") -> s.copy(loadingPick = false, capture = ComposerCapture.Voice(media.bytes, media.mime, media.durationMs ?: 0))
-                    media.mime.startsWith("video") -> s.copy(loadingPick = false, capture = ComposerCapture.Shot(media, MomentKind.Video))
-                    else -> s.copy(loadingPick = false, capture = ComposerCapture.Shot(media, MomentKind.Image))
+                    media.isEmpty() -> s.copy(loadingPick = false)
+                    audio != null && (audio.durationMs ?: 0) > MomentMediaMaxMs + 500 ->
+                        s.copy(loadingPick = false, error = "Voice moments are up to a minute long. Pick a shorter one.")
+                    audio != null -> s.copy(loadingPick = false, items = listOf(ComposerItem(ComposerCapture.Voice(audio.bytes, audio.mime, audio.durationMs ?: 0))), current = 0)
+                    else -> {
+                        val added = media.take(MomentPickMax - s.items.size).map { m ->
+                            ComposerItem(ComposerCapture.Shot(m, if (m.mime.startsWith("video")) MomentKind.Video else MomentKind.Image))
+                        }
+                        // The first one over a minute goes on the stage, so its trimmer opens straight away.
+                        val long = added.indexOfFirst { it.tooLong }
+                        s.copy(loadingPick = false, items = s.items + added, current = s.items.size + long.coerceAtLeast(0), gallery = null, selecting = false, selection = emptyList())
+                    }
                 }
+            }
+            openTrimIfNeeded()
+        }
+    }
+
+    /** M4's strip: put another picked item on the stage. */
+    fun select(index: Int) {
+        if (index !in _state.value.items.indices) return
+        _state.update { it.copy(current = index, playingBack = false) }
+        openTrimIfNeeded()
+    }
+
+    /** Takes the item on the stage out (the bin on the strip); with nothing left, back to the camera. */
+    fun removeCurrent() {
+        player.stop()
+        _state.update { s ->
+            val left = s.items.filterIndexed { i, _ -> i != s.current }
+            s.copy(items = left, current = s.current.coerceAtMost((left.size - 1).coerceAtLeast(0)), playingBack = false, trim = null)
+        }
+    }
+
+    fun markUnplayable() = _state.update { s -> s.copy(items = s.items.mapIndexed { i, it -> if (i == s.current) it.copy(unplayable = true) else it }) }
+
+    // ---- trimming (M3b)
+
+    private fun openTrimIfNeeded() {
+        val s = _state.value
+        if (s.trim == null && s.item?.tooLong == true) openTrim(required = true)
+    }
+
+    /** The trimmer for the video on the stage: a minute from the start to begin with. */
+    fun openTrim(required: Boolean = false) {
+        val s = _state.value
+        val item = s.item ?: return
+        val video = item.video ?: return
+        val path = video.path ?: return
+        val duration = video.durationMs?.takeIf { it > 0 } ?: return
+        _state.update { it.copy(trim = TrimState(s.current, duration, 0, minOf(duration, MomentMediaMaxMs), required = required || item.tooLong)) }
+        trimJob?.cancel()
+        trimJob = viewModelScope.launch {
+            val frames = library.filmstrip(path, TrimFrames)
+            _state.update { st -> st.trim?.let { st.copy(trim = it.copy(frames = frames)) } ?: st }
+        }
+    }
+
+    /** Dragging a handle: the window stays between 1 s and a minute, inside the video. */
+    fun setTrim(startMs: Long, endMs: Long) {
+        _state.update { s ->
+            val t = s.trim ?: return@update s
+            var start = startMs.coerceIn(0, t.durationMs)
+            var end = endMs.coerceIn(0, t.durationMs)
+            val movedStart = start != t.startMs
+            if (end - start < MinTrimMs) { if (movedStart) start = (end - MinTrimMs).coerceAtLeast(0) else end = (start + MinTrimMs).coerceAtMost(t.durationMs) }
+            if (end - start > MomentMediaMaxMs) { if (movedStart) end = start + MomentMediaMaxMs else start = end - MomentMediaMaxMs }
+            s.copy(trim = t.copy(startMs = start, endMs = end))
+        }
+    }
+
+    /** Done: the trimmed copy replaces the original on this phone until it is shared. */
+    fun applyTrim() {
+        val t = _state.value.trim ?: return
+        if (t.working) return
+        val item = _state.value.items.getOrNull(t.index) ?: return
+        val path = item.video?.path ?: return
+        // The whole video, already a minute or less: nothing to cut.
+        if (t.startMs == 0L && t.endMs >= t.durationMs && !item.tooLong) { _state.update { it.copy(trim = null) }; return }
+        _state.update { it.copy(trim = t.copy(working = true)) }
+        viewModelScope.launch {
+            val cut = library.trim(path, t.startMs, t.endMs)
+            _state.update { s ->
+                if (cut == null) s.copy(trim = s.trim?.copy(working = false), error = "This video couldn’t be trimmed on this phone. Try a shorter one.")
+                else s.copy(trim = null, items = s.items.mapIndexed { i, it -> if (i == t.index) it.copy(capture = ComposerCapture.Shot(cut, MomentKind.Video), unplayable = false) else it })
             }
         }
     }
+
+    /** Cancel: a video that had to be trimmed (over a minute) leaves the review; otherwise it stays as it was. */
+    fun cancelTrim() {
+        val t = _state.value.trim ?: return
+        if (t.working) return
+        if (t.required) removeCurrent() else _state.update { it.copy(trim = null) }
+    }
+
+    // ---- camera and recording
+
     fun toggleFlash() { val on = !_state.value.flash; camera.setFlash(on); _state.update { it.copy(flash = on) } }
     fun flip() = camera.flip()
 
     fun takePhoto() {
         viewModelScope.launch {
             val shot = camera.takePhoto()
-            _state.update { if (shot != null) it.copy(capture = ComposerCapture.Shot(shot, MomentKind.Image)) else it.copy(error = "The photo didn’t come out. Try again.") }
+            _state.update { if (shot != null) it.withSingle(ComposerCapture.Shot(shot, MomentKind.Image)) else it.copy(error = "The photo didn’t come out. Try again.") }
         }
     }
 
@@ -171,7 +407,7 @@ class MomentComposerViewModel(
             val ok = camera.startVideo()
             videoStarting = false
             if (!ok) { _state.update { it.copy(error = "The video didn’t start. Try again.") }; return@launch }
-            _state.update { it.copy(recordingVideo = true, recordingSince = com.circaso.core.sync.nowMillis()) }
+            _state.update { it.copy(recordingVideo = true, recordingSince = now()) }
             if (videoReleaseAsked) stopVideo()
         }
     }
@@ -185,11 +421,9 @@ class MomentComposerViewModel(
         _state.update { it.copy(recordingVideo = false, recordingSince = null) }
         viewModelScope.launch {
             val clip = camera.stopVideo()
-            _state.update { if (clip != null) it.copy(capture = ComposerCapture.Shot(clip, MomentKind.Video), mode = ComposerMode.Video) else it.copy(error = "The video didn’t record. Try again.") }
+            _state.update { if (clip != null) it.withSingle(ComposerCapture.Shot(clip, MomentKind.Video)).copy(mode = ComposerMode.Video) else it.copy(error = "The video didn’t record. Try again.") }
         }
     }
-
-    fun pickFromGallery() = pickFromLibrary()
 
     /** The mic went down (M5b): record until it lifts, or 1:00, whichever comes first. */
     fun voiceDown() {
@@ -201,7 +435,7 @@ class MomentComposerViewModel(
             voiceStarting = false
             when (started) {
                 RecordingStart.Started -> {
-                    voiceStartedAt = com.circaso.core.sync.nowMillis()
+                    voiceStartedAt = now()
                     _state.update { it.copy(recordingVoice = true, micDenied = false, recordingSince = voiceStartedAt) }
                     voiceCap = viewModelScope.launch { kotlinx.coroutines.delay(com.circaso.core.platform.MomentVideoMaxMs); voiceUp() }
                     if (voiceReleaseAsked) voiceUp()
@@ -219,10 +453,10 @@ class MomentComposerViewModel(
         _state.update { it.copy(recordingVoice = false, recordingSince = null) }
         viewModelScope.launch {
             val clip = recorder.stop()
-            val heldMs = com.circaso.core.sync.nowMillis() - voiceStartedAt
+            val heldMs = now() - voiceStartedAt
             // Under half a second is a slip, not a moment.
             if (clip != null && heldMs >= 500) {
-                _state.update { it.copy(capture = ComposerCapture.Voice(clip.bytes, clip.contentType, heldMs.coerceAtMost(com.circaso.core.platform.MomentVideoMaxMs))) }
+                _state.update { it.withSingle(ComposerCapture.Voice(clip.bytes, clip.contentType, heldMs.coerceAtMost(com.circaso.core.platform.MomentVideoMaxMs))) }
             }
         }
     }
@@ -246,34 +480,114 @@ class MomentComposerViewModel(
         }
     }
 
-    fun discardCapture() { player.stop(); _state.update { it.copy(capture = null, caption = "", playingBack = false) } }
-    fun onCaption(text: String) = _state.update { it.copy(caption = text.take(700)) }
+    /** The close button on the review: everything picked or captured is let go, back to the camera. */
+    fun discardCapture() { player.stop(); _state.update { it.copy(items = emptyList(), current = 0, playingBack = false, trim = null, forwarding = false) } }
+
+    fun onCaption(text: String) = _state.update { s -> s.copy(items = s.items.mapIndexed { i, it -> if (i == s.current) it.copy(caption = text.take(700)) else it }) }
     fun onText(text: String) = _state.update { it.copy(text = text.take(700)) }
     fun onBackground(bg: String) = _state.update { it.copy(background = bg) }
     /** Aa cycles the fonts. */
     fun toggleStyle() = _state.update { it.copy(style = MomentTextStyle.entries[(it.style.ordinal + 1) % MomentTextStyle.entries.size]) }
     fun errorShown() = _state.update { it.copy(error = null) }
+    /** A line for the toast that is not an error (after forwarding). */
+    fun notice(text: String) = _state.update { it.copy(error = text) }
 
-    /** Hands the moment to the outbox and closes (optimistic; my ring shows Posting, M6). */
+    // ---- forward (V4, from the review)
+
+    fun openForward(open: Boolean) = _state.update { it.copy(forwarding = open && it.item != null) }
+
+    /** The item on the stage as something to send to a chat; a video's bytes are read only when it is sent. */
+    fun forwardItem(): ForwardMedia? {
+        val item = _state.value.item ?: return null
+        return when (val cap = item.capture) {
+            is ComposerCapture.Shot -> ForwardMedia(cap.kind, cap.media.bytes.takeIf { it.isNotEmpty() }, cap.media.path, cap.media.mime, cap.media.width, cap.media.height, cap.media.durationMs, cap.media.thumb, item.caption)
+            is ComposerCapture.Voice -> ForwardMedia(MomentKind.Voice, cap.bytes, null, cap.mime, null, null, cap.durationMs, null, null)
+        }
+    }
+
+    // ---- sharing
+
+    /**
+     * Hands the moments to the outbox, in order, and closes (optimistic; my ring shows Posting, M6). Several picked
+     * at once each become their own moment. A video too large to post as it is gets re-encoded first.
+     */
     fun share() {
         val s = _state.value
         if (!s.canShare) return
-        val size = when (val cap = s.capture) { is ComposerCapture.Shot -> cap.media.bytes.size; is ComposerCapture.Voice -> cap.bytes.size; null -> 0 }
-        if (size > com.circaso.core.platform.MomentMediaMaxBytes) {
-            _state.update { it.copy(error = "This is too large to share. Keep videos under a minute.") }
+        if (s.items.isEmpty()) {
+            _state.update { it.copy(sharing = true) }
+            viewModelScope.launch {
+                repository.post(MomentDraft.Text(s.text.trim(), s.background, s.style))
+                _state.update { it.copy(sharing = false, shared = true) }
+            }
             return
-        }
-        val draft = when (val cap = s.capture) {
-            is ComposerCapture.Shot -> MomentDraft.Media(cap.kind, cap.media.bytes, cap.media.mime, s.caption, cap.media.thumb, cap.media.durationMs, cap.media.width, cap.media.height)
-            is ComposerCapture.Voice -> MomentDraft.Media(MomentKind.Voice, cap.bytes, cap.mime, s.caption, null, cap.durationMs)
-            null -> MomentDraft.Text(s.text.trim(), s.background, s.style)
         }
         _state.update { it.copy(sharing = true) }
         viewModelScope.launch {
-            repository.post(draft)
-            _state.update { it.copy(sharing = false, shared = true) }
+            val drafts = mutableListOf<MomentDraft>()
+            for ((index, item) in s.items.withIndex()) {
+                when (val draft = draftOf(item)) {
+                    is Draft.Ready -> drafts += draft.draft
+                    Draft.Missing -> { _state.update { it.copy(sharing = false, preparing = false, current = index, error = "This video isn’t on the phone any more. Pick it again.") }; return@launch }
+                    Draft.TooLarge -> { _state.update { it.copy(sharing = false, preparing = false, current = index, error = "This is too large to share. Keep videos under a minute.") }; return@launch }
+                }
+            }
+            // Only once every one is ready: never half a batch posted and the rest left behind.
+            drafts.forEach { repository.post(it) }
+            _state.update { it.copy(sharing = false, preparing = false, shared = true) }
+        }
+    }
+
+    private sealed interface Draft {
+        class Ready(val draft: MomentDraft) : Draft
+        data object Missing : Draft
+        data object TooLarge : Draft
+    }
+
+    /** The draft for one item, with its bytes read; or why not (the file is gone, or too large even re-encoded). */
+    private suspend fun draftOf(item: ComposerItem): Draft = when (val cap = item.capture) {
+        is ComposerCapture.Voice -> if (cap.bytes.size > MomentMediaMaxBytes) Draft.TooLarge else Draft.Ready(MomentDraft.Media(MomentKind.Voice, cap.bytes, cap.mime, item.caption, null, cap.durationMs))
+        is ComposerCapture.Shot -> {
+            var media = cap.media
+            var bytes = media.bytes.takeIf { it.isNotEmpty() } ?: media.path?.let { library.read(it) } ?: ByteArray(0)
+            if (bytes.size > MomentMediaMaxBytes && cap.kind == MomentKind.Video && media.path != null) {
+                // A minute shot at a high bit rate: the same clip at the moments' bit rate.
+                _state.update { it.copy(preparing = true) }
+                library.trim(media.path, 0, media.durationMs ?: MomentMediaMaxMs)?.let { smaller ->
+                    media = smaller
+                    bytes = smaller.bytes.takeIf { it.isNotEmpty() } ?: smaller.path?.let { library.read(it) } ?: ByteArray(0)
+                }
+            }
+            when {
+                bytes.isEmpty() -> Draft.Missing
+                bytes.size > MomentMediaMaxBytes -> Draft.TooLarge
+                else -> Draft.Ready(MomentDraft.Media(cap.kind, bytes, media.mime, item.caption, media.thumb, media.durationMs, media.width, media.height))
+            }
         }
     }
 
     override fun onCleared() { player.stop(); camera.close() }
+
+    private fun MomentComposerUiState.withSingle(capture: ComposerCapture) = copy(items = listOf(ComposerItem(capture)), current = 0)
+
+    companion object {
+        /** Frames in the trim bar's filmstrip (design M3b shows eight). */
+        const val TrimFrames = 8
+        /** The shortest clip the trimmer keeps. */
+        const val MinTrimMs = 1_000L
+    }
 }
+
+/** A moment's media (or text), ready to forward to chats. [bytes] null: read from [path] when it is sent. */
+class ForwardMedia(
+    val kind: MomentKind,
+    val bytes: ByteArray?,
+    val path: String?,
+    val mime: String,
+    val width: Int?,
+    val height: Int?,
+    val durationMs: Long?,
+    val thumb: ByteArray?,
+    val caption: String?,
+    val text: String? = null,
+)

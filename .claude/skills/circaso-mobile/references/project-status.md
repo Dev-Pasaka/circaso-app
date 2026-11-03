@@ -187,14 +187,25 @@ Nothing to show is never an error screen. The first moment was posted through th
   video at 3.5 Mbit/s so 60 s fits the 32 MiB limit, with a size check and plain copy; hold-to-record that can't leave
   the camera or mic running; the voice moment as designed with listen-back, 1:00 cap and slide to cancel). Also fixed:
   view count from the server, the heart undone when not taken, Only-share-with needs someone.
-- Still open from that review (should-fix, before release): gallery picks one photo, no videos, no recents strip, no
-  trimmer (M1, M3–M3c); V3 voice viewer and V7 "no longer available"; Forward and "Message X" in More (V1b, V4); the
+- Composer and posting gaps closed (2026-11-03, branch `worktree-agent-ad0e9b22a8d9ac97c`): each library kind asks for its
+  own access (Android 13+ photo access says nothing about videos; Android 14 "selected photos and videos" is Limited
+  with a Manage tile; access off says so with Allow access); gallery M3 (All/Photos/Videos, numbered ticks, up to 10,
+  each its own moment posted in order) and multi-pick on the strip (hold a tile); M3c limited/off states with the
+  system picker as a fallback; trimmer M3b (Media3 Transformer, already a dependency, on Android; AVAssetExportSession
+  on iOS; no new library), opened by itself for videos over a minute; a too-large video is re-encoded before posting;
+  determinate posting ring from real bytes sent (Ktor `onUpload` on Android, `didSendBodyData` in the background
+  URLSession on iOS); Forward (V4) from my moment's viewers sheet and from the composer review, a full-screen chat
+  picker (up to 5 chats) through `MediaMessages`; composer and forward ViewModel tests, Android previews. The black
+  video review on the emulator was the emulator's `c2.goldfish.h264.decoder` failing on its first buffer (Codec2
+  BufferPool error 14); `MomentVideo` now retries without a decoder that failed (software decoder) and shows the
+  thumbnail until the first frame renders, and says so if the phone can't preview it.
+- Still open from that review (should-fix, before release): V3 voice viewer and V7 "no longer available"; "Message X" in More (V1b); the
   viewers sheet doesn't scroll; shade gradients behind text on media; Ask Asha and Search in the Spaces header; the
   Spaces tab dot; S1e "not downloaded" ring; offline first open says "No moments yet"; the heart and Delete should be
   disabled offline (or queued); a decrypted moment's media isn't deleted after 24 h; hold doesn't pause video or voice;
   the reply draft should follow the moment; no prefetch of the next moment; drag-to-close and ring transitions;
-  a determinate posting ring; accessibility actions in the viewer; proper icons (More, Lock, Heart, People, Mute,
-  Forward, ChevronDown); composer, viewer and privacy previews and ViewModel tests.
+  accessibility actions in the viewer; proper icons (More, Lock, Heart, People, Mute,
+  ChevronDown); viewer and privacy previews and ViewModel tests.
 
 ### Backend gaps (design exists, no API yet)
 - W7/W8: statements on the server, PIN change and restore.
