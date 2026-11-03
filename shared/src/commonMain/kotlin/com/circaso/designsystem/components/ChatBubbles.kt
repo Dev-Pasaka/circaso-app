@@ -31,6 +31,8 @@ import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.text.TextRange
@@ -81,6 +83,8 @@ fun ChatBubble(
     quiet: Boolean = false,
     onClick: (() -> Unit)? = null,
     above: (@Composable ColumnScope.() -> Unit)? = null,
+    /** A long press: the reaction bubble (WhatsApp-style). */
+    onLongClick: (() -> Unit)? = null,
     /** Asha writes Markdown (bold, lists); people's messages are shown exactly as typed. */
     markdown: Boolean = false,
 ) {
@@ -92,7 +96,16 @@ fun ChatBubble(
             .alpha(if (faded) 0.6f else 1f)
             .clip(shape)
             .background(if (outgoing && !quiet) c.action else c.fill)
-            .then(if (onClick != null) Modifier.pressable(role = Role.Button, onClick = onClick) else Modifier)
+            .then(
+                when {
+                    onClick != null -> Modifier.pressable(role = Role.Button, onLongClick = onLongClick, onClick = onClick)
+                    // Long press only (their messages): no button look or role for a tap that does nothing.
+                    onLongClick != null -> Modifier.pointerInput(onLongClick) {
+                        detectTapGestures(onLongPress = { onLongClick() })
+                    }
+                    else -> Modifier
+                },
+            )
             .padding(horizontal = 14.dp, vertical = 9.dp),
     ) {
         above?.invoke(this)
