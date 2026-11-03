@@ -11,7 +11,6 @@ import com.circaso.core.platform.RecordingStart
 import com.circaso.core.platform.momentThumbnail
 import com.circaso.feature.contacts.domain.ObserveContactsUseCase
 import com.circaso.feature.status.domain.MomentAudienceMode
-import com.circaso.feature.status.domain.MomentBackground
 import com.circaso.feature.status.domain.MomentDraft
 import com.circaso.feature.status.domain.MomentKind
 import com.circaso.feature.status.domain.MomentTextStyle
@@ -44,10 +43,13 @@ data class MomentComposerUiState(
     val recordingSince: Long? = null,
     /** Listening back to a recorded voice before sharing (M5). */
     val playingBack: Boolean = false,
+    /** The recents strip for the current mode (WhatsApp-style), newest first; empty without library access. */
+    val recents: List<com.circaso.core.platform.LibraryItem> = emptyList(),
+    val loadingPick: Boolean = false,
     val capture: ComposerCapture? = null,
     val caption: String = "",
     val text: String = "",
-    val background: MomentBackground = MomentBackground.Ink,
+    val background: String = "Ink",
     val style: MomentTextStyle = MomentTextStyle.Bold,
     /** The audience chip: "My contacts · 48 people". */
     val audienceLabel: String = "My contacts",
@@ -74,6 +76,7 @@ class MomentComposerViewModel(
     private val recorder: AudioRecorder,
     observeContacts: ObserveContactsUseCase,
     private val player: com.circaso.core.platform.AudioPlayer,
+    private val library: com.circaso.core.platform.MediaLibrary,
     observeProfile: com.circaso.feature.profile.domain.ObserveProfileUseCase,
 ) : ViewModel() {
     private val _state = MutableStateFlow(MomentComposerUiState())
@@ -88,7 +91,7 @@ class MomentComposerViewModel(
     private var voiceCap: kotlinx.coroutines.Job? = null
 
     init {
-        viewModelScope.launch { _state.update { it.copy(camera = camera.open()) } }
+        viewModelScope.launch { _state.update { it.copy(camera = camera.open()) }; loadRecents(ComposerMode.Photo) }
         viewModelScope.launch { observeProfile().collect { p -> _state.update { it.copy(myName = p?.displayName.orEmpty(), myAvatarUrl = p?.avatarUrl) } } }
         viewModelScope.launch {
             combine(observeContacts(), repository.privacy) { contacts, p ->
@@ -102,7 +105,53 @@ class MomentComposerViewModel(
         }
     }
 
-    fun setMode(mode: ComposerMode) = _state.update { it.copy(mode = mode, error = null) }
+    fun setMode(mode: ComposerMode) {
+        _state.update { it.copy(mode = mode, error = null, recents = emptyList()) }
+        loadRecents(mode)
+    }
+
+    private var recentsJob: kotlinx.coroutines.Job? = null
+
+    /** The strip under the camera: recent photos, videos or audio from the phone (asks for access the first time). */
+    private fun loadRecents(mode: ComposerMode) {
+        val kind = libraryKind(mode) ?: return
+        recentsJob?.cancel()
+        recentsJob = viewModelScope.launch {
+            val items = library.recent(kind, 30)
+            if (_state.value.mode == mode) _state.update { it.copy(recents = items) }
+        }
+    }
+
+    private fun libraryKind(mode: ComposerMode) = when (mode) {
+        ComposerMode.Photo -> com.circaso.core.platform.LibraryKind.Photo
+        ComposerMode.Video -> com.circaso.core.platform.LibraryKind.Video
+        ComposerMode.Voice -> com.circaso.core.platform.LibraryKind.Audio
+        ComposerMode.Text -> null
+    }
+
+    /** One tile from the strip. */
+    fun useRecent(item: com.circaso.core.platform.LibraryItem) = use { library.load(item) }
+
+    /** Gallery (or Files for audio): the phone's own picker for everything not in the strip. */
+    fun pickFromLibrary() { val kind = libraryKind(_state.value.mode) ?: com.circaso.core.platform.LibraryKind.Photo; use { library.pick(kind) } }
+
+    private fun use(load: suspend () -> CapturedMedia?) {
+        if (_state.value.loadingPick) return
+        _state.update { it.copy(loadingPick = true) }
+        viewModelScope.launch {
+            val media = load()
+            _state.update { s ->
+                val long = (media?.durationMs ?: 0) > com.circaso.core.platform.MomentMediaMaxMs + 500
+                when {
+                    media == null -> s.copy(loadingPick = false)
+                    long -> s.copy(loadingPick = false, error = "Moments are up to a minute long. Pick a shorter one.")
+                    media.mime.startsWith("audio") -> s.copy(loadingPick = false, capture = ComposerCapture.Voice(media.bytes, media.mime, media.durationMs ?: 0))
+                    media.mime.startsWith("video") -> s.copy(loadingPick = false, capture = ComposerCapture.Shot(media, MomentKind.Video))
+                    else -> s.copy(loadingPick = false, capture = ComposerCapture.Shot(media, MomentKind.Image))
+                }
+            }
+        }
+    }
     fun toggleFlash() { val on = !_state.value.flash; camera.setFlash(on); _state.update { it.copy(flash = on) } }
     fun flip() = camera.flip()
 
@@ -140,14 +189,7 @@ class MomentComposerViewModel(
         }
     }
 
-    fun pickFromGallery() {
-        viewModelScope.launch {
-            val picked = picker.pick() ?: return@launch
-            val thumb = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) { momentThumbnail(picked.bytes) }
-            val media = CapturedMedia(picked.bytes, picked.contentType, picked.width, picked.height, thumb = thumb)
-            _state.update { it.copy(capture = ComposerCapture.Shot(media, MomentKind.Image)) }
-        }
-    }
+    fun pickFromGallery() = pickFromLibrary()
 
     /** The mic went down (M5b): record until it lifts, or 1:00, whichever comes first. */
     fun voiceDown() {
@@ -207,8 +249,9 @@ class MomentComposerViewModel(
     fun discardCapture() { player.stop(); _state.update { it.copy(capture = null, caption = "", playingBack = false) } }
     fun onCaption(text: String) = _state.update { it.copy(caption = text.take(700)) }
     fun onText(text: String) = _state.update { it.copy(text = text.take(700)) }
-    fun onBackground(bg: MomentBackground) = _state.update { it.copy(background = bg) }
-    fun toggleStyle() = _state.update { it.copy(style = if (it.style == MomentTextStyle.Bold) MomentTextStyle.Regular else MomentTextStyle.Bold) }
+    fun onBackground(bg: String) = _state.update { it.copy(background = bg) }
+    /** Aa cycles the fonts. */
+    fun toggleStyle() = _state.update { it.copy(style = MomentTextStyle.entries[(it.style.ordinal + 1) % MomentTextStyle.entries.size]) }
     fun errorShown() = _state.update { it.copy(error = null) }
 
     /** Hands the moment to the outbox and closes (optimistic; my ring shows Posting, M6). */

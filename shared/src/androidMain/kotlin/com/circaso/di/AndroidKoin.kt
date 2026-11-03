@@ -79,6 +79,7 @@ fun initKoinAndroid(context: Context) {
             single<LiveSpeaker> { AndroidLiveSpeaker(app) }
             single<ImagePicker> { AndroidImagePicker(app) }
             single<com.circaso.core.platform.MomentCamera> { com.circaso.core.platform.AndroidMomentCamera(app) }
+            single<com.circaso.core.platform.MediaLibrary> { com.circaso.core.platform.AndroidMediaLibrary(app) }
             single<com.circaso.core.platform.MediaGallery> { com.circaso.core.platform.AndroidMediaGallery(app) }
             single<PushTokenProvider> { AndroidPushTokenProvider() }
             single<SocialSignIn> { AndroidSocialSignIn(get(), SocialConfig.GoogleWebClientId) }

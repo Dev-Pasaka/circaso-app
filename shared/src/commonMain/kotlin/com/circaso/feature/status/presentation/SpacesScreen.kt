@@ -198,7 +198,8 @@ private fun MyMomentItem(state: SpacesUiState, actions: SpacesActions) {
             MyRing.Posting -> PostingArc()
             MyRing.Waiting -> Badge(c.fillStrong) { CircasoIconImage(CircasoIcon.Clock, c.ink, Modifier.size(13.dp)) }
             MyRing.Failed -> Badge(c.critical) { BasicText("!", style = CircasoTheme.typography.footnote.copy(color = c.bg, fontWeight = FontWeight.Bold)) }
-            else -> Badge(c.action) { CircasoIconImage(CircasoIcon.Plus, c.onAction, Modifier.size(13.dp)) }
+            // Its own target (Pasaka, 2026-11-03): the plus always opens the camera, even when the ring opens my moments.
+            else -> Badge(c.action, onClick = actions.onCompose, label = "New moment") { CircasoIconImage(CircasoIcon.Plus, c.onAction, Modifier.size(13.dp)) }
         } },
     ) {
         Avatar(state.myName.ifBlank { "Me" }, size = CircasoSizes.avatarLg, imageUrl = state.myAvatarUrl)
@@ -250,14 +251,20 @@ private fun MomentItem(
 }
 
 @Composable
-private fun BoxScope.Badge(color: androidx.compose.ui.graphics.Color, content: @Composable BoxScope.() -> Unit) {
+private fun BoxScope.Badge(color: androidx.compose.ui.graphics.Color, onClick: (() -> Unit)? = null, label: String? = null, content: @Composable BoxScope.() -> Unit) {
     val c = CircasoTheme.colors
+    // A tappable badge gets a 44 dp target around its 22 dp disc.
     Box(
-        Modifier.align(Alignment.BottomEnd).offset(4.dp, 4.dp).size(22.dp).border(2.5.dp, c.bg, CircasoShapes.circle).padding(2.dp)
-            .clip(CircasoShapes.circle).background(color),
+        Modifier.align(Alignment.BottomEnd).offset(if (onClick != null) 15.dp else 4.dp, if (onClick != null) 15.dp else 4.dp)
+            .then(if (onClick != null) Modifier.size(CircasoSizes.controlMd).pressable(role = Role.Button, onClick = onClick).semantics { label?.let { contentDescription = it } } else Modifier),
         contentAlignment = Alignment.Center,
-        content = content,
-    )
+    ) {
+        Box(
+            Modifier.size(22.dp).border(2.5.dp, c.bg, CircasoShapes.circle).padding(2.dp).clip(CircasoShapes.circle).background(color),
+            contentAlignment = Alignment.Center,
+            content = content,
+        )
+    }
 }
 
 /** Upload progress around my ring while a moment posts; it turns slowly so it never looks stuck. */

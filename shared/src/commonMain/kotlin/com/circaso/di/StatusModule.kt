@@ -34,7 +34,7 @@ val statusModule = module {
     single { MomentPostHandler { get<MomentsRepositoryImpl>() } } bind OutboxHandler::class
     single<MomentsRepository> { get<MomentsRepositoryImpl>() }
     viewModel { com.circaso.feature.status.presentation.SpacesViewModel(get(), get(), get(), get(), get()) }
-    viewModel { com.circaso.feature.status.presentation.MomentComposerViewModel(get(), get(), get(), get(), get(), get(), get()) }
+    viewModel { com.circaso.feature.status.presentation.MomentComposerViewModel(get(), get(), get(), get(), get(), get(), get(), get()) }
     viewModel { com.circaso.feature.status.presentation.MomentsPrivacyViewModel(get(), get()) }
     viewModel { params ->
         val chats = get<com.circaso.feature.messaging.domain.ChatsRepository>()

@@ -20,7 +20,6 @@ import com.circaso.feature.status.data.remote.MomentsRemote
 import com.circaso.feature.status.data.remote.PostMomentRequest
 import com.circaso.feature.status.domain.Moment
 import com.circaso.feature.status.domain.MomentAudienceMode
-import com.circaso.feature.status.domain.MomentBackground
 import com.circaso.feature.status.domain.MomentDraft
 import com.circaso.feature.status.domain.MomentKind
 import com.circaso.feature.status.domain.MomentMedia
@@ -215,7 +214,7 @@ class MomentsRepositoryImpl(
     override suspend fun post(draft: MomentDraft): AppResult<Unit> {
         val localId = Uuid.random().toString()
         val pending = when (draft) {
-            is MomentDraft.Text -> PendingDraft(MomentKind.Text.name, text = draft.text, background = draft.background.name, style = draft.style.name)
+            is MomentDraft.Text -> PendingDraft(MomentKind.Text.name, text = draft.text, background = draft.background, style = draft.style.name)
             is MomentDraft.Media -> {
                 files.write(localId, draft.bytes)
                 PendingDraft(draft.kind.name, caption = draft.caption?.takeIf { it.isNotBlank() }, mime = draft.mime, thumb = draft.thumb?.let { Base64.encode(it) },
@@ -342,7 +341,7 @@ class MomentsRepositoryImpl(
         val b = body?.let { runCatching { json.decodeFromString(MomentBody.serializer(), it) }.getOrNull() } ?: return null
         return Moment(
             momentId = momentId, posterId = posterId, kind = kindOf(b.kind), text = b.text,
-            background = b.background?.let { runCatching { MomentBackground.valueOf(it) }.getOrNull() } ?: MomentBackground.Ink,
+            background = b.background ?: "Ink",
             style = b.style?.let { runCatching { MomentTextStyle.valueOf(it) }.getOrNull() } ?: MomentTextStyle.Bold,
             caption = b.caption, thumb = b.thumb,
             media = b.media?.let { MomentMedia(it.mediaId, it.key, it.digest, it.mime, it.sizeBytes, it.durationMs, it.width, it.height) },

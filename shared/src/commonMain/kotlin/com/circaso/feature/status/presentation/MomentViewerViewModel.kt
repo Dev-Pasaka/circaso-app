@@ -39,6 +39,8 @@ data class MomentViewerUiState(
     val index: Int = 0,
     val media: ViewerMedia = ViewerMedia.None,
     val paused: Boolean = false,
+    /** Video sound off, kept for the rest of this viewing. */
+    val muted: Boolean = false,
     val viewersOpen: Boolean = false,
     val viewers: List<Pair<MomentViewer, String>>? = null,
     val viewersError: String? = null,
@@ -155,6 +157,7 @@ class MomentViewerViewModel(
 
     fun retryMedia() { shownId = null; showCurrent() }
     fun setPaused(paused: Boolean) = _state.update { it.copy(paused = paused) }
+    fun toggleMute() = _state.update { it.copy(muted = !it.muted) }
     fun onReply(text: String) = _state.update { it.copy(reply = text, paused = text.isNotEmpty()) }
 
     fun react() {

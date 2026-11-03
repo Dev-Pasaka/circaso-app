@@ -6,10 +6,8 @@ import kotlinx.coroutines.flow.Flow
 /** What a moment is. Its content is end to end encrypted; the server sees only who it is for and when it expires. */
 enum class MomentKind { Text, Image, Video, Voice }
 
-/** Text moment backgrounds (design M2): fixed values from the light theme's tokens, the same for every viewer. */
-enum class MomentBackground { Ink, Metal, Paper, Graphite }
-
-enum class MomentTextStyle { Bold, Regular }
+/** A text moment's font (cycled by Aa); the background is a palette id (presentation's `MomentPalette`). */
+enum class MomentTextStyle { Bold, Regular, Serif, Rounded, Mono, Script }
 
 /** The encrypted media a moment points at: the server's id, the key and digest only the audience has. */
 data class MomentMedia(
@@ -29,7 +27,8 @@ data class Moment(
     val posterId: String,
     val kind: MomentKind,
     val text: String? = null,
-    val background: MomentBackground = MomentBackground.Ink,
+    /** A `MomentPalette` id; unknown ids (from newer phones) fall back to Ink. */
+    val background: String = "Ink",
     val style: MomentTextStyle = MomentTextStyle.Bold,
     val caption: String? = null,
     val media: MomentMedia? = null,
@@ -63,7 +62,7 @@ data class MomentViewer(val userId: String, val viewedAt: Long, val reacted: Boo
 
 /** What the composer hands over to post. Media is the plain file on this phone; it is encrypted before it leaves. */
 sealed interface MomentDraft {
-    data class Text(val text: String, val background: MomentBackground, val style: MomentTextStyle) : MomentDraft
+    data class Text(val text: String, val background: String, val style: MomentTextStyle) : MomentDraft
     data class Media(
         val kind: MomentKind,
         val bytes: ByteArray,

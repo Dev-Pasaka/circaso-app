@@ -53,7 +53,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.circaso.core.platform.AudioPlayer
 import com.circaso.core.platform.LocalTimeStyle
-import com.circaso.core.platform.VideoPlayer
+import com.circaso.core.platform.MomentVideo
 import com.circaso.core.platform.formatLocalTime
 import com.circaso.core.sync.nowMillis
 import com.circaso.designsystem.chrome.CircasoSheet
@@ -77,7 +77,6 @@ import com.circaso.designsystem.theme.CircasoSpacing
 import com.circaso.designsystem.theme.CircasoTheme
 import com.circaso.designsystem.theme.LightColors
 import com.circaso.feature.status.domain.Moment
-import com.circaso.feature.status.domain.MomentBackground
 import com.circaso.feature.status.domain.MomentKind
 import com.circaso.feature.status.domain.MomentTextStyle
 import kotlinx.coroutines.launch
@@ -112,7 +111,7 @@ private fun MomentViewerContent(state: MomentViewerUiState, vm: MomentViewerView
             Spinner(c.inkSecondary, Modifier.align(Alignment.Center))
             return@Box
         }
-        Stage(moment, state.media, vm::retryMedia)
+        Stage(moment, state.media, vm::retryMedia, paused = state.paused, muted = state.muted)
 
         // Tap the left third for back, anywhere else for next; hold to pause; swipe down to close, left for the next person.
         Box(
@@ -136,6 +135,7 @@ private fun MomentViewerContent(state: MomentViewerUiState, vm: MomentViewerView
                     BasicText(if (moment.mine) "My moment" else ring.name, style = t.subhead.copy(color = c.ink, fontWeight = FontWeight.SemiBold), maxLines = 1)
                     BasicText(ago(moment.postedAt), style = t.footnote.copy(color = c.inkSecondary))
                 }
+                if (moment.kind == MomentKind.Video) GlassButton(if (state.muted) CircasoIcon.MicOff else CircasoIcon.Speaker, if (state.muted) "Unmute" else "Mute", onClick = vm::toggleMute)
                 GlassButton(CircasoIcon.ChevronRight, "More", rotate = 90f) { if (moment.mine) vm.askDelete(true) else vm.openMore(true) }
                 GlassButton(CircasoIcon.Close, "Close", onClick = onClose)
             }
@@ -186,16 +186,17 @@ private fun MomentViewerContent(state: MomentViewerUiState, vm: MomentViewerView
 
 /** The moment itself: a text card, the photo, the video, or the voice with its waveform (V1–V3, V5–V6). */
 @Composable
-private fun BoxScope.Stage(moment: Moment, media: ViewerMedia, onRetry: () -> Unit) {
+private fun BoxScope.Stage(moment: Moment, media: ViewerMedia, onRetry: () -> Unit, paused: Boolean, muted: Boolean) {
     val c = CircasoTheme.colors
     val t = CircasoTheme.typography
     when (moment.kind) {
         MomentKind.Text -> {
-            val (bg, ink) = textColours(moment.background)
-            Box(Modifier.fillMaxSize().background(bg).padding(horizontal = 28.dp), contentAlignment = Alignment.Center) {
+            val swatch = MomentPalette.of(moment.background)
+            val (family, weight) = momentFont(moment.style)
+            Box(Modifier.fillMaxSize().background(brush = swatch.brush).padding(horizontal = 28.dp), contentAlignment = Alignment.Center) {
                 BasicText(
                     moment.text.orEmpty(), Modifier.semantics { contentDescription = moment.text.orEmpty() },
-                    style = t.title1.copy(color = ink, textAlign = TextAlign.Center, fontWeight = if (moment.style == MomentTextStyle.Bold) FontWeight.Bold else FontWeight.Normal,
+                    style = t.title1.copy(color = swatch.ink, textAlign = TextAlign.Center, fontWeight = weight, fontFamily = family ?: t.title1.fontFamily,
                         fontSize = if ((moment.text?.length ?: 0) > 120) 22.sp else 32.sp, lineHeight = if ((moment.text?.length ?: 0) > 120) 28.sp else 39.sp),
                 )
             }
@@ -209,7 +210,8 @@ private fun BoxScope.Stage(moment: Moment, media: ViewerMedia, onRetry: () -> Un
             when (media) {
                 is ViewerMedia.Ready -> when (moment.kind) {
                     MomentKind.Image -> coil3.compose.AsyncImage(media.bytes, moment.caption ?: "Photo", Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
-                    MomentKind.Video -> media.path?.let { VideoPlayer(it, Modifier.fillMaxSize()) }
+                    // No player controls (Pasaka, 2026-11-03): hold anywhere to pause, the speaker at the top mutes.
+                    MomentKind.Video -> media.path?.let { MomentVideo(it, playing = !paused, muted = muted, modifier = Modifier.fillMaxSize()) }
                     else -> VoiceStage(moment, media.bytes)
                 }
                 ViewerMedia.Loading -> Column(Modifier.align(Alignment.Center), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -309,15 +311,6 @@ private fun HeartGlyph(color: Color) {
     }
 }
 
-/** Text backgrounds: the light theme's own token values, fixed, so a moment looks the same to every viewer. */
-private fun textColours(bg: MomentBackground): Pair<Brush, Color> = when (bg) {
-    MomentBackground.Ink -> SolidColor(LightColors.ink) to LightColors.bg
-    MomentBackground.Metal -> Brush.linearGradient(listOf(LightColors.moneyCardSheen, LightColors.moneyCard, LightColors.moneyCard, LightColors.moneyCardSheen)) to LightColors.onMoney
-    MomentBackground.Paper -> SolidColor(LightColors.fill) to LightColors.ink
-    MomentBackground.Graphite -> SolidColor(LightColors.inkSecondary) to LightColors.bg
-}
-
-private fun Modifier.background(brush: Brush): Modifier = this.then(Modifier.background(brush = brush))
 
 private fun ago(at: Long): String {
     val minutes = ((nowMillis() - at) / 60_000).coerceAtLeast(0)

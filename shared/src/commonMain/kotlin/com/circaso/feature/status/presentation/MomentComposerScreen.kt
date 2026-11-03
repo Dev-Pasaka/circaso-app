@@ -25,6 +25,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.unit.sp
 import androidx.compose.runtime.setValue
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.ui.draw.drawBehind
@@ -62,7 +63,6 @@ import com.circaso.designsystem.theme.CircasoSizes
 import com.circaso.designsystem.theme.CircasoSpacing
 import com.circaso.designsystem.theme.CircasoTheme
 import com.circaso.designsystem.theme.LightColors
-import com.circaso.feature.status.domain.MomentBackground
 import com.circaso.feature.status.domain.MomentTextStyle
 
 @OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class)
@@ -100,7 +100,7 @@ private fun ComposerContent(state: MomentComposerUiState, vm: MomentComposerView
             StageButton(CircasoIcon.Close, if (state.capture != null) "Discard" else "Close") { if (state.capture != null) vm.discardCapture() else onClose() }
             Box(Modifier.weight(1f))
             if (state.capture == null && state.mode == ComposerMode.Text) {
-                StageButton(null, if (state.style == MomentTextStyle.Bold) "Text style: Bold" else "Text style: Regular", label = "Aa", bold = state.style == MomentTextStyle.Bold, onClick = vm::toggleStyle)
+                StageButton(null, "Font: ${state.style.label}. Change", label = "Aa", bold = true, onClick = vm::toggleStyle)
             }
             if (state.capture == null && (state.mode == ComposerMode.Photo || state.mode == ComposerMode.Video) && state.camera == CameraStart.Started) {
                 StageButton(CircasoIcon.Flash, if (state.flash) "Flash on" else "Flash off", filled = state.flash, onClick = vm::toggleFlash)
@@ -153,8 +153,9 @@ private fun ComposerContent(state: MomentComposerUiState, vm: MomentComposerView
                         BasicText("End-to-end encrypted. Gone after 24 hours.", style = CircasoTheme.typography.footnote.copy(color = c.inkSecondary))
                     }
                 }
-            } else if (state.mode != ComposerMode.Voice) {
-                CameraControls(state, vm)
+            } else {
+                if (!state.recordingVideo && !state.recordingVoice) RecentsStrip(state, vm)
+                if (state.mode != ComposerMode.Voice) CameraControls(state, vm)
             }
             if (state.capture == null && !state.recordingVideo && !state.recordingVoice) ModeRow(state.mode, vm::setMode)
         }
@@ -220,7 +221,7 @@ private fun ModeRow(mode: ComposerMode, onMode: (ComposerMode) -> Unit) {
 /** M4: the shot, before sharing. */
 @Composable
 private fun ShotReview(shot: ComposerCapture.Shot, state: MomentComposerUiState) {
-    if (shot.media.mime.startsWith("video") && shot.media.path != null) VideoPlayer(shot.media.path, Modifier.fillMaxSize())
+    if (shot.media.mime.startsWith("video") && shot.media.path != null) com.circaso.core.platform.MomentVideo(shot.media.path, playing = true, muted = false, modifier = Modifier.fillMaxSize(), loop = true)
     else coil3.compose.AsyncImage(shot.media.bytes, "Your photo", Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
 }
 
@@ -234,29 +235,86 @@ private fun CaptionField(value: String, onChange: (String) -> Unit) {
     }
 }
 
-/** M2: big centred text on its background. */
+/** M2: big centred text on its background, in the chosen font. */
 @Composable
 private fun TextEditor(state: MomentComposerUiState, vm: MomentComposerViewModel) {
-    val (bg, ink) = composerColours(state.background)
+    val swatch = MomentPalette.of(state.background)
+    val (family, weight) = momentFont(state.style)
     val t = CircasoTheme.typography
-    Box(Modifier.fillMaxSize().background(bg).padding(horizontal = 28.dp), contentAlignment = Alignment.Center) {
-        val style = t.title1.copy(color = ink, textAlign = TextAlign.Center, fontWeight = if (state.style == MomentTextStyle.Bold) FontWeight.Bold else FontWeight.Normal)
-        if (state.text.isEmpty()) BasicText("Type a moment", style = style.copy(color = ink.copy(alpha = 0.55f)))
-        BasicTextField(state.text, vm::onText, textStyle = style, cursorBrush = SolidColor(ink), modifier = Modifier.fillMaxWidth().semantics { contentDescription = "Moment text" })
+    Box(Modifier.fillMaxSize().background(brush = swatch.brush).padding(horizontal = 28.dp), contentAlignment = Alignment.Center) {
+        val style = t.title1.copy(color = swatch.ink, textAlign = TextAlign.Center, fontWeight = weight, fontFamily = family ?: t.title1.fontFamily, fontSize = 32.sp, lineHeight = 39.sp)
+        if (state.text.isEmpty()) BasicText("Type a moment", style = style.copy(color = swatch.ink.copy(alpha = 0.55f)))
+        BasicTextField(state.text, vm::onText, textStyle = style, cursorBrush = SolidColor(swatch.ink), modifier = Modifier.fillMaxWidth().semantics { contentDescription = "Moment text" })
     }
 }
 
+/** Every background in the palette, scrolling (Pasaka, 2026-11-03: many colours). */
 @Composable
-private fun Swatches(selected: MomentBackground, onPick: (MomentBackground) -> Unit) {
+private fun Swatches(selected: String, onPick: (String) -> Unit) {
     val c = CircasoTheme.colors
-    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(14.dp, Alignment.CenterHorizontally)) {
-        MomentBackground.entries.forEach { bg ->
-            val (fill, _) = composerColours(bg)
+    androidx.compose.foundation.lazy.LazyRow(
+        Modifier.fillMaxWidth(), contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = CircasoSpacing.s4),
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        items(MomentPalette.entries.size) { i ->
+            val swatch = MomentPalette.entries[i]
+            val on = swatch.id == selected || (i == 0 && MomentPalette.of(selected) == swatch)
             Box(
-                Modifier.size(CircasoSizes.controlMd).padding(5.dp).border(if (bg == selected) 2.5.dp else 1.5.dp, c.ink, CircasoShapes.circle).padding(3.dp)
-                    .clip(CircasoShapes.circle).background(fill).pressable(onClick = { onPick(bg) })
-                    .semantics { contentDescription = "Background ${bg.name}"; role = Role.RadioButton; this.selected = bg == selected },
+                Modifier.size(CircasoSizes.controlMd).padding(5.dp).border(if (on) 2.5.dp else 1.dp, if (on) c.ink else c.inkSecondary, CircasoShapes.circle).padding(3.dp)
+                    .clip(CircasoShapes.circle).background(brush = swatch.brush).pressable(onClick = { onPick(swatch.id) })
+                    .semantics { contentDescription = "Background ${swatch.name}"; role = Role.RadioButton; this.selected = on },
             )
+        }
+    }
+}
+
+/**
+ * The recents strip (WhatsApp-style): the newest photos, videos or audio on the phone, then Gallery (Files for audio)
+ * for everything else. Tap one to use it.
+ */
+@Composable
+private fun RecentsStrip(state: MomentComposerUiState, vm: MomentComposerViewModel) {
+    val c = CircasoTheme.colors
+    val t = CircasoTheme.typography
+    val audio = state.mode == ComposerMode.Voice
+    androidx.compose.foundation.lazy.LazyRow(
+        Modifier.fillMaxWidth(), contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = CircasoSpacing.s4),
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        // Photo and video have Gallery beside the shutter (as WhatsApp); audio has no shutter, so Files leads its strip.
+        if (audio) item(key = "pick") {
+            Column(
+                Modifier.size(if (audio) 120.dp else 56.dp, 56.dp).clip(CircasoShapes.md).background(c.glass).pressable(onClick = vm::pickFromLibrary)
+                    .semantics(mergeDescendants = true) { contentDescription = if (audio) "Choose an audio file" else "Open gallery"; role = Role.Button },
+                horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center,
+            ) {
+                if (state.loadingPick) com.circaso.designsystem.components.Spinner(c.ink)
+                else {
+                    CircasoIconImage(if (audio) CircasoIcon.Waveform else CircasoIcon.Photo, c.ink, Modifier.size(20.dp))
+                    BasicText(if (audio) "Files" else "Gallery", style = t.caption2.copy(color = c.ink))
+                }
+            }
+        }
+        items(state.recents.size, key = { state.recents[it].id }) { i ->
+            val item = state.recents[i]
+            if (audio) {
+                Column(
+                    Modifier.size(120.dp, 56.dp).clip(CircasoShapes.md).background(c.glass).pressable(onClick = { vm.useRecent(item) }).padding(horizontal = 10.dp, vertical = 6.dp)
+                        .semantics(mergeDescendants = true) { contentDescription = "Audio ${item.title.orEmpty()}, ${clock(item.durationMs ?: 0)}"; role = Role.Button },
+                    verticalArrangement = Arrangement.Center,
+                ) {
+                    BasicText(item.title ?: "Audio", style = t.footnote.copy(color = c.ink, fontWeight = FontWeight.SemiBold), maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
+                    BasicText(clock(item.durationMs ?: 0), style = t.caption2.copy(color = c.inkSecondary, fontFeatureSettings = "tnum"))
+                }
+            } else {
+                Box(
+                    Modifier.size(56.dp).clip(CircasoShapes.md).background(c.fill).pressable(onClick = { vm.useRecent(item) })
+                        .semantics { contentDescription = if (item.kind == com.circaso.core.platform.LibraryKind.Video) "Video, ${clock(item.durationMs ?: 0)}" else "Photo"; role = Role.Button },
+                ) {
+                    com.circaso.core.platform.LibraryThumbnail(item, Modifier.fillMaxSize())
+                    item.durationMs?.let { BasicText(clock(it), Modifier.align(Alignment.BottomStart).padding(4.dp), style = t.caption2.copy(color = c.ink, fontFeatureSettings = "tnum")) }
+                }
+            }
         }
     }
 }
@@ -280,7 +338,7 @@ private fun BoxScope.VoiceRecorderStage(state: MomentComposerUiState, vm: Moment
         )
     }
     var dragX by androidx.compose.runtime.remember { androidx.compose.runtime.mutableFloatStateOf(0f) }
-    Column(Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(bottom = 96.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(14.dp)) {
+    Column(Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(bottom = 180.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(14.dp)) {
         Box(
             Modifier.graphicsLayer { translationX = dragX }.size(84.dp).clip(CircasoShapes.circle).background(if (state.recordingVoice) c.ink else c.glass)
                 .semantics {
@@ -397,12 +455,4 @@ private fun StageButton(icon: CircasoIcon?, description: String, label: String? 
         if (label != null) BasicText(label, style = CircasoTheme.typography.headline.copy(color = c.ink, fontWeight = if (bold) FontWeight.Bold else FontWeight.Normal))
         else if (icon != null) CircasoIconImage(icon, if (filled) c.bg else c.ink, Modifier.size(20.dp))
     }
-}
-
-/** The same fixed text backgrounds the viewer draws. */
-private fun composerColours(bg: MomentBackground) = when (bg) {
-    MomentBackground.Ink -> androidx.compose.ui.graphics.SolidColor(LightColors.ink) to LightColors.bg
-    MomentBackground.Metal -> androidx.compose.ui.graphics.Brush.linearGradient(listOf(LightColors.moneyCardSheen, LightColors.moneyCard, LightColors.moneyCard, LightColors.moneyCardSheen)) to LightColors.onMoney
-    MomentBackground.Paper -> androidx.compose.ui.graphics.SolidColor(LightColors.fill) to LightColors.ink
-    MomentBackground.Graphite -> androidx.compose.ui.graphics.SolidColor(LightColors.inkSecondary) to LightColors.bg
 }

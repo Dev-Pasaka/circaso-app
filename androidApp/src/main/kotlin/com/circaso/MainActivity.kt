@@ -32,6 +32,7 @@ class MainActivity : ComponentActivity() {
         intent?.extras?.let { bundle -> AndroidLaunchArgs.extras = bundle.keySet().mapNotNull { k -> bundle.getString(k)?.let { k to it } }.toMap() }
         PermissionBridge.register(this) // must happen while the activity is being created
         ImagePickerBridge.register(this)
+        com.circaso.core.platform.MomentPickerBridge.register(this)
 
         setContent {
             App()

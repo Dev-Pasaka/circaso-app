@@ -9,6 +9,12 @@
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <!-- Calls (designs H1–H5): the camera for video, Bluetooth headsets for audio, and an ongoing-call notification. -->
     <uses-permission android:name="android.permission.CAMERA" />
+    <!-- Moments: the recents strip under the camera (WhatsApp-style). The system picker needs none of these. -->
+    <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
+    <uses-permission android:name="android.permission.READ_MEDIA_VIDEO" />
+    <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" />
+    <uses-permission android:name="android.permission.READ_MEDIA_VISUAL_USER_SELECTED" />
+    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
     <!-- "Share location" in a chat: asked only when the person taps it. -->
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <!-- The chat's attach sheet shows recent photos and videos, WhatsApp-style (Pasaka, 2026-10-30). Android 14+
