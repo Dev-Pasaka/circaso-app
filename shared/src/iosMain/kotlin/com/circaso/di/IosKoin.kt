@@ -76,6 +76,7 @@ fun initKoinIos() {
         single<ImagePicker> { IosImagePicker() }
         single<com.circaso.core.platform.MediaGallery> { com.circaso.core.platform.IosMediaGallery() }
         single<com.circaso.core.platform.MomentCamera> { com.circaso.core.platform.IosMomentCamera() } // AVFoundation lives on the Swift side; see MomentCameraBridge
+        single<com.circaso.core.platform.MediaLibrary> { com.circaso.core.platform.IosMediaLibrary() } // Photos recents here; loading and pickers on the Swift side, see MediaLibraryBridge
         // APNs needs the Push Notifications capability and a server-side key; until then there is no address to send.
         single<PushTokenProvider> { NoPushToken }
         single<RoomDatabase.Builder<CircasoDatabase>> {
