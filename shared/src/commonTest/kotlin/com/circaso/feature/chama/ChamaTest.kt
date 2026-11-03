@@ -83,7 +83,24 @@ private class FakeRemote : ChamaRemote {
     var attach: AppResult<RequestDto>? = null
     val attached = mutableListOf<String>()
     override suspend fun attachPayment(requestId: String, transferId: String): AppResult<RequestDto> { attached += transferId; return attach ?: AppResult.Success(request("APPROVED", transferId = transferId)) }
+    // Phase 2 (CH7–CH9).
+    var money: AppResult<com.circaso.feature.chama.data.remote.GroupMoneyResponse> = AppResult.Success(groupMoney())
+    var moneyReads = 0
+    val policies = mutableListOf<Pair<String, String>>()
+    var removed = 0
+    override suspend fun money(chatId: String): AppResult<com.circaso.feature.chama.data.remote.GroupMoneyResponse> { moneyReads++; return money }
+    override suspend fun removeGoal(chatId: String): AppResult<com.circaso.core.network.NoBody> { removed++; return AppResult.Success(com.circaso.core.network.NoBody()) }
+    override suspend fun setSettings(chatId: String, request: com.circaso.feature.chama.data.remote.GroupSettingsRequest, idempotencyKey: String): AppResult<com.circaso.feature.chama.data.remote.GroupSettingsDto> {
+        policies += request.approvalPolicy to idempotencyKey
+        return AppResult.Success(com.circaso.feature.chama.data.remote.GroupSettingsDto(chatId, request.approvalPolicy))
+    }
 }
+
+private fun groupMoney(wallet: Boolean = true, goal: Boolean = true, policy: String = "TWO_ADMINS") = com.circaso.feature.chama.data.remote.GroupMoneyResponse(
+    chatId = "g1", wallet = if (wallet) com.circaso.feature.chama.data.remote.GroupWalletDto("gw-1", "ACTIVE", "me") else null, approvalPolicy = policy,
+    goal = if (goal) goal(1).copy(treasurerUserId = "me") else null, memberCount = 3, contributed = usdc("100000000"), myContribution = usdc("0"),
+    contributors = emptyList(), paidOut = usdc("0"), openRequests = listOf(request("APPROVED")), isAdmin = true, isOwner = true, isSigner = true,
+)
 
 private class FakeLinks : PendingLinks {
     val map = MutableStateFlow<Map<String, Pair<String, String>>>(emptyMap())
@@ -98,6 +115,11 @@ private class FakeDao : ChamaDao {
     override suspend fun save(row: ChamaSnapshotEntity) { rows.value = rows.value + (row.chatId to row) }
     override suspend fun delete(chatId: String) { rows.value = rows.value - chatId }
     override suspend fun clearAll() { rows.value = emptyMap() }
+    val money = MutableStateFlow<Map<String, com.circaso.feature.chama.data.local.GroupMoneyEntity>>(emptyMap())
+    override fun observeMoney(chatId: String) = money.map { it[chatId] }
+    override fun observeAllMoney() = money.map { it.values.toList() }
+    override suspend fun saveMoney(row: com.circaso.feature.chama.data.local.GroupMoneyEntity) { money.value = money.value + (row.chatId to row) }
+    override suspend fun clearMoney() { money.value = emptyMap() }
 }
 
 class ChamaTest {
@@ -244,5 +266,57 @@ class ChamaTest {
         assertTrue(outside.copy(draft = outside.draft!!.copy(toName = "Coast Bus", address = "0xcoast")).canAsk)
         assertTrue(!outside.copy(online = false, draft = outside.draft!!.copy(toName = "Coast Bus", address = "0xcoast")).canAsk)
         assertEquals("12000000", base.draftAmountMinor)
+    }
+}
+
+/** Phase 2: chamas and groups are one Group; its money (CH7–CH9) lives in the group's own wallet. */
+class GroupMoneyTest {
+    private val json = Json { ignoreUnknownKeys = true; explicitNulls = false }
+    private val remote = FakeRemote()
+    private val dao = FakeDao()
+    private val repo = ChamaRepositoryImpl(remote, dao, json, FakeLinks(), CoroutineScope(Dispatchers.Unconfined), groupWallets = { true })
+
+    @Test
+    fun the_groups_money_is_kept_on_the_phone_and_reads_as_a_chama_for_the_strip() = runTest {
+        val money = assertIs<AppResult.Success<com.circaso.feature.chama.domain.GroupMoney>>(repo.refreshMoney("g1")).value
+        assertTrue(money.walletActive)
+        assertTrue(money.isSigner)
+        assertEquals(money.copy(fetchedAt = 0), repo.money("g1").first()?.copy(fetchedAt = 0))
+        val chama = money.asChama()!!
+        assertEquals("me", chama.goal.treasurerUserId, "the signer stands where the treasurer stood")
+        assertTrue(chama.isTreasurer)
+    }
+
+    @Test
+    fun a_group_without_a_wallet_has_no_money_actions() = runTest {
+        remote.money = AppResult.Success(groupMoney(wallet = false, goal = false))
+        val money = assertIs<AppResult.Success<com.circaso.feature.chama.domain.GroupMoney>>(repo.refreshMoney("g1")).value
+        assertTrue(!money.hasWallet)
+        assertNull(money.asChama())
+    }
+
+    @Test
+    fun frames_reload_the_groups_money_not_the_treasurer_goal() = runTest {
+        repo.onFrame("group.updated", buildJsonObject { put("chatId", "g1") })
+        repo.onFrame("request.updated", buildJsonObject { put("chatId", "g1") })
+        assertEquals(2, remote.moneyReads)
+        assertEquals(0, remote.reads, "CH1 isn't read with group wallets on")
+    }
+
+    @Test
+    fun who_approves_is_sent_with_its_key_and_the_target_can_go() = runTest {
+        val r = repo.setApprovalPolicy("g1", com.circaso.feature.chama.domain.ApprovalPolicy.AnyAdmin, "key-9")
+        assertEquals(com.circaso.feature.chama.domain.ApprovalPolicy.AnyAdmin, assertIs<AppResult.Success<*>>(r).value)
+        assertEquals(listOf("ANY_ADMIN" to "key-9"), remote.policies)
+        assertIs<AppResult.Success<Unit>>(repo.removeGoal("g1"))
+        assertEquals(1, remote.removed)
+    }
+
+    @Test
+    fun a_target_still_waiting_for_its_wallet_decodes() = runTest {
+        // Migrated treasurer-model goals carry no treasurer (spaces-plan §11.4).
+        remote.money = AppResult.Success(groupMoney(wallet = false).let { it.copy(goal = it.goal?.copy(treasurerUserId = null)) })
+        val money = assertIs<AppResult.Success<com.circaso.feature.chama.domain.GroupMoney>>(repo.refreshMoney("g1")).value
+        assertNull(money.goal?.treasurerUserId)
     }
 }

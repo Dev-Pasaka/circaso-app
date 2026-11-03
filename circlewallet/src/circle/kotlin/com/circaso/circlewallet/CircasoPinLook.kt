@@ -9,6 +9,7 @@ import circle.programmablewallet.sdk.presentation.LayoutProvider
 import circle.programmablewallet.sdk.presentation.Resource
 import circle.programmablewallet.sdk.presentation.TextConfig
 import circle.programmablewallet.sdk.presentation.ViewSetterProvider
+import com.circaso.feature.wallet.domain.SignSubject
 
 /**
  * Circaso's look inside Circle's PIN, security-question and biometrics screens: the Circaso mark on the PIN intro,
@@ -37,7 +38,16 @@ internal class CircasoPinImages(private val context: Context) : ViewSetterProvid
     }
 }
 
+/**
+ * Circle's headlines, naming the wallet the challenge is for. Each wallet (personal, every group wallet) is its own
+ * Circle user with its own PIN, so a group wallet's screens must never read like the personal one's (GW2, GW3, GW11):
+ * "Set a PIN for Kilimani Chama", "Approve from Kilimani Chama". [subject] is set before every call; calls never overlap.
+ */
 internal class CircasoPinTexts(private val context: Context) : LayoutProvider() {
+    companion object {
+        @Volatile var subject: SignSubject = SignSubject.Personal
+    }
+
     private val ink get() = context.getColor(R.color.circlepw_text_main)
     private val soft get() = context.getColor(R.color.circlepw_text_auxiliary)
     private val regular = Typeface.create("sans-serif", Typeface.NORMAL)
@@ -46,15 +56,19 @@ internal class CircasoPinTexts(private val context: Context) : LayoutProvider() 
     /** A headline in two parts, the second carrying the weight: "Choose your **wallet PIN**". */
     private fun headline(lead: String, strong: String): Array<TextConfig?> = arrayOf(TextConfig(lead, ink, bold), TextConfig(strong, ink, bold))
 
-    override fun getTextConfigs(key: Resource.TextsKey): Array<TextConfig?>? = when (key) {
-        Resource.TextsKey.newPinCodeHeadline -> headline("Choose your ", "wallet PIN")
-        Resource.TextsKey.enterPinCodeHeadline -> headline("Enter your ", "wallet PIN")
-        Resource.TextsKey.recoverPinCodeHeadline -> headline("Choose a ", "new PIN")
-        Resource.TextsKey.securityIntroHeadline -> headline("Protect your ", "wallet")
-        Resource.TextsKey.securityQuestionHeaders -> arrayOf(TextConfig("First question", soft, regular), TextConfig("Second question", soft, regular))
-        Resource.TextsKey.securitySummaryQuestionHeaders -> arrayOf(TextConfig("First question", soft, regular), TextConfig("Second question", soft, regular))
-        // Circle's own explainer link stays: Circaso has no page of its own for this.
-        Resource.TextsKey.securityIntroLink -> super.getTextConfigs(key)
+    override fun getTextConfigs(key: Resource.TextsKey): Array<TextConfig?>? {
+        // Named whenever the app names it: a group wallet, and Personal when the person has others (GW11b).
+        val named = subject.name
+        return when (key) {
+            Resource.TextsKey.newPinCodeHeadline -> if (named != null) headline("Set a PIN for ", named) else headline("Choose your ", "wallet PIN")
+            Resource.TextsKey.enterPinCodeHeadline -> if (named != null) headline("Approve from ", named) else headline("Enter your ", "wallet PIN")
+            Resource.TextsKey.recoverPinCodeHeadline -> headline("Choose a ", "new PIN")
+            Resource.TextsKey.securityIntroHeadline -> if (named != null) headline("Protect ", named) else headline("Protect your ", "wallet")
+            Resource.TextsKey.securityQuestionHeaders -> arrayOf(TextConfig("First question", soft, regular), TextConfig("Second question", soft, regular))
+            Resource.TextsKey.securitySummaryQuestionHeaders -> arrayOf(TextConfig("First question", soft, regular), TextConfig("Second question", soft, regular))
+            // Circle's own explainer link stays: Circaso has no page of its own for this.
+            Resource.TextsKey.securityIntroLink -> super.getTextConfigs(key)
+        }
     }
 
     override fun getIconTextConfigs(key: Resource.IconTextsKey): Array<IconTextConfig?>? = when (key) {

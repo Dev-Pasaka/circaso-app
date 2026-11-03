@@ -27,6 +27,7 @@ import com.circaso.feature.messaging.domain.SetRoleUseCase
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
@@ -37,6 +38,9 @@ sealed interface InfoAction {
     data class HandOver(val member: ChatMember) : InfoAction
     data object Leave : InfoAction
 }
+
+/** Group info's sheets for the group's money (GW7, CH9, §11.9 leaving, W8 Change PIN). */
+enum class MoneySheet { TargetNeedsWallet, Approvals, LeaveBlocked, ChangePin }
 
 /** Members and roles, the group's name and settings, and the safety number for a direct chat. Every change needs the server. */
 data class ChatInfoUiState(
@@ -59,7 +63,20 @@ data class ChatInfoUiState(
     val messages: List<Message> = emptyList(),
     val searching: Boolean = false,
     val query: String = "",
+    /** The group's money (group wallets, GW6–GW8); `enabled` false keeps the treasurer-model row. */
+    val money: com.circaso.feature.chama.presentation.GroupInfoMoney = com.circaso.feature.chama.presentation.GroupInfoMoney(),
+    val moneySheet: MoneySheet? = null,
+    val policyChoice: com.circaso.feature.chama.domain.ApprovalPolicy = com.circaso.feature.chama.domain.ApprovalPolicy.TwoAdmins,
+    val myUserId: String? = null,
 ) {
+    /** §11.9: the signer may not leave while the group wallet holds money. */
+    val leavingBlocked: Boolean get() {
+        val m = money.money ?: return false
+        if (!money.enabled || !m.isSigner || !m.hasWallet) return false
+        val held = money.balance?.totals.orEmpty().any { !com.circaso.feature.wallet.domain.MinorUnits.isZero(it.amountMinor) }
+        return held
+    }
+    val moneyBalanceText: String? get() = money.balance?.usdc?.let { com.circaso.feature.chama.presentation.amountText(it.amountMinor, money.balance.fiat) }
     /** Text messages containing the query, newest first. */
     val found: List<Message.Text>
         get() = if (query.isBlank()) emptyList()
@@ -88,11 +105,25 @@ class ChatInfoViewModel(
     observeThread: ObserveThreadUseCase? = null,
     /** Loads shared photos for the profile's media strip; null in previews. */
     val media: ThreadMedia? = null,
+    /** The group's money (group wallets on); null in previews and direct chats' tests. */
+    private val groupMoney: com.circaso.feature.chama.presentation.GroupInfoMoneySource? = null,
+    myUserId: String? = null,
 ) : ViewModel() {
-    private val _state = MutableStateFlow(ChatInfoUiState())
+    private val _state = MutableStateFlow(ChatInfoUiState(myUserId = myUserId))
     val state: StateFlow<ChatInfoUiState> = _state.asStateFlow()
 
+    /** CH9 keeps one key per choice, so a slow first answer can't be applied twice. */
+    private var policyKey = com.circaso.core.network.newIdempotencyKey()
+
     init {
+        groupMoney?.let { source ->
+            viewModelScope.launch { source.observe(chatId).collect { m -> _state.update { it.copy(money = m) } } }
+            viewModelScope.launch {
+                // Only for groups: a direct chat has no money of its own.
+                val chat = observeChat(chatId).first { it != null }
+                if (chat?.kind == ChatKind.Group) source.refresh(chatId)
+            }
+        }
         viewModelScope.launch {
             observeChat(chatId).collect { chat ->
                 _state.update { it.copy(chat = chat) }
@@ -115,7 +146,47 @@ class ChatInfoViewModel(
     fun onSelect(member: ChatMember?) = _state.update { it.copy(selected = member) }
     fun onSearch(open: Boolean) = _state.update { it.copy(searching = open, query = if (open) it.query else "") }
     fun onQuery(text: String) = _state.update { it.copy(query = text) }
-    fun onAction(action: InfoAction?) = _state.update { it.copy(pending = action, selected = null) }
+    fun onAction(action: InfoAction?) {
+        // §11.9: leaving would lock the group's money; say so and offer the way out instead of a confirm to tap through.
+        if (action == InfoAction.Leave && _state.value.leavingBlocked) { _state.update { it.copy(moneySheet = MoneySheet.LeaveBlocked, selected = null) }; return }
+        _state.update { it.copy(pending = action, selected = null) }
+    }
+
+    fun onMoneySheet(sheet: MoneySheet?) = _state.update {
+        it.copy(moneySheet = sheet, policyChoice = if (sheet == MoneySheet.Approvals) it.money.money?.approvalPolicy ?: it.policyChoice else it.policyChoice)
+    }
+
+    fun onRetryMoney() { val source = groupMoney ?: return; viewModelScope.launch { source.refresh(chatId) } }
+
+    fun onPolicyChoice(policy: com.circaso.feature.chama.domain.ApprovalPolicy) { if (policy != _state.value.policyChoice) policyKey = com.circaso.core.network.newIdempotencyKey(); _state.update { it.copy(policyChoice = policy) } }
+
+    /** CH9 (the owner): online-only, announced to every member. */
+    fun onSavePolicy() {
+        val source = groupMoney ?: return
+        val s = _state.value
+        if (!s.canChange) return
+        _state.update { it.copy(busy = true) }
+        viewModelScope.launch {
+            val r = source.setApprovalPolicy(chatId, s.policyChoice, policyKey)
+            _state.update { it.copy(busy = false, moneySheet = if (r is AppResult.Success) null else it.moneySheet, message = (r as? AppResult.Failure)?.let { f -> withRef(f.error) }) }
+            if (r is AppResult.Success) policyKey = com.circaso.core.network.newIdempotencyKey()
+        }
+    }
+
+    /** GW8: this wallet's fingerprint / Face ID: on through Circle with the wallet's own PIN; off back to its PIN. */
+    fun onWalletBiometrics(on: Boolean) {
+        val source = groupMoney ?: return
+        val s = _state.value
+        val walletId = s.money.money?.wallet?.walletId ?: return
+        if (!on) { viewModelScope.launch { source.turnOffBiometrics(walletId) }; return }
+        if (!s.canChange) return
+        _state.update { it.copy(busy = true) }
+        viewModelScope.launch {
+            val r = source.turnOnBiometrics(walletId, s.chat?.title ?: "the group")
+            val cancelled = ((r as? AppResult.Failure)?.error as? com.circaso.core.common.AppError.Api)?.code == "wallet.cancelled"
+            _state.update { it.copy(busy = false, message = (r as? AppResult.Failure)?.takeIf { !cancelled }?.let { f -> withRef(f.error) }) }
+        }
+    }
 
     fun onConfirm() {
         val action = _state.value.pending ?: return
@@ -170,4 +241,7 @@ class ChatInfoViewModel(
     }
 
     fun onMessageShown() = _state.update { it.copy(message = null) }
+
+    /** The error's words, with its reference for support. */
+    private fun withRef(error: com.circaso.core.common.AppError) = ErrorMessages.forError(error) + (ErrorMessages.reference(error)?.let { " Ref $it" } ?: "")
 }

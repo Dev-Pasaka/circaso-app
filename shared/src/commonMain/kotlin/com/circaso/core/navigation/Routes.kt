@@ -96,9 +96,31 @@ data object NewGroupRoute : Route
 @Serializable
 data class ChatInfoRoute(val chatId: String) : Route
 
-/** Pay a person (design C4/C5): [userId] null means pick one first; [chatId] when paying from that chat. */
+/**
+ * Pay a person (design C4/C5): [userId] null means pick one first; [chatId] when paying from that chat. Group wallets
+ * (phase 2): [groupId] pays into that group's wallet (a contribution, GW9d); [fromWalletId] with [requestId] pays an
+ * approved payout from the group wallet (GW9); [fromWalletId] alone starts from that wallet (Request Payout, GW9c).
+ */
 @Serializable
-data class PayRoute(val userId: String? = null, val chatId: String? = null, val displayName: String? = null, val amount: String? = null, val address: String? = null, val goalName: String? = null, val requestId: String? = null) : Route
+data class PayRoute(
+    val userId: String? = null, val chatId: String? = null, val displayName: String? = null, val amount: String? = null, val address: String? = null,
+    val goalName: String? = null, val requestId: String? = null, val groupId: String? = null, val fromWalletId: String? = null, val note: String? = null,
+) : Route
+
+/** Set up (or finish setting up) a group's wallet (GW2–GW5c), carrying what New Group chose (GW1b). */
+@Serializable
+data class GroupWalletSetupRoute(
+    val chatId: String, val approvalPolicy: String? = null, val targetMinor: String? = null, val targetName: String? = null, val deadline: String? = null,
+    val thenTarget: Boolean = false,
+) : Route
+
+/** A group's own wallet (GW16's structure): balance, Add / Payout / Receive, the target, requests and payments. */
+@Serializable
+data class GroupWalletRoute(val chatId: String) : Route
+
+/** Add or change a group's target (GW7b). */
+@Serializable
+data class TargetRoute(val chatId: String, val walletReady: Boolean = false) : Route
 
 /** Send to an outside wallet address (design E5). */
 @Serializable
@@ -203,6 +225,9 @@ val routeSerializers = SerializersModule {
         subclass(HelpRoute::class)
         subclass(LostAccessRoute::class)
         subclass(ChamaRoute::class)
+        subclass(GroupWalletSetupRoute::class)
+        subclass(TargetRoute::class)
+        subclass(GroupWalletRoute::class)
         subclass(PreviewRoute::class)
         subclass(GalleryRoute::class)
         subclass(ForceUpdateRoute::class)

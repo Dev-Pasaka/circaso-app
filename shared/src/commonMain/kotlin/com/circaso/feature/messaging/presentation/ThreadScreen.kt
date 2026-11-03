@@ -132,13 +132,19 @@ fun ThreadScreen(
     onOpenLocation: (Message.Media) -> Unit = {},
     /** Design C3: `#500` pays the other person from inside the chat (direct chats); only the PIN step leaves it. */
     quickPay: com.circaso.feature.wallet.presentation.PayViewModel? = null,
+    /**
+     * Group wallets: the preview's arrow opens the review instead of the PIN (GW9a), with the amount and note from the
+     * chat: always for a contribution (GW9d), and in a direct chat when there is another wallet to pay from (GW9b).
+     */
+    onReview: ((amount: String, note: String) -> Unit)? = null,
     focusLocalId: Long? = null,
     onOpenMoment: (posterId: String?, momentId: String) -> Unit = { _, _ -> },
 ) {
     val state by viewModel.state.collectAsState()
     val pay = quickPay?.let { vm ->
         val payState by vm.state.collectAsState()
-        QuickPay(payState, vm::onAmount, vm::onNote, vm::onPay, vm::onQuickReset, vm::onErrorShown, vm::onAssetTag)
+        val review = onReview?.takeIf { payState.toGroup || payState.choices.size > 1 }
+        QuickPay(payState, vm::onAmount, vm::onNote, if (review != null) ({ if (payState.canPay) { review(payState.amountText, payState.note); vm.onQuickReset() } }) else vm::onPay, vm::onQuickReset, vm::onErrorShown, vm::onAssetTag, reviews = review != null)
     }
     ThreadContent(
         state, onBack, onInfo, onAsha, viewModel::onDraft, viewModel::onSend, viewModel::onSelect, viewModel::onRetry, viewModel::onDiscard, viewModel::onDeleteForEveryone, viewModel::onMessageShown,
@@ -217,7 +223,7 @@ fun ThreadContent(
     val chipHaptics = androidx.compose.ui.platform.LocalHapticFeedback.current
     fun clearPay() { payChip = null; onDraft(""); quickPay?.onReset?.invoke() }
     // "#5" while still typing (before the space makes it a chip): the preview is up at once and follows each digit.
-    val payable = quickPay != null && !state.isGroup && !state.isSupport
+    val payable = quickPay != null && (!state.isGroup || state.groupMoney?.walletActive == true) && !state.isSupport
     val typingAmount = if (payChip == null && payable) typingAmount(state.draft) else null
     LaunchedEffect(typingAmount) {
         if (typingAmount != null) quickPay?.onAmount?.invoke(typingAmount) else if (payChip == null) quickPay?.onReset?.invoke()
@@ -546,7 +552,7 @@ fun ThreadContent(
             }
             // Design D6: the first time this phone opens a group with a goal.
             CircasoSheet(visible = state.showIntro && chama != null && state.chat != null, onDismiss = onIntroSeen, label = "About this group") {
-                if (chama != null && state.chat != null) GroupIntroContent(state.chat, chama, state.fiat, state.myUserId, onDone = onIntroSeen)
+                if (chama != null && state.chat != null) GroupIntroContent(state.chat, chama, state.fiat, state.myUserId, onDone = onIntroSeen, inGroupWallet = state.groupMoney != null)
             }
         },
     ) { padding ->
@@ -576,7 +582,7 @@ fun ThreadContent(
                                 else onOpenMoment(if (outgoing) state.chat?.peerId else null, q.momentId)
                             }) { onSelect(m) }
                         }
-                        is Message.Payment -> PaymentMessage(m, onOpen = { onOpenTransfer(m.transferId) }, moment = !m.outgoing && index == state.messages.lastIndex, onThanks = { onQuickReply("Asante!") }, chama = chama, fiat = state.fiat,
+                        is Message.Payment -> PaymentMessage(m, onOpen = { onOpenTransfer(m.transferId) }, moment = !m.outgoing && index == state.messages.lastIndex, onThanks = { onQuickReply("Asante!") }, chama = chama, fiat = state.fiat, groupName = state.chat?.title?.takeIf { state.groupMoney?.hasWallet == true },
                             react = reactUi(m.messageId))
                         is Message.Deleted -> MessageColumn(m.outgoing) { ChatBubble("This message was deleted", m.outgoing, quiet = true) }
                         is Message.Unreadable -> MessageColumn(false) { ChatBubble("A message from ${m.senderName} this phone can't show", false, quiet = true) }
@@ -624,7 +630,7 @@ fun ThreadContent(
                             quickPay?.onNote?.invoke(note)
                         }
                         stripped != null && onAsha != null -> { onDraft(stripped); onAsha() }
-                        amount != null && quickPay != null && !state.isGroup && !state.isSupport -> {
+                        amount != null && quickPay != null && (!state.isGroup || state.groupMoney?.walletActive == true) && !state.isSupport -> {
                             chipHaptics.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.TextHandleMove)
                             payChip = "#$amount"; onDraft(""); quickPay.onAmount(amount); quickPay.onNote("")
                         }
@@ -633,12 +639,13 @@ fun ThreadContent(
                         else -> onDraft(text)
                     }
                 },
-                placeholder = if (chama != null && state.canContribute) "Message, or #amount to add" else if (!state.isGroup && !state.isSupport && onPay != null) "Message, or #amount to send" else "Message",
+                placeholder = if ((chama != null || state.groupMoney != null) && state.canContribute) "Message, or #amount to add" else if (!state.isGroup && !state.isSupport && onPay != null) "Message, or #amount to send" else "Message",
                 onAttach = if (media != null) ({ attaching = true }) else null,
                 showSend = paying || media == null || state.draft.isNotBlank(),
                 trailing = if (payChip == null && media != null && state.draft.isBlank()) ({ VoiceButton(state.recording, media.onVoiceStart, media.onVoiceEnd) }) else null,
                 canSend = if (paying) quickPay?.state?.canPay == true else state.canSend,
-                onSend = if (paying) ({ quickPay?.onPay?.invoke(); Unit }) else onSend,
+                // A review (group wallets) leaves the chat with what was typed: the chip goes, as after a payment.
+                onSend = if (paying) ({ quickPay?.onPay?.invoke(); if (quickPay?.reviews == true) clearPay(); Unit }) else onSend,
                 chip = payChip,
                 onChipEdit = { val back = payChip.orEmpty(); payChip = null; quickPay?.onReset?.invoke(); onDraft(back + if (state.draft.isNotEmpty()) " " + state.draft else "") },
                 floating = {
@@ -661,7 +668,7 @@ fun ThreadContent(
                         (payChip != null || typingAmount != null) && quickPay != null,
                         enter = if (CircasoTheme.reduceMotion) fadeIn(tween(CircasoMotion.QuickMs)) else fadeIn(tween(CircasoMotion.QuickMs)) + androidx.compose.animation.slideInVertically(tween(CircasoMotion.QuickMs)) { it / 2 },
                         exit = fadeOut(tween(CircasoMotion.QuickMs)),
-                    ) { quickPay?.let { QuickPayPreview(it.state, it.onPay) } }
+                    ) { quickPay?.let { q -> QuickPayPreview(q.state, { q.onPay(); if (q.reviews) clearPay() }, q.reviews) } }
                 },
                 above = {
                     // Support never takes money (so nobody pretending to be Circaso can ask for it): say so the moment
@@ -745,7 +752,7 @@ internal fun amountShortcut(text: String): String? {
 
 /** A payment card in the thread (designs C3–C7): the money colour for money received, `fill` for money sent. */
 @Composable
-private fun PaymentMessage(m: Message.Payment, onOpen: () -> Unit, moment: Boolean = false, onThanks: () -> Unit = {}, chama: Chama? = null, fiat: FiatValue? = null, react: ReactUi? = null) {
+private fun PaymentMessage(m: Message.Payment, onOpen: () -> Unit, moment: Boolean = false, onThanks: () -> Unit = {}, chama: Chama? = null, fiat: FiatValue? = null, react: ReactUi? = null, groupName: String? = null) {
     val waiting = m.state == DeliveryState.Waiting || m.state == DeliveryState.Sending
     val failed = m.state == DeliveryState.Failed
     val usdc = MinorUnits.coinText(m.amountMinor, m.asset)
@@ -753,6 +760,8 @@ private fun PaymentMessage(m: Message.Payment, onOpen: () -> Unit, moment: Boole
     // the card reads it from the group's own copy, so the encrypted payload needs no goal field.
     val treasurer = chama?.goal?.treasurerUserId
     val kind = when {
+        // Group wallets (GW18): the card's own note says which way the money went; a group without a target names the group.
+        groupName != null -> if (m.note?.startsWith("Paid from") == true) "Paid from $groupName" else "Contribution"
         chama == null -> null
         m.senderId == treasurer -> "Paid from the group"
         else -> "Contribution"
@@ -767,7 +776,7 @@ private fun PaymentMessage(m: Message.Payment, onOpen: () -> Unit, moment: Boole
                 // The person's currency large (You → Currency), the coin amount in the foot (design C4: "KES 500", "3.88 USDC").
                 // No + or −: "Sent" and "Received" already say which way it went (the user, 2026-10-31).
                 amount = shownFiat ?: usdc,
-                note = if (kind == "Contribution" && chama != null) "${if (m.outgoing) "You" else m.senderName.substringBefore(' ')} added to ${chama.goal.name}" else m.note,
+                note = if (kind == "Contribution" && (chama != null || groupName != null)) "${if (m.outgoing) "You" else m.senderName.substringBefore(' ')} added to ${chama?.goal?.name ?: groupName}" else m.note,
                 foot = (if (shownFiat != null) "$usdc · " else "") + formatLocalTime(m.orderAt, LocalTimeStyle.Clock) + when { failed -> " · card not sent"; waiting -> " · sending card"; else -> "" },
                 outgoing = m.outgoing, pending = waiting, failed = failed, onClick = onOpen, onLongClick = react?.onOpen, symbol = m.asset,
             ) }
@@ -944,6 +953,8 @@ class QuickPay(
     val onReset: () -> Unit,
     val onErrorShown: () -> Unit,
     val onAssetTag: (String?) -> Unit = {},
+    /** The arrow opens the review (group wallets) rather than the PIN. */
+    val reviews: Boolean = false,
 )
 
 /** The amount while it is still being typed: "#5", "#12.", "#12.5" (no space yet). */
@@ -1013,7 +1024,7 @@ internal fun splitAssetTag(text: String): Pair<String?, String> {
  * the note, or plainly why it can't go yet (over the balance, no wallet, offline). Its arrow opens the PIN step.
  */
 @Composable
-private fun QuickPayPreview(s: com.circaso.feature.wallet.presentation.PayUiState, onPay: () -> Unit) {
+private fun QuickPayPreview(s: com.circaso.feature.wallet.presentation.PayUiState, onPay: () -> Unit, reviews: Boolean = false) {
     val c = CircasoTheme.colors
     val t = CircasoTheme.typography
     val name = s.payee?.displayName?.substringBefore(' ') ?: "them"
@@ -1029,6 +1040,8 @@ private fun QuickPayPreview(s: com.circaso.feature.wallet.presentation.PayUiStat
         s.assetMissing -> "You don't have ${s.assetTag?.uppercase()} in this wallet." to true
         s.overBalance -> "More than you have · ${com.circaso.feature.wallet.domain.MinorUnits.toDisplay(s.balanceMinor, s.tagged?.second?.decimals ?: 6)} ${s.asset}" to true
         amount == null -> "Type an amount after #" to false
+        // GW9a2: where the group's target will stand once this lands.
+        s.toGroup -> listOfNotNull(s.usdcText.takeIf { s.fiatText != null }, s.progressAfter?.let { "target ${(it * 100).toInt()}% after this" } ?: s.note.trim().takeIf { it.isNotEmpty() }).joinToString(" · ").ifEmpty { "Into the group’s wallet" } to false
         else -> listOfNotNull(s.usdcText.takeIf { s.fiatText != null }, s.note.trim().takeIf { it.isNotEmpty() }).joinToString(" · ").ifEmpty { "From your wallet" } to false
     }
     // true = can't be sent as asked (red), null = can't go right now (amber), false = fine.
@@ -1041,13 +1054,17 @@ private fun QuickPayPreview(s: com.circaso.feature.wallet.presentation.PayUiStat
         verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(CircasoSpacing.s3),
     ) {
         Column(Modifier.weight(1f)) {
-            BasicText(if (amount != null) "Send $amount to $name" else "Send money to $name", style = t.subhead.copy(color = c.ink, fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold))
+            val groupName = s.payee?.displayName ?: "the group"
+            BasicText(
+                when { s.toGroup && amount != null -> "Add $amount to $groupName"; s.toGroup -> "Add to $groupName"; amount != null -> "Send $amount to $name"; else -> "Send money to $name" },
+                style = t.subhead.copy(color = c.ink, fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold),
+            )
             BasicText(sub, style = t.footnote.copy(color = subColor, fontFeatureSettings = "tnum"), maxLines = 2)
         }
         if (s.step == com.circaso.feature.wallet.presentation.PayStep.Signing) {
             Box(Modifier.size(com.circaso.designsystem.theme.CircasoSizes.iconButton), contentAlignment = Alignment.Center) { com.circaso.designsystem.components.Spinner(c.inkSecondary, Modifier.size(18.dp)) }
         } else {
-            com.circaso.designsystem.components.CircasoIconButton(CircasoIcon.ArrowUp, if (amount != null) "Review $amount to $name" else "Send money", onPay, emphasised = s.canPay, enabled = s.canPay)
+            com.circaso.designsystem.components.CircasoIconButton(CircasoIcon.ArrowUp, if (amount != null) "Review $amount to ${if (s.toGroup) s.payee?.displayName ?: "the group" else name}" else "Send money", onPay, emphasised = s.canPay, enabled = s.canPay)
         }
     }
 }
@@ -1540,7 +1557,8 @@ private fun androidx.compose.foundation.lazy.LazyListScope.threadTail(
     items(state.openRequests.asReversed(), key = { "request-" + it.requestId }) { request ->
         RequestCard(
             request, state.fiat, nameOf = state::memberName,
-            isAdmin = chama?.isAdmin == true, isTreasurer = chama?.isTreasurer == true, myUserId = state.myUserId, busy = state.chamaBusy, online = state.online,
+            isAdmin = state.requestsAdmin, isTreasurer = state.requestsPayer, myUserId = state.myUserId, busy = state.chamaBusy, online = state.online,
+            inGroupWallet = state.groupMoney != null,
             onApprove = { onDecide(request, true) }, onDecline = { onDecide(request, false) }, onPay = { onPayRequest?.invoke(request) },
             modifier = Modifier.animateItem(),
         )

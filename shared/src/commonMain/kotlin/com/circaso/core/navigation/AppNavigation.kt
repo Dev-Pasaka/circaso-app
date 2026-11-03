@@ -110,6 +110,11 @@ fun AppNavigation(forceUpdate: Boolean, home: @Composable () -> Unit) {
         AuthState.Active -> HomeRoute
     }
     val preview = remember { launchValue("-preview") }
+    // Debug builds: `-group-wallets=on|off|default` (Android: `--es group-wallets off`) overrides the build's default.
+    val groupWalletsArg = remember { launchValue("-group-wallets") }
+    val prefs: com.circaso.core.datastore.AppPreferences = koinInject()
+    val client: com.circaso.core.platform.ClientInfo = koinInject()
+    LaunchedEffect(groupWalletsArg) { if (groupWalletsArg != null && client.debugBuild) prefs.setGroupWalletsOverride(groupWalletsArg) }
     LaunchedEffect(root, forceUpdate) {
         val target: Route = if (forceUpdate) ForceUpdateRoute else if (preview != null) PreviewRoute(preview) else root
         if (backStack.firstOrNull() != target) {
@@ -224,6 +229,15 @@ fun AppNavigation(forceUpdate: Boolean, home: @Composable () -> Unit) {
                                 onAssets = { chain -> backStack.add(NetworkAssetsRoute(chain)) },
                                 onNetworkActivity = { chain -> backStack.add(NetworkActivityRoute(chain)) },
                             ),
+                            // GW16: a group wallet picked in the tab's switcher, with its own view model per group.
+                            groupWallet = { chatId, pad ->
+                                val gvm = koinViewModel<com.circaso.feature.chama.presentation.GroupWalletViewModel>(key = "group-wallet-$chatId", parameters = { parametersOf(chatId) })
+                                val gw by gvm.state.collectAsState()
+                                com.circaso.feature.chama.presentation.GroupWalletContent(
+                                    gw, pad, groupWalletActions(chatId, gw, backStack::add), gvm::onDecide,
+                                    onReceive = { backStack.add(GroupWalletRoute(chatId)) }, onRetry = gvm::refresh,
+                                )
+                            },
                         )
                     },
                     walletActions = { WalletTitleActions(walletViewModel) },
@@ -320,6 +334,9 @@ fun AppNavigation(forceUpdate: Boolean, home: @Composable () -> Unit) {
                 val thread by threadViewModel.state.collectAsState()
                 val peer = thread.chat?.peerId
                 val goal = thread.chama?.goal
+                // Group wallets (GW9a2, GW9): a group whose wallet is active takes contributions into it; its signer pays payouts from it.
+                val groupMoney = thread.groupMoney
+                val intoGroup = groupMoney?.walletActive == true
                 val callNow by calls.state.collectAsState()
                 ThreadScreen(
                     threadViewModel,
@@ -329,21 +346,38 @@ fun AppNavigation(forceUpdate: Boolean, home: @Composable () -> Unit) {
                     onAsha = { if (backStack.lastOrNull() != AshaRoute) backStack.add(AshaRoute) },
                     onPay = if (peer != null) ({ amount -> backStack.add(PayRoute(userId = peer, chatId = route.chatId, displayName = thread.chat?.title, amount = amount)) }) else null,
                     onOpenTransfer = { id -> backStack.add(TransferRoute(id)) },
-                    onOpenGoal = { backStack.add(ChamaRoute(route.chatId)) },
+                    onOpenGoal = { backStack.add(if (groupMoney != null) GroupWalletRoute(route.chatId) else ChamaRoute(route.chatId)) },
                     // D3: a contribution is a payment to the treasurer from this chat; D5: the treasurer pays the approved request.
-                    onContribute = if (goal != null) ({ amount -> backStack.add(PayRoute(userId = goal.treasurerUserId, chatId = route.chatId, displayName = thread.memberName(goal.treasurerUserId), amount = amount, goalName = goal.name)) }) else null,
-                    onPayRequest = { r -> backStack.add(payRequestRoute(route.chatId, goal?.name, r, thread::memberName)) },
+                    onContribute = when {
+                        intoGroup -> ({ amount -> backStack.add(PayRoute(groupId = route.chatId, chatId = route.chatId, displayName = thread.chat?.title, amount = amount, goalName = goal?.name)) })
+                        goal != null && groupMoney == null -> ({ amount -> backStack.add(PayRoute(userId = goal.treasurerUserId, chatId = route.chatId, displayName = thread.memberName(goal.treasurerUserId), amount = amount, goalName = goal.name)) })
+                        else -> null
+                    },
+                    onPayRequest = { r -> backStack.add(payRequestRoute(route.chatId, goal?.name, r, thread::memberName, fromWalletId = groupMoney?.wallet?.walletId)) },
+                    // GW9a: the preview's arrow opens the review with what was typed in the chat.
+                    onReview = { amount, note ->
+                        backStack.add(
+                            if (intoGroup) PayRoute(groupId = route.chatId, chatId = route.chatId, displayName = thread.chat?.title, amount = amount, goalName = goal?.name, note = note)
+                            else PayRoute(userId = peer, chatId = route.chatId, displayName = thread.chat?.title, amount = amount, note = note),
+                        )
+                    },
                     onCall = if (calls.available) ({ video -> calls.start(route.chatId, video) }) else null,
                     ongoingCall = callNow?.takeIf { it.chatId == route.chatId && it.minimised && it.phase != com.circaso.feature.calls.CallPhase.Ended }?.let { if (it.video || it.camera) "Ongoing video call" else "Ongoing voice call" },
                     onReturnToCall = { calls.minimise(false) },
                     focusLocalId = route.focusLocalId,
                     onOpenLocation = { m -> backStack.add(LocationMapRoute(route.chatId, m.localId)) },
                     // C3: `#500` pays the other person without leaving the chat; one per chat, reset after each payment.
-                    quickPay = peer?.let { id ->
-                        koinViewModel<com.circaso.feature.wallet.presentation.PayViewModel>(
+                    quickPay = when {
+                        peer != null -> koinViewModel<com.circaso.feature.wallet.presentation.PayViewModel>(
                             key = "quickpay-${route.chatId}",
-                            parameters = { parametersOf(com.circaso.feature.wallet.presentation.PayIntent(userId = id, chatId = route.chatId, displayName = thread.chat?.title)) },
+                            parameters = { parametersOf(com.circaso.feature.wallet.presentation.PayIntent(userId = peer, chatId = route.chatId, displayName = thread.chat?.title)) },
                         )
+                        // GW9a2: `#1000` in a group with a wallet is a contribution into it.
+                        intoGroup -> koinViewModel<com.circaso.feature.wallet.presentation.PayViewModel>(
+                            key = "quickpay-group-${route.chatId}",
+                            parameters = { parametersOf(com.circaso.feature.wallet.presentation.PayIntent(chatId = route.chatId, displayName = thread.chat?.title, groupId = route.chatId)) },
+                        )
+                        else -> null
                     },
                     onCallSupport = if (calls.available) ({ calls.start(route.chatId, false) }) else null,
                 )
@@ -351,7 +385,37 @@ fun AppNavigation(forceUpdate: Boolean, home: @Composable () -> Unit) {
             entry<NewChatRoute> {
                 NewChatScreen(koinViewModel(), onBack = ::pop, onOpened = { id -> pop(); openChatFromList(id) }, onNewGroup = { backStack.add(NewGroupRoute) }, onInvite = { backStack.add(ContactsRoute) })
             }
-            entry<NewGroupRoute> { NewGroupScreen(koinViewModel(), onBack = ::pop, onCreated = { id -> pop(); pop(); openChatFromList(id) }) }
+            entry<NewGroupRoute> {
+                NewGroupScreen(koinViewModel(), onBack = ::pop, onCreated = { id, plan ->
+                    pop(); pop(); openChatFromList(id)
+                    // GW1b → GW2: the group exists; its wallet is set up over the new chat, so a failure lands in it.
+                    if (plan != null) backStack.add(
+                        GroupWalletSetupRoute(id, plan.approvalPolicy?.name, plan.targetMinor, plan.targetName, plan.deadline, plan.thenTarget),
+                    )
+                })
+            }
+            entry<GroupWalletSetupRoute>(metadata = Panes.FullScreen) { route ->
+                val plan = com.circaso.feature.chama.presentation.GroupWalletPlan(
+                    approvalPolicy = route.approvalPolicy?.let { runCatching { com.circaso.feature.chama.domain.ApprovalPolicy.valueOf(it) }.getOrNull() },
+                    targetMinor = route.targetMinor, targetName = route.targetName, deadline = route.deadline, thenTarget = route.thenTarget,
+                )
+                com.circaso.feature.chama.presentation.GroupWalletSetupScreen(
+                    koinViewModel(key = "gw-setup-" + route.chatId, parameters = { parametersOf(route.chatId, plan) }),
+                    onOpenGroup = ::pop,
+                    onDone = { pop(); if (route.thenTarget) backStack.add(TargetRoute(route.chatId, walletReady = true)) },
+                )
+            }
+            entry<GroupWalletRoute> { route ->
+                val vm = koinViewModel<com.circaso.feature.chama.presentation.GroupWalletViewModel>(key = "group-wallet-" + route.chatId, parameters = { parametersOf(route.chatId) })
+                val gw by vm.state.collectAsState()
+                com.circaso.feature.chama.presentation.GroupWalletScreen(
+                    vm, onBack = ::pop,
+                    actions = groupWalletActions(route.chatId, gw, backStack::add),
+                )
+            }
+            entry<TargetRoute> { route ->
+                com.circaso.feature.chama.presentation.TargetScreen(koinViewModel(key = "target-" + route.chatId, parameters = { parametersOf(route.chatId, route.walletReady) }), onBack = ::pop)
+            }
             entry<LocationMapRoute>(metadata = Panes.FullScreen) { route ->
                 com.circaso.feature.messaging.presentation.map.LocationMapScreen(
                     koinViewModel<com.circaso.feature.messaging.presentation.map.LocationMapViewModel>(
@@ -365,7 +429,9 @@ fun AppNavigation(forceUpdate: Boolean, home: @Composable () -> Unit) {
                 val info by infoViewModel.state.collectAsState()
                 val peer = info.chat?.peerId
                 ChatInfoScreen(
-                    infoViewModel, onBack = ::pop, onLeft = { pop(); pop() }, onGroupWallet = { backStack.add(ChamaRoute(route.chatId)) },
+                    infoViewModel, onBack = ::pop, onLeft = { pop(); pop() }, onGroupWallet = { backStack.add(if (info.money.enabled) GroupWalletRoute(route.chatId) else ChamaRoute(route.chatId)) },
+                    onSetUpWallet = { thenTarget -> backStack.add(GroupWalletSetupRoute(route.chatId, thenTarget = thenTarget)) },
+                    onTarget = { backStack.add(TargetRoute(route.chatId)) },
                     onCall = if (calls.available) ({ video -> calls.start(route.chatId, video) }) else null,
                     onPay = if (peer != null) ({ backStack.add(PayRoute(userId = peer, chatId = route.chatId, displayName = info.chat?.title)) }) else null,
                     onOpenLocation = { m -> backStack.add(LocationMapRoute(route.chatId, m.localId)) },
@@ -390,7 +456,10 @@ fun AppNavigation(forceUpdate: Boolean, home: @Composable () -> Unit) {
             }
             entry<PayRoute>(metadata = Panes.FullScreen) { route ->
                 PayScreen(
-                    koinViewModel<PayViewModel>(key = "pay-${route.userId}-${route.chatId}-${route.requestId}", parameters = { parametersOf(PayIntent(route.userId, route.chatId, route.displayName, route.amount, route.address, route.goalName, route.requestId)) }),
+                    koinViewModel<PayViewModel>(
+                        key = "pay-${route.userId}-${route.chatId}-${route.requestId}-${route.groupId}-${route.fromWalletId}",
+                        parameters = { parametersOf(PayIntent(route.userId, route.chatId, route.displayName, route.amount, route.address, route.goalName, route.requestId, groupId = route.groupId, fromWalletId = route.fromWalletId, note = route.note)) },
+                    ),
                     onBack = ::pop,
                     onOpenTransfer = { id -> backStack.add(TransferRoute(id)) },
                     onOpenChat = if (route.chatId == null) ({ id -> pop(); openChatFromList(id) }) else null,
@@ -439,7 +508,11 @@ private fun androidx.compose.foundation.layout.BoxScope.CallLayer(backStack: Mut
     val call by controller.state.collectAsState()
     val chatId = call?.chatId
     val chamas = koinInject<com.circaso.feature.chama.domain.ChamaRepository>()
-    val chama by remember(chatId) { if (chatId != null) chamas.chama(chatId) else kotlinx.coroutines.flow.flowOf(null) }.collectAsState(null)
+    // Group wallets: a group call's contribute preset pays into the group's own wallet (CH7), not a treasurer (CH1).
+    val groupWalletsOn by koinInject<com.circaso.core.flags.GroupWalletsFlag>().enabled.collectAsState()
+    val treasurerChama by remember(chatId) { if (chatId != null) chamas.chama(chatId) else kotlinx.coroutines.flow.flowOf(null) }.collectAsState(null)
+    val groupMoney by remember(chatId, groupWalletsOn) { if (chatId != null && groupWalletsOn) chamas.money(chatId) else kotlinx.coroutines.flow.flowOf(null) }.collectAsState(null)
+    val chama = if (groupWalletsOn) groupMoney?.asChama() else treasurerChama
     val wallet by koinInject<com.circaso.feature.wallet.domain.WalletRepository>().wallet.collectAsState(null)
     val messages = koinInject<com.circaso.feature.messaging.domain.MessagesRepository>()
     val thread by remember(chatId) { if (chatId != null) messages.thread(chatId) else kotlinx.coroutines.flow.flowOf(emptyList()) }.collectAsState(emptyList())
@@ -475,7 +548,8 @@ private fun androidx.compose.foundation.layout.BoxScope.CallLayer(backStack: Mut
                 if (c.phase == com.circaso.feature.calls.CallPhase.Incoming) controller.decline() else controller.minimise(true)
                 backStack.add(PayRoute(userId = peer.userId, chatId = c.chatId, displayName = peer.name))
             }) else null,
-            onContribute = chama?.goal?.let { g -> { amount: String? -> controller.minimise(true); backStack.add(PayRoute(userId = g.treasurerUserId, chatId = g.chatId, displayName = c?.people?.firstOrNull { it.userId == g.treasurerUserId }?.name, amount = amount, goalName = g.name)) } },
+            onContribute = if (groupWalletsOn) groupMoney?.takeIf { it.walletActive }?.let { m -> { amount: String? -> controller.minimise(true); backStack.add(PayRoute(groupId = m.chatId, chatId = m.chatId, amount = amount, goalName = m.goal?.name)) } }
+                else chama?.goal?.let { g -> { amount: String? -> controller.minimise(true); backStack.add(PayRoute(userId = g.treasurerUserId, chatId = g.chatId, displayName = c?.people?.firstOrNull { it.userId == g.treasurerUserId }?.name, amount = amount, goalName = g.name)) } },
         ),
         money = money,
         chama = chama,
@@ -484,10 +558,24 @@ private fun androidx.compose.foundation.layout.BoxScope.CallLayer(backStack: Mut
 }
 
 /** The treasurer paying an approved request (design D5): a member, or an outside address with its name. */
-private fun payRequestRoute(chatId: String, goalName: String?, r: ChamaRequest, nameOf: (String) -> String): PayRoute {
+/** The group wallet's actions (GW16): Add contributes, Payout asks the admins, a request's Pay leaves the group wallet. */
+internal fun groupWalletActions(chatId: String, state: com.circaso.feature.chama.presentation.GroupWalletUiState, open: (Route) -> Unit) =
+    com.circaso.feature.chama.presentation.GroupWalletActions(
+        onAdd = { open(PayRoute(groupId = chatId, chatId = chatId, displayName = state.chat?.title, goalName = state.money?.goal?.name)) },
+        onPayout = { state.walletId?.let { open(PayRoute(chatId = chatId, fromWalletId = it)) } },
+        onPayRequest = { r -> open(payRequestRoute(chatId, state.money?.goal?.name, r, state::memberName, fromWalletId = state.walletId)) },
+        onOpenTransfer = { id -> open(TransferRoute(id)) },
+        onTarget = { open(TargetRoute(chatId)) },
+    )
+
+/**
+ * Paying an approved request (design D5): a member, or an outside address with its name. With group wallets it leaves
+ * the group's wallet ([fromWalletId], GW9) and W4 carries the request; otherwise the treasurer pays it.
+ */
+private fun payRequestRoute(chatId: String, goalName: String?, r: ChamaRequest, nameOf: (String) -> String, fromWalletId: String? = null): PayRoute {
     val fiatFree = com.circaso.feature.wallet.domain.MinorUnits.toDisplay(r.amountMinor, 6).replace(",", "")
     return PayRoute(
         userId = r.payeeUserId, chatId = chatId, displayName = r.payeeUserId?.let(nameOf) ?: r.payeeName, amount = fiatFree,
-        address = r.payeeAddress?.takeIf { r.payeeUserId == null }, goalName = goalName, requestId = r.requestId,
+        address = r.payeeAddress?.takeIf { r.payeeUserId == null }, goalName = goalName, requestId = r.requestId, fromWalletId = fromWalletId,
     )
 }

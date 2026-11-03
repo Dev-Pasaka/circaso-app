@@ -91,13 +91,30 @@ class MoneyMathTest {
     }
 }
 
-private class FakeWalletDao : WalletDao {
+internal class FakeWalletDao : WalletDao {
     val snapshot = MutableStateFlow<WalletSnapshotEntity?>(null)
     val transfers = MutableStateFlow<Map<String, TransferEntity>>(emptyMap())
+    val cached = MutableStateFlow<Map<String, com.circaso.feature.wallet.data.local.WalletCacheEntity>>(emptyMap())
+    val list = MutableStateFlow<com.circaso.feature.wallet.data.local.WalletListEntity?>(null)
+    val activity = MutableStateFlow<List<com.circaso.feature.wallet.data.local.WalletActivityEntity>>(emptyList())
     override fun observeSnapshot(): Flow<WalletSnapshotEntity?> = snapshot
     override suspend fun snapshot() = snapshot.value
     override suspend fun saveSnapshot(row: WalletSnapshotEntity) { snapshot.value = row }
-    override fun observeTransfers(): Flow<List<TransferEntity>> = transfers.map { it.values.sortedByDescending { t -> t.createdAt } }
+    override fun observeTransfers(): Flow<List<TransferEntity>> = transfers.map { it.values.filter { t -> t.walletId == null }.sortedByDescending { t -> t.createdAt } }
+    override fun observeTransfersOf(walletId: String): Flow<List<TransferEntity>> = transfers.map { it.values.filter { t -> t.walletId == walletId }.sortedByDescending { t -> t.createdAt } }
+    override fun observeCached(walletId: String) = cached.map { it[walletId] }
+    override suspend fun saveCached(row: com.circaso.feature.wallet.data.local.WalletCacheEntity) { cached.value = cached.value + (row.walletId to row) }
+    override fun observeList() = list
+    override suspend fun list() = list.value
+    override suspend fun saveList(row: com.circaso.feature.wallet.data.local.WalletListEntity) { list.value = row }
+    override fun observeActivity(walletId: String) = activity.map { rows -> rows.filter { it.walletId == walletId }.sortedByDescending { it.occurredAt } }
+    override suspend fun saveActivity(rows: List<com.circaso.feature.wallet.data.local.WalletActivityEntity>) {
+        val keys = rows.map { it.walletId to it.rowId }.toSet()
+        activity.value = activity.value.filter { (it.walletId to it.rowId) !in keys } + rows
+    }
+    override suspend fun clearCached() { cached.value = emptyMap() }
+    override suspend fun clearList() { list.value = null }
+    override suspend fun clearActivity() { activity.value = emptyList() }
     override fun observeTransfer(id: String): Flow<TransferEntity?> = transfers.map { it[id] }
     override suspend fun transfer(id: String) = transfers.value[id]
     override suspend fun upsert(row: TransferEntity) { transfers.value = transfers.value + (row.transferId to row) }
@@ -105,17 +122,53 @@ private class FakeWalletDao : WalletDao {
     override suspend fun clearTransfers() { transfers.value = emptyMap() }
 }
 
-private class FakeWalletRemote : WalletRemote {
-    override suspend fun transactions(cursor: String?, limit: Int): AppResult<com.circaso.feature.wallet.data.remote.TransactionsResponse> =
-        AppResult.Success(com.circaso.feature.wallet.data.remote.TransactionsResponse())
+internal class FakeWalletRemote : WalletRemote {
+    /** W6 rows per wallet id (null: the personal wallet). */
+    val history = mutableMapOf<String?, List<com.circaso.feature.wallet.data.remote.TransactionDto>>()
+    override suspend fun transactions(cursor: String?, limit: Int, walletId: String?): AppResult<com.circaso.feature.wallet.data.remote.TransactionsResponse> =
+        AppResult.Success(com.circaso.feature.wallet.data.remote.TransactionsResponse(history[walletId].orEmpty()))
+    // Group wallets (W14–W16, `?walletId=`).
+    var groupStatus = "NONE"
+    var groupChallenge: String? = "ch-group"
+    val groupSdk = SdkDto("app", "group-token", "group-key", "2026-10-29T12:00:00Z")
+    val walletReads = mutableListOf<String?>()
+    val sessions = mutableListOf<String?>()
+    val missingFor = mutableListOf<String?>()
+    var setups = 0
+    var groupBalance = "50000000"
+    override suspend fun wallets() = AppResult.Success(
+        com.circaso.feature.wallet.data.remote.WalletsResponse(
+            listOf(
+                com.circaso.feature.wallet.data.remote.WalletListingDto("me", com.circaso.feature.wallet.data.remote.WalletOwnerDto("PERSON", userId = "me", signerUserId = "me"), status, true, listOf("BASE-SEPOLIA")),
+                com.circaso.feature.wallet.data.remote.WalletListingDto("gw-1", com.circaso.feature.wallet.data.remote.WalletOwnerDto("GROUP", chatId = "g1", signerUserId = "me"), "ACTIVE", true, listOf("BASE-SEPOLIA")),
+                com.circaso.feature.wallet.data.remote.WalletListingDto("gw-2", com.circaso.feature.wallet.data.remote.WalletOwnerDto("GROUP", chatId = "g2", signerUserId = "amina"), "ACTIVE", false, listOf("BASE-SEPOLIA")),
+            ),
+        ),
+    )
+    override suspend fun groupWallet(chatId: String) = AppResult.Success(
+        com.circaso.feature.wallet.data.remote.GroupWalletResponse(chatId, groupStatus, if (groupStatus == "NONE") null else com.circaso.feature.wallet.data.remote.WalletListingDto("gw-1", com.circaso.feature.wallet.data.remote.WalletOwnerDto("GROUP", chatId = chatId, signerUserId = "me"), groupStatus, true, emptyList())),
+    )
+    override suspend fun setUpGroupWallet(chatId: String, idempotencyKey: String): AppResult<com.circaso.feature.wallet.data.remote.GroupWalletSetupResponse> {
+        setups++
+        if (groupStatus == "ACTIVE") return AppResult.Failure(AppError.Api("wallet.already_exists", 409, null, null, emptyMap()))
+        groupStatus = "SETTING_UP"
+        return AppResult.Success(com.circaso.feature.wallet.data.remote.GroupWalletSetupResponse("gw-1", chatId, "SETTING_UP", groupChallenge, groupSdk))
+    }
     var status = "NONE"
     var creates = 0
     var challenge: String? = "ch-1"
     val prepared = mutableListOf<Pair<PrepareTransferRequest, String>>()
     var transferState = "AWAITING_SIGNATURE"
     val sdk = SdkDto("app", "token", "key", "2026-10-29T12:00:00Z")
-    override suspend fun wallet(currency: String?): AppResult<WalletResponse> = AppResult.Success(
-        WalletResponse(
+    override suspend fun wallet(currency: String?, walletId: String?): AppResult<WalletResponse> = AppResult.Success(
+        if (walletId != null) {
+            walletReads += walletId
+            WalletResponse(
+                "ACTIVE", chains = listOf(ChainDto("BASE-SEPOLIA", "0xgroup", "ACTIVE", listOf(AssetDto("USDC", "0xusdc", 6, groupBalance, MinorUnits.toDisplay(groupBalance, 6), null)))),
+                totals = listOf(AssetTotalDto("USDC", 6, groupBalance, MinorUnits.toDisplay(groupBalance, 6))),
+                walletId = walletId, owner = com.circaso.feature.wallet.data.remote.WalletOwnerDto("GROUP", chatId = "g1", signerUserId = "me"), canSign = true,
+            )
+        } else WalletResponse(
             status,
             chains = if (status == "ACTIVE") listOf(ChainDto("BASE-SEPOLIA", "0xabc", "ACTIVE", listOf(AssetDto("USDC", "0xusdc", 6, "20000000", "20", "2580.00")))) else emptyList(),
             totals = if (status == "ACTIVE") listOf(AssetTotalDto("USDC", 6, "20000000", "20")) else emptyList(),
@@ -123,10 +176,13 @@ private class FakeWalletRemote : WalletRemote {
         ),
     )
     override suspend fun create(idempotencyKey: String): AppResult<CreateWalletResponse> { creates++; status = "SETTING_UP"; return AppResult.Success(CreateWalletResponse("SETTING_UP", challenge, sdk)) }
-    override suspend fun session() = AppResult.Success(sdk)
-    override suspend fun chains() = AppResult.Success(ChainsResponse("BASE-SEPOLIA", emptyList()))
+    override suspend fun session(walletId: String?): AppResult<SdkDto> { sessions += walletId; return AppResult.Success(if (walletId != null) groupSdk else sdk) }
+    override suspend fun chains(walletId: String?) = AppResult.Success(ChainsResponse("BASE-SEPOLIA", emptyList()))
     override suspend fun addChain(blockchain: String, idempotencyKey: String) = AppResult.Success(AddChainResponse(blockchain, "ENABLED"))
-    override suspend fun addMissingChains(idempotencyKey: String) = AppResult.Success(com.circaso.feature.wallet.data.remote.AddMissingChainsResponse())
+    override suspend fun addMissingChains(idempotencyKey: String, walletId: String?): AppResult<com.circaso.feature.wallet.data.remote.AddMissingChainsResponse> {
+        missingFor += walletId
+        return AppResult.Success(com.circaso.feature.wallet.data.remote.AddMissingChainsResponse())
+    }
     override suspend fun prepare(request: PrepareTransferRequest, idempotencyKey: String): AppResult<PrepareTransferResponse> {
         prepared += request to idempotencyKey
         return AppResult.Success(PrepareTransferResponse("t-1", "AWAITING_SIGNATURE", request.blockchain, AmountDto("USDC", request.amount.amountMinor, MinorUnits.toDisplay(request.amount.amountMinor, 6)), "ch-pay", sdk, AmountDto("USDC", "0", "0"), "2026-10-29T12:15:00Z"))
@@ -139,12 +195,14 @@ private class FakeWalletRemote : WalletRemote {
     override suspend fun validateAddress(request: ValidateAddressRequest) = AppResult.Success(ValidateAddressResponse(request.blockchain, request.address.lowercase(), request.address.startsWith("0x")))
 }
 
-private class FakeSigner(var outcome: SignOutcome = SignOutcome.Done, val onExecute: suspend () -> Unit = {}) : WalletSigner {
+internal class FakeSigner(var outcome: SignOutcome = SignOutcome.Done, val onExecute: suspend () -> Unit = {}) : WalletSigner {
     val challenges = mutableListOf<String>()
+    /** Every session the SDK was handed, so a test can see which wallet each challenge signed for. */
+    val sessions = mutableListOf<SdkSession>()
     override val available = true
-    override suspend fun execute(session: SdkSession, challengeId: String): SignOutcome { challenges += challengeId; onExecute(); return outcome }
+    override suspend fun execute(session: SdkSession, challengeId: String): SignOutcome { challenges += challengeId; sessions += session; onExecute(); return outcome }
     var biometricsEnabled = false
-    override suspend fun enableBiometrics(session: SdkSession): SignOutcome = outcome.also { if (it == SignOutcome.Done) biometricsEnabled = true }
+    override suspend fun enableBiometrics(session: SdkSession): SignOutcome { sessions += session; return outcome.also { if (it == SignOutcome.Done) biometricsEnabled = true } }
 }
 
 class WalletRepositoryTest {

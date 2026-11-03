@@ -20,8 +20,8 @@ class RoomSessionDataCleaner(private val db: CircasoDatabase, private val cursor
         db.signalDao().clearAll() // another person's Signal identity, sessions and prekeys never carry over
         db.chatsDao().clearAll()
         db.messagesDao().clearAll()
-        db.walletDao().apply { clearSnapshot(); clearTransfers() }
-        db.chamaDao().clearAll()
+        db.walletDao().apply { clearSnapshot(); clearTransfers(); clearCached(); clearList(); clearActivity() }
+        db.chamaDao().apply { clearAll(); clearMoney() }
         db.reactionsDao().clear()
         db.momentsDao().apply { clearMoments(); clearPending() } // the moments sender keys go with the Signal store above
     }

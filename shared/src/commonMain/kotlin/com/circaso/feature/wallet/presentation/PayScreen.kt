@@ -37,6 +37,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.circaso.designsystem.chrome.CircasoNavBar
 import com.circaso.designsystem.chrome.CircasoScaffold
+import com.circaso.designsystem.chrome.CircasoSheet
 import com.circaso.designsystem.chrome.ToastHost
 import com.circaso.designsystem.chrome.rememberToastState
 import com.circaso.designsystem.components.AshaMark
@@ -67,6 +68,8 @@ import com.circaso.designsystem.theme.CircasoTheme
 import com.circaso.feature.wallet.domain.MinorUnits
 import com.circaso.feature.wallet.domain.RemindOutcome
 import com.circaso.feature.wallet.domain.chainName
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.semantics
 
 /**
  * Paying a person: pick them (from the wallet), the amount and note (design C4), the Circle SDK's PIN (C5), then the
@@ -75,7 +78,10 @@ import com.circaso.feature.wallet.domain.chainName
 @Composable
 fun PayScreen(viewModel: PayViewModel, onBack: () -> Unit, onOpenTransfer: (String) -> Unit, onOpenChat: ((String) -> Unit)?) {
     val state by viewModel.state.collectAsState()
-    PayContent(state, onBack, viewModel::onQuery, viewModel::onPick, { if (!viewModel.onBackToPick()) onBack() }, viewModel::onAmount, viewModel::onToggleUnit, viewModel::onNote, viewModel::onChain, viewModel::onRemind, viewModel::onPay, viewModel::onErrorShown, onOpenTransfer, onOpenChat, onAttachAgain = viewModel::onAttachAgain, onScan = if (viewModel.canScan) viewModel::onScan else null)
+    PayContent(
+        state, onBack, viewModel::onQuery, viewModel::onPick, { if (!viewModel.onBackToPick()) onBack() }, viewModel::onAmount, viewModel::onToggleUnit, viewModel::onNote, viewModel::onChain, viewModel::onRemind, viewModel::onPay, viewModel::onErrorShown, onOpenTransfer, onOpenChat,
+        onAttachAgain = viewModel::onAttachAgain, onScan = if (viewModel.canScan) viewModel::onScan else null, onChoosing = viewModel::onChoosing, onPayFrom = viewModel::onPayFrom,
+    )
 }
 
 @Composable
@@ -97,12 +103,19 @@ fun PayContent(
     onAttachAgain: () -> Unit = {},
     /** Scan someone's Circaso code (design E4) to pay them; null when the phone can't scan. */
     onScan: (() -> Unit)? = null,
+    /** GW10: open or close "Pay from", and pick a wallet. */
+    onChoosing: (Boolean) -> Unit = {},
+    onPayFrom: (NamedWallet) -> Unit = {},
 ) {
     val c = CircasoTheme.colors
     val t = CircasoTheme.typography
     val toast = rememberToastState()
     LaunchedEffect(state.error) { state.error?.let { toast.show(it); onErrorShown() } }
     val title = when {
+        // Group wallets (GW9, GW9c, GW9d): the review says what kind of money this is.
+        state.toGroup -> if (state.step == PayStep.Done) "Added" else "Contribute"
+        state.groupPayout -> if (state.step == PayStep.Done && state.result?.settled == true) "Paid" else if (state.step == PayStep.Done) "Sent" else "Pay Payout"
+        state.requestPayout -> if (state.step == PayStep.Done) "Requested" else "Request Payout"
         state.contribution -> if (state.step == PayStep.Done) "Added" else "Add to ${state.goalName}"
         state.payout -> when { state.step != PayStep.Done -> "Pay from the Group"; state.linked -> "Paid"; else -> "Sent" }
         state.step == PayStep.Pick -> "Send"
@@ -119,10 +132,15 @@ fun PayContent(
             )
         },
         toast = { ToastHost(toast, Modifier.align(Alignment.TopCenter).padding(top = 8.dp)) },
+        overlay = {
+            CircasoSheet(visible = state.choosing, onDismiss = { onChoosing(false) }, label = "Pay from") {
+                PayFromSheetContent(state.choices, state.payingFrom.walletId, state.balances, state.online, state.asOf, onPick = onPayFrom, onClose = { onChoosing(false) })
+            }
+        },
     ) { padding ->
         when (state.step) {
             PayStep.Pick -> PickPerson(state, padding, onQuery, onPick)
-            PayStep.Amount, PayStep.Signing -> AmountStep(state, padding, onAmount, onToggleUnit, onNote, onChain, onRemind, onPay)
+            PayStep.Amount, PayStep.Signing, PayStep.Sending -> AmountStep(state, padding, onAmount, onToggleUnit, onNote, onChain, onRemind, onPay, onChoosing)
             PayStep.Done -> DoneStep(state, padding, onBack, onOpenTransfer, onOpenChat, onAttachAgain)
         }
     }
@@ -147,7 +165,7 @@ private fun PickPerson(state: PayUiState, padding: PaddingValues, onQuery: (Stri
 
 /** Design C4: the person, the amount big, a note, from/fee/receives, then the button. The SDK takes over for C5. */
 @Composable
-private fun AmountStep(state: PayUiState, padding: PaddingValues, onAmount: (String) -> Unit, onToggleUnit: () -> Unit, onNote: (String) -> Unit, onChain: (String) -> Unit, onRemind: () -> Unit, onPay: () -> Unit) {
+private fun AmountStep(state: PayUiState, padding: PaddingValues, onAmount: (String) -> Unit, onToggleUnit: () -> Unit, onNote: (String) -> Unit, onChain: (String) -> Unit, onRemind: () -> Unit, onPay: () -> Unit, onChoosing: (Boolean) -> Unit = {}) {
     val c = CircasoTheme.colors
     val t = CircasoTheme.typography
     val payee = state.payee
@@ -156,11 +174,24 @@ private fun AmountStep(state: PayUiState, padding: PaddingValues, onAmount: (Str
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).imePadding().padding(horizontal = CircasoSpacing.s4).padding(bottom = padding.calculateBottomPadding() + CircasoSpacing.s4), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(CircasoSpacing.s4)) {
         if (payee != null) {
             Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(CircasoSpacing.s2), modifier = Modifier.padding(top = CircasoSpacing.s2)) {
-                Avatar(payee.displayName, size = CircasoSizes.avatarLg, imageUrl = payee.avatarUrl)
+                if (state.toGroup) WalletAvatar(payee.displayName, payee.avatarUrl, group = true) else Avatar(payee.displayName, size = CircasoSizes.avatarLg, imageUrl = payee.avatarUrl)
                 BasicText(payee.displayName, style = t.headline.copy(color = c.ink))
-                // Design D3: a contribution goes to the treasurer's wallet; design D5: a payout leaves it.
-                if (state.contribution) BasicText("holds the money for ${state.goalName}", style = t.footnote.copy(color = c.inkSecondary))
-                if (state.payout) BasicText("approved by the group's admins", style = t.footnote.copy(color = c.inkSecondary))
+                when {
+                    // GW9d: into the group's own wallet, not anyone's personal one.
+                    state.toGroup -> BasicText("the group’s own wallet", style = t.footnote.copy(color = c.inkSecondary))
+                }
+                // The signer left (spaces-plan §11.8): paying in is allowed, but say nothing can leave it for now.
+                val signer = state.groupMoney?.wallet?.signerUserId
+                if (state.toGroup && signer != null && state.memberNames.isNotEmpty() && signer !in state.memberNames) {
+                    BasicText("Nothing can be sent from this wallet until the person who signs for it is back in the group.", style = t.footnote.copy(color = c.warning, textAlign = TextAlign.Center))
+                }
+                when {
+                    state.toGroup -> Unit
+                    state.groupPayout -> BasicText("approved by the group’s admins", style = t.footnote.copy(color = c.inkSecondary))
+                    // Design D3: a contribution goes to the treasurer's wallet; design D5: a payout leaves it.
+                    state.contribution -> BasicText("holds the money for ${state.goalName}", style = t.footnote.copy(color = c.inkSecondary))
+                    state.payout -> BasicText("approved by the group's admins", style = t.footnote.copy(color = c.inkSecondary))
+                }
             }
         }
         // The amount as typed, with the other unit under it.
@@ -179,9 +210,21 @@ private fun AmountStep(state: PayUiState, padding: PaddingValues, onAmount: (Str
             }
         }
         val other = if (state.inFiat) state.usdcText else state.fiatText
-        if (state.payout) BasicText(listOfNotNull(state.fiatText?.let { "≈ $it" }, "The amount the admins approved").joinToString(" · "), style = t.footnote.copy(color = c.inkSecondary, textAlign = TextAlign.Center))
+        if (state.payout) Row(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
+            CircasoIconImage(CircasoIcon.Lock, c.inkSecondary, Modifier.size(12.dp))
+            BasicText(listOfNotNull(state.fiatText?.let { "≈ $it" }, "The amount the admins approved").joinToString(" · "), style = t.footnote.copy(color = c.inkSecondary, textAlign = TextAlign.Center))
+        }
         else if (state.canUseFiat) SuggestionChip(other?.let { "≈ $it · switch" } ?: "Type in ${if (state.inFiat) "USDC" else state.currency}", onToggleUnit)
-        if (state.overBalance) BasicText("You have ${MinorUnits.toDisplay(state.balanceMinor, 6)} USDC on ${chainName(state.blockchain.orEmpty())}.", style = t.footnote.copy(color = c.critical))
+        if (state.overBalance) BasicText((if (state.fromGroupWallet) "${state.walletName} has" else "You have") + " ${MinorUnits.toDisplay(state.balanceMinor, 6)} USDC on ${chainName(state.blockchain.orEmpty())}.", style = t.footnote.copy(color = c.critical))
+        // G2 / GW19: the payment didn't go; nothing was taken, and the approval (if any) still stands.
+        state.failure?.let { f ->
+            com.circaso.designsystem.chrome.Banner(
+                "Not sent. Nothing was taken from ${f.wallet}." + (if (state.payout) " The approval still stands." else "") +
+                    // The code's own words only when they add something ("Nothing was sent" would repeat the line).
+                    (f.message.takeIf { it != com.circaso.core.common.ErrorMessages.SomethingWrong && !it.contains("Nothing was sent") && !it.contains("Nothing was taken") }?.let { " $it" } ?: ""),
+                CircasoIcon.Warning, tone = com.circaso.designsystem.chrome.BannerTone.Critical,
+            )
+        }
 
         CircasoTextField(state.note, onNote, label = "Note", placeholder = "What's it for?", enabled = state.step == PayStep.Amount)
 
@@ -206,17 +249,48 @@ private fun AmountStep(state: PayUiState, padding: PaddingValues, onAmount: (Str
 
         // Design `.cx-details`: a raised card with hairlines between the rows.
         Column(Modifier.fillMaxWidth().clip(CircasoShapes.md).background(c.surfaceRaised).border(1.dp, c.separator, CircasoShapes.md)) {
-            DetailRow("From", "USDC on ${chainName(state.blockchain.orEmpty())}")
-            state.chama?.let { RowDivider(); DetailRow("Visible to", "All ${it.memberCount} members") }
+            if (state.showPayingFrom) {
+                // GW9b: the wallet the money leaves; a payout's and a contribution's are fixed (GW9, GW9d).
+                Row(Modifier.fillMaxWidth().padding(horizontal = CircasoSpacing.s4, vertical = 10.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                    BasicText("Paying from", style = t.body.copy(color = c.inkSecondary))
+                    PayingFromChip(state.payingFrom, if (state.canSwitch) ({ onChoosing(true) }) else null)
+                }
+                RowDivider()
+                DetailRow("Network", "USDC on ${chainName(state.blockchain.orEmpty())}")
+            } else {
+                DetailRow("From", "USDC on ${chainName(state.blockchain.orEmpty())}")
+            }
+            state.payoutRequest?.takeIf { state.groupPayout }?.let { r ->
+                val names = r.approvedBy.map { state.memberNames[it]?.substringBefore(' ') ?: "an admin" }
+                RowDivider(); DetailRow("Request", if (names.isEmpty()) "Approved" else "Approved by " + names.joinToString(" and "))
+            }
+            if (state.requestPayout) {
+                val policy = state.groupMoney?.approvalPolicy
+                RowDivider(); DetailRow("Approvals", if (policy == com.circaso.feature.chama.domain.ApprovalPolicy.AnyAdmin) "Any admin" else "2 admins")
+            }
+            (state.chama?.memberCount ?: state.groupMoney?.memberCount?.takeIf { state.toGroup || state.fromGroupWallet })?.let { RowDivider(); DetailRow("Visible to", "All $it members") }
             RowDivider()
+            // Phase 2F puts the quoted fee and the total here (GW13); until then W4's fee is zero.
             DetailRow("Fee", "No fee")
             RowDivider()
             DetailRow("${payee?.displayName?.substringBefore(' ') ?: "They"} receive${if (payee == null) "" else "s"}", state.usdcText ?: "—")
         }
+        // GW9d: the target as it will stand once this lands.
+        val groupGoal = state.groupMoney?.goal?.takeIf { state.toGroup }
+        val groupAfter = state.progressAfter
+        if (groupGoal != null && groupAfter != null) {
+            val got = MinorUnits.add(state.groupMoney!!.contributedMinor, state.amountMinor ?: "0")
+            Column(Modifier.fillMaxWidth().padding(horizontal = CircasoSpacing.s1)) {
+                GoalProgress(
+                    raised = amountText(got, state.wallet?.fiat), of = amountNumber(groupGoal.targetMinor, state.wallet?.fiat), progress = groupAfter,
+                    meta = if (state.amountMinor?.let { MinorUnits.isZero(it) } == false) "After your contribution" else "Today", label = "Target after your contribution",
+                )
+            }
+        }
         // Design D3: the goal as it will stand once this lands.
         val chama = state.chama
         val after = state.progressAfter
-        if (chama != null && after != null) {
+        if (chama != null && after != null && !state.toGroup) {
             val got = (chama.contributedMinor.toLongOrNull() ?: 0L) + (state.amountMinor?.toLongOrNull() ?: 0L)
             Column(Modifier.fillMaxWidth().padding(horizontal = CircasoSpacing.s1)) {
                 GoalProgress(
@@ -229,7 +303,15 @@ private fun AmountStep(state: PayUiState, padding: PaddingValues, onAmount: (Str
         val amount = if (state.inFiat && state.fiatText != null) state.fiatText else state.usdcText
         CircasoButton(
             text = when {
+                state.step == PayStep.Sending -> "Sending from ${if (state.fromGroupWallet) state.walletName else "your wallet"}…"
+                state.failure != null -> "Try Again"
+                state.step == PayStep.Signing && state.requestPayout -> "Asking the admins…"
+                state.step == PayStep.Signing && state.fromGroupWallet -> "Waiting for the PIN…"
                 state.step == PayStep.Signing -> "Waiting for your PIN…"
+                state.toGroup && amount != null -> "Pay $amount"
+                state.toGroup -> "Contribute"
+                state.requestPayout && amount != null -> "Request $amount Payout"
+                state.requestPayout -> "Request Payout"
                 state.contribution && amount != null -> "Add $amount to ${state.goalName}"
                 state.contribution -> "Add to ${state.goalName}"
                 state.payout && amount != null -> "Pay $amount"
@@ -237,8 +319,15 @@ private fun AmountStep(state: PayUiState, padding: PaddingValues, onAmount: (Str
                 amount != null -> "Send $amount"
                 else -> "Send"
             },
-            onClick = onPay, size = ButtonSize.Large, block = true, enabled = state.canPay, busy = state.step == PayStep.Signing,
+            onClick = onPay, size = ButtonSize.Large, block = true, enabled = state.canPay, busy = state.step == PayStep.Signing || state.step == PayStep.Sending,
         )
+        if (state.step == PayStep.Sending) BasicText("This takes a few seconds. You can close this; the card in the chat updates.", Modifier.semantics { liveRegion = androidx.compose.ui.semantics.LiveRegionMode.Polite }, style = t.footnote.copy(color = c.inkSecondary, textAlign = TextAlign.Center))
+        state.failure?.reference?.let { BasicText("Ref $it", style = t.caption1.copy(color = c.inkTertiary, fontFeatureSettings = "tnum")) }
+        // GW11: the approval names its wallet; behind Circle's PIN (and iOS's bare Face ID glyph) this stays on screen.
+        if (state.step == PayStep.Signing && state.fromGroupWallet && !state.requestPayout) {
+            BasicText("Approve from ${state.walletName} · ${state.walletName}’s PIN, not your personal one.", Modifier.semantics { liveRegion = androidx.compose.ui.semantics.LiveRegionMode.Polite }, style = t.footnote.copy(color = c.inkSecondary, textAlign = TextAlign.Center))
+        }
+        if (state.requestPayout) BasicText(if (state.payingFrom.canSign) "Admins approve in the group chat. Then you pay it with ${state.walletName}’s PIN." else "Admins approve in the group chat. Then ${state.signerName} pays it from ${state.walletName}’s wallet.", style = t.footnote.copy(color = c.inkSecondary, textAlign = TextAlign.Center))
         state.rate?.let { BasicText("1 USDC = ${state.currency} ${formatRate(it)}", style = t.caption1.copy(color = c.inkTertiary)) }
         if (!state.online) BasicText("You need a connection to send money.", style = t.footnote.copy(color = c.inkSecondary))
         if (state.onHold) BasicText("Sending is paused for a short while after your account was recovered. You can still receive money.", style = t.footnote.copy(color = c.warning, textAlign = TextAlign.Center))
@@ -272,11 +361,19 @@ private fun DoneStep(state: PayUiState, padding: PaddingValues, onDone: () -> Un
     Column(Modifier.fillMaxSize().padding(horizontal = CircasoSpacing.s6).padding(bottom = padding.calculateBottomPadding() + CircasoSpacing.s4), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(CircasoSpacing.s4, Alignment.CenterVertically)) {
         AshaMark(size = CircasoSizes.avatarLg)
         BasicText(
-            when { state.contribution -> "Added to ${state.goalName}"; state.linked -> "Paid from the group"; state.payout -> "The money went"; else -> "On its way" },
+            when {
+                state.requestPayout -> "Payout requested"
+                state.toGroup -> "Added to ${state.payee?.displayName ?: "the group"}"
+                state.groupPayout -> if (state.result?.settled == true) "Paid from ${state.walletName}" else "On its way from ${state.walletName}"
+                state.contribution -> "Added to ${state.goalName}"; state.linked -> "Paid from the group"; state.payout -> "The money went"; else -> "On its way"
+            },
             style = t.title2.copy(color = c.ink, textAlign = TextAlign.Center),
         )
         BasicText(
             when {
+                state.requestPayout -> "The admins of ${state.walletName} decide in the group chat. Once it’s approved, " + if (state.payingFrom.canSign) "you pay it with ${state.walletName}’s PIN." else "${state.signerName} pays it from the group wallet."
+                state.toGroup -> "It’s in the group’s own wallet, and everyone in the group sees it. It settles on chain in a moment."
+                state.groupPayout -> "${state.payee?.displayName ?: "They"} will have it in a moment, and the request in the chat turns to Paid."
                 state.contribution -> "Everyone in the group sees it on the goal. It settles on chain in a moment."
                 state.linked -> "${state.payee?.displayName ?: "They"} will have it in a moment, and the group sees the request as paid."
                 state.payout && state.attaching -> "${state.payee?.displayName ?: "They"} will have it in a moment. Linking it to the request…"
@@ -287,7 +384,7 @@ private fun DoneStep(state: PayUiState, padding: PaddingValues, onDone: () -> Un
         )
         if (transfer != null) {
             MoneyCard(
-                head = if (state.contribution) "Contribution" else "Sent", amount = state.fiatText ?: state.usdcText ?: "", foot = "${MinorUnits.toDisplay(transfer.amount.amountMinor, 6)} USDC · on its way", outgoing = true,
+                head = when { state.groupPayout && transfer.settled -> "Paid from ${state.walletName}"; state.groupPayout -> "From ${state.walletName}"; state.contribution -> "Contribution"; else -> "Sent" }, amount = state.fiatText ?: state.usdcText ?: "", foot = "${MinorUnits.toDisplay(transfer.amount.amountMinor, 6)} USDC · " + if (transfer.settled) "settled" else "on its way", outgoing = true,
                 note = state.note.trim().takeIf { it.isNotEmpty() }, onClick = { onOpenTransfer(transfer.transferId) },
             )
         }
@@ -297,8 +394,9 @@ private fun DoneStep(state: PayUiState, padding: PaddingValues, onDone: () -> Un
             CircasoButton("Link to the Request", onAttachAgain, style = ButtonStyle.Secondary, size = ButtonSize.Large, block = true, enabled = state.online)
         }
         Spacer(Modifier.height(CircasoSpacing.s2))
-        val chat = state.chatId
-        if (chat != null && onOpenChat != null) CircasoButton("Open Chat", { onOpenChat(chat) }, size = ButtonSize.Large, block = true)
+        // Request Payout from someone's chat: the card waits in the group's own chat.
+        val chat = if (state.requestPayout) state.payingFrom.chatId else state.chatId
+        if (chat != null && onOpenChat != null) CircasoButton(if (state.requestPayout) "Open ${state.walletName}" else "Open Chat", { onOpenChat(chat) }, size = ButtonSize.Large, block = true)
         CircasoButton("Done", onDone, style = if (chat != null && onOpenChat != null) ButtonStyle.Plain else ButtonStyle.Primary, size = ButtonSize.Large, block = true)
     }
 }

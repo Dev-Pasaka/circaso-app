@@ -108,7 +108,13 @@ fun RowScope.WalletTitleActions(viewModel: WalletViewModel) {
 }
 
 @Composable
-fun WalletTab(viewModel: WalletViewModel, bottomPadding: PaddingValues, actions: WalletActions) {
+fun WalletTab(
+    viewModel: WalletViewModel,
+    bottomPadding: PaddingValues,
+    actions: WalletActions,
+    /** GW16: a group wallet chosen in the switcher, drawn by the app (it has its own view model per group). */
+    groupWallet: (@Composable (chatId: String, bottomPadding: PaddingValues) -> Unit)? = null,
+) {
     val state by viewModel.state.collectAsState()
     // Fresh whenever the tab is in front: on coming back to the app, and quietly every 30 seconds while it stays open,
     // so money that arrives shows even when the server's "payment received" signal didn't reach the phone.
@@ -118,11 +124,37 @@ fun WalletTab(viewModel: WalletViewModel, bottomPadding: PaddingValues, actions:
             while (true) { viewModel.refresh(); kotlinx.coroutines.delay(30_000) }
         }
     }
-    WalletContent(
-        state, bottomPadding, actions,
-        onCreate = viewModel::onCreate, onRefresh = { viewModel.refresh(fromPull = true) }, onReceive = viewModel::onReceive, onComing = viewModel::onComing, onErrorShown = viewModel::onErrorShown,
-        sheets = false, onAddNetworks = viewModel::onAddMissingNetworks, onToggleHidden = viewModel::onToggleHidden,
-    )
+    Column(Modifier.fillMaxSize()) {
+        if (state.showSwitcher) WalletSwitcherTitle(state.selected, onClick = { viewModel.onSwitching(true) })
+        val group = state.selectedGroupChat
+        Box(Modifier.weight(1f)) {
+            if (group != null && groupWallet != null) groupWallet(group, bottomPadding)
+            else WalletContent(
+                state, bottomPadding, actions,
+                onCreate = viewModel::onCreate, onRefresh = { viewModel.refresh(fromPull = true) }, onReceive = viewModel::onReceive, onComing = viewModel::onComing, onErrorShown = viewModel::onErrorShown,
+                sheets = false, onAddNetworks = viewModel::onAddMissingNetworks, onToggleHidden = viewModel::onToggleHidden,
+            )
+        }
+    }
+}
+
+/**
+ * GW16: the tab's title is the switcher ("Wallet ▾") for someone with other wallets; it truncates a long group name.
+ * Tabs have no title bar otherwise (Pasaka, 2026-10-30), so it shows only when there is something to switch to.
+ */
+@Composable
+private fun WalletSwitcherTitle(selected: NamedWallet, onClick: () -> Unit) {
+    val c = CircasoTheme.colors
+    val t = CircasoTheme.typography
+    Row(
+        Modifier.fillMaxWidth().padding(start = CircasoSpacing.s4, end = CircasoSpacing.s4, top = CircasoSpacing.s2, bottom = CircasoSpacing.s1)
+            .pressable(role = Role.Button, onClick = onClick)
+            .semantics(mergeDescendants = true) { contentDescription = "Wallet: ${if (selected.personal) "Personal" else selected.name}, change" },
+        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        BasicText(if (selected.personal) "Wallet" else selected.name, Modifier.weight(1f, fill = false).semantics { heading() }, style = t.largeTitle.copy(color = c.ink), maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
+        com.circaso.designsystem.components.CircasoIconImage(CircasoIcon.ChevronDown, c.ink, Modifier.padding(top = 4.dp).size(22.dp))
+    }
 }
 
 /** The Wallet tab's sheets (E4, E2/E6), for the home scaffold's overlay so they sit above the tab bar. */
@@ -134,6 +166,10 @@ fun androidx.compose.foundation.layout.BoxScope.WalletOverlay(
 ) {
     val state by viewModel.state.collectAsState()
     WalletSheets(state, actions, viewModel::onReceive, viewModel::onComing)
+    // GW16: every wallet the person can see; a group's is read-only for its members, sent from by its signer.
+    CircasoSheet(state.switching, { viewModel.onSwitching(false) }, label = "Wallets") {
+        WalletPickContent(state.wallets, state.selectedWalletId, onPick = viewModel::onSelectWallet, onClose = { viewModel.onSwitching(false) })
+    }
     if (biometrics != null) {
         val bio by biometrics.state.collectAsState()
         // Asked once, right after the wallet is made; later it lives in You → Security → Payments. The sheet stays up

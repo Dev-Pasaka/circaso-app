@@ -113,6 +113,8 @@ fun RequestCard(
     onDecline: () -> Unit,
     onPay: () -> Unit,
     modifier: Modifier = Modifier,
+    /** Group wallets: the money is in the group's own wallet and its signer pays (GW9); otherwise the treasurer model. */
+    inGroupWallet: Boolean = false,
 ) {
     val c = CircasoTheme.colors
     val t = CircasoTheme.typography
@@ -146,7 +148,8 @@ fun RequestCard(
         val line = listOfNotNull(
             if (approvers.isNotEmpty()) "Approved by ${approvers.joinToString()}" else null,
             if (request.state == RequestState.Pending && hours != null) "Expires in $hours hour${if (hours == 1L) "" else "s"}" else null,
-            if (request.state == RequestState.Approved && isTreasurer && request.transferId == null) "Waiting for you to pay it" else null,
+            if (request.state == RequestState.Approved && isTreasurer && request.transferId == null) (if (inGroupWallet) "It’s ready for you to pay from the group wallet" else "Waiting for you to pay it") else null,
+            if (request.state == RequestState.Approved && !isTreasurer && inGroupWallet && request.transferId == null) "Paid from the group wallet once its signer sends it" else null,
         ).joinToString(" · ")
         if (line.isNotEmpty()) BasicText(line, style = t.footnote.copy(color = c.inkSecondary))
         val canDecide = request.state == RequestState.Pending && isAdmin && !decided
@@ -156,7 +159,7 @@ fun RequestCard(
                 CircasoButton("Approve", onApprove, modifier = Modifier.weight(1f), size = ButtonSize.Medium, enabled = !busy && online, busy = busy)
                 CircasoButton("Decline", onDecline, modifier = Modifier.weight(1f), style = ButtonStyle.Secondary, size = ButtonSize.Medium, enabled = !busy && online)
             }
-            canPay -> CircasoButton("Pay from the Group", onPay, size = ButtonSize.Medium, block = true, enabled = !busy && online)
+            canPay -> CircasoButton(if (inGroupWallet) "Pay Payout" else "Pay from the Group", onPay, size = ButtonSize.Medium, block = true, enabled = !busy && online)
             else -> Unit
         }
         if ((canDecide || canPay) && !online) BasicText(if (canPay) "You're offline. Paying needs a connection." else "You're offline. Approving needs a connection.", style = t.footnote.copy(color = c.inkSecondary))
@@ -165,7 +168,7 @@ fun RequestCard(
 
 /** Design D6: what the group is, who is in it, and the goal, the first time it opens. */
 @Composable
-fun GroupIntroContent(chat: Chat, chama: Chama, fiat: FiatValue?, myUserId: String?, onDone: () -> Unit) {
+fun GroupIntroContent(chat: Chat, chama: Chama, fiat: FiatValue?, myUserId: String?, onDone: () -> Unit, inGroupWallet: Boolean = false) {
     val c = CircasoTheme.colors
     val t = CircasoTheme.typography
     val mine = chama.goal.treasurerUserId == myUserId
@@ -185,8 +188,13 @@ fun GroupIntroContent(chat: Chat, chama: Chama, fiat: FiatValue?, myUserId: Stri
         }
         CircasoButton("Got It", onDone, size = ButtonSize.Large, block = true)
         BasicText(
-            if (mine) "You hold the group's money and pay out only what two admins approve. Everyone sees every contribution and payment."
-            else "$treasurer holds the group's money and pays out only what the admins approve. Contributing is always your choice.",
+            when {
+                // Group wallets: "held by Otieno" becomes "in the group wallet" (spaces-plan §7).
+                inGroupWallet && mine -> "The money is in the group’s own wallet. Only you can send from it, and only what the admins approve. Everyone sees every payment."
+                inGroupWallet -> "The money is in the group’s own wallet. Only $treasurer can send from it, and only what the admins approve. Contributing is always your choice."
+                mine -> "You hold the group's money and pay out only what two admins approve. Everyone sees every contribution and payment."
+                else -> "$treasurer holds the group's money and pays out only what the admins approve. Contributing is always your choice."
+            },
             style = t.footnote.copy(color = c.inkSecondary, textAlign = TextAlign.Center),
         )
     }

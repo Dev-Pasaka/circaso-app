@@ -79,7 +79,7 @@ final class CircleWalletImpl: NSObject, WalletSigner {
                     case .failure(let error):
                         response.onErrorController?.dismiss(animated: true)
                         // Face ID re-enrolled, turned off or not allowed: approval falls back to the PIN, so stop showing it as on.
-                        if Self.biometricsGone.contains("\(error.errorCode)") { WalletSignerBridge.shared.reportBiometricsLost() }
+                        if Self.biometricsGone.contains("\(error.errorCode)") { WalletSignerBridge.shared.reportBiometricsLost(walletId: session.subject.walletId) }
                         if error.errorCode == .userCanceled {
                             continuation.resume(returning: SignOutcomeCancelled.shared)
                         } else {

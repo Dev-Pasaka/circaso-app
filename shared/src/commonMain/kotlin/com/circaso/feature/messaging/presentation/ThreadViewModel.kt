@@ -56,6 +56,8 @@ data class ThreadUiState(
     val showIntro: Boolean = false,
     val myUserId: String? = null,
     val chamaBusy: Boolean = false,
+    /** Group wallets (GW9a2, GW9): the group's money; a wallet that's active turns `#` into a contribution. */
+    val groupMoney: com.circaso.feature.chama.domain.GroupMoney? = null,
     /** SP05: the person said that's all; ask whether it was sorted. */
     val supportEnding: Boolean = false,
     /** A voice note is being recorded (the mic is held). */
@@ -84,9 +86,13 @@ data class ThreadUiState(
     val isSupport get() = com.circaso.feature.support.Support.isSupportChat(chat, myUserId)
     val isGroup get() = chat?.kind == ChatKind.Group
     /** The open requests (D5) sit under the messages; the treasurer can't contribute to themselves. */
-    val openRequests get() = chama?.openRequests.orEmpty()
-    val canContribute get() = chama != null && chama.goal.treasurerUserId != myUserId
-    fun memberName(userId: String) = chat?.members?.firstOrNull { it.userId == userId }?.displayName ?: "Someone"
+    val openRequests get() = groupMoney?.openRequests ?: chama?.openRequests.orEmpty()
+    /** Group wallets: every member pays into the group's own wallet (its signer too). Treasurer model: not the treasurer. */
+    val canContribute get() = if (groupMoney != null) groupMoney.walletActive else chama != null && chama.goal.treasurerUserId != myUserId
+    /** Who may decide on requests and who pays them: the group's admins, and its wallet's signer (or the treasurer). */
+    val requestsAdmin get() = groupMoney?.isAdmin ?: (chama?.isAdmin == true)
+    val requestsPayer get() = groupMoney?.isSigner ?: (chama?.isTreasurer == true)
+    fun memberName(userId: String?) = chat?.members?.firstOrNull { it.userId == userId }?.displayName ?: "Someone"
     val canSend get() = draft.isNotBlank() && chat != null
     /** The header's second line: typing first, then the connection, then the member count (design C2/D2 and G3). */
     val subtitle: String
@@ -175,7 +181,7 @@ class ThreadViewModel(
                 if (chat?.kind == ChatKind.Group && chama != null && !chamaRefreshed) { chamaRefreshed = true; launch { chama.refresh(chatId) } }
             }
         }
-        if (chama != null) viewModelScope.launch { chama.observe(chatId).collect { s -> _state.update { it.copy(chama = s.chama, fiat = s.fiat, showIntro = s.showIntro, myUserId = s.myUserId) } } }
+        if (chama != null) viewModelScope.launch { chama.observe(chatId).collect { s -> _state.update { it.copy(chama = s.chama, fiat = s.fiat, showIntro = s.showIntro, myUserId = s.myUserId, groupMoney = s.groupMoney) } } }
         viewModelScope.launch {
             // A window of the newest messages that grows by a page as the person scrolls up (onLoadOlder).
             @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
