@@ -194,14 +194,14 @@ private fun MyMomentItem(state: SpacesUiState, actions: SpacesActions) {
     MomentItem(
         name = name, label = label, ring = if (ring == MyRing.Seen) RingStyle.Seen else RingStyle.None,
         onClick = if (ring == MyRing.Seen) actions.onOpenMine else actions.onCompose,
-    ) {
-        Avatar(state.myName.ifBlank { "Me" }, size = CircasoSizes.avatarLg, imageUrl = state.myAvatarUrl)
-        when (ring) {
+        badge = { when (ring) {
             MyRing.Posting -> PostingArc()
             MyRing.Waiting -> Badge(c.fillStrong) { CircasoIconImage(CircasoIcon.Clock, c.ink, Modifier.size(13.dp)) }
             MyRing.Failed -> Badge(c.critical) { BasicText("!", style = CircasoTheme.typography.footnote.copy(color = c.bg, fontWeight = FontWeight.Bold)) }
             else -> Badge(c.action) { CircasoIconImage(CircasoIcon.Plus, c.onAction, Modifier.size(13.dp)) }
-        }
+        } },
+    ) {
+        Avatar(state.myName.ifBlank { "Me" }, size = CircasoSizes.avatarLg, imageUrl = state.myAvatarUrl)
     }
 }
 
@@ -222,6 +222,8 @@ private enum class RingStyle { Unseen, Seen, None }
 @Composable
 private fun MomentItem(
     name: String, label: String, ring: RingStyle, onClick: () -> Unit, dimmed: Boolean = false,
+    /** Drawn above the ring and the photo (the plus, clock, ! or posting arc), so the ring's line never crosses it. */
+    badge: @Composable BoxScope.() -> Unit = {},
     content: @Composable BoxScope.() -> Unit,
 ) {
     val c = CircasoTheme.colors
@@ -232,11 +234,14 @@ private fun MomentItem(
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
         val ringColor = when (ring) { RingStyle.Unseen -> c.ink; RingStyle.Seen -> c.fillStrong; RingStyle.None -> androidx.compose.ui.graphics.Color.Transparent }
-        Box(
-            Modifier.size(CircasoSizes.momentRing).border(2.5.dp, ringColor, CircasoShapes.circle).padding(3.dp).alpha(if (dimmed) 0.5f else 1f),
-            contentAlignment = Alignment.Center,
-            content = content,
-        )
+        Box(Modifier.size(CircasoSizes.momentRing), contentAlignment = Alignment.Center) {
+            Box(
+                Modifier.matchParentSize().border(2.5.dp, ringColor, CircasoShapes.circle).padding(3.dp).alpha(if (dimmed) 0.5f else 1f),
+                contentAlignment = Alignment.Center,
+                content = content,
+            )
+            badge()
+        }
         BasicText(
             name, maxLines = 1, overflow = TextOverflow.Ellipsis,
             style = t.caption1.copy(color = if (ring == RingStyle.Seen) c.inkSecondary else c.ink, textAlign = TextAlign.Center),
