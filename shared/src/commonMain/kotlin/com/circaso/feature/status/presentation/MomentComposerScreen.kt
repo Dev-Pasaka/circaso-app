@@ -1,6 +1,16 @@
 package com.circaso.feature.status.presentation
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.width
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.semantics.customActions
+import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.foundation.border
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
@@ -65,15 +75,39 @@ import com.circaso.designsystem.theme.CircasoTheme
 import com.circaso.designsystem.theme.LightColors
 import com.circaso.feature.status.domain.MomentTextStyle
 
+/** Whether the person's own theme is dark, for the list screens over the dark stage (the gallery, M3). */
+private val LocalPersonalDark = androidx.compose.runtime.staticCompositionLocalOf { false }
+
 @OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class)
 @Composable
 fun MomentComposerScreen(viewModel: MomentComposerViewModel, onClose: () -> Unit, onAudience: () -> Unit, onFindPeople: () -> Unit = {}) {
     val state by viewModel.state.collectAsState()
     LaunchedEffect(state.shared) { if (state.shared) onClose() }
-    androidx.compose.ui.backhandler.BackHandler { if (state.capture != null) viewModel.discardCapture() else onClose() }
-    // The dark stage in every theme (design M1), from the dark tokens.
-    CircasoTheme(darkTheme = true, highContrast = CircasoTheme.colors.isHighContrast) {
-        ComposerContent(state, viewModel, onClose, onAudience, onFindPeople)
+    androidx.compose.ui.backhandler.BackHandler {
+        when {
+            state.trim != null -> viewModel.cancelTrim()
+            state.gallery != null -> viewModel.closeGallery()
+            state.selecting -> viewModel.clearSelection()
+            state.capture != null -> viewModel.discardCapture()
+            else -> onClose()
+        }
+    }
+    val forward = if (state.forwarding) androidx.compose.runtime.remember(state.current, state.items) { viewModel.forwardItem() } else null
+    Box(Modifier.fillMaxSize()) {
+        // The dark stage in every theme (design M1), from the dark tokens. The person's own theme is kept for the list
+        // screens drawn over it (the gallery).
+        androidx.compose.runtime.CompositionLocalProvider(LocalPersonalDark provides CircasoTheme.colors.isDark) {
+            CircasoTheme(darkTheme = true, highContrast = CircasoTheme.colors.isHighContrast) {
+                ComposerContent(state, viewModel, onClose, onAudience, onFindPeople)
+            }
+        }
+        // Forward (V4) is a list screen in the person's own theme, over the stage.
+        if (forward != null) {
+            MomentForwardScreen(
+                org.koin.compose.viewmodel.koinViewModel(key = "forward-composer"), forward, onClose = { viewModel.openForward(false) },
+                onSent = { names -> viewModel.openForward(false); viewModel.notice(forwardedNotice(names)) },
+            )
+        }
     }
 }
 
@@ -83,9 +117,10 @@ private fun ComposerContent(state: MomentComposerUiState, vm: MomentComposerView
     val toast = rememberToastState()
     LaunchedEffect(state.error) { state.error?.let { toast.show(it); vm.errorShown() } }
     Box(Modifier.fillMaxSize().background(c.bg)) {
+        val capture = state.capture
         when {
-            state.capture is ComposerCapture.Shot -> ShotReview(state.capture, state)
-            state.capture is ComposerCapture.Voice -> VoiceStageReview(state.capture, state.playingBack, vm)
+            capture is ComposerCapture.Shot -> ShotReview(capture, state.item?.unplayable == true, playing = state.trim == null && !state.forwarding, vm = vm)
+            capture is ComposerCapture.Voice -> VoiceStageReview(capture, state.playingBack, vm)
             state.mode == ComposerMode.Text -> TextEditor(state, vm)
             state.mode == ComposerMode.Voice -> VoiceRecorderStage(state, vm)
             state.camera == CameraStart.Started -> CameraViewfinder(vm.camera, Modifier.fillMaxSize())
@@ -105,6 +140,10 @@ private fun ComposerContent(state: MomentComposerUiState, vm: MomentComposerView
             if (state.capture == null && (state.mode == ComposerMode.Photo || state.mode == ComposerMode.Video) && state.camera == CameraStart.Started) {
                 StageButton(CircasoIcon.Flash, if (state.flash) "Flash on" else "Flash off", filled = state.flash, onClick = vm::toggleFlash)
             }
+            if (state.capture != null) {
+                if (state.item?.video?.path != null) StageButton(CircasoIcon.Scissors, "Trim video") { vm.openTrim() }
+                StageButton(CircasoIcon.Forward, "Forward to a chat") { vm.openForward(true) }
+            }
         }
 
         if (state.recordingVideo) {
@@ -120,24 +159,44 @@ private fun ComposerContent(state: MomentComposerUiState, vm: MomentComposerView
 
         Column(Modifier.align(Alignment.BottomCenter).fillMaxWidth().navigationBarsPadding().imePadding().padding(bottom = CircasoSpacing.s3), verticalArrangement = Arrangement.spacedBy(14.dp)) {
             if (state.capture != null || state.mode == ComposerMode.Text) {
+                if (state.items.size > 1) PickedStrip(state, vm)
                 if (state.capture != null) CaptionField(state.caption, vm::onCaption)
+                // Under the caption, once (design M4): what happens to it.
+                if (state.capture != null && !state.nobody) {
+                    Row(Modifier.fillMaxWidth().padding(horizontal = CircasoSpacing.s4), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                        CircasoIconImage(CircasoIcon.Lock, c.inkSecondary, Modifier.size(13.dp))
+                        BasicText(
+                            when {
+                                state.preparing -> "Making the video smaller to share…"
+                                state.items.size > 1 -> "${state.items.size} moments, in this order. End-to-end encrypted."
+                                else -> "End-to-end encrypted. Gone after 24 hours."
+                            },
+                            style = CircasoTheme.typography.footnote.copy(color = c.inkSecondary),
+                        )
+                    }
+                }
                 if (state.capture == null) Swatches(state.background, vm::onBackground)
                 Row(Modifier.fillMaxWidth().padding(horizontal = CircasoSpacing.s4), horizontalArrangement = Arrangement.spacedBy(CircasoSpacing.s2), verticalAlignment = Alignment.CenterVertically) {
+                    // Compact (Pasaka, 2026-11-04): the people icon and the chevron only, to leave room for the moment. The
+                    // audience is still read out in full, and the target stays 48 dp.
                     Row(
-                        Modifier.clip(CircasoShapes.pill).background(c.glass).pressable(onClick = onAudience).padding(horizontal = 14.dp, vertical = 12.dp)
-                            .semantics(mergeDescendants = true) { contentDescription = "Who can see this: ${state.audienceLabel}. Change" },
+                        Modifier.heightIn(min = 48.dp).clip(CircasoShapes.pill).background(c.glass).pressable(onClick = onAudience).padding(horizontal = 14.dp)
+                            .semantics(mergeDescendants = true) { contentDescription = "Who sees this: ${state.audienceLabel.replace(" · ", ", ")}. Change"; role = Role.Button },
                         verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp),
                     ) {
-                        CircasoIconImage(CircasoIcon.People, c.ink, Modifier.size(16.dp))
-                        BasicText(state.audienceLabel, style = CircasoTheme.typography.subhead.copy(color = c.ink, fontWeight = FontWeight.SemiBold), maxLines = 1)
+                        CircasoIconImage(CircasoIcon.People, if (state.nobody) c.critical else c.ink, Modifier.size(18.dp))
                         CircasoIconImage(CircasoIcon.ChevronDown, c.ink, Modifier.size(14.dp))
                     }
                     Box(Modifier.weight(1f))
                     Box(
                         Modifier.size(52.dp).clip(CircasoShapes.circle).background(if (state.canShare) c.ink else c.fill)
-                            .pressable(enabled = state.canShare, onClick = vm::share).semantics { contentDescription = "Share moment"; role = Role.Button },
+                            .pressable(enabled = state.canShare, onClick = vm::share)
+                            .semantics { contentDescription = if (state.items.size > 1) "Share ${state.items.size} moments" else "Share moment"; role = Role.Button },
                         contentAlignment = Alignment.Center,
-                    ) { CircasoIconImage(CircasoIcon.ArrowUp, if (state.canShare) c.bg else c.inkTertiary, Modifier.size(22.dp)) }
+                    ) {
+                        if (state.sharing || state.preparing) com.circaso.designsystem.components.Spinner(c.bg, Modifier.size(22.dp))
+                        else CircasoIconImage(CircasoIcon.ArrowUp, if (state.canShare) c.bg else c.inkTertiary, Modifier.size(22.dp))
+                    }
                 }
                 if (state.nobody) {
                     // Caught before Share, not after: a moment with nobody to see it is never posted.
@@ -148,19 +207,61 @@ private fun ComposerContent(state: MomentComposerUiState, vm: MomentComposerView
                         BasicText("Moments go to your contacts on Circaso. None are here yet.", Modifier.weight(1f), style = CircasoTheme.typography.footnote.copy(color = c.ink))
                         CircasoButton("Find People", onFindPeople, style = ButtonStyle.Secondary, size = ButtonSize.Small)
                     }
-                } else if (state.capture != null) {
-                    Row(Modifier.align(Alignment.CenterHorizontally), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
-                        CircasoIconImage(CircasoIcon.Lock, c.inkSecondary, Modifier.size(13.dp))
-                        BasicText("End-to-end encrypted. Gone after 24 hours.", style = CircasoTheme.typography.footnote.copy(color = c.inkSecondary))
-                    }
                 }
             } else {
                 if (!state.recordingVideo && !state.recordingVoice) RecentsStrip(state, vm)
-                if (state.mode != ComposerMode.Voice) CameraControls(state, vm)
+                if (state.selecting && state.selection.isNotEmpty()) SelectionBar(state, vm)
+                else if (state.mode != ComposerMode.Voice) CameraControls(state, vm)
             }
-            if (state.capture == null && !state.recordingVideo && !state.recordingVoice) ModeRow(state.mode, vm::setMode)
+            if (state.capture == null && !state.recordingVideo && !state.recordingVoice && !state.selecting) ModeRow(state.mode, vm::setMode)
         }
+        // The gallery and the trimmer rise over the stage and fade away (still under reduced motion).
+        Layer(state.gallery) { GalleryScreen(it, state, vm) }
+        Layer(state.trim) { TrimScreen(it, state, vm) }
         ToastHost(toast, Modifier.align(Alignment.TopCenter).statusBarsPadding().padding(top = 64.dp))
+    }
+}
+
+/** While several are ticked on the strip: how many, Cancel and Next (WhatsApp-style), in place of the shutter. */
+@Composable
+private fun SelectionBar(state: MomentComposerUiState, vm: MomentComposerViewModel) {
+    val c = CircasoTheme.colors
+    Row(
+        Modifier.fillMaxWidth().padding(horizontal = CircasoSpacing.s4).heightIn(min = 78.dp),
+        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(CircasoSpacing.s3),
+    ) {
+        CircasoButton("Cancel", vm::clearSelection, style = ButtonStyle.Secondary, size = ButtonSize.Small)
+        BasicText(
+            "${state.selection.size} selected", Modifier.weight(1f).semantics { liveRegion = androidx.compose.ui.semantics.LiveRegionMode.Polite },
+            style = CircasoTheme.typography.subhead.copy(color = c.ink, fontWeight = FontWeight.SemiBold, textAlign = TextAlign.Center),
+        )
+        CircasoButton("Next", vm::useSelection, size = ButtonSize.Small, busy = state.loadingPick)
+    }
+}
+
+/** M4: several picked; tap one to put it on the stage (and edit its caption), the bin takes it out. */
+@Composable
+private fun PickedStrip(state: MomentComposerUiState, vm: MomentComposerViewModel) {
+    val c = CircasoTheme.colors
+    Row(Modifier.fillMaxWidth().padding(horizontal = CircasoSpacing.s4), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        androidx.compose.foundation.lazy.LazyRow(Modifier.weight(1f), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            items(state.items.size, key = { state.items[it].capture.hashCode() }) { i ->
+                val item = state.items[i]
+                val on = i == state.current
+                val media = (item.capture as? ComposerCapture.Shot)?.media
+                Box(
+                    Modifier.size(CircasoSizes.controlMd).clip(CircasoShapes.sm).background(c.fill)
+                        .then(if (on) Modifier.border(2.dp, c.ink, CircasoShapes.sm) else Modifier)
+                        .pressable(onClick = { vm.select(i) })
+                        .semantics { contentDescription = "Moment ${i + 1} of ${state.items.size}" + if (item.tooLong) ", needs trimming" else ""; selected = on; role = Role.Tab },
+                ) {
+                    val picture = media?.thumb ?: media?.bytes?.takeIf { media.mime.startsWith("image") }
+                    if (picture != null) coil3.compose.AsyncImage(picture, null, Modifier.fillMaxSize().graphicsLayer { alpha = if (on) 1f else 0.7f }, contentScale = ContentScale.Crop)
+                    if (item.tooLong) CircasoIconImage(CircasoIcon.Scissors, c.ink, Modifier.align(Alignment.Center).size(16.dp))
+                }
+            }
+        }
+        StageButton(CircasoIcon.Trash, "Remove this one", onClick = vm::removeCurrent)
     }
 }
 
@@ -219,11 +320,32 @@ private fun ModeRow(mode: ComposerMode, onMode: (ComposerMode) -> Unit) {
     }
 }
 
-/** M4: the shot, before sharing. */
+/**
+ * M4: the shot, before sharing. A video shows its thumbnail until the first frame is on screen, so the review is never
+ * a black void; if this phone can't play it, the thumbnail stays and a line says it will still post.
+ */
 @Composable
-private fun ShotReview(shot: ComposerCapture.Shot, state: MomentComposerUiState) {
-    if (shot.media.mime.startsWith("video") && shot.media.path != null) com.circaso.core.platform.MomentVideo(shot.media.path, playing = true, muted = false, modifier = Modifier.fillMaxSize(), loop = true)
-    else coil3.compose.AsyncImage(shot.media.bytes, "Your photo", Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+private fun BoxScope.ShotReview(shot: ComposerCapture.Shot, unplayable: Boolean, playing: Boolean, vm: MomentComposerViewModel) {
+    val c = CircasoTheme.colors
+    val path = shot.media.path
+    if (shot.media.mime.startsWith("video") && path != null) {
+        com.circaso.core.platform.MomentVideo(
+            path, playing = playing, muted = false, modifier = Modifier.fillMaxSize(), loop = true,
+            poster = shot.media.thumb, onUnplayable = vm::markUnplayable,
+        )
+        if (unplayable) {
+            Row(
+                Modifier.align(Alignment.Center).padding(horizontal = 32.dp).clip(CircasoShapes.md).background(c.glass).padding(horizontal = 14.dp, vertical = 10.dp)
+                    .semantics { liveRegion = androidx.compose.ui.semantics.LiveRegionMode.Polite },
+                verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                CircasoIconImage(CircasoIcon.Video, c.ink, Modifier.size(18.dp))
+                BasicText("This phone can’t preview this video. It will still post.", style = CircasoTheme.typography.subhead.copy(color = c.ink))
+            }
+        }
+    } else {
+        coil3.compose.AsyncImage(shot.media.bytes, "Your photo", Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+    }
 }
 
 @Composable
@@ -270,31 +392,33 @@ private fun Swatches(selected: String, onPick: (String) -> Unit) {
 }
 
 /**
- * The recents strip (WhatsApp-style): the newest photos, videos or audio on the phone, then Gallery (Files for audio)
- * for everything else. Tap one to use it.
+ * The recents strip (WhatsApp-style): the newest photos, videos or audio on the phone. Tap one to use it; hold one to
+ * pick several (numbered in the order they'll post). Without access to this kind it says so and offers to allow it;
+ * with limited access (only chosen items) a Manage tile leads.
  */
 @Composable
 private fun RecentsStrip(state: MomentComposerUiState, vm: MomentComposerViewModel) {
     val c = CircasoTheme.colors
     val t = CircasoTheme.typography
     val audio = state.mode == ComposerMode.Voice
+    val access = state.recentsAccess
     androidx.compose.foundation.lazy.LazyRow(
         Modifier.fillMaxWidth(), contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = CircasoSpacing.s4),
         horizontalArrangement = Arrangement.spacedBy(6.dp),
     ) {
         // Photo and video have Gallery beside the shutter (as WhatsApp); audio has no shutter, so Files leads its strip.
         if (audio) item(key = "pick") {
-            Column(
-                Modifier.size(if (audio) 120.dp else 56.dp, 56.dp).clip(CircasoShapes.md).background(c.glass).pressable(onClick = vm::pickFromLibrary)
-                    .semantics(mergeDescendants = true) { contentDescription = if (audio) "Choose an audio file" else "Open gallery"; role = Role.Button },
-                horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center,
-            ) {
-                if (state.loadingPick) com.circaso.designsystem.components.Spinner(c.ink)
-                else {
-                    CircasoIconImage(if (audio) CircasoIcon.Waveform else CircasoIcon.Photo, c.ink, Modifier.size(20.dp))
-                    BasicText(if (audio) "Files" else "Gallery", style = t.caption2.copy(color = c.ink))
-                }
-            }
+            StripTile("Files", CircasoIcon.Waveform, "Choose an audio file", wide = true, busy = state.loadingPick, onClick = vm::pickFromLibrary)
+        }
+        if (access == com.circaso.core.platform.LibraryAccess.Denied) item(key = "allow") {
+            StripTile(
+                "Allow access", CircasoIcon.Lock,
+                when (state.mode) { ComposerMode.Video -> "Allow access to your videos"; ComposerMode.Voice -> "Allow access to your audio"; else -> "Allow access to your photos" },
+                wide = true, onClick = vm::manageAccess,
+            )
+        }
+        if (access == com.circaso.core.platform.LibraryAccess.Limited) item(key = "manage") {
+            StripTile("Manage", CircasoIcon.Plus, "Circaso can see only what you chose. Choose more", wide = false, onClick = vm::manageAccess)
         }
         items(state.recents.size, key = { state.recents[it].id }) { i ->
             val item = state.recents[i]
@@ -308,15 +432,63 @@ private fun RecentsStrip(state: MomentComposerUiState, vm: MomentComposerViewMod
                     BasicText(clock(item.durationMs ?: 0), style = t.caption2.copy(color = c.inkSecondary, fontFeatureSettings = "tnum"))
                 }
             } else {
-                Box(
-                    Modifier.size(56.dp).clip(CircasoShapes.md).background(c.fill).pressable(onClick = { vm.useRecent(item) })
-                        .semantics { contentDescription = if (item.kind == com.circaso.core.platform.LibraryKind.Video) "Video, ${clock(item.durationMs ?: 0)}" else "Photo"; role = Role.Button },
-                ) {
-                    com.circaso.core.platform.LibraryThumbnail(item, Modifier.fillMaxSize())
-                    item.durationMs?.let { BasicText(clock(it), Modifier.align(Alignment.BottomStart).padding(4.dp), style = t.caption2.copy(color = c.ink, fontFeatureSettings = "tnum")) }
-                }
+                val order = state.selection.indexOfFirst { it.id == item.id }
+                LibraryTile(
+                    item, Modifier.size(56.dp), number = if (order >= 0) order + 1 else null, showTick = state.selecting,
+                    onClick = { vm.useRecent(item) }, onLongClick = { vm.startSelecting(item) },
+                )
             }
         }
+    }
+}
+
+/** A glass tile at the start of the strip: Files, Allow access, Manage. */
+@Composable
+private fun StripTile(label: String, icon: CircasoIcon, description: String, wide: Boolean, busy: Boolean = false, onClick: () -> Unit) {
+    val c = CircasoTheme.colors
+    Column(
+        Modifier.size(if (wide) 120.dp else 56.dp, 56.dp).clip(CircasoShapes.md).background(c.glass).pressable(onClick = onClick)
+            .semantics(mergeDescendants = true) { contentDescription = description; role = Role.Button },
+        horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center,
+    ) {
+        if (busy) com.circaso.designsystem.components.Spinner(c.ink)
+        else {
+            CircasoIconImage(icon, c.ink, Modifier.size(18.dp))
+            BasicText(label, style = CircasoTheme.typography.caption2.copy(color = c.ink), maxLines = 1)
+        }
+    }
+}
+
+/**
+ * One photo or video in the strip or the gallery: its thumbnail, a video's length, and when picking several the
+ * round tick with its number (design M3).
+ */
+@Composable
+private fun LibraryTile(
+    item: com.circaso.core.platform.LibraryItem, modifier: Modifier, number: Int?, showTick: Boolean, onClick: () -> Unit,
+    onLongClick: (() -> Unit)? = null, shape: androidx.compose.ui.graphics.Shape = CircasoShapes.sm,
+) {
+    val c = CircasoTheme.colors
+    val t = CircasoTheme.typography
+    val video = item.kind == com.circaso.core.platform.LibraryKind.Video
+    Box(
+        modifier.clip(shape).background(c.fill).pressable(onLongClick = onLongClick, onClick = onClick)
+            .semantics(mergeDescendants = true) {
+                contentDescription = (if (video) "Video, ${clock(item.durationMs ?: 0)}" else "Photo") + if (number != null) ", selected, $number" else ""
+                role = if (showTick) Role.Checkbox else Role.Button
+                if (showTick) selected = number != null
+            },
+    ) {
+        com.circaso.core.platform.LibraryThumbnail(item, Modifier.fillMaxSize())
+        // On the picture in every theme: the light stage ink with a soft shadow (design M3), never the theme's ink.
+        item.durationMs?.let {
+            BasicText(longClock(it), Modifier.align(Alignment.BottomStart).padding(start = 6.dp, bottom = 5.dp),
+                style = t.caption1.copy(
+                    color = com.circaso.designsystem.theme.DarkColors.ink, fontWeight = FontWeight.SemiBold, fontFeatureSettings = "tnum",
+                    shadow = androidx.compose.ui.graphics.Shadow(com.circaso.designsystem.theme.DarkColors.scrim, androidx.compose.ui.geometry.Offset(0f, 1f), 4f),
+                ))
+        }
+        if (showTick) Box(Modifier.align(Alignment.TopEnd).padding(4.dp)) { Tick(number != null, number, onMedia = true) }
     }
 }
 
@@ -412,6 +584,15 @@ private fun LevelBars(active: Boolean) {
 
 private fun clock(ms: Long): String { val s = (ms / 1000).coerceIn(0, 60); return "${s / 60}:${(s % 60).toString().padStart(2, '0')}" }
 
+/** A library video's length, past a minute too ("2:14", "1:02:05"). */
+private fun longClock(ms: Long): String {
+    val s = (ms / 1000).coerceAtLeast(0)
+    val h = s / 3600
+    val m = (s % 3600) / 60
+    val sec = (s % 60).toString().padStart(2, '0')
+    return if (h > 0) "$h:${m.toString().padStart(2, '0')}:$sec" else "$m:$sec"
+}
+
 /** "0:14 / 1:00" for the recording in progress; it ticks every second. */
 @Composable
 private fun elapsedLabel(since: Long?): String {
@@ -456,4 +637,196 @@ private fun StageButton(icon: CircasoIcon?, description: String, label: String? 
         if (label != null) BasicText(label, style = CircasoTheme.typography.headline.copy(color = c.ink, fontWeight = if (bold) FontWeight.Bold else FontWeight.Normal))
         else if (icon != null) CircasoIconImage(icon, if (filled) c.bg else c.ink, Modifier.size(20.dp))
     }
+}
+
+/**
+ * M3: the gallery. Recents in a three-column grid with All, Photos and Videos; tap to tick (numbers show the order),
+ * Next puts them on the review, each its own moment. Limited access (M3c) says so with Manage; with access off, one
+ * line, Open Settings, and the phone's own picker (which needs no permission).
+ */
+@Composable
+private fun GalleryScreen(gallery: GalleryState, state: MomentComposerUiState, vm: MomentComposerViewModel) {
+    val t = CircasoTheme.typography
+    // The gallery is a list screen: the person's own theme, not the dark stage.
+    CircasoTheme(darkTheme = LocalPersonalDark.current, highContrast = CircasoTheme.colors.isHighContrast) {
+        val cc = CircasoTheme.colors
+        Column(Modifier.fillMaxSize().background(cc.bg).statusBarsPadding().navigationBarsPadding()) {
+            // Design M3's bar: Close, "Recents", Next.
+            Row(
+                Modifier.fillMaxWidth().heightIn(min = CircasoSizes.controlMd).padding(horizontal = CircasoSpacing.s2),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Box(
+                    Modifier.size(CircasoSizes.controlMd).clip(CircasoShapes.circle).pressable(onClick = vm::closeGallery).semantics { contentDescription = "Close"; role = Role.Button },
+                    contentAlignment = Alignment.Center,
+                ) { CircasoIconImage(CircasoIcon.Close, cc.ink, Modifier.size(20.dp)) }
+                BasicText("Recents", Modifier.weight(1f).semantics { heading() }, style = t.headline.copy(color = cc.ink, textAlign = TextAlign.Center))
+                CircasoButton(if (state.selection.size > 1) "Next (${state.selection.size})" else "Next", vm::useSelection, size = ButtonSize.Small, enabled = state.selection.isNotEmpty(), busy = state.loadingPick)
+            }
+            com.circaso.designsystem.components.SegmentedControl(
+                listOf("All", "Photos", "Videos"), GalleryTab.entries.indexOf(gallery.tab), { vm.galleryTab(GalleryTab.entries[it]) },
+                Modifier.padding(horizontal = CircasoSpacing.s4, vertical = CircasoSpacing.s2),
+            )
+            if (gallery.access == com.circaso.core.platform.LibraryAccess.Limited) {
+                Row(
+                    Modifier.fillMaxWidth().padding(CircasoSpacing.s4).clip(CircasoShapes.md).background(cc.fill).padding(horizontal = 14.dp, vertical = 10.dp)
+                        .semantics(mergeDescendants = true) { liveRegion = androidx.compose.ui.semantics.LiveRegionMode.Polite },
+                    verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    CircasoIconImage(CircasoIcon.Photo, cc.inkSecondary, Modifier.size(18.dp))
+                    val n = gallery.photos.size + gallery.videos.size
+                    BasicText("Circaso can see $n ${if (n == 1) "item" else "items"} you chose.", Modifier.weight(1f), style = t.subhead.copy(color = cc.ink))
+                    BasicText("Manage", Modifier.heightIn(min = CircasoSizes.controlMd).pressable(onClick = vm::manageAccess).padding(horizontal = 4.dp, vertical = 12.dp), style = t.subhead.copy(color = cc.action, fontWeight = FontWeight.SemiBold))
+                }
+            } else {
+                Box(Modifier.height(CircasoSpacing.s3))
+            }
+            val items = androidx.compose.runtime.remember(gallery.photos, gallery.videos, gallery.tab) { gallery.items }
+            when {
+                gallery.loading -> Box(Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.Center) { com.circaso.designsystem.components.Spinner(cc.inkSecondary) }
+                gallery.access == com.circaso.core.platform.LibraryAccess.Denied -> Column(
+                    Modifier.fillMaxWidth().weight(1f).padding(horizontal = 32.dp), horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(12.dp, Alignment.CenterVertically),
+                ) {
+                    CircasoIconImage(CircasoIcon.Photo, cc.inkTertiary, Modifier.size(40.dp))
+                    BasicText("Allow photo access to share from your gallery.", style = t.body.copy(color = cc.ink, textAlign = TextAlign.Center))
+                    CircasoButton("Open Settings", vm::manageAccess, style = ButtonStyle.Secondary, size = ButtonSize.Small)
+                    BasicText("Choose from your phone instead", Modifier.heightIn(min = CircasoSizes.controlMd).pressable(onClick = { vm.closeGallery(); vm.pickWithSystem() }).padding(horizontal = 8.dp, vertical = 12.dp),
+                        style = t.subhead.copy(color = cc.action, fontWeight = FontWeight.SemiBold))
+                }
+                items.isEmpty() -> Box(Modifier.fillMaxWidth().weight(1f).padding(32.dp), contentAlignment = Alignment.Center) {
+                    BasicText(when (gallery.tab) { GalleryTab.Videos -> "No videos here yet."; GalleryTab.Photos -> "No photos here yet."; else -> "Nothing here yet." },
+                        style = t.body.copy(color = cc.inkSecondary, textAlign = TextAlign.Center))
+                }
+                else -> androidx.compose.foundation.lazy.grid.LazyVerticalGrid(
+                    androidx.compose.foundation.lazy.grid.GridCells.Fixed(3), Modifier.fillMaxWidth().weight(1f),
+                    horizontalArrangement = Arrangement.spacedBy(2.dp), verticalArrangement = Arrangement.spacedBy(2.dp),
+                ) {
+                    items(items.size, key = { items[it].id }) { i ->
+                        val item = items[i]
+                        val order = state.selection.indexOfFirst { it.id == item.id }
+                        LibraryTile(item, Modifier.fillMaxWidth().aspectRatio(1f), number = if (order >= 0) order + 1 else null, showTick = true, onClick = { vm.toggle(item) }, shape = androidx.compose.ui.graphics.RectangleShape)
+                    }
+                }
+            }
+        }
+    }
+}
+
+/**
+ * M3b: trim a video. The frame on the stage, Cancel and Done at the top, "0:58 selected of 2:14" and the filmstrip with
+ * two handles below. The window is at most a minute and at least a second; the trimmed copy stays on this phone until
+ * it is shared.
+ */
+@Composable
+private fun TrimScreen(trim: TrimState, state: MomentComposerUiState, vm: MomentComposerViewModel) {
+    val c = CircasoTheme.colors
+    val t = CircasoTheme.typography
+    Box(Modifier.fillMaxSize().background(c.bg).pointerInput(Unit) { detectTapGestures { } }) {
+        val thumb = (state.items.getOrNull(trim.index)?.capture as? ComposerCapture.Shot)?.media?.thumb
+        val still = trim.frames.getOrNull(trim.frames.size / 2) ?: thumb
+        if (still != null) coil3.compose.AsyncImage(still, null, Modifier.fillMaxSize().graphicsLayer { alpha = 0.9f }, contentScale = ContentScale.Crop)
+        Row(
+            Modifier.fillMaxWidth().statusBarsPadding().padding(horizontal = CircasoSpacing.s4, vertical = CircasoSpacing.s2),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            StageButton(CircasoIcon.Close, if (trim.required) "Cancel, and leave this video out" else "Cancel trimming", onClick = vm::cancelTrim)
+            Box(Modifier.weight(1f))
+            CircasoButton("Done", vm::applyTrim, size = ButtonSize.Small, busy = trim.working)
+        }
+        Column(
+            Modifier.align(Alignment.BottomCenter).fillMaxWidth().navigationBarsPadding().padding(horizontal = CircasoSpacing.s4, vertical = 60.dp),
+            horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            BasicText(
+                if (trim.working) "Trimming…" else "${longClock(trim.selectedMs)} selected of ${longClock(trim.durationMs)}",
+                Modifier.clip(CircasoShapes.pill).background(c.scrim).padding(horizontal = 12.dp, vertical = 4.dp)
+                    .semantics { liveRegion = androidx.compose.ui.semantics.LiveRegionMode.Polite },
+                style = t.subhead.copy(color = c.ink, fontWeight = FontWeight.SemiBold, fontFeatureSettings = "tnum"),
+            )
+            TrimBar(trim, vm)
+            if (trim.required) BasicText("Moments are up to a minute. Drag the edges to choose which minute.", style = t.footnote.copy(color = c.inkSecondary, textAlign = TextAlign.Center))
+        }
+    }
+}
+
+/** The filmstrip with its two handles (design M3b): drag an edge to move it, the middle to slide the whole window. */
+@Composable
+private fun TrimBar(trim: TrimState, vm: MomentComposerViewModel) {
+    val c = CircasoTheme.colors
+    val handle = 12.dp
+    var widthPx by androidx.compose.runtime.remember { androidx.compose.runtime.mutableIntStateOf(1) }
+    val latest by androidx.compose.runtime.rememberUpdatedState(trim)
+    Box(
+        Modifier.fillMaxWidth().height(56.dp).clip(CircasoShapes.sm).background(c.fill)
+            .onSizeChanged { widthPx = it.width.coerceAtLeast(1) }
+            .semantics {
+                contentDescription = "Trim"
+                stateDescription = "${longClock(trim.startMs)} to ${longClock(trim.endMs)}"
+                // Screen readers: move the window a few seconds at a time.
+                customActions = listOf(
+                    androidx.compose.ui.semantics.CustomAccessibilityAction("Later by 5 seconds") { val x = latest; vm.setTrim(x.startMs + 5_000, x.endMs + 5_000); true },
+                    androidx.compose.ui.semantics.CustomAccessibilityAction("Earlier by 5 seconds") { val x = latest; vm.setTrim(x.startMs - 5_000, x.endMs - 5_000); true },
+                    androidx.compose.ui.semantics.CustomAccessibilityAction("Shorter by 5 seconds") { val x = latest; vm.setTrim(x.startMs, x.endMs - 5_000); true },
+                    androidx.compose.ui.semantics.CustomAccessibilityAction("Longer by 5 seconds") { val x = latest; vm.setTrim(x.startMs, x.endMs + 5_000); true },
+                )
+            }
+            .pointerInput(trim.durationMs) {
+                val edge = 28.dp.toPx()
+                var grab = 0 // -1 start, 1 end, 0 the window
+                detectHorizontalDragGestures(
+                    onDragStart = { at ->
+                        val x = latest
+                        val startX = x.startMs.toFloat() / x.durationMs * widthPx
+                        val endX = x.endMs.toFloat() / x.durationMs * widthPx
+                        grab = when { kotlin.math.abs(at.x - startX) < edge -> -1; kotlin.math.abs(at.x - endX) < edge -> 1; else -> 0 }
+                    },
+                ) { change, dx ->
+                    change.consume()
+                    val x = latest
+                    val dMs = (dx / widthPx * x.durationMs).toLong()
+                    when (grab) {
+                        -1 -> vm.setTrim(x.startMs + dMs, x.endMs)
+                        1 -> vm.setTrim(x.startMs, x.endMs + dMs)
+                        else -> {
+                            val shift = dMs.coerceIn(-x.startMs, x.durationMs - x.endMs)
+                            vm.setTrim(x.startMs + shift, x.endMs + shift)
+                        }
+                    }
+                }
+            },
+    ) {
+        Row(Modifier.fillMaxSize()) {
+            if (trim.frames.isEmpty()) Box(Modifier.fillMaxSize())
+            trim.frames.forEach { f ->
+                coil3.compose.AsyncImage(f, null, Modifier.weight(1f).fillMaxHeight().graphicsLayer { alpha = 0.45f }, contentScale = ContentScale.Crop)
+            }
+        }
+        val density = androidx.compose.ui.platform.LocalDensity.current
+        val left = with(density) { (trim.startMs.toFloat() / trim.durationMs * widthPx).toDp() }
+        val width = with(density) { ((trim.endMs - trim.startMs).toFloat() / trim.durationMs * widthPx).toDp() }
+        Box(
+            Modifier.offset(x = left).width(width).fillMaxHeight()
+                .border(androidx.compose.foundation.BorderStroke(3.dp, c.ink), CircasoShapes.sm),
+        ) {
+            Box(Modifier.align(Alignment.CenterStart).width(handle).fillMaxHeight().background(c.ink))
+            Box(Modifier.align(Alignment.CenterEnd).width(handle).fillMaxHeight().background(c.ink))
+        }
+    }
+}
+
+/** A full-screen layer over the stage: in with a short rise and fade, out with a fade; the last value draws the exit. */
+@Composable
+private fun <T : Any> Layer(value: T?, content: @Composable (T) -> Unit) {
+    val reduce = CircasoTheme.reduceMotion
+    var last by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(value) }
+    if (value != null) last = value
+    androidx.compose.animation.AnimatedVisibility(
+        value != null, Modifier.fillMaxSize(),
+        enter = if (reduce) androidx.compose.animation.fadeIn(androidx.compose.animation.core.snap())
+        else androidx.compose.animation.slideInVertically(androidx.compose.animation.core.tween(com.circaso.designsystem.theme.CircasoMotion.BaseMs)) { it / 12 } +
+            androidx.compose.animation.fadeIn(androidx.compose.animation.core.tween(com.circaso.designsystem.theme.CircasoMotion.BaseMs)),
+        exit = if (reduce) androidx.compose.animation.fadeOut(androidx.compose.animation.core.snap())
+        else androidx.compose.animation.fadeOut(androidx.compose.animation.core.tween(com.circaso.designsystem.theme.CircasoMotion.QuickMs)),
+    ) { last?.let { content(it) } }
 }

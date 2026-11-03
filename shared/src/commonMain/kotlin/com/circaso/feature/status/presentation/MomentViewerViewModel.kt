@@ -238,6 +238,8 @@ class MomentViewerViewModel(
     }
 
     fun noticeShown() = _state.update { it.copy(notice = null) }
+    /** A line for the toast (e.g. after forwarding). */
+    fun notice(text: String) = _state.update { it.copy(notice = text) }
     fun openMore(open: Boolean) = _state.update { it.copy(moreOpen = open, paused = open) }
 
     fun mute() {

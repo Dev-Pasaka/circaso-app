@@ -45,6 +45,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.Serializable
@@ -118,8 +119,22 @@ class MomentsRepositoryImpl(
         .flatMapLatest { at -> dao.observe(at) }
         .map { rows -> rows.mapNotNull { it.toModel() } }
 
-    override val pending: Flow<List<PendingMoment>> = dao.observePending().map { rows ->
-        rows.map { PendingMoment(it.localId, kindOf(it.kind), stateOf(it.state), it.error, it.createdAt) }
+    /** Upload progress by pending id, in memory only: it means something only while this run is sending it. */
+    private val uploadProgress = kotlinx.coroutines.flow.MutableStateFlow<Map<String, Float>>(emptyMap())
+
+    override val pending: Flow<List<PendingMoment>> = kotlinx.coroutines.flow.combine(dao.observePending(), uploadProgress) { rows, progress ->
+        rows.map { PendingMoment(it.localId, kindOf(it.kind), stateOf(it.state), it.error, it.createdAt, progress[it.localId]) }
+    }
+
+    /** Published in whole percent steps, so a 30 MB upload is a hundred updates, not thousands. */
+    private fun setProgress(localId: String, fraction: Float?) {
+        uploadProgress.update { now ->
+            when {
+                fraction == null -> now - localId
+                ((now[localId] ?: -1f) * 100).toInt() == (fraction * 100).toInt() -> now
+                else -> now + (localId to fraction.coerceIn(0f, 1f))
+            }
+        }
     }
 
     override val privacy: Flow<MomentPrivacy> = dao.observePrivacy().map { it.toPrivacy() }
@@ -263,7 +278,7 @@ class MomentsRepositoryImpl(
         kickOutbox()
     }
 
-    override suspend fun discard(localId: String) { dao.deletePending(localId); files.delete(localId) }
+    override suspend fun discard(localId: String) { dao.deletePending(localId); files.delete(localId); setProgress(localId, null) }
 
     /**
      * The outbox's turn for one pending moment. A photo, video or voice moment runs as background work, so it
@@ -310,6 +325,7 @@ class MomentsRepositoryImpl(
                 dao.upsert(listOf(MomentEntity(r.value.momentId, ownUserId().orEmpty(), plain.decodeToString(), null, null,
                     millis(r.value.postedAt), millis(r.value.expiresAt), mine = true, viewed = true, reacted = false, viewCount = 0)))
                 dao.deletePending(row.localId)
+                setProgress(row.localId, null)
                 files.delete(row.localId) // the plain copy kept for the upload; the media id's copy stays for my viewer
                 AppResult.Success(Unit)
             }
@@ -325,8 +341,13 @@ class MomentsRepositoryImpl(
             is AppResult.Success -> r.value
             is AppResult.Failure -> return r
         }
-        val put = uploads.putFile(storage, slot.uploadUrl, mapOf("Content-Type" to slot.uploadHeaders.contentType), sealed)
-        if (!put) return AppResult.Failure(AppError.Network)
+        // The ring on "My moment" follows the bytes (M6); the last few percent wait for the post itself.
+        setProgress(row.localId, 0f)
+        val put = uploads.putFile(storage, slot.uploadUrl, mapOf("Content-Type" to slot.uploadHeaders.contentType), sealed) { sent, total ->
+            if (total > 0) setProgress(row.localId, UploadShare * sent / total)
+        }
+        if (!put) { setProgress(row.localId, null); return AppResult.Failure(AppError.Network) }
+        setProgress(row.localId, UploadShare)
         (remote.completeMedia(slot.mediaId, newIdempotencyKey()) as? AppResult.Failure)?.let { return it }
         // Filed under the media id, the name a viewer's copy gets, so my own viewer opens it without downloading.
         files.write(slot.mediaId, plain)
@@ -399,6 +420,8 @@ class MomentsRepositoryImpl(
     private fun millis(iso: String): Long = runCatching { Instant.parse(iso).toEpochMilliseconds() }.getOrDefault(now())
 
     private companion object {
+        /** How much of the ring the upload fills; sealing and posting (ST3) fill the rest. */
+        const val UploadShare = 0.95f
         const val StatePosting = "posting"
         const val StateWaiting = "waiting"
         const val StateFailed = "failed"

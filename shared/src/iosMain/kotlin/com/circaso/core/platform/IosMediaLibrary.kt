@@ -13,7 +13,10 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.blur
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.toComposeImageBitmap
 import androidx.compose.ui.layout.ContentScale
@@ -31,6 +34,7 @@ import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import platform.AVFoundation.AVLayerVideoGravityResizeAspectFill
 import platform.AVFoundation.AVPlayerItem
+import platform.AVFoundation.AVPlayerItemStatusFailed
 import platform.AVFoundation.AVPlayerLayer
 import platform.AVFoundation.AVPlayerLooper
 import platform.AVFoundation.AVQueuePlayer
@@ -40,6 +44,9 @@ import platform.AVFoundation.play
 import platform.CoreGraphics.CGRectZero
 import platform.CoreGraphics.CGSizeMake
 import platform.Foundation.NSData
+import platform.Foundation.dataWithContentsOfFile
+import platform.Foundation.timeIntervalSince1970
+import platform.AVFoundation.currentItem
 import platform.Foundation.NSSortDescriptor
 import platform.Foundation.NSURL
 import platform.Photos.PHAccessLevelReadWrite
@@ -71,6 +78,14 @@ interface MediaLibraryProvider {
     fun load(id: String, video: Boolean, completion: (LibraryMedia?) -> Unit)
     /** [kind]: 0 photo (PHPicker), 1 video (PHPicker), 2 audio (Files). Null when the person cancels. */
     fun pick(kind: Int, completion: (LibraryMedia?) -> Unit)
+    /** PHPicker for photos and videos, up to [max] in the order ticked; empty when the person cancels. */
+    fun pickMany(max: Int, completion: (List<LibraryMedia>) -> Unit)
+    /** Limited library: the system's picker to choose more photos (iOS 15+), then [completion]. */
+    fun manageLimited(completion: () -> Unit)
+    /** [count] small JPEGs spread through the video at [path] (AVAssetImageGenerator), for the trim bar. */
+    fun filmstrip(path: String, count: Int, completion: (List<NSData>) -> Unit)
+    /** The video at [path] from [startMs] to [endMs] as MP4 (AVAssetExportSession), within the moment size limit; null if it can't be. */
+    fun trim(path: String, startMs: Long, endMs: Long, completion: (LibraryMedia?) -> Unit)
 }
 
 /** One photo (JPEG), video (MP4) or audio file from the Swift side; [durationMs] 0 and sizes 0 mean unknown. */
@@ -93,9 +108,11 @@ object MediaLibraryBridge {
  * person chose); iOS has no audio library an app can list, so audio comes only through the Files picker.
  */
 class IosMediaLibrary : MediaLibrary {
-    override suspend fun access(): LibraryAccess {
+    override suspend fun access(): LibraryAccess = access(ask = true)
+
+    private suspend fun access(ask: Boolean): LibraryAccess {
         val status = PHPhotoLibrary.authorizationStatusForAccessLevel(PHAccessLevelReadWrite)
-        val answer = if (status == PHAuthorizationStatusNotDetermined) {
+        val answer = if (status == PHAuthorizationStatusNotDetermined && ask) {
             suspendCancellableCoroutine { cont ->
                 PHPhotoLibrary.requestAuthorizationForAccessLevel(PHAccessLevelReadWrite) { if (cont.isActive) cont.resume(it) }
             }
@@ -107,9 +124,26 @@ class IosMediaLibrary : MediaLibrary {
         }
     }
 
-    override suspend fun recent(kind: LibraryKind, limit: Int): List<LibraryItem> {
-        if (kind == LibraryKind.Audio || limit <= 0) return emptyList()
-        if (access() == LibraryAccess.Denied) return emptyList()
+    /** Photos and videos share one permission on iPhone; audio has no library an app can list (Files only). */
+    override suspend fun recents(kind: LibraryKind, limit: Int, ask: Boolean): LibraryRecents {
+        if (kind == LibraryKind.Audio) return LibraryRecents(emptyList(), LibraryAccess.Granted)
+        val access = access(ask)
+        if (access == LibraryAccess.Denied || limit <= 0) return LibraryRecents(emptyList(), access)
+        return LibraryRecents(fetch(kind, limit), access)
+    }
+
+    override suspend fun manage(kind: LibraryKind): LibraryAccess {
+        when (access(ask = true)) {
+            LibraryAccess.Granted -> Unit
+            LibraryAccess.Limited -> MediaLibraryBridge.provider?.let { p ->
+                suspendCancellableCoroutine<Unit> { cont -> p.manageLimited { if (cont.isActive) cont.resume(Unit) } }
+            }
+            LibraryAccess.Denied -> openAppSettings()
+        }
+        return access(ask = false)
+    }
+
+    private suspend fun fetch(kind: LibraryKind, limit: Int): List<LibraryItem> {
         return withContext(Dispatchers.Default) {
             val options = PHFetchOptions().apply {
                 sortDescriptors = listOf(NSSortDescriptor.sortDescriptorWithKey("creationDate", ascending = false))
@@ -119,7 +153,10 @@ class IosMediaLibrary : MediaLibrary {
             val result = PHAsset.fetchAssetsWithMediaType(if (video) PHAssetMediaTypeVideo else PHAssetMediaTypeImage, options)
             (0 until result.count.toInt()).mapNotNull { i ->
                 val asset = result.objectAtIndex(i.toULong()) as? PHAsset ?: return@mapNotNull null
-                LibraryItem(id = asset.localIdentifier, kind = kind, durationMs = if (video) (asset.duration * 1000).toLong() else null)
+                LibraryItem(
+                    id = asset.localIdentifier, kind = kind, durationMs = if (video) (asset.duration * 1000).toLong() else null,
+                    addedAt = asset.creationDate?.let { (it.timeIntervalSince1970 * 1000).toLong() } ?: 0,
+                )
             }
         }
     }
@@ -138,8 +175,26 @@ class IosMediaLibrary : MediaLibrary {
         return suspendCancellableCoroutine<LibraryMedia?> { cont -> p.pick(code) { if (cont.isActive) cont.resume(it) } }?.toCaptured()
     }
 
+    override suspend fun pickMany(max: Int): List<CapturedMedia> {
+        val p = MediaLibraryBridge.provider ?: return emptyList()
+        return suspendCancellableCoroutine<List<LibraryMedia>> { cont -> p.pickMany(max) { if (cont.isActive) cont.resume(it) } }.map { it.toCaptured() }
+    }
+
+    override suspend fun read(path: String): ByteArray? = withContext(Dispatchers.Default) { NSData.dataWithContentsOfFile(path)?.toByteArray() }
+
+    override suspend fun filmstrip(path: String, count: Int): List<ByteArray> {
+        val p = MediaLibraryBridge.provider ?: return emptyList()
+        return suspendCancellableCoroutine<List<NSData>> { cont -> p.filmstrip(path, count) { if (cont.isActive) cont.resume(it) } }.map { it.toByteArray() }
+    }
+
+    override suspend fun trim(path: String, startMs: Long, endMs: Long): CapturedMedia? {
+        val p = MediaLibraryBridge.provider ?: return null
+        return suspendCancellableCoroutine<LibraryMedia?> { cont -> p.trim(path, startMs, endMs) { if (cont.isActive) cont.resume(it) } }?.toCaptured()
+    }
+
+    /** A video stays on disk (empty bytes, [CapturedMedia.path]); [read] brings it in when it is posted. */
     private fun LibraryMedia.toCaptured() = CapturedMedia(
-        bytes = data.toByteArray(),
+        bytes = if (mime.startsWith("video") && path != null) ByteArray(0) else data.toByteArray(),
         mime = mime,
         width = width.takeIf { it > 0 },
         height = height.takeIf { it > 0 },
@@ -206,10 +261,15 @@ private class MomentPlayerView : UIView(frame = CGRectZero.readValue()) {
     }
 }
 
-/** AVQueuePlayer in an aspect-filled layer, no controls; [loop] repeats through AVPlayerLooper. Released on dispose. */
+/**
+ * AVQueuePlayer in an aspect-filled layer, no controls; [loop] repeats through AVPlayerLooper. Released on dispose.
+ * The poster covers the layer until it has a frame to show (`readyForDisplay`), and stays if the item fails.
+ */
 @Composable
-actual fun MomentVideo(path: String, playing: Boolean, muted: Boolean, modifier: Modifier, loop: Boolean) {
+actual fun MomentVideo(path: String, playing: Boolean, muted: Boolean, modifier: Modifier, loop: Boolean, poster: ByteArray?, onUnplayable: () -> Unit) {
     val player = remember(path) { AVQueuePlayer() }
+    val view = remember(path) { MomentPlayerView().also { it.playerLayer.player = player } }
+    var shown by remember(path) { mutableStateOf(false) }
     DisposableEffect(player, loop) {
         val item = AVPlayerItem(uRL = NSURL.fileURLWithPath(path))
         val looper = if (loop) AVPlayerLooper.playerLooperWithPlayer(player, templateItem = item) else null
@@ -222,10 +282,31 @@ actual fun MomentVideo(path: String, playing: Boolean, muted: Boolean, modifier:
     }
     LaunchedEffect(player, muted) { player.muted = muted }
     LaunchedEffect(player, playing, loop) { if (playing) player.play() else player.pause() }
-    UIKitView(
-        factory = { MomentPlayerView().also { it.playerLayer.player = player } },
-        modifier = modifier,
-        onRelease = { it.playerLayer.player = null },
-        properties = UIKitInteropProperties(interactionMode = null) // touches stay with Compose (hold to pause),
-    )
+    // No KVO from Compose: a light check until the first frame is ready, or the item has failed.
+    LaunchedEffect(view) {
+        while (!shown) {
+            if (view.playerLayer.readyForDisplay) { shown = true; break }
+            if (player.currentItem?.status == AVPlayerItemStatusFailed) { onUnplayable(); break }
+            kotlinx.coroutines.delay(80)
+        }
+    }
+    val posterImage = remember(poster) { poster?.let { runCatching { org.jetbrains.skia.Image.makeFromEncoded(it).toComposeImageBitmap() }.getOrNull() } }
+    Box(modifier) {
+        UIKitView(
+            factory = { view },
+            modifier = Modifier.fillMaxSize(),
+            onRelease = { it.playerLayer.player = null },
+            properties = UIKitInteropProperties(interactionMode = null), // touches stay with Compose (hold to pause)
+        )
+        // The same blur as the viewer's loading placeholder (V5), fading out as the first frame lands.
+        if (posterImage != null) {
+            androidx.compose.animation.AnimatedVisibility(
+                !shown, Modifier.fillMaxSize(),
+                enter = androidx.compose.animation.EnterTransition.None,
+                exit = androidx.compose.animation.fadeOut(androidx.compose.animation.core.tween(com.circaso.designsystem.theme.CircasoMotion.QuickMs)),
+            ) {
+                Image(posterImage, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize().blur(24.dp).graphicsLayer { scaleX = 1.2f; scaleY = 1.2f })
+            }
+        }
+    }
 }

@@ -39,6 +39,7 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.progressBarRangeInfo
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -193,7 +194,7 @@ private fun MyMomentItem(state: SpacesUiState, actions: SpacesActions) {
     val (label, name) = when (ring) {
         MyRing.Add -> "Add to my moment" to "My moment"
         MyRing.Seen -> "My moment, add to it" to "My moment"
-        MyRing.Posting -> "My moment, posting" to "Posting…"
+        MyRing.Posting -> (state.postingProgress?.let { "My moment, posting, ${(it * 100).toInt()} percent" } ?: "My moment, posting") to "Posting…"
         MyRing.Waiting -> "My moment, waiting for a connection" to "Waiting"
         MyRing.Failed -> "My moment, not posted" to "Not posted"
     }
@@ -201,7 +202,7 @@ private fun MyMomentItem(state: SpacesUiState, actions: SpacesActions) {
         name = name, label = label, ring = if (ring == MyRing.Seen) RingStyle.Seen else RingStyle.None,
         onClick = if (ring == MyRing.Seen) actions.onOpenMine else actions.onCompose,
         badge = { when (ring) {
-            MyRing.Posting -> PostingArc()
+            MyRing.Posting -> PostingArc(state.postingProgress)
             MyRing.Waiting -> Badge(c.fillStrong) { CircasoIconImage(CircasoIcon.Clock, c.ink, Modifier.size(13.dp)) }
             MyRing.Failed -> Badge(c.critical) { BasicText("!", style = CircasoTheme.typography.footnote.copy(color = c.bg, fontWeight = FontWeight.Bold)) }
             // Its own target (Pasaka, 2026-11-03): the plus always opens the camera, even when the ring opens my moments.
@@ -273,16 +274,27 @@ private fun BoxScope.Badge(color: androidx.compose.ui.graphics.Color, onClick: (
     }
 }
 
-/** Upload progress around my ring while a moment posts; it turns slowly so it never looks stuck. */
+/**
+ * Upload progress around my ring while a moment posts (M6): the real share of bytes sent, filling clockwise from the
+ * top. Before any byte has gone (or for a text moment) the arc turns slowly, so it never looks stuck.
+ */
 @Composable
-private fun PostingArc() {
+private fun PostingArc(progress: Float?) {
     val c = CircasoTheme.colors
     val reduce = CircasoTheme.reduceMotion
-    val angle = if (reduce) 0f else rememberInfiniteTransition().animateFloat(0f, 360f, infiniteRepeatable(tween(1600, easing = LinearEasing), RepeatMode.Restart)).value
-    Canvas(Modifier.size(CircasoSizes.momentRing).semantics { contentDescription = "Posting" }) {
+    val angle = if (reduce || progress != null) 0f else rememberInfiniteTransition().animateFloat(0f, 360f, infiniteRepeatable(tween(1600, easing = LinearEasing), RepeatMode.Restart)).value
+    // Eased between the steps the upload reports, never jumping; straight to the value with reduced motion.
+    val shown = androidx.compose.animation.core.animateFloatAsState(progress ?: 0f, if (reduce) androidx.compose.animation.core.snap() else tween(com.circaso.designsystem.theme.CircasoMotion.BaseMs)).value
+    Canvas(
+        Modifier.size(CircasoSizes.momentRing).semantics {
+            contentDescription = "Posting"
+            if (progress != null) progressBarRangeInfo = androidx.compose.ui.semantics.ProgressBarRangeInfo(progress, 0f..1f)
+        },
+    ) {
         val w = 2.5.dp.toPx()
         drawArc(c.fillStrong, 0f, 360f, false, Offset(w / 2, w / 2), Size(size.width - w, size.height - w), style = Stroke(w))
-        drawArc(c.ink, angle - 90f, 220f, false, Offset(w / 2, w / 2), Size(size.width - w, size.height - w), style = Stroke(w))
+        if (progress != null) drawArc(c.ink, -90f, 360f * shown, false, Offset(w / 2, w / 2), Size(size.width - w, size.height - w), style = Stroke(w, cap = androidx.compose.ui.graphics.StrokeCap.Round))
+        else drawArc(c.ink, angle - 90f, 220f, false, Offset(w / 2, w / 2), Size(size.width - w, size.height - w), style = Stroke(w))
     }
 }
 

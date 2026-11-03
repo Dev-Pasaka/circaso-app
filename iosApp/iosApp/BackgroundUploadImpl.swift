@@ -9,7 +9,7 @@ final class BackgroundUploadImpl: NSObject, BackgroundUploadProvider, URLSession
     static let identifier = "com.circaso.app.uploads"
 
     private let lock = NSLock()
-    private var waiting: [Int: (path: String, done: (KotlinBoolean) -> Void)] = [:]
+    private var waiting: [Int: (path: String, progress: (KotlinLong, KotlinLong) -> Void, done: (KotlinBoolean) -> Void)] = [:]
     /// iOS's handler from `handleEventsForBackgroundURLSession`, called once the session's events are delivered.
     var finishedEvents: (() -> Void)?
 
@@ -26,14 +26,21 @@ final class BackgroundUploadImpl: NSObject, BackgroundUploadProvider, URLSession
         _ = shared.session
     }
 
-    func upload(url: String, headers: [String: String], path: String, done: @escaping (KotlinBoolean) -> Void) {
+    func upload(url: String, headers: [String: String], path: String, progress: @escaping (KotlinLong, KotlinLong) -> Void, done: @escaping (KotlinBoolean) -> Void) {
         guard let target = URL(string: url) else { done(KotlinBoolean(value: false)); return }
         var request = URLRequest(url: target)
         request.httpMethod = "PUT"
         headers.forEach { request.setValue($0.value, forHTTPHeaderField: $0.key) }
         let task = session.uploadTask(with: request, fromFile: URL(fileURLWithPath: path))
-        lock.lock(); waiting[task.taskIdentifier] = (path, done); lock.unlock()
+        lock.lock(); waiting[task.taskIdentifier] = (path, progress, done); lock.unlock()
         task.resume()
+    }
+
+    /// The body going up, for the determinate ring on "My moment" (M6). Only while Circaso is running to hear it.
+    func urlSession(_ session: URLSession, task: URLSessionTask, didSendBodyData bytesSent: Int64, totalBytesSent: Int64, totalBytesExpectedToSend: Int64) {
+        lock.lock(); let entry = waiting[task.taskIdentifier]; lock.unlock()
+        guard let entry, totalBytesExpectedToSend > 0 else { return }
+        entry.progress(KotlinLong(value: totalBytesSent), KotlinLong(value: totalBytesExpectedToSend))
     }
 
     func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {

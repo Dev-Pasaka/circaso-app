@@ -19,9 +19,23 @@ import kotlinx.coroutines.withContext
 object PermissionBridge {
     private var launcher: ActivityResultLauncher<String>? = null
     private var pending: CompletableDeferred<Boolean>? = null
+    private var many: ActivityResultLauncher<Array<String>>? = null
+    private var pendingMany: CompletableDeferred<Map<String, Boolean>>? = null
 
     fun register(activity: ComponentActivity) {
         launcher = activity.registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted -> pending?.complete(granted) }
+        many = activity.registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { result -> pendingMany?.complete(result) }
+    }
+
+    /**
+     * Several permissions in one system prompt (Android 14's photo and video access is asked with
+     * READ_MEDIA_VISUAL_USER_SELECTED alongside, so "Select photos and videos" can be offered). What was granted.
+     */
+    suspend fun requestAll(permissions: Array<String>): Map<String, Boolean> {
+        val l = many ?: return emptyMap()
+        val answer = CompletableDeferred<Map<String, Boolean>>().also { pendingMany = it }
+        l.launch(permissions)
+        return answer.await()
     }
 
     suspend fun request(permission: String): Boolean {

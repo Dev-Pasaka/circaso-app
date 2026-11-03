@@ -45,8 +45,12 @@ data class Moment(
     val reactionCount: Int = 0,
 )
 
-/** My moment that hasn't reached the server yet (M6): posting, waiting for a connection, or failed. */
-data class PendingMoment(val localId: String, val kind: MomentKind, val state: PendingState, val error: String?, val createdAt: Long)
+/**
+ * My moment that hasn't reached the server yet (M6): posting, waiting for a connection, or failed. [progress] is how
+ * much of its media has gone up (0..1, bytes sent over bytes in all) while it uploads; null before the upload starts
+ * and for a text moment, which has nothing to upload.
+ */
+data class PendingMoment(val localId: String, val kind: MomentKind, val state: PendingState, val error: String?, val createdAt: Long, val progress: Float? = null)
 
 enum class PendingState { Posting, Waiting, Failed }
 

@@ -53,7 +53,7 @@ class MomentViewerViewModelTest {
     private val dispatcher = UnconfinedTestDispatcher()
     private val monitor = object : ConnectivityMonitor { override val osStatus = MutableStateFlow(ConnectionStatus.Online) }
     private lateinit var connection: ConnectionState
-    private val repo = FakeMoments()
+    private val repo = ViewerFakeMoments()
 
     @BeforeTest fun setUp() { Dispatchers.setMain(dispatcher); connection = ConnectionState(monitor, NetworkHealth(), CoroutineScope(dispatcher), offlineDelayMs = 0) }
     @AfterTest fun tearDown() = Dispatchers.resetMain()
@@ -154,7 +154,7 @@ private fun moment(id: String) = Moment(
 )
 
 /** The phone's moments; a reaction shows at once and goes back if the server says no, like the real repository. */
-private class FakeMoments : MomentsRepository {
+private class ViewerFakeMoments : MomentsRepository {
     val list = MutableStateFlow(listOf(moment("m1")))
     val reactions = mutableListOf<Pair<String, String?>>()
     var result: AppResult<Unit> = AppResult.Success(Unit)

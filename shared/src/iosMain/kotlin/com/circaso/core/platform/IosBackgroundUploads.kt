@@ -21,8 +21,11 @@ import kotlin.coroutines.resume
 
 /** The background URL session lives on the Swift side (`BackgroundUploadImpl.swift`), installed at launch. */
 interface BackgroundUploadProvider {
-    /** PUTs the file at [path] through a background session iOS finishes even if Circaso is suspended; [done] gets true on a 2xx. */
-    fun upload(url: String, headers: Map<String, String>, path: String, done: (Boolean) -> Unit)
+    /**
+     * PUTs the file at [path] through a background session iOS finishes even if Circaso is suspended; [progress] gets
+     * (bytes sent, bytes in all) as the body goes up, [done] true on a 2xx.
+     */
+    fun upload(url: String, headers: Map<String, String>, path: String, progress: (Long, Long) -> Unit, done: (Boolean) -> Unit)
 }
 
 object BackgroundUploadBridge {
@@ -51,14 +54,14 @@ class IosBackgroundUploads : BackgroundUploads {
         }
     }
 
-    override suspend fun put(url: String, headers: Map<String, String>, bytes: ByteArray): Boolean? {
+    override suspend fun put(url: String, headers: Map<String, String>, bytes: ByteArray, onProgress: (sent: Long, total: Long) -> Unit): Boolean? {
         val provider = BackgroundUploadBridge.provider ?: return null
         // A background session uploads from a file, never from memory.
         val path = NSTemporaryDirectory() + "upload-" + NSUUID().UUIDString
         val written = withContext(Dispatchers.Default) { bytes.toNSData().writeToFile(path, atomically = true) }
         if (!written) return null
         return suspendCancellableCoroutine { cont ->
-            provider.upload(url, headers, path) { ok -> if (cont.isActive) cont.resume(ok) }
+            provider.upload(url, headers, path, { sent, total -> onProgress(sent, total) }) { ok -> if (cont.isActive) cont.resume(ok) }
         }
     }
 

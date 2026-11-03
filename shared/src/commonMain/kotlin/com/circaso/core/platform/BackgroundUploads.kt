@@ -1,6 +1,7 @@
 package com.circaso.core.platform
 
 import io.ktor.client.HttpClient
+import io.ktor.client.plugins.onUpload
 import io.ktor.client.request.header
 import io.ktor.client.request.put
 import io.ktor.client.request.setBody
@@ -29,9 +30,10 @@ interface BackgroundUploads {
 
     /**
      * PUTs [bytes] to a pre-signed storage URL through the platform's own uploader where that carries on without the
-     * app (iOS). Null: this platform has none, use the app's HTTP client.
+     * app (iOS). Null: this platform has none, use the app's HTTP client. [onProgress] gets (bytes sent, bytes in
+     * all) as the body goes up, from any thread.
      */
-    suspend fun put(url: String, headers: Map<String, String>, bytes: ByteArray): Boolean? = null
+    suspend fun put(url: String, headers: Map<String, String>, bytes: ByteArray, onProgress: (sent: Long, total: Long) -> Unit = { _, _ -> }): Boolean? = null
 
     /** An upload stopped for good (the person must send it again): told when Circaso isn't on screen. */
     fun failed(kind: UploadKind) {}
@@ -41,11 +43,22 @@ object NoBackgroundUploads : BackgroundUploads {
     override suspend fun <T> keep(kind: UploadKind, work: suspend () -> T): T = work()
 }
 
-/** One PUT to pre-signed storage: the platform's background uploader when there is one, else [client]. */
-suspend fun BackgroundUploads.putFile(client: HttpClient, url: String, headers: Map<String, String>, bytes: ByteArray): Boolean {
-    put(url, headers, bytes)?.let { return it }
+/**
+ * One PUT to pre-signed storage: the platform's background uploader when there is one, else [client]. [onProgress]
+ * reports (bytes sent, bytes in all) as it goes, for a determinate progress ring (Moments M6); it may be called from
+ * any thread and should only publish the numbers.
+ */
+suspend fun BackgroundUploads.putFile(
+    client: HttpClient, url: String, headers: Map<String, String>, bytes: ByteArray,
+    onProgress: (sent: Long, total: Long) -> Unit = { _, _ -> },
+): Boolean {
+    put(url, headers, bytes, onProgress)?.let { return it }
     return try {
-        client.put(url) { headers.forEach { (k, v) -> header(k, v) }; setBody(bytes) }.status.isSuccess()
+        client.put(url) {
+            headers.forEach { (k, v) -> header(k, v) }
+            setBody(bytes)
+            onUpload { sent, total -> onProgress(sent, total ?: bytes.size.toLong()) }
+        }.status.isSuccess()
     } catch (e: CancellationException) {
         throw e
     } catch (_: Throwable) {

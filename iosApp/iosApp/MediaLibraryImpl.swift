@@ -15,7 +15,11 @@ final class MediaLibraryImpl: NSObject, MediaLibraryProvider, PHPickerViewContro
     private static let photoMaxSide = CGFloat(MomentCameraKt.MomentPhotoMaxSide)
     private static let thumbSide = CGFloat(MomentCameraKt.MomentThumbSide)
 
+    private static let mediaMaxBytes = Int(MomentCameraKt.MomentMediaMaxBytes)
+
     private var pickCompletion: ((LibraryMedia?) -> Void)?
+    /// Set while the several-at-once picker is up (Moments M3); its results come back in the order ticked.
+    private var pickManyCompletion: (([LibraryMedia]) -> Void)?
 
     // MARK: Recents
 
@@ -64,8 +68,41 @@ final class MediaLibraryImpl: NSObject, MediaLibraryProvider, PHPickerViewContro
         }
     }
 
+    func pickMany(max: Int32, completion: @escaping ([LibraryMedia]) -> Void) {
+        guard pickCompletion == nil, pickManyCompletion == nil, let presenter = Self.topController() else { completion([]); return }
+        pickManyCompletion = completion
+        var config = PHPickerConfiguration()
+        config.filter = .any(of: [.images, .videos])
+        config.selectionLimit = Int(max)
+        config.selection = .ordered // the numbers on the ticks are the order the moments post in
+        config.preferredAssetRepresentationMode = .current
+        let picker = PHPickerViewController(configuration: config)
+        picker.delegate = self
+        presenter.present(picker, animated: true)
+    }
+
+    func manageLimited(completion: @escaping () -> Void) {
+        guard let presenter = Self.topController() else { completion(); return }
+        PHPhotoLibrary.shared().presentLimitedLibraryPicker(from: presenter) { _ in
+            DispatchQueue.main.async { completion() }
+        }
+    }
+
     func picker(_ picker: PHPickerViewController, didFinishPicking results: [PHPickerResult]) {
         picker.dismiss(animated: true)
+        if let many = pickManyCompletion {
+            pickManyCompletion = nil
+            let providers = results.map(\.itemProvider)
+            Task.detached(priority: .userInitiated) {
+                var picked: [LibraryMedia] = []
+                for provider in providers { // one at a time, in order: each is a file on disk, not all in memory
+                    if let media = await Self.media(from: provider) { picked.append(media) }
+                }
+                let done = picked
+                await MainActor.run { many(done) }
+            }
+            return
+        }
         guard let provider = results.first?.itemProvider else { finishPick(nil); return }
         if provider.hasItemConformingToTypeIdentifier(UTType.movie.identifier) {
             // The URL lives only inside the callback, so the file is copied out first.
@@ -110,6 +147,61 @@ final class MediaLibraryImpl: NSObject, MediaLibraryProvider, PHPickerViewContro
         }
     }
 
+    /// One picked item as a moment's media: a video copied out of the picker's callback and made MP4, or a photo.
+    private nonisolated static func media(from provider: NSItemProvider) async -> LibraryMedia? {
+        if provider.hasItemConformingToTypeIdentifier(UTType.movie.identifier) {
+            let copy: URL? = await withCheckedContinuation { cont in
+                provider.loadFileRepresentation(forTypeIdentifier: UTType.movie.identifier) { url, _ in cont.resume(returning: url.flatMap(copyToTemp)) }
+            }
+            guard let copy else { return nil }
+            let media = await video(AVURLAsset(url: copy))
+            if media?.path != copy.path { try? FileManager.default.removeItem(at: copy) }
+            return media
+        }
+        if provider.hasItemConformingToTypeIdentifier(UTType.image.identifier) {
+            return await withCheckedContinuation { cont in
+                provider.loadFileRepresentation(forTypeIdentifier: UTType.image.identifier) { url, _ in
+                    cont.resume(returning: url.flatMap { photo(CGImageSourceCreateWithURL($0 as CFURL, nil)) })
+                }
+            }
+        }
+        return nil
+    }
+
+    // MARK: Trimming (M3b)
+
+    func filmstrip(path: String, count: Int32, completion: @escaping @Sendable ([Data]) -> Void) {
+        let asset = AVURLAsset(url: URL(fileURLWithPath: path))
+        Task.detached(priority: .userInitiated) {
+            var frames: [Data] = []
+            let seconds = (try? await asset.load(.duration)).map { CMTimeGetSeconds($0) } ?? 0
+            if seconds.isFinite, seconds > 0, count > 0 {
+                let generator = AVAssetImageGenerator(asset: asset)
+                generator.appliesPreferredTrackTransform = true
+                generator.maximumSize = CGSize(width: 160, height: 160)
+                for i in 0..<Int(count) {
+                    let at = CMTime(seconds: seconds * (Double(2 * i + 1) / Double(2 * Int(count))), preferredTimescale: 600)
+                    if let frame = try? await generator.image(at: at).image,
+                       let jpeg = UIImage(cgImage: frame).jpegData(compressionQuality: 0.6) {
+                        frames.append(jpeg)
+                    }
+                }
+            }
+            let done = frames
+            await MainActor.run { completion(done) }
+        }
+    }
+
+    /// The clip, passthrough when it fits the moment limit, else re-encoded at 1280x720 (which always fits a minute).
+    func trim(path: String, startMs: Int64, endMs: Int64, completion: @escaping (LibraryMedia?) -> Void) {
+        let asset = AVURLAsset(url: URL(fileURLWithPath: path))
+        let range = CMTimeRange(start: CMTime(value: startMs, timescale: 1000), end: CMTime(value: endMs, timescale: 1000))
+        Task.detached(priority: .userInitiated) {
+            let media = await Self.video(asset, range: range)
+            await MainActor.run { completion(media) }
+        }
+    }
+
     // MARK: Making the media
 
     /// ImageIO draws the long side at most MomentPhotoMaxSide straight from the file (HEIC too), upright, without
@@ -129,19 +221,29 @@ final class MediaLibraryImpl: NSObject, MediaLibraryProvider, PHPickerViewContro
                             durationMs: 0, path: nil, mime: "image/jpeg")
     }
 
-    /// MP4 in tmp: remuxed (passthrough) when the tracks fit MP4, otherwise re-encoded at the highest quality.
-    private static func video(_ asset: AVAsset) async -> LibraryMedia? {
+    /// MP4 in tmp: remuxed (passthrough) when the tracks fit MP4, otherwise re-encoded at the highest quality. With
+    /// [range] (the trimmer), only that part, and re-encoded at 1280x720 when the passthrough copy is over the limit.
+    /// The file stays on disk and is handed over by path (no bytes): the shared code reads it when it is posted.
+    private nonisolated static func video(_ asset: AVAsset, range: CMTimeRange? = nil) async -> LibraryMedia? {
         let mp4 = FileManager.default.temporaryDirectory.appendingPathComponent("moment-\(UUID().uuidString).mp4")
         var exported = false
-        for preset in [AVAssetExportPresetPassthrough, AVAssetExportPresetHighestQuality] where !exported {
+        let presets = range == nil ? [AVAssetExportPresetPassthrough, AVAssetExportPresetHighestQuality]
+                                   : [AVAssetExportPresetPassthrough, AVAssetExportPreset1280x720]
+        for preset in presets where !exported {
             try? FileManager.default.removeItem(at: mp4)
             guard let export = AVAssetExportSession(asset: asset, presetName: preset),
                   export.supportedFileTypes.contains(.mp4) else { continue }
             export.shouldOptimizeForNetworkUse = true
+            if let range { export.timeRange = range }
             exported = (try? await export.export(to: mp4, as: .mp4)) != nil
+            if exported, range != nil, preset == AVAssetExportPresetPassthrough,
+               let size = (try? FileManager.default.attributesOfItem(atPath: mp4.path)[.size]) as? Int, size > mediaMaxBytes {
+                exported = false // too large for a moment as it is: the next preset shrinks it
+            }
         }
-        guard exported, let data = try? Data(contentsOf: mp4) else { try? FileManager.default.removeItem(at: mp4); return nil }
-        let duration = (try? await asset.load(.duration)).map { CMTimeGetSeconds($0) } ?? 0
+        guard exported, FileManager.default.fileExists(atPath: mp4.path) else { try? FileManager.default.removeItem(at: mp4); return nil }
+        let duration: Double
+        if let range { duration = CMTimeGetSeconds(range.duration) } else { duration = (try? await asset.load(.duration)).map { CMTimeGetSeconds($0) } ?? 0 }
         var size = CGSize.zero
         if let track = try? await asset.loadTracks(withMediaType: .video).first,
            let loaded = try? await track.load(.naturalSize, .preferredTransform) {
@@ -152,8 +254,8 @@ final class MediaLibraryImpl: NSObject, MediaLibraryProvider, PHPickerViewContro
         generator.appliesPreferredTrackTransform = true
         generator.maximumSize = CGSize(width: 256, height: 256)
         var thumb: Data?
-        if let frame = try? await generator.image(at: .zero).image { thumb = thumbnail(UIImage(cgImage: frame)) }
-        return LibraryMedia(data: data, thumb: thumb, width: Int32(size.width.rounded()), height: Int32(size.height.rounded()),
+        if let frame = try? await generator.image(at: range?.start ?? .zero).image { thumb = thumbnail(UIImage(cgImage: frame)) }
+        return LibraryMedia(data: Data(), thumb: thumb, width: Int32(size.width.rounded()), height: Int32(size.height.rounded()),
                             durationMs: Int64((duration.isFinite ? duration * 1000 : 0).rounded()), path: mp4.path, mime: "video/mp4")
     }
 
