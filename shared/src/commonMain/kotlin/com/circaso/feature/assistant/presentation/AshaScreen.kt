@@ -91,7 +91,7 @@ fun AshaContent(
                 title = "Asha",
                 subtitle = state.conversationTitle ?: "Reads your activity · can't move money",
                 onBack = onBack,
-                // Her animated head (asha.riv, `AshaIcon`) at the header size; her mark if the file can't be drawn.
+                // Her animated head (asha.riv, `framing` = icon) at the header size; her mark if the file can't be drawn.
                 avatar = { AshaAvatar(state.mascot, AshaAvatarVariant.Icon, Modifier.size(CircasoSizes.avatarSm), reactions) { AshaMark(size = CircasoSizes.avatarSm) } },
                 trailing = {
                     // Past conversations, and a fresh one (as Claude): each keeps its own context.

@@ -108,7 +108,7 @@ checking_receipt (Asha), building_sandcastle (Robbie). App wiring in progress on
   sets `look`, `scene`, `mood`, `activity`, `voiceLevel`; a reaction sets `reaction` then fires `react`. Reduced
   motion: plays 450 ms after each pose change (the blends), then holds the frame; reactions skipped, mouth still. If
   the file, artboard, state machine or view model fails, the fallback (`AshaMark` / `AshaOrb`) stays for good.
-- Placement: Asha's chat header shows `AshaIcon` at `avatarSm`; voice mode shows the `Asha` stage (full width up to
+- Placement: Asha's chat header shows the `Asha` artboard with `framing` = icon (head crop, no scene) at `avatarSm`; voice mode shows the `Asha` stage (full width up to
   340 dp, the artboard's 480:460) with `listening` / `thinking` (or the server's activity) / `speaking` + `voiceLevel`
   from the speaker's loudness / `done`; tapping the stage plays `poke`.
 - Rules (`feature/assistant/domain/AshaMascot.kt`, tested in `commonTest/.../AshaMascotTest.kt`): typed enums with the
@@ -130,9 +130,9 @@ checking_receipt (Asha), building_sandcastle (Robbie). App wiring in progress on
   in Asha's settings (part A). `AshaMascotContext.support` is false until support moves into Asha (part C).
 - App-event reactions (money received, payment sent/failed, goal reached) are not wired yet; `AshaAvatar(reactions =)`
   takes them.
-- **The exported `asha.riv` (21:51) has no `AshaIcon` artboard or `Icon` state machine** (only the `Asha` artboard,
-  state machine and view model are in the file; `AshaIcon` is only in `asha_mascot.rev`). Until it is re-exported with
-  both artboards, the chat header falls back to the static `AshaMark`; voice mode's stage is unaffected.
+- **Icon framing (fixed 2026-11-04):** the Rive exporter drops an artboard that only nests another, so `AshaIcon` never
+  reached `asha.riv`. The head crop is now a `framing` enum (stage | icon) on the `Asha` view model and state machine;
+  the app sets `framing` = icon and scene `none` for the header.
 - Offline uses scene `none` (the wiring brief), not "idle in the office" from the section above; pick one with Pasaka.
 - Reduced motion holds whatever frame the idle loop is on after 450 ms; a `still` boolean in the view model that
   sends the idle layer to a rest pose would make it a designed pose (Rive file change).

@@ -29,6 +29,7 @@ import com.circaso.core.platform.RiveOneShot
 import com.circaso.designsystem.theme.CircasoTheme
 import com.circaso.feature.assistant.domain.AshaAvatarState
 import com.circaso.feature.assistant.domain.AshaReaction
+import com.circaso.feature.assistant.domain.AshaScene
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
@@ -38,15 +39,18 @@ import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.merge
 
-/** Which artboard of `asha.riv`: the head crop for headers and rows, or the full stage with her scenes. */
-enum class AshaAvatarVariant(val artboard: String, val stateMachine: String, val maxFps: Int) {
+/**
+ * How `asha.riv` is framed. Both use the one `Asha` artboard and state machine: the Rive exporter drops an artboard that
+ * only nests another, so the head crop is a `framing` state inside the stage instead of its own artboard.
+ */
+enum class AshaAvatarVariant(val artboard: String, val stateMachine: String, val framing: String, val maxFps: Int) {
     /**
-     * 256×256 head crop (`AshaIcon`, state machine `Icon`); it nests the stage and shares its view model. Capped at
-     * 30 fps: a 28 dp avatar gains nothing from more, and the chat can stay open for minutes.
+     * Head-and-face crop (`framing` = icon, no scene) for headers and rows. Capped at 30 fps: a 28 dp avatar gains
+     * nothing from more, and the chat can stay open for minutes.
      */
-    Icon("AshaIcon", "Icon", 30),
-    /** 480×460 full stage (`Asha`, state machine `Asha`) with scenes, props and the talking mouth. */
-    Stage("Asha", "Asha", 0),
+    Icon("Asha", "Asha", "icon", 30),
+    /** 480×460 full stage (`framing` = stage) with scenes, props and the talking mouth. */
+    Stage("Asha", "Asha", "stage", 0),
 }
 
 /** The stage's own proportions (480×460), so scenes are never cropped. */
@@ -102,7 +106,14 @@ fun AshaAvatar(
         artboard = variant.artboard,
         stateMachine = variant.stateMachine,
         viewModel = "Asha",
-        enums = mapOf("look" to state.look.rive, "scene" to state.scene.rive, "mood" to state.mood.rive, "activity" to state.activity.rive),
+        enums = mapOf(
+            "framing" to variant.framing,
+            // The head crop never shows a scene: at 28 dp it would only be noise behind her face.
+            "scene" to if (icon) AshaScene.None.rive else state.scene.rive,
+            "look" to state.look.rive,
+            "mood" to state.mood.rive,
+            "activity" to state.activity.rive,
+        ),
         numbers = mapOf("voiceLevel" to if (still) 0f else state.voiceLevel.coerceIn(0f, 1f)),
         oneShots = oneShots,
         playing = !still || settling,
