@@ -141,6 +141,13 @@ checking_receipt (Asha), building_sandcastle (Robbie). App wiring in progress on
 - Not seen on a device or simulator yet: check the header icon's crop at 28 dp, the stage's size on small phones, and
   the iOS fill colour against the header in all four themes.
 
+
+- **Money reactions (2026-11-04):** while Asha is open, the app plays `payment_sent` / `payment_failed` when one of the
+  person's payments confirms or fails (`WalletRepository.settled`) and `money_received` when a new incoming payment
+  confirms (`AshaMoneyReactions`, no model involved). Not yet: `goal_reached` from savings or group targets.
+- **Backend live (PR #32, deployed to dev 2026-11-04):** every turn sends a `mascot` frame; the app parses it on SSE and
+  the voice socket. Default scene server-side is `office`; the app shows no scene offline.
+
 ### Three independent layers
 
 They combine freely, e.g. beach + excited + searching on her phone for flights.

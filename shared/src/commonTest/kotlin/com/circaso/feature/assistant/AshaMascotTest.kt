@@ -201,3 +201,30 @@ private class TagSocket : LiveSocket {
     override suspend fun close() { fromServer.close() }
     fun server(text: String) { fromServer.trySend(LiveFrame.Text(text)) }
 }
+
+class AshaMoneyReactionsTest {
+    private fun t(id: String, dir: com.circaso.feature.wallet.domain.TransferDirection, state: com.circaso.feature.wallet.domain.TransferState) =
+        com.circaso.feature.wallet.domain.Transfer(
+            transferId = id, direction = dir, state = state, blockchain = "BASE", from = "a", toUserId = null, toAddress = "b",
+            amount = com.circaso.feature.wallet.domain.Amount("USDC", "1000000", "1"), fee = null, chatId = null, txHash = null, failureReason = null,
+            counterpartName = null, note = null, createdAt = 0L, updatedAt = 0L,
+        )
+
+    @kotlin.test.Test fun outgoingPaymentsPlaySentOrFailed() {
+        val out = com.circaso.feature.wallet.domain.TransferDirection.Out
+        kotlin.test.assertEquals(AshaReaction.PaymentSent, com.circaso.feature.assistant.domain.AshaMoneyReactions.forSettled(t("1", out, com.circaso.feature.wallet.domain.TransferState.Confirmed)))
+        kotlin.test.assertEquals(AshaReaction.PaymentFailed, com.circaso.feature.assistant.domain.AshaMoneyReactions.forSettled(t("2", out, com.circaso.feature.wallet.domain.TransferState.Failed)))
+        kotlin.test.assertNull(com.circaso.feature.assistant.domain.AshaMoneyReactions.forSettled(t("3", out, com.circaso.feature.wallet.domain.TransferState.Submitted)))
+        kotlin.test.assertNull(com.circaso.feature.assistant.domain.AshaMoneyReactions.forSettled(t("4", com.circaso.feature.wallet.domain.TransferDirection.In, com.circaso.feature.wallet.domain.TransferState.Confirmed)))
+    }
+
+    @kotlin.test.Test fun onlyNewConfirmedArrivalsPlayAndABurstPlaysOnce() {
+        val inn = com.circaso.feature.wallet.domain.TransferDirection.In
+        val r = com.circaso.feature.assistant.domain.AshaMoneyReactions
+        val before = r.confirmedIncoming(listOf(t("a", inn, com.circaso.feature.wallet.domain.TransferState.Confirmed), t("b", inn, com.circaso.feature.wallet.domain.TransferState.Submitted)))
+        kotlin.test.assertEquals(setOf("a"), before)
+        kotlin.test.assertEquals(0, r.newArrivals(before, before))
+        val now = r.confirmedIncoming(listOf(t("a", inn, com.circaso.feature.wallet.domain.TransferState.Confirmed), t("b", inn, com.circaso.feature.wallet.domain.TransferState.Confirmed), t("c", inn, com.circaso.feature.wallet.domain.TransferState.Confirmed)))
+        kotlin.test.assertEquals(1, r.newArrivals(before, now))
+    }
+}

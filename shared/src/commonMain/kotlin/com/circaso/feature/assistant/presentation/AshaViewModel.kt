@@ -105,6 +105,8 @@ class AshaViewModel(
     private val chats: com.circaso.feature.assistant.domain.AshaRepository? = null,
     /** The mascot's look from the chosen voice; absent in previews and tests, which show Asha. */
     private val look: AshaLookSource? = null,
+    /** Payments confirming, failing and arriving while Asha is open; absent in previews and tests. */
+    private val money: com.circaso.feature.assistant.domain.AshaMoneyReactions? = null,
 ) : ViewModel() {
     private val _reactions = MutableSharedFlow<AshaReaction>(extraBufferCapacity = 4)
     /** One-shot mascot reactions the server asked for (thanks, goal reached, …). */
@@ -148,6 +150,12 @@ class AshaViewModel(
         viewModelScope.launch { refreshHistory() }
         // The voice's gender, once per visit (a cheap GET); offline the saved look stays.
         look?.let { l -> viewModelScope.launch { l.refresh() } }
+        // The person's own money moving plays a one-shot (coins, the paper plane, the caring wrench) while she's on screen.
+        money?.let { m ->
+            viewModelScope.launch {
+                m.reactions.collect { r -> if (AshaMascotRules.allowReaction(r, AshaMascotContext(online = state.value.online))) _reactions.tryEmit(r) }
+            }
+        }
     }
 
     fun onDraft(text: String) = local.update { it.copy(draft = text, error = null) }
