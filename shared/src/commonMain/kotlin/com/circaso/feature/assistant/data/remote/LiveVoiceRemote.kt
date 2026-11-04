@@ -186,6 +186,8 @@ class LiveVoiceSocketSession(private val socket: LiveSocket, private val json: J
                 )
                 "tool_status" -> LiveVoiceEvent.Status(str("label"), AshaTagsParser.parse(o))
                 "tool_done" -> LiveVoiceEvent.Status(null, AshaTagsParser.parse(o))
+                // Backend PR #32: the mascot frame (before the first reply sentence, and with activity done after reply_done).
+                "mascot" -> LiveVoiceEvent.Status(null, AshaTagsParser.parse(o))
                 "tool_request" -> LiveVoiceEvent.ToolRequest(str("turnId").orEmpty(), str("callId").orEmpty(), str("name").orEmpty(), argumentsOf(o["arguments"]))
                 "timing" -> LiveVoiceEvent.Timing(
                     o["turn"]?.jsonPrimitive?.intOrNull ?: 0,

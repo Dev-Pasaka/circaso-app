@@ -139,6 +139,9 @@ class AshaRepositoryImpl(
             }
             // The mascot's tags may ride on tool_done too; its body was never read before, so a bare one stays quiet.
             "tool_done" -> AshaEvent.Status(null, runCatching { com.circaso.feature.assistant.data.remote.AshaTagsParser.parse(json.parseToJsonElement(data).jsonObject) }.getOrNull())
+            // Backend PR #32: a `mascot` event on every turn (before the first text, when the hints change, and last
+            // with activity done), so turns that use no tool still drive the mascot.
+            "mascot" -> AshaEvent.Status(null, runCatching { com.circaso.feature.assistant.data.remote.AshaTagsParser.parse(json.parseToJsonElement(data).jsonObject) }.getOrNull())
             "done" -> AshaEvent.Done(json.decodeFromString(DoneData.serializer(), data).message.toDomain())
             else -> null
         }

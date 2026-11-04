@@ -164,6 +164,21 @@ class AshaMascotTest {
         assertEquals(AshaTags(activity = AshaActivity.Thinking), AshaTagsParser.parse(odd))
     }
 
+    @Test fun theBackendsMascotFrameParses() {
+        // Exact shape from backend PR #32 (docs/mobile-integration.md, "Asha's mascot"): reaction is an explicit null.
+        val o = json.parseToJsonElement("""{"scene":"office","mood":"concerned","activity":"speaking","reaction":null,"sensitive":true}""").jsonObject
+        assertEquals(AshaTags(AshaScene.Office, AshaMood.Concerned, AshaActivity.Speaking, null, sensitive = true), AshaTagsParser.parse(o))
+    }
+
+    @Test fun liveVoiceMascotFramesBecomeStatusEvents() = runTest {
+        val socket = TagSocket()
+        val session = LiveVoiceSocketSession(socket, json, authFrame("app", "agent", "en", true))
+        socket.server("""{"scene":"beach","mood":"excited","activity":"speaking","reaction":null,"sensitive":false,"type":"mascot"}""")
+        socket.close()
+        val events = session.events.toList()
+        assertEquals(LiveVoiceEvent.Status(null, AshaTags(AshaScene.Beach, AshaMood.Excited, AshaActivity.Speaking)), events[0])
+    }
+
     @Test fun liveVoiceStatusFramesCarryTheTags() = runTest {
         val socket = TagSocket()
         val session = LiveVoiceSocketSession(socket, json, authFrame("app", "agent", "en", true))
