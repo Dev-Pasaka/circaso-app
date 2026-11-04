@@ -17,6 +17,7 @@ Update both files when things change.
 | Need | Open |
 | --- | --- |
 | Project status: decisions, built, pending, bugs, open questions (2026-11-03) | `references/project-status.md` |
+| Asha next: settings inside Asha, the animated mascot (Rive; scenes, moods, activities), support and tickets through Asha (decided 2026-11-04) | `references/asha-next.md` |
 | Plan for Spaces, Moments, group wallets, shops, fees and limits (decided 2026-11-03) | `references/spaces-plan.md` |
 | How to call the backend: headers, tokens, device key, flows, every endpoint, encrypted chats and messages, realtime, Asha, request/response types, build order (updated 2026-10-28; read its "Changed on" notes in section 1 first) | `references/mobile-integration.md` |
 | What a screen says and does: copy, buttons, components, states, per flow; design decisions and open questions | `references/design-spec.md` (99 KB; read the contents table, then only the section you need; section 15 has decisions) |
