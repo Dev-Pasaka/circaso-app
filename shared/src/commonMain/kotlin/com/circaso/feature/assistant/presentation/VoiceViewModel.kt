@@ -92,6 +92,8 @@ data class VoiceUiState(
     /** What the server's tags have said so far (scene, mood, activity). */
     val mascotTags: AshaMascotTags = AshaMascotTags(),
     val look: AshaLook = AshaLook.Asha,
+    /** Debug builds only: the showcase tour's current pose (long-press the stage), shown instead of the live one. */
+    val showcase: AshaAvatarState? = null,
 ) {
     val live get() = phase != VoicePhase.Connecting && phase != VoicePhase.Ended
 
@@ -101,7 +103,7 @@ data class VoiceUiState(
      * offline pose.
      */
     val mascot: AshaAvatarState
-        get() = AshaMascotRules.resolve(
+        get() = showcase ?: AshaMascotRules.resolve(
             look = look,
             tags = mascotTags,
             context = AshaMascotContext(online = ending != VoiceEnding.Offline, lateNight = AshaMascotRules.isLateNight(com.circaso.core.platform.localHour(kotlin.time.Clock.System.now().toEpochMilliseconds()))),
@@ -263,6 +265,24 @@ class VoiceViewModel(
     }
 
     /** Hangs up. The screen leaves at once; the `end` frame is best effort. */
+    private var showcaseJob: Job? = null
+
+    /** Debug builds only: long-press the stage to tour every look, scene, mood and activity; again to stop. */
+    fun onToggleShowcase() {
+        if (client?.debugBuild != true) return
+        showcaseJob?.let { it.cancel(); showcaseJob = null; local.update { s -> s.copy(showcase = null) }; return }
+        showcaseJob = viewModelScope.launch {
+            while (true) {
+                for (step in com.circaso.feature.assistant.domain.AshaShowcase.steps) {
+                    local.update { it.copy(showcase = step.state) }
+                    kotlinx.coroutines.delay(600)
+                    step.reaction?.let { _reactions.tryEmit(it) }
+                    kotlinx.coroutines.delay(3400)
+                }
+            }
+        }
+    }
+
     fun onEnd() {
         if (ended) return
         val s = session

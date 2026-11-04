@@ -57,7 +57,7 @@ enum class AshaAvatarVariant(val artboard: String, val stateMachine: String, val
 const val AshaStageAspect = 480f / 460f
 
 /** The largest the stage is drawn in voice mode; beyond it the scenes' line weights get heavy. */
-val AshaStageMaxWidth = 340.dp
+val AshaStageMaxWidth = 440.dp
 
 /**
  * Asha's animated mascot (asha-next.md part B), drawn from `files/asha.riv` by the platform's Rive runtime and driven by
@@ -78,6 +78,8 @@ fun AshaAvatar(
     modifier: Modifier = Modifier,
     reactions: Flow<AshaReaction> = emptyFlow(),
     pokeable: Boolean = false,
+    /** Debug builds: the voice screen's showcase toggle. */
+    onLongPress: (() -> Unit)? = null,
     background: Color = CircasoTheme.colors.bg,
     fallback: @Composable () -> Unit,
 ) {
@@ -108,6 +110,8 @@ fun AshaAvatar(
         viewModel = "Asha",
         enums = mapOf(
             "framing" to variant.framing,
+            // The scene fades at its edges into the screen behind it, so the stage has no box around it.
+            "backdrop" to if (c.isDark) "dark" else "light",
             // Reduced motion: the file holds a clean rest pose (eyes open, no sway) before the frame is held.
             "motion" to if (still) "still" else "moving",
             // The head crop never shows a scene: at 28 dp it would only be noise behind her face.
@@ -130,7 +134,12 @@ fun AshaAvatar(
             .then(if (icon) Modifier.clip(CircasoShapes.circle).background(c.fill) else Modifier)
             // The header already says "Asha" beside the icon, so the icon is decorative; the stage is described.
             .then(if (icon) Modifier.clearAndSetSemantics {} else Modifier.semantics { contentDescription = "Asha"; role = Role.Image })
-            .then(if (pokeable) Modifier.pointerInput(Unit) { detectTapGestures { pokes.tryEmit(AshaReaction.Poke) } } else Modifier),
+            .then(if (pokeable || onLongPress != null) Modifier.pointerInput(pokeable, onLongPress) {
+                detectTapGestures(
+                    onTap = { if (pokeable) pokes.tryEmit(AshaReaction.Poke) },
+                    onLongPress = onLongPress?.let { f -> { _ -> f() } },
+                )
+            } else Modifier),
     )
 }
 
