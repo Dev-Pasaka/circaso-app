@@ -52,6 +52,9 @@ interface WalletRepository {
      */
     suspend fun pay(request: PaymentRequest, idempotencyKey: String): AppResult<Transfer>
 
+    /** W17 for the same payment, online only; null when the server takes no fees (an older server). */
+    suspend fun quote(request: PaymentRequest): AppResult<PaymentQuote?> = AppResult.Success(null)
+
     /** W5, saved to the phone's copy. */
     suspend fun loadTransfer(transferId: String): AppResult<Transfer>
 
@@ -114,4 +117,32 @@ data class PaymentRequest(
     val payoutRequestId: String? = null,
     /** Which wallet signs, as the PIN screen names it. */
     val subject: SignSubject = SignSubject.Personal,
+    /** W17's hold on the fee the person saw (phase 2F): W4 charges exactly it while it holds. */
+    val quoteId: String? = null,
+)
+
+/** What stops a quoted payment as it is (W17 reports it; W4 would refuse it). */
+enum class QuoteProblem { InsufficientFunds, PerPaymentLimit, DailyLimit }
+
+/**
+ * W17's answer (phase 2F, spaces-plan §7b): the one Circaso fee for exactly this payment, network cost included, in
+ * the payment's coin (USDC minor units). [minimum] when the floor that covers the network cost made it more than the
+ * rate. [maxAmountMinor] is the most that can go now with its fee; [leftMinor] what the wallet may still send in its
+ * rolling 24 hours; [fitsAt] when this payment fits that window (ISO), if it doesn't now. [quoteId] only for the signer.
+ */
+data class PaymentQuote(
+    val feeMinor: String,
+    /** Null when the server didn't say (a repeat); the row then shows the fee alone. */
+    val rateBps: Int?,
+    val minimum: Boolean,
+    val totalMinor: String,
+    val balanceMinor: String?,
+    val maxAmountMinor: String?,
+    val problem: QuoteProblem?,
+    val fitsAt: String?,
+    val leftMinor: String?,
+    val dailyMaxMinor: String?,
+    val moreAt: String?,
+    val quoteId: String?,
+    val expiresAt: String?,
 )

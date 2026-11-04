@@ -300,7 +300,7 @@ Nothing to show is never an error screen. The first moment was posted through th
   and `gw-wallet*` now draw the unified screen. Not checked on a device or simulator yet (no install, by instruction).
 - To finish: device check on the emulator with two accounts (owner and member) against the sandbox once PR #28 is
   live; the Circle SDK paths (`:circlewallet/src/circle`, the Swift `canImport` branch) only build with the GitHub
-  Packages token and the pods, so naming the wallet on Circle's screens is untested until then. Then 2F (fees, caps).
+  Packages token and the pods, so naming the wallet on Circle’s screens is untested until then. 2F (fees, caps) is built: see below.
 
 **Pasaka's corrections (2026-11-04), built on `main`, not yet on a device:**
 - **No review page from a chat** (one-to-one and groups): the chat's money card is the review and Pay opens the
@@ -317,6 +317,33 @@ Nothing to show is never an error screen. The first moment was posted through th
   without leaving (needs PR #30 for the group without a target); B's own goal strip moves at once. Offline: Pay is
   dimmed with the offline line. Cancel the PIN: nothing in the chat. A direct chat: `#50 lunch @usdc`, Paying from
   switch to the group wallet → Request Payout; A's profile Pay puts `#` in the composer.
+
+**Phase 2F progress (2026-11-04): fees and limits built, backend PR #31 open (not merged or deployed), app on branch
+`worktree-agent-ab009271e84d17f92`, not on a device yet.** Plan and decisions: `spaces-plan.md` §11.10; contract:
+`mobile-integration.md` → "Fees and limits" (copy refreshed from the PR branch, also at the project root).
+- Backend: fee and limit rules in the database with seeds, W17 quote, W4 `quoteId` and `wallet.fee_changed`, the EVM
+  `executeBatch` challenge (payee + fee wallet from server config), rolling 24 h limits at W4 under a lock, fee ledger.
+- App: `PayViewModel` quotes W17 400 ms after the amount, coin, network, payee or Paying from changes (only the latest
+  answer counts; offline nothing is asked and the fee says "Needs a connection"; a server without W17 answers 404 and
+  shows "No fee"). `PayFee` is None / Quoting / Quoted (rate, minimum, `quoteId`, `expiresAt`) / Failed / Offline; Pay
+  waits for a settled fee. W4 sends the `quoteId`; `wallet.fee_changed`, `wallet.limit_exceeded` and
+  `wallet.insufficient_funds` keep the card (no "Not sent": nothing was attempted) with GW13c's banner, GW14b's note
+  and "Pay After 14:30", or GW20's "the most you can send" with "… Instead" (`onUseMax`, never a cent over in KES); a
+  fresh key after each. Shared UI in `FeeParts.kt` (fee row with spinner / Try Again, total "—" until known, the
+  footnote "One Circaso fee, network cost included." with "minimum", rate and "held until"), used by the chat's money
+  card and the Pay screen. A Request Payout shows "about KES 50 · 1%, set when paid" and GW14's "can send X more today"
+  with "Request X Instead" (a request may exceed today's cap). GW14c: the thread's D5 card asks W17 (as a member) for
+  each approved, unpaid payout and says "Approved · waits for the limit", when it fits and who pays, with a disabled
+  "Pay After 14:30". New `CircasoIcon.Info` (GW20's glyph).
+- Departures (premium standard): the GW13 footnote says "fee and rate held until 14:52" (a clock time) instead of a
+  ticking countdown; GW14c's line names "the group wallet" (the card has no group name in scope).
+- Design review (2026-11-04): both Blockers fixed (the card and the D5 card wake at `fitsAt` and when a hold runs out, asking W17 again and showing GW13c before Pay; the last answer stays on the card, dimmed, while a new one is asked, with the notes easing in and out and a Crossfade on the fee) and the should-fix items: a stale quote can't be signed for a new amount (`feeStale`, also guarded in `onPay`), a bare "Send" until the fee is known, "held until" hidden once passed, problems above the rows with Network and For dropped, "tomorrow 09:00", a 44 dp Try Again, GW13d only for retryable failures (others say why), no "0%" for an unknown rate, offers worded with exactly what they fill in, the Pay screen's fee row a `DetailRow` (new composable overload), the card row's value wrapping, Medium offer buttons, footnotes as the frames have them, the offline thread asking again later, and the GW14c joiner.
+- Tests: `PayFeeTest` (11), `PayoutWaitsTest` (3). Previews `-preview=chat-fee|chat-fee-quoting|chat-fee-minimum|chat-fee-changed|chat-fee-error|chat-fee-offline|chat-fee-short|chat-contribute-fee|chat-payout-cap|chat-request-cap|chat-request-waits|gw-pay-fee|gw-pay-fee-quoting|gw-pay-fee-error|gw-pay-fee-short`.
+- To finish: merge and deploy PR #31; create the Circle fee wallet per chain and set `WALLET_FEES_CHAIN_<CHAIN>_ADDRESS`
+  (until then no fee is taken, limits and W17 still work); on the emulator pay `#1` (minimum), `#500` (0.5 %), into a
+  group (1 %), to an address (2 %), a payout over a group's cap (GW14b/GW14c); sign one batch challenge and check
+  its webhook confirms the transfer. Release note: an app without this build gets `wallet.fee_changed` on every paid
+  payment once PR #31 is live.
 
 ### Backend gaps (design exists, no API yet)
 - W7/W8: statements on the server, PIN change and restore.

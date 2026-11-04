@@ -17,7 +17,7 @@ import com.circaso.designsystem.platform.PlatformStyle
 import com.circaso.designsystem.theme.CircasoTheme
 
 /** Semantic icon names. Each is drawn per platform (chevron back on iOS, arrow back on Android). */
-enum class CircasoIcon { Back, Close, Check, Delete, Backspace, Offline, Clock, Chat, Wallet, Person, ChevronRight, Plus, Search, Send, Mic, MicOff, Speaker, Stop, Waveform, ArrowUp, ArrowDown, Bank, Eye, EyeOff, Copy, Share, Clipboard, Network, Money, Warning, Scan, Phone, Video, VideoOff, FlipCamera, Minimise, Pin, Play, Pause, Photo, Camera, Spaces, Flash, More, Lock, Heart, HeartFilled, People, VolumeOff, ChevronDown, Trash, Forward, Scissors, Target, Fingerprint, FaceId }
+enum class CircasoIcon { Back, Close, Check, Delete, Backspace, Offline, Clock, Chat, Wallet, Person, ChevronRight, Plus, Search, Send, Mic, MicOff, Speaker, Stop, Waveform, ArrowUp, ArrowDown, Bank, Eye, EyeOff, Copy, Share, Clipboard, Network, Money, Warning, Scan, Phone, Video, VideoOff, FlipCamera, Minimise, Pin, Play, Pause, Photo, Camera, Spaces, Flash, More, Lock, Heart, HeartFilled, People, VolumeOff, ChevronDown, Trash, Forward, Scissors, Target, Fingerprint, FaceId, Info }
 
 /** Strokes drawn on a 24x24 grid, same as the design's inline SVGs. */
 @Composable
@@ -214,6 +214,11 @@ fun CircasoIconImage(icon: CircasoIcon, tint: Color, modifier: Modifier = Modifi
                 CircasoIcon.Warning -> {
                     p.moveTo(12f, 4f); p.lineTo(21f, 20f); p.lineTo(3f, 20f); p.close()
                     p.moveTo(12f, 10f); p.lineTo(12f, 14.5f); p.moveTo(12f, 17f); p.lineTo(12f, 17.1f)
+                }
+                // The design's `info`: a ring with the i's stem and dot (GW20).
+                CircasoIcon.Info -> {
+                    p.addOval(Rect(3.5f, 3.5f, 20.5f, 20.5f))
+                    p.moveTo(12f, 11f); p.lineTo(12f, 16f); p.moveTo(12f, 8f); p.lineTo(12f, 8.1f)
                 }
             }
             if (icon == CircasoIcon.Play || icon == CircasoIcon.Pause || icon == CircasoIcon.HeartFilled) drawPath(p, tint) else drawPath(p, tint, style = stroke)

@@ -190,7 +190,7 @@ internal class FakeWalletRemote : WalletRemote {
     }
     override suspend fun prepare(request: PrepareTransferRequest, idempotencyKey: String): AppResult<PrepareTransferResponse> {
         prepared += request to idempotencyKey
-        return AppResult.Success(PrepareTransferResponse("t-1", "AWAITING_SIGNATURE", request.blockchain, AmountDto("USDC", request.amount.amountMinor, MinorUnits.toDisplay(request.amount.amountMinor, 6)), "ch-pay", sdk, AmountDto("USDC", "0", "0"), "2026-10-29T12:15:00Z"))
+        return AppResult.Success(PrepareTransferResponse("t-1", "AWAITING_SIGNATURE", request.blockchain, AmountDto("USDC", request.amount.amountMinor, MinorUnits.toDisplay(request.amount.amountMinor, 6)), "ch-pay", sdk, com.circaso.feature.wallet.data.remote.FeeDto("USDC", "0", "0"), "2026-10-29T12:15:00Z"))
     }
     override suspend fun transfer(transferId: String): AppResult<TransferResponse> =
         if (transferId == "t-1" || transferId == "t-in") AppResult.Success(TransferResponse(transferId, if (transferId == "t-in") "IN" else "OUT", transferState, "BASE-SEPOLIA", "0xabc", PayeeDto("u-2", "0xdef"), AmountDto("USDC", "5000000", "5"), null, "chat-1", "APP", null, null))
