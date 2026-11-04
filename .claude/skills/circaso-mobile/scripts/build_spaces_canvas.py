@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Builds Circaso-Spaces.html: the phase 0a design frames for Spaces phase 1 (Spaces tab, Moments) and
-phase 2 (groups with wallets, Paying from, the fee line, group daily caps).
+phase 2 (groups with wallets, Paying from, the fee line, group daily caps), and the phase 0b frames for phase 3, Spaces core
+(pages SD, SS, SN, SM, SI, SH, SR, SW: discover, the space page, create, paid entry, invites, space chat, roles and
+moderation, the space wallet).
 
 Same format as Circaso-Offline-States.html: the token and component CSS and the portrait photos are copied
 from that file, so the frames use exactly the canvas's design system. Run from the repo root:
@@ -120,6 +122,7 @@ GALLERY_CSS = """
 .tag{display:inline-block;font-size:11px;font-weight:600;border-radius:6px;padding:1px 6px;background:var(--g-line);color:var(--g-ink);margin-left:6px;vertical-align:1px}
 .decisions{max-width:860px;color:var(--g-ink2);font-size:15px;line-height:1.55}
 .decisions li{margin:4px 0}
+.decisions h3{color:var(--g-ink);font-size:17px;margin:26px 0 6px}
 """
 
 # ---------------------------------------------------------------- icons (24 px grid, stroke, from the canvas)
@@ -356,8 +359,8 @@ discover = (space_row("Coffee Farmers Kenya", "Farming · 4.8k members", "CF", e
             + space_row("Karura Runners", "Sport · 910 members", "KR", end=btn("Follow", "secondary", "sm", block=False)))
 frame(P_S, "S1b-Spaces-full", "S1 · Spaces tab, with spaces (phase 3)",
       "The same tab once spaces ship. Your spaces first, newest activity on top, a red LIVE pill when a room is open. "
-      "Discover lists public and members-only spaces. Follow acts in place; Join on a members-only space opens Send filled in with "
-      "the price and the fee (a paid entry). LIVE is monochrome with a soft pulse, not the error red.",
+      "Discover lists public and members-only spaces. Follow acts in place. LIVE (phase 4) is monochrome with a soft pulse, not the error red. "
+      "Superseded for phase 3 by SD1 (page SD); joining is the money card SM1, not Send.",
       large_title("Spaces", spaces_buttons) + moments_row(ROW_FULL[:5])
       + '<div style="padding: 18px 0 0; display: flex; flex-direction: column; gap: 4px;">'
       + '<div class="sec-row" style="padding: 0 20px;"><span class="sec">Your spaces</span><button type="button" class="link">See All</button></div>'
@@ -1183,6 +1186,1176 @@ frame(P_G, "GW16-Wallet-tab-switch", "GW16 · Wallet tab, switched to a group",
       + row("Coast Bus", "Payout · fee KES 120 · approved by 2", av("Coast Bus"), '<span class="cx-row-amount">−KES 12,120</span>') + "</div></div>"
       + tabbar("Wallet"), bg="var(--bg-grouped)")
 
+# ================================================================ PHASE 3 · Spaces core (phase 0b)
+# Discover and search, the space page, create a space, paid entry and membership, invites, space chat and the private
+# chat with the owner, roles and moderation, the space wallet. Shop (3S) and live (4) are not here.
+P3 = "Phase 3"
+I.update({
+    "globe": "M12 3.5a8.5 8.5 0 1 0 0 17a8.5 8.5 0 0 0 0-17zM3.5 12h17M12 3.5c2.4 2.5 3.5 5.4 3.5 8.5s-1.1 6-3.5 8.5c-2.4-2.5-3.5-5.4-3.5-8.5s1.1-6 3.5-8.5z",
+    "ticket": "M4 7h16v3a2 2 0 0 0 0 4v3H4v-3a2 2 0 0 0 0-4zM14 7v10",
+    "flag": "M5.5 20.5v-16M5.5 4.5h11l-2 4l2 4h-11",
+    "share": "M12 14.5V4M8 7.5L12 4l4 3.5M6.5 11H5.5v9h13v-9h-1",
+    "link": "M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1",
+    "shield": "M12 3.5l7 2.5v5.5c0 4.5-3 7.8-7 9c-4-1.2-7-4.5-7-9V6z",
+    "bell": "M6.5 16.5V11a5.5 5.5 0 0 1 11 0v5.5l1.5 2h-14zM10 20.5a2 2 0 0 0 4 0",
+    "ban": "M12 3.5a8.5 8.5 0 1 0 0 17a8.5 8.5 0 0 0 0-17zM6 6l12 12",
+    "user_minus": "M9 11a3.5 3.5 0 1 0 0-7a3.5 3.5 0 0 0 0 7zM2.5 19.5c.3-3.3 3-5.2 6.5-5.2s6.2 1.9 6.5 5.2M16 9h5.5",
+    "user_plus": "M9 11a3.5 3.5 0 1 0 0-7a3.5 3.5 0 0 0 0 7zM2.5 19.5c.3-3.3 3-5.2 6.5-5.2s6.2 1.9 6.5 5.2M18.5 6.5v5.5M15.75 9.25h5.5",
+    "reply": "M10 6L4 12l6 6M4 12h10a6 6 0 0 1 6 6",
+    "copy": "M9 9h10v11H9zM5.5 15V4.5h10",
+    "mail": "M4 6.5h16v11H4zM4.5 7.5l7.5 5.5l7.5-5.5",
+    "qr": "M4 4h6v6H4zM14 4h6v6h-6zM4 14h6v6H4zM14 14h2v2h-2zM18 18h2v2h-2zM14 18h2v2h-2zM18 14h2v2h-2z",
+    "bank": "M3.5 9.5L12 4l8.5 5.5M5 10v8M9.7 10v8M14.3 10v8M19 10v8M3.5 20h17",
+    "down": "M12 5v14M5.5 12.5L12 19l6.5-6.5",
+    "gear": "M12 9a3 3 0 1 0 0 6a3 3 0 0 0 0-6zM12 2.8v2.4M12 18.8v2.4M2.8 12h2.4M18.8 12h2.4M5.5 5.5l1.7 1.7M16.8 16.8l1.7 1.7M5.5 18.5l1.7-1.7M16.8 7.2l1.7-1.7",
+})
+
+EXTRA_CSS += r"""
+/* Phase 3: spaces. Every value is a token or a canvas measure. */
+.scr .sp-tile{border-radius:var(--radius-md);background:var(--fill-strong);color:var(--ink);display:inline-flex;align-items:center;justify-content:center;font-family:var(--font-rounded);font-weight:600;flex:none;overflow:hidden}
+/* Default cover, drawn from tokens until the owner adds a photo: the brand's rings on a quiet fill. */
+.scr .cover{position:relative;height:178px;overflow:hidden;background:
+  radial-gradient(circle at 84% 34%,transparent 46px,var(--fill-strong) 47px,var(--fill-strong) 49px,transparent 50px),
+  radial-gradient(circle at 84% 34%,transparent 78px,var(--fill-strong) 79px,var(--fill-strong) 80px,transparent 81px),
+  radial-gradient(circle at 12% 110%,transparent 70px,var(--fill-strong) 71px,var(--fill-strong) 72px,transparent 73px),
+  var(--fill)}
+.scr .cover img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
+.scr .cover-btns{position:absolute;left:16px;right:16px;top:59px;display:flex;justify-content:space-between;z-index:2}
+.scr .cover-btns .cx-icon-btn{background:var(--glass);-webkit-backdrop-filter:blur(20px);backdrop-filter:blur(20px);box-shadow:inset 0 0 0 1px var(--glass-edge)}
+.scr .sp-head{padding:0 16px;margin-top:-44px;position:relative;display:flex;flex-direction:column;gap:6px}
+.scr .sp-head .sp-tile{box-shadow:0 0 0 4px var(--bg)}
+.scr .kind{display:inline-flex;align-items:center;gap:5px;font:400 15px/20px var(--font-sans);color:var(--ink-secondary)}
+.scr .role{display:inline-flex;align-items:center;height:18px;padding:0 6px;border-radius:999px;background:var(--fill);color:var(--ink-secondary);font:600 11px/13px var(--font-sans);letter-spacing:.2px;flex:none}
+.scr .sysline{align-self:center;max-width:300px;text-align:center;font:400 12px/16px var(--font-sans);color:var(--ink-secondary);display:flex;gap:5px;align-items:flex-start;justify-content:center;padding:2px 0}
+.scr .sysline .cx-icon{margin-top:1px}
+.scr .who{font:600 13px/18px var(--font-sans);display:flex;align-items:center;gap:6px;padding:0 0 2px 4px}
+.scr .reacts{display:flex;gap:4px;padding:3px 0 0 4px}
+.scr .reacts span{display:inline-flex;align-items:center;gap:3px;height:24px;padding:0 8px;border-radius:999px;background:var(--surface);box-shadow:inset 0 0 0 1px var(--separator);font:500 12px/16px var(--font-sans);font-variant-numeric:tabular-nums}
+.scr .reacts .mine{box-shadow:inset 0 0 0 1.5px var(--ink)}
+/* Popover: anchored to what opened it, never a sheet (Pasaka: don't overuse bottom sheets). */
+.scr .pop{position:absolute;z-index:8;width:250px;background:var(--surface-raised);border-radius:var(--radius-md);box-shadow:var(--shadow-float),inset 0 0 0 1px var(--separator);overflow:hidden;display:flex;flex-direction:column}
+.scr .pop-item{display:flex;align-items:center;gap:12px;min-height:44px;padding:0 16px;font:400 17px/22px var(--font-sans);letter-spacing:-0.43px;color:var(--ink)}
+.scr .pop-item .cx-icon{margin-left:auto;color:var(--ink-secondary)}
+.scr .pop-item+.pop-item,.scr .pop-sep{box-shadow:inset 0 .5px 0 var(--separator)}
+.scr .pop-crit,.scr .pop-crit .cx-icon{color:var(--critical)}
+.scr .pop-dim{color:var(--ink-tertiary)}
+.scr .pop-note{padding:10px 16px;font:400 13px/18px var(--font-sans);color:var(--ink-secondary)}
+.scr .pop-head{padding:12px 16px 4px;font:600 13px/18px var(--font-sans);color:var(--ink-secondary)}
+.scr .dim-behind{position:absolute;inset:0;z-index:7;background:color-mix(in srgb,var(--bg) 40%,transparent)}
+/* The chat money card: solid, the whole review, Pay goes straight to the PIN (D-M3). */
+.scr .mcard{position:absolute;left:12px;right:12px;z-index:5;background:var(--surface-raised);border-radius:var(--radius-lg);box-shadow:var(--shadow-float);padding:12px 12px 12px 16px;display:flex;flex-direction:column;gap:8px}
+.scr [data-theme$="-hc"] .mcard{box-shadow:var(--shadow-float),inset 0 0 0 1px var(--separator)}
+.scr .mc-head{display:flex;align-items:center;gap:12px}
+.scr .mc-title{font:400 15px/20px var(--font-sans);color:var(--ink-secondary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.scr .mc-amt{font:700 22px/28px var(--font-sans);letter-spacing:-0.26px;font-variant-numeric:tabular-nums}
+.scr .mc-rows{display:flex;flex-direction:column;gap:4px}
+.scr .crow{display:flex;justify-content:space-between;align-items:center;gap:12px;min-height:22px}
+.scr .crow>span:first-child{font:400 13px/18px var(--font-sans);color:var(--ink-secondary);flex:none}
+.scr .crow>span:last-child{font:600 15px/20px var(--font-sans);text-align:right;font-variant-numeric:tabular-nums;min-width:0}
+.scr .mc-line{font:400 13px/18px var(--font-sans)}
+.scr .mc-foot{font:400 12px/16px var(--font-sans);color:var(--ink-tertiary);font-variant-numeric:tabular-nums}
+/* A locked preview: the shape of a chat behind a lock, never real posts. */
+.scr .ghost{display:flex;flex-direction:column;gap:10px;padding:4px 16px}
+.scr .ghost i{display:block;height:36px;border-radius:var(--radius-lg);background:var(--fill)}
+/* Wallet tab (D-M9): no title, a corner switcher, metal cards per network. */
+.scr .wpill{appearance:none;border:0;height:36px;padding:0 10px 0 12px;border-radius:999px;background:var(--fill);color:var(--ink);display:inline-flex;align-items:center;gap:6px;font:600 15px/20px var(--font-sans);max-width:200px}
+.scr .ncard{position:relative;overflow:hidden;height:196px;border-radius:var(--radius-lg);padding:18px 20px;display:flex;flex-direction:column;justify-content:space-between;color:var(--on-money);
+  background:linear-gradient(140deg,var(--money-card-sheen) 0%,var(--money-card) 38%,var(--money-card) 62%,var(--money-card-sheen) 100%);box-shadow:inset 0 1px 0 rgba(255,255,255,.24),inset 0 -1px 0 rgba(0,0,0,.22)}
+.scr .ncard::before{content:"";position:absolute;inset:0;pointer-events:none;background:radial-gradient(120% 70% at 12% 0%,rgba(255,255,255,.20),transparent 60%)}
+.scr .ncard>*{position:relative}
+.scr .ncard .dim{opacity:.82}
+.scr [data-theme$="-hc"] .ncard .dim{opacity:1}
+.scr .ncard-peek{position:absolute;top:10px;bottom:10px;width:24px;border-radius:var(--radius-lg);background:var(--money-card);opacity:.55}
+.scr .opt{border-radius:var(--radius-md);background:var(--surface);box-shadow:inset 0 0 0 1px var(--separator);padding:14px 16px;display:flex;flex-direction:column;gap:12px}
+.scr .opt-on{box-shadow:inset 0 0 0 2px var(--ink)}
+.scr .steps{display:flex;gap:6px}
+.scr .steps i{flex:1;height:4px;border-radius:2px;background:var(--fill-strong)}
+.scr .steps i.on{background:var(--ink)}
+"""
+
+# ---------------------------------------------------------------- spaces and people for phase 3
+SPACES = {
+    "sneaker": ("Nairobi Sneaker Drop", "@sneakerdrop", "ND"),
+    "books": ("Nairobi Book Club", "@nairobibooks", "NB"),
+    "founders": ("Nairobi Founders Circle", "@founderscircle", "FC"),
+    "coffee": ("Coffee Farmers Kenya", "@coffeefarmers", "CF"),
+    "runners": ("Karura Runners", "@karurarunners", "KR"),
+    "chamahub": ("Kilimani Chama Hub", "@chamahub", "KC"),
+    "yoga": ("Kilimani Yoga Collective", "@kilimaniyoga", "KY"),
+    "swap": ("Kisumu Book Swap", "@kisumubooks", "KB"),
+    "mama": ("Mama Mboga Traders", "@mamamboga", "MM"),
+    "worship": ("Jubilee Youth Worship", "@jubileeyouth", "JY"),
+}
+AMINA = "Amina Wairimu"  # no photo in the canvas: initials
+
+def tile(key, size=52, style=""):
+    name, _, init = SPACES[key]
+    return (f'<span class="sp-tile" role="img" aria-label="{name}" style="width: {size}px; height: {size}px; font-size: {round(size * 0.34)}px; '
+            f'border-radius: {14 if size < 60 else 22}px;{style}">{init}</span>')
+
+def sp_row(key, sub, end="", title_extra=""):
+    name = SPACES[key][0]
+    return (f'<div role="button" tabindex="0" class="cx-row cx-row-tap">{tile(key)}<div class="cx-row-body"><div class="cx-row-text">'
+            f'<div class="cx-row-title" style="display: flex; align-items: center; gap: 8px;"><span style="overflow: hidden; text-overflow: ellipsis;">{name}</span>{title_extra}</div>'
+            f'<div class="cx-row-sub">{sub}</div></div><div class="cx-row-end">{end}</div></div></div>')
+
+def kind_icon(kind):
+    return {"public": ic("globe", 15, 1.8), "members": ic("ticket", 15, 1.8), "invite": ic("lock", 15, 1.8)}[kind]
+
+def meta(text):
+    return f'<span class="cx-row-meta">{text}</span>'
+
+def count(n):
+    return f'<span class="cx-badge cx-badge-count" aria-label="{n} unread">{n}</span>'
+
+def role(text):
+    return f'<span class="role">{text}</span>'
+
+def sysline(text, icon=None):
+    return f'<div class="sysline" role="note">{ic(icon, 13, 2) if icon else ""}<span>{text}</span></div>'
+
+def day(text="Today"):
+    return f'<div style="align-self: center; font-size: 12px; line-height: 16px; font-weight: 600; color: var(--ink-secondary); padding: 4px 0;">{text}</div>'
+
+def post(who, text, role_txt=None, reacts=None, name=None, quote=None):
+    nm = name or NAMES.get(who, who)
+    r = role(role_txt) if role_txt else ""
+    rx = ""
+    if reacts:
+        rx = '<div class="reacts">' + "".join(f'<span role="button" tabindex="0" aria-pressed="{str(m).lower()}" class="{"mine" if m else ""}" aria-label="{e} {n}{", including you" if m else ""}">{e} {n}</span>' for e, n, m in reacts) + "</div>"
+    q = (f'<div style="padding: 6px 10px; margin-bottom: 6px; border-radius: 12px; background: var(--fill-strong); font: 400 13px/18px var(--font-sans);">'
+         f'<div style="font-weight: 600;">{quote[0]}</div>{quote[1]}</div>') if quote else ""
+    return (f'<div class="cx-msg">{av(who, "sm")}<div style="display: flex; flex-direction: column; min-width: 0;">'
+            f'<div class="who">{nm}{r}</div><div class="cx-bubble cx-bubble-in">{q}{text}</div>{rx}</div></div>')
+
+def mine(text, time="", state=""):
+    st = (f'<div class="cx-bubble-time cx-bubble-time-out" style="display: flex; gap: 4px; align-items: center;">{state}</div>' if state else
+          (f'<div class="cx-bubble-time cx-bubble-time-out">{time}</div>' if time else ""))
+    return f'<div class="cx-bubble cx-bubble-out">{text}</div>{st}'
+
+def space_composer(placeholder, extra="", attach=True, money_hint=False):
+    lead = f'<button type="button" class="cx-icon-btn" aria-label="Attach">{ic("plus")}</button>' if attach else ""
+    return (f'<div style="position: absolute; left: 0; right: 0; bottom: 0; padding-bottom: 26px; background: var(--glass); -webkit-backdrop-filter: blur(24px); backdrop-filter: blur(24px); z-index: 4;">'
+            f'<div class="cx-composer">{extra}<div class="cx-composer-bar">{lead}'
+            f'<div class="cx-composer-field"><span class="cx-composer-placeholder">{placeholder}</span></div>'
+            f'<button type="button" class="cx-icon-btn cx-icon-btn-action" aria-label="Send">{ic("send")}</button></div></div></div>')
+
+def composer_note(text, action=None):
+    a = btn(action, "secondary", "sm", block=False) if action else ""
+    return (f'<div style="position: absolute; left: 0; right: 0; bottom: 0; padding: 12px 16px 34px; background: var(--glass); -webkit-backdrop-filter: blur(24px); backdrop-filter: blur(24px); border-top: 1px solid var(--glass-edge); z-index: 4; display: flex; align-items: center; gap: 12px;">'
+            f'<span class="small" style="flex: 1; font-size: 15px; line-height: 20px;">{text}</span>{a}</div>')
+
+def space_bar(key, sub, right=None):
+    return bar(SPACES[key][0], sub=sub, avatar=tile(key, 28, " border-radius: 8px;"),
+               right=right if right is not None else icon_btn("more", "Space info"))
+
+def crow(k, v):
+    return f'<div class="crow"><span>{k}</span><span>{v}</span></div>'
+
+def mcard(title, amount, under, rows, button, lead, status="", tone="ink-secondary", foot="", bottom=34, close=True,
+          disabled=False, busy=False, problem="", label=None):
+    x = f'<button type="button" class="cx-icon-btn" aria-label="Close">{ic("close", 16)}</button>' if close and not busy else ""
+    st = f'<div class="mc-line" role="status" aria-live="polite" style="color: var(--{tone});">{status}</div>' if status else ""
+    ft = f'<div class="mc-foot">{foot}</div>' if foot else ""
+    return (f'<section class="mcard" role="group" aria-label="{label or title}" style="bottom: {bottom}px;">'
+            f'<div class="mc-head">{lead}<div style="flex: 1; min-width: 0;" role="heading" aria-level="2"><div class="mc-title">{title}</div>'
+            f'<div class="mc-amt">{amount}</div><div class="cx-amount-sub" style="text-align: left;">{under}</div></div>{x}</div>'
+            f'{problem}<div class="mc-rows">{"".join(crow(k, v) for k, v in rows)}</div>{st}'
+            f'{btn(button, disabled=disabled, busy=busy)}{ft}</section>')
+
+def pop(items, top, right=16, left=None, width=250, head=None, note=None):
+    pos = f"top: {top}px; " + (f"left: {left}px;" if left is not None else f"right: {right}px;")
+    out = []
+    for it in items:
+        if it == "-":
+            out.append('<div class="pop-sep"></div>'); continue
+        label, icon, cls = (tuple(it) + ("",))[:3]
+        out.append(f'<div role="menuitem" tabindex="0" class="pop-item {cls}">{label}{ic(icon, 18, 1.8) if icon else ""}</div>')
+    h = f'<div class="pop-head">{head}</div>' if head else ""
+    n = f'<div class="pop-note pop-sep">{note}</div>' if note else ""
+    return f'<div class="pop" role="menu" style="{pos} width: {width}px;">{h}{"".join(out)}{n}</div>'
+
+def space_head(key, kind, kind_text, line=None, actions="", cover_extra="", right_btn=None, photo=None):
+    name, handle, _ = SPACES[key]
+    rb = right_btn or f'<button type="button" class="cx-icon-btn" aria-label="Share {name}">{ic("share", 17, 1.9)}</button>'
+    img = f'<img data-ph="{photo}" src="" alt="">' if photo else ""
+    return (f'<div class="cover">{img}{cover_extra}<div class="cover-btns"><button type="button" class="cx-icon-btn" aria-label="Back">{ic("back")}</button>'
+            f'<div style="display: flex; gap: 8px;">{rb}<button type="button" class="cx-icon-btn" aria-label="More">{ic("more", 18, 3)}</button></div></div></div>'
+            f'<div class="sp-head">{tile(key, 88)}<h1 style="margin: 6px 0 0; font: 700 22px/28px var(--font-sans); letter-spacing: -0.26px;">{name}</h1>'
+            f'<div class="kind">{handle} · {kind_icon(kind)}{kind_text}</div>'
+            + (f'<p style="margin: 2px 0 0; font: 400 15px/20px var(--font-sans);">{line}</p>' if line else "")
+            + (f'<div style="display: flex; gap: 8px; padding-top: 8px;">{actions}</div>' if actions else "") + "</div>")
+
+def tabs(on=0, items=("Chat", "About", "Members")):
+    return f'<div style="padding: 14px 16px 6px;">{seg(list(items), on, "Space sections")}</div>'
+
+def known(people, text):
+    faces = "".join(av(p, "sm", f"box-shadow: 0 0 0 2px var(--bg); margin-left: {0 if i == 0 else -8}px;") for i, p in enumerate(people))
+    return f'<div style="display: flex; align-items: center; gap: 8px; padding-top: 4px;"><span style="display: flex;">{faces}</span><span class="small">{text}</span></div>'
+
+def asof_banner(t="10:42", what="spaces"):
+    return banner(f"You’re offline · Showing {what} as of {t}")
+
+def ref_banner(text, rid):
+    return (f'<div class="cx-banner cx-banner-critical" role="alert"><span class="cx-banner-icon">{ic("warning")}</span>'
+            f'<span class="cx-banner-text">{text} <span class="rid">Ref {rid}</span></span></div>')
+
+def center(icon, title, text, action="", top=120, extra=""):
+    return (f'<div style="padding: {top}px 32px 0; display: flex; flex-direction: column; align-items: center; gap: 10px; text-align: center;">'
+            f'<span style="color: var(--ink-tertiary); display: flex;">{icon}</span><div style="font: 600 17px/22px var(--font-sans);">{title}</div>'
+            f'<p class="small" style="font-size: 15px; line-height: 20px; max-width: 300px;">{text}</p>{action}{extra}</div>')
+
+sk_row = ('<div class="cx-row" aria-hidden="true"><span class="sk" style="width: 52px; height: 52px; border-radius: 14px;"></span><div class="cx-row-body" style="flex-direction: column; align-items: flex-start; gap: 8px;">'
+          '<span class="sk" style="width: 60%; height: 14px;"></span><span class="sk" style="width: 85%; height: 12px;"></span></div></div>')
+
+RATE3 = "1 USDC = KES 129.20 · fee and rate held for 14:52"
+PERSONAL_FIXED = '<span style="display: inline-flex; align-items: center; gap: 6px;">' + av("pasaka", "sm", "width: 22px; height: 22px;") + "Personal</span>"
+def wchip3(name, key=None, me="pasaka"):
+    a = tile(key, 22, " border-radius: 6px;") if key else av(me, "sm", "width: 22px; height: 22px; font-size: 9px;")
+    return f'<button type="button" class="wchip" aria-label="Paying from {name}, change">{a}<span style="max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">{name}</span>{ic("chev_down", 14)}</button>'
+
+# ================================================================ PAGE SD · Discover and search
+P_SD = "SD"
+TOPIC_LIST = ["Business", "Shopping", "Farming", "Health", "Faith", "Sport", "Books", "Chamas", "Music", "Other"]
+spaces_tab_btns = spaces_buttons
+YOUR3 = (sp_row("sneaker", "Amina: Size 42 Jordans back in stock at 6 pm", f'{meta("18:02")}{count(12)}')
+         + sp_row("books", "Renew by 4 Dec · Njeri: This month’s pick is Kintu", f'{meta("Mon")}', title_extra=f'<span class="cx-badge cx-badge-warning">{ic("clock", 13)}Renew</span>')
+         + sp_row("chamahub", "Weekly meet moved to Saturday", meta("Sun")))
+SUGG3 = (sp_row("coffee", "Public · Farming · 4.8k · Juma follows", btn("Follow", "secondary", "sm", block=False))
+         + sp_row("runners", "Public · Sport · 910 · 3 contacts", btn("Follow", "secondary", "sm", block=False))
+         + sp_row("worship", "Members only · 1 USDC (KES 129) a month", btn("Join", "secondary", "sm", block=False)))
+def sec_head(text, link="See All", pad="12px 20px 0"):
+    l = f'<button type="button" class="link">{link}</button>' if link else ""
+    return f'<div class="sec-row" style="padding: {pad};"><span class="sec">{text}</span>{l}</div>'
+
+frame(P_SD, "SD1-Spaces-tab", "SD1 · Spaces tab, with spaces",
+      "Replaces S1b. Your spaces first, newest activity on top, unread counts as in Chats. A membership ending soon shows "
+      "Renew on its row (amber, the only warning colour). Suggested is public and members-only spaces: ones your contacts "
+      "follow first, then popular in Kenya. Follow acts in place; Join opens the space with its join card (SM1). Invite-only spaces never appear.",
+      large_title("Spaces", spaces_tab_btns) + moments_row(ROW_FULL[:5])
+      + '<div style="padding: 14px 0 0; display: flex; flex-direction: column; gap: 4px;">' + sec_head("Your spaces", pad="0 20px")
+      + f'<div class="cx-list cx-list-plain">{YOUR3}</div>' + sec_head("Suggested for you")
+      + f'<div class="cx-list cx-list-plain">{SUGG3}</div></div>' + tabbar("Spaces"), tag=P3)
+
+frame(P_SD, "SD1b-No-spaces", "SD1 · Not in any space yet",
+      "Empty: no space joined. Suggestions carry the section, and the one line under them says how to start one. "
+      "Create a Space opens SN1 (the same as + → Space).",
+      large_title("Spaces", spaces_tab_btns) + moments_row(ROW_FULL[:5])
+      + '<div style="padding: 14px 0 0; display: flex; flex-direction: column; gap: 4px;">' + sec_head("Your spaces", link=None, pad="0 20px")
+      + '<div style="margin: 6px 16px 4px; padding: 16px; border-radius: var(--radius-md); background: var(--fill); display: flex; flex-direction: column; gap: 10px;">'
+      + '<div style="font: 600 17px/22px var(--font-sans);">Find your people</div><p class="small" style="font-size: 15px; line-height: 20px;">Follow a public space, join a members-only one, or start your own for your shop, church, chama or club.</p>'
+      + f'<div>{btn("Create a Space", "primary", "sm", block=False)}</div></div>'
+      + sec_head("Suggested for you") + f'<div class="cx-list cx-list-plain">{SUGG3}</div></div>' + tabbar("Spaces"), tag=P3)
+
+frame(P_SD, "SD1c-Loading", "SD1 · Loading, first open",
+      "Only before anything is cached: skeleton rows the size of the real ones, no spinner. Moments come from the phone at "
+      "once. After the first load the spaces open from the phone and refresh quietly.",
+      large_title("Spaces", spaces_tab_btns) + moments_row(ROW_FULL[:5])
+      + '<div style="padding: 14px 0 0; display: flex; flex-direction: column; gap: 4px;" aria-busy="true" aria-label="Loading spaces">' + sec_head("Your spaces", link=None, pad="0 20px")
+      + f'<div class="cx-list cx-list-plain">{sk_row * 2}</div>' + sec_head("Suggested for you", link=None) + f'<div class="cx-list cx-list-plain">{sk_row * 3}</div></div>' + tabbar("Spaces"), tag=P3)
+
+frame(P_SD, "SD1d-Offline", "SD1 · Offline",
+      "Your spaces open from the phone (their last posts and counts as of the time shown). Suggestions need the server, so "
+      "the section says so instead of showing stale ones; Follow and Join are never offered offline.",
+      large_title("Spaces", spaces_tab_btns) + f'<div style="padding: 10px 16px 0;">{asof_banner()}</div>' + moments_row(ROW_FULL[:5])
+      + '<div style="padding: 14px 0 0; display: flex; flex-direction: column; gap: 4px;">' + sec_head("Your spaces", link=None, pad="0 20px")
+      + f'<div class="cx-list cx-list-plain">{YOUR3}</div>' + sec_head("Suggested for you", link=None)
+      + '<p class="small" style="padding: 8px 20px; font-size: 15px; line-height: 20px;">Suggestions show when you’re back online.</p></div>' + tabbar("Spaces"), tag=P3)
+
+frame(P_SD, "SD1e-Error", "SD1 · Suggestions didn’t load",
+      "The server failed after retries. Your spaces still show from the phone; only the failed section says so, with Try "
+      "Again and the reference. Nothing else on the tab is blocked.",
+      large_title("Spaces", spaces_tab_btns) + moments_row(ROW_FULL[:5])
+      + '<div style="padding: 14px 0 0; display: flex; flex-direction: column; gap: 4px;">' + sec_head("Your spaces", pad="0 20px")
+      + '<div class="cx-list cx-list-plain">' + sp_row("sneaker", "Amina: Size 42 Jordans back in stock at 6 pm", meta("18:02") + count(12)) + '</div>' + sec_head("Suggested for you", link=None)
+      + '<div style="padding: 0 0 0;">' + err_box("Suggestions didn’t load", "Something went wrong on our side.", "req_D2kq7Z") + "</div></div>" + tabbar("Spaces"), tag=P3)
+
+def search_bar(text="", placeholder="Spaces, @handles, people", cancel=True):
+    val = f'<span style="flex: 1; font: 400 17px/22px var(--font-sans);">{text}</span>' if text else f'<span style="flex: 1; font: 400 17px/22px var(--font-sans); color: var(--ink-secondary);">{placeholder}</span>'
+    x = f'<button type="button" class="cx-icon-btn" aria-label="Clear" style="width: 22px; height: 22px; background: var(--fill-strong);">{ic("close", 11, 2.6)}</button>' if text else ""
+    c = btn("Cancel", "plain", "sm", block=False) if cancel else ""
+    return (f'<div style="display: flex; align-items: center; gap: 8px; padding: 8px 16px 8px;"><div class="cx-field-box" role="search" style="flex: 1; height: 44px;">'
+            f'<span style="color: var(--ink-secondary); display: flex;">{ic("search", 16)}</span>{val}{x}</div>{c}</div>')
+
+TOPICS = ["All"] + TOPIC_LIST
+def topic_chips(on=0):
+    return '<div style="display: flex; gap: 8px; padding: 4px 16px 10px; overflow: hidden;" role="radiogroup" aria-label="Topic">' + "".join(
+        f'<button type="button" role="radio" aria-checked="{str(i == on).lower()}" class="chip{" chip-on" if i == on else ""}">{t}</button>' for i, t in enumerate(TOPICS)) + "</div>"
+
+frame(P_SD, "SD2-Search", "SD2 · Search, typing",
+      "From the search button. Results update as you type (after a short pause), grouped: Spaces first (name, handle, topic), "
+      "then People, whose moments you can see. Members-only rows show the price in your currency. Matching words are bold.",
+      search_bar("book") + topic_chips(0)
+      + '<div class="sec" style="padding: 6px 20px 0;">Spaces</div><div class="cx-list cx-list-plain">'
+      + sp_row("books", "<b>Book</b>s · Members only · 5 USDC (KES 646) a month", btn("Join", "secondary", "sm", block=False))
+      + sp_row("swap", "<b>Book</b>s · Public · Kisumu · 1.1k", btn("Follow", "secondary", "sm", block=False))
+      + "</div>"
+      + '<div class="sec" style="padding: 14px 20px 0;">People</div><div class="cx-list cx-list-plain">'
+      + row("Faith Chebet", "Shared a moment: “<b>Book</b> haul from Prestige”", av("faith"), chev()) + "</div>"
+      + '<p class="small" style="padding: 18px 20px 0;">Invite-only spaces never show in search.</p>', tag=P3)
+
+frame(P_SD, "SD2b-Search-handle", "SD2 · Search by @handle",
+      "Typing @ searches handles only and puts an exact match on top with its kind and size, so a link someone read out "
+      "loud finds the right space, not a lookalike.",
+      search_bar("@sneakerdrop") + '<div class="sec" style="padding: 6px 20px 0;">Exact match</div><div class="cx-list cx-list-plain">'
+      + sp_row("sneaker", "@sneakerdrop · Public · Shopping · 1.2k", btn("Follow", "secondary", "sm", block=False)) + "</div>"
+      + '<div class="sec" style="padding: 14px 20px 0;">Similar handles</div><div class="cx-list cx-list-plain">'
+      + space_row("Sneaker Drop Mombasa", "@sneakerdropmsa · Public · 86", "SM", end=btn("Follow", "secondary", "sm", block=False)) + "</div>", tag=P3)
+
+frame(P_SD, "SD2c-Search-empty", "SD2 · No results",
+      "Nothing matches. Say so, say why an invite-only space can’t be found, and offer to start one with that name.",
+      search_bar("mitumba thika") + topic_chips(0)
+      + center(ic("search", 40, 1.6), "No spaces match “mitumba thika”", "Check the spelling or try a topic. Invite-only spaces never show in search; ask someone in it for an invite.",
+               btn("Create “Mitumba Thika”", "secondary", "sm", block=False), top=90), tag=P3)
+
+frame(P_SD, "SD2d-Search-offline", "SD2 · Search offline",
+      "Offline, search still filters the spaces on your phone (yours) by name and handle; finding new ones says it needs a connection.",
+      search_bar("chama") + f'<div style="padding: 0 16px 8px;">{banner("You’re offline. Searching your spaces only.")}</div>'
+      + '<div class="sec" style="padding: 6px 20px 0;">Your spaces</div><div class="cx-list cx-list-plain">'
+      + sp_row("chamahub", "@chamahub · Public · 340", chev()) + "</div>"
+      + '<p class="small" style="padding: 14px 20px 0; font-size: 15px; line-height: 20px;">More spaces show when you’re back online.</p>', tag=P3)
+
+frame(P_SD, "SD3-Suggested-all", "SD3 · Suggested, See All",
+      "Suggested in full, filtered by topic chips. The sub line gives the reason it’s suggested (a contact follows it, popular "
+      "near you). A followed space flips to Following in place, with no navigation.",
+      bar("Suggested") + topic_chips(1) + '<div class="cx-list cx-list-plain">'
+      + sp_row("mama", "Public · Business · 2.3k · Mum follows", btn("Following", "plain", "sm", block=False, icon="check"))
+      + sp_row("sneaker", "Public · Shopping · 1.2k · Baraka’s space", btn("Follow", "secondary", "sm", block=False))
+      + sp_row("coffee", "Public · Farming · 4.8k · Popular in Kenya", btn("Follow", "secondary", "sm", block=False))
+      + space_row("Nyeri Dairy Co-op", "Members only · 10 USDC (KES 1,292) a year", "NY", end=btn("Join", "secondary", "sm", block=False))
+      + space_row("Gikomba Wholesale", "Public · Business · 3.9k · Popular in Kenya", "GW", end=btn("Follow", "secondary", "sm", block=False)) + "</div>", tag=P3)
+
+# ================================================================ PAGE SS · The space page
+P_SS = "SS"
+SNEAK_ABOUT = "Original sneakers in Nairobi CBD. New drops every Friday, M-Pesa-friendly, delivery in town."
+def chat_preview_sneaker():
+    return (f'<div class="cx-thread" style="padding: 4px 16px 0;">{day("Today")}'
+            + post("baraka", "New Jordan 1s land Friday 6 pm. Sizes 40 to 45. 🔥", "Owner", [("🔥", 48, False), ("👟", 12, False)])
+            + post(AMINA, "Size 42 is back in stock for those who asked", "Admin", [("🙌", 9, False)], name="Amina") + "</div>")
+
+frame(P_SS, "SS1-Public-visitor", "SS1 · Public space, not following",
+      "A public space before following: cover (token rings until the owner adds a photo), photo, name, handle, kind and size, "
+      "one line about, people you know. Follow is the only primary. Visitors read the latest posts (read-only) so they know "
+      "what they’re joining. Message (privately) is open to anyone who can see a public space.",
+      space_head("sneaker", "public", "Public · 1.2k", SNEAK_ABOUT,
+                 btn("Follow", "primary", "md", block=False, icon="plus") + btn("Message", "secondary", "md", block=False))
+      + f'<div style="padding: 0 16px;">{known(["juma", "faith", "kevin"], "Juma, Faith and 1 other contact follow")}</div>'
+      + tabs(0) + chat_preview_sneaker()
+      + composer_note("Follow to post and react."), pad_top=0, tag=P3)
+
+frame(P_SS, "SS1b-Public-following", "SS1 · Following",
+      "After Follow (online): the button becomes Following with a chevron (its popover has Notifications and Unfollow), the "
+      "composer opens and a toast confirms. Optimistic is not allowed here: membership is the server’s, so the button shows "
+      "progress for the moment it takes.",
+      space_head("sneaker", "public", "Public · 1.2k", SNEAK_ABOUT,
+                 btn("Following", "secondary", "md", block=False, icon="check") + btn("Message", "secondary", "md", block=False))
+      + tabs(0) + chat_preview_sneaker()
+      + space_composer("Message Nairobi Sneaker Drop") + toast("You follow Nairobi Sneaker Drop", top=112), pad_top=0, tag=P3)
+
+frame(P_SS, "SS1c-Following-menu", "SS1 · Following, the popover",
+      "Following opens a popover under the button, not a sheet: notifications (All, Mentions and admins, Off) and Unfollow. "
+      "Unfollow acts at once with a toast and Undo; a paid membership confirms first, in the popover (SM6).",
+      space_head("sneaker", "public", "Public · 1.2k", SNEAK_ABOUT,
+                 btn("Following", "secondary", "md", block=False, icon="chev_down") + btn("Message", "secondary", "md", block=False))
+      + tabs(0) + chat_preview_sneaker() + space_composer("Message Nairobi Sneaker Drop")
+      + '<div class="dim-behind"></div>'
+      + pop([("All posts", "check"), ("Mentions and admins", None), ("Off", None), "-", ("Unfollow", "user_minus", "pop-crit")], top=424, left=16, head="Notifications"),
+      pad_top=0, tag=P3)
+
+BOOKS_ABOUT = "A monthly book, a Saturday meet-up at Alliance Française, and a chat that actually reads."
+frame(P_SS, "SS2-Members-only-visitor", "SS2 · Members-only space, not a member",
+      "A members-only space before paying: everything public about it (name, photo, about, price, what members get, who "
+      "you know) and the shape of the chat behind a lock, never real posts. The button carries the price and period; it "
+      "opens the join card (SM1) on this page.",
+      space_head("books", "members", "Members only · 214", BOOKS_ABOUT,
+                 btn("Join · KES 646 a month", "primary", "md", block=False) + btn("Message", "secondary", "md", block=False))
+      + f'<div style="padding: 0 16px;">{known(["njeri", "achieng"], "Njeri (owner) and Achieng are here")}</div>'
+      + '<div style="margin: 14px 16px 0; padding: 14px 16px; border-radius: var(--radius-md); background: var(--fill); display: flex; flex-direction: column; gap: 8px;">'
+      + '<div style="font: 600 15px/20px var(--font-sans);">Members get</div>'
+      + "".join(f'<div style="display: flex; gap: 8px; font: 400 15px/20px var(--font-sans);">{ic("check", 16, 2.4)}<span>{t}</span></div>' for t in ("The space chat and its history", "Monthly meet-ups and the reading list", "5.00 USDC a month, about KES 646. Never taken automatically"))
+      + "</div>"
+      + f'<div style="position: relative; padding-top: 14px;"><div class="ghost" aria-hidden="true"><i style="width: 70%;"></i><i style="width: 52%;"></i><i style="width: 64%; align-self: flex-end;"></i></div>'
+      + f'<div style="position: absolute; inset: 14px 0 0; display: flex; align-items: center; justify-content: center;"><span style="display: inline-flex; align-items: center; gap: 6px; padding: 8px 14px; border-radius: 999px; background: var(--bg); box-shadow: var(--shadow-float); font: 600 15px/20px var(--font-sans);">{ic("lock", 16)}The chat is for members</span></div></div>',
+      pad_top=0, tag=P3)
+
+frame(P_SS, "SS3-Invite-only-link", "SS3 · Invite-only space, from a link",
+      "Invite-only spaces are hidden from search, but a shared link or QR still opens this: the name, photo and size only, "
+      "nothing inside. Without an invite the person can Request to Join; admins answer in their Invites list (SI4).",
+      space_head("founders", "invite", "Invite only · 48", None, right_btn='<span></span>')
+      + '<div style="padding: 18px 16px 0; display: flex; flex-direction: column; gap: 12px;">'
+      + '<p class="small" style="font-size: 15px; line-height: 20px;">This space is private. Its posts and member list are only for people an admin lets in.</p>'
+      + known(["wanjiru"], "Wanjiru is a member") + "</div>"
+      + f'<div style="position: absolute; left: 16px; right: 16px; bottom: 34px; display: flex; flex-direction: column; gap: 8px;">{btn("Request to Join")}'
+      + '<p class="small" style="text-align: center;">The admins see your name, photo and @handle.</p></div>', pad_top=0, tag=P3)
+
+frame(P_SS, "SS3b-Request-pending", "SS3 · Request sent, pending",
+      "After Request to Join: the button is a quiet Requested state with the time, and Cancel Request. When an admin "
+      "answers, the person gets a push and the page changes (accepted opens the space; declined goes back to SS3 after 30 days).",
+      space_head("founders", "invite", "Invite only · 48", None, right_btn='<span></span>')
+      + '<div style="padding: 18px 16px 0; display: flex; flex-direction: column; gap: 12px;">'
+      + '<p class="small" style="font-size: 15px; line-height: 20px;">This space is private. Its posts and member list are only for people an admin lets in.</p>'
+      + known(["wanjiru"], "Wanjiru is a member") + "</div>"
+      + f'<div style="position: absolute; left: 16px; right: 16px; bottom: 34px; display: flex; flex-direction: column; gap: 8px;">'
+      + f'<div role="status" style="display: flex; align-items: center; justify-content: center; gap: 8px; height: 50px; border-radius: 999px; background: var(--fill); font: 600 17px/22px var(--font-sans); color: var(--ink-secondary);">{ic("clock", 18)}Requested today, 09:12</div>'
+      + btn("Cancel Request", "plain") + "</div>", pad_top=0, tag=P3)
+
+about_rows = ('<div class="cx-list">'
+              + row("Owner", "Baraka Mwita", av("baraka"), chev())
+              + row("Topic", "Shopping · Nairobi", f'<span class="cx-icon-btn">{ic("globe")}</span>', "", tap=False)
+              + row("Share", "circaso.app/s/sneakerdrop · QR code", f'<span class="cx-icon-btn">{ic("qr", 18, 1.8)}</span>', chev())
+              + row("Notifications", "All posts", f'<span class="cx-icon-btn">{ic("bell", 18, 1.8)}</span>', chev()) + "</div>")
+frame(P_SS, "SS4-About", "SS4 · About",
+      "About: the full description, house rules, owner, topic, share link and QR, notifications. The trust line is here in "
+      "plain words: space chats are not end-to-end encrypted; private messages to the owner are. Report and Leave sit at the end, quiet.",
+      space_head("sneaker", "public", "Public · 1.2k", None, btn("Following", "secondary", "md", block=False, icon="check") + btn("Message", "secondary", "md", block=False))
+      + tabs(1) + '<div style="padding: 4px 16px 0; display: flex; flex-direction: column; gap: 12px;">'
+      + f'<p style="margin: 0; font: 400 15px/20px var(--font-sans);">{SNEAK_ABOUT} House rules: no fakes, no reselling posts, be kind.</p>'
+      + about_rows
+      + f'<div style="display: flex; gap: 8px; align-items: flex-start; font: 400 13px/18px var(--font-sans); color: var(--ink-secondary);"><span style="display: flex; padding-top: 1px;">{ic("info", 14)}</span><span>Chats in spaces are not end-to-end encrypted. Circaso and the space’s admins can read them to keep the space safe. Private messages to the owner are end-to-end encrypted.</span></div>'
+      + f'<div style="display: flex; gap: 20px; padding-top: 2px;">{btn("Report Space", "destructive", "sm", block=False, icon="flag")}{btn("Unfollow", "plain", "sm", block=False)}</div></div>',
+      pad_top=0, tag=P3)
+
+def member_row(who, sub=None, rl=None, end=""):
+    t = FULL.get(who, who)
+    title = f'{t}' + (f' {role(rl)}' if rl else "")
+    return (f'<div role="button" tabindex="0" class="cx-row cx-row-tap">{av(who)}<div class="cx-row-body"><div class="cx-row-text">'
+            f'<div class="cx-row-title" style="display: flex; align-items: center; gap: 6px;"><span style="overflow: hidden; text-overflow: ellipsis;">{t}</span>{role(rl) if rl else ""}</div>'
+            + (f'<div class="cx-row-sub">{sub}</div>' if sub else "") + f'</div><div class="cx-row-end">{end}</div></div></div>')
+
+frame(P_SS, "SS5-Members", "SS5 · Members",
+      "Members, for everyone in the space: owner, admins and moderators first (with their role), then your contacts, then "
+      "the count. A member list never shows phone numbers; @handles only. Admins get the same list with actions (SR1).",
+      space_head("sneaker", "public", "Public · 1.2k", None, btn("Following", "secondary", "md", block=False, icon="check") + btn("Message", "secondary", "md", block=False))
+      + tabs(2) + '<div style="padding: 0 16px; display: flex; flex-direction: column; gap: 6px;"><div class="sec">Team</div><div class="cx-list">'
+      + member_row("baraka", "@barakam", "Owner") + member_row(AMINA, "@amina.w", "Admin") + member_row("kevin", "@kevo", "Moderator") + "</div>"
+      + '<div class="sec" style="padding-top: 8px;">Your contacts here</div><div class="cx-list">' + member_row("juma", "@jumak") + member_row("faith", "@faithc") + "</div>"
+      + '<p class="small" style="padding: 4px;">And 1,199 more</p></div>', pad_top=0, tag=P3)
+
+sk_head = ('<div class="cover" style="background: var(--fill);"><div class="cover-btns"><button type="button" class="cx-icon-btn" aria-label="Back">' + ic("back") + '</button><span></span></div></div>'
+           '<div class="sp-head" aria-busy="true" aria-label="Opening the space"><span class="sk" style="width: 88px; height: 88px; border-radius: 22px; box-shadow: 0 0 0 4px var(--bg);"></span>'
+           '<span class="sk" style="width: 62%; height: 22px; margin-top: 8px;"></span><span class="sk" style="width: 44%; height: 14px;"></span><span class="sk" style="width: 90%; height: 14px;"></span>'
+           '<div style="display: flex; gap: 8px; padding-top: 8px;"><span class="sk" style="width: 110px; height: 44px; border-radius: 999px;"></span><span class="sk" style="width: 110px; height: 44px; border-radius: 999px;"></span></div></div>')
+frame(P_SS, "SS6-Loading", "SS6 · Opening a space",
+      "A space never opened before: the page’s own shape in skeletons, so nothing jumps when it arrives. Opened from a row, "
+      "the name and photo are known already and show at once; only the rest loads.",
+      sk_head + f'<div style="padding: 20px 16px 0;">{seg(["Chat", "About", "Members"], 0, "Space sections")}</div>'
+      + '<div class="ghost" style="padding-top: 16px;" aria-hidden="true"><i class="sk" style="width: 70%;"></i><i class="sk" style="width: 50%;"></i><i class="sk" style="width: 62%;"></i></div>', pad_top=0, tag=P3)
+
+frame(P_SS, "SS6b-Offline", "SS6 · Offline",
+      "A space you’re in opens from the phone: its details and latest posts as of the time shown. Follow, Join, Request and "
+      "Message to a new owner need the server, so they’re disabled with the reason, never failed after the tap.",
+      space_head("coffee", "public", "Public · 4.8k", "Smallholders sharing prices, buyers and weather from Nyeri to Kericho.",
+                 btn("Follow", "primary", "md", block=False, disabled=True) + btn("Message", "secondary", "md", block=False, disabled=True))
+      + f'<div style="padding: 10px 16px 0;">{asof_banner("10:42", "this space")}</div>'
+      + '<p class="small" style="padding: 8px 20px 0;">Following needs a connection.</p>'
+      + tabs(0) + f'<div class="cx-thread" style="padding: 4px 16px 0;">{day("Yesterday")}' + post("juma", "AA grade is at KES 92 a kilo at the Karatina factory today", None, [("🙏", 31, False)]) + "</div>",
+      pad_top=0, tag=P3)
+
+frame(P_SS, "SS6c-Error", "SS6 · Couldn’t open",
+      "The space failed to load after retries and nothing is cached. Plain words, Try Again, the reference.",
+      '<div class="cover"><div class="cover-btns"><button type="button" class="cx-icon-btn" aria-label="Back">' + ic("back") + '</button><span></span></div></div>'
+      + err_box("This space didn’t open", "Something went wrong on our side. Try again in a moment.", "req_S6p0Qa"), pad_top=0, tag=P3)
+
+frame(P_SS, "SS6d-Unavailable", "SS6 · No longer available",
+      "The owner deleted the space, or Circaso removed it for breaking the rules. One calm screen that says which, without "
+      "detail; payments already made stay in the wallet history.",
+      '<div class="cover"><div class="cover-btns"><button type="button" class="cx-icon-btn" aria-label="Back">' + ic("back") + '</button><span></span></div></div>'
+      + center(ic("ban", 40, 1.6), "This space isn’t available", "Circaso removed Gikomba Deals for breaking the community rules. Your payments to it are still in your wallet history.",
+               btn("Back to Spaces", "secondary", "sm", block=False), top=60), pad_top=0, tag=P3)
+
+frame(P_SS, "SS6e-Banned", "SS6 · Removed from the space",
+      "Permission denied: an admin banned this person. They see that they can’t take part, not who did it, and private "
+      "messages to the owner stop too (a ban must end harassment). A removed (not banned) person sees the normal page and can follow again.",
+      space_head("runners", "public", "Public · 910", None, right_btn='<span></span>')
+      + center(ic("ban", 36, 1.6), "You can’t join Karura Runners", "An admin banned you from this space. You can’t follow, post, message its owner or be invited again. If you think this is a mistake, tell Circaso through Asha.",
+               btn("Ask Asha", "secondary", "sm", block=False), top=36), pad_top=0, tag=P3)
+
+# ================================================================ PAGE SN · Create a space
+P_SN = "SN"
+def create_bar(step, total=3, right=None):
+    return (bar("New Space", left="cancel", right=right or "")
+            + f'<div style="padding: 4px 16px 0;"><div class="steps" role="progressbar" aria-valuemin="1" aria-valuemax="{total}" aria-valuenow="{step}" aria-label="Step {step} of {total}">'
+            + "".join(f'<i class="{"on" if i < step else ""}"></i>' for i in range(total)) + "</div></div>")
+
+def create_details(handle_state="ok", offline=False, failed=False):
+    hint = {"ok": f'<span style="display: inline-flex; gap: 4px; align-items: center;">{ic("check", 13, 2.6)}Available · circaso.app/s/kilimaniyoga</span>',
+            "checking": '<span style="display: inline-flex; gap: 6px; align-items: center;"><span class="cx-spin" style="width: 12px; height: 12px; border-width: 1.5px;"></span>Checking…</span>',
+            "taken": "@kilimaniyoga is taken. Try one of these:"}[handle_state]
+    hf = field("Handle", "kilimaniyoga", prefix="@", fid="sh", invalid=handle_state == "taken", hint=hint)
+    if handle_state == "taken":
+        hf += '<div style="display: flex; gap: 8px; flex-wrap: wrap; padding: 2px 4px 0;">' + "".join(f'<button type="button" class="chip">@{s}</button>' for s in ("kilimaniyoga.ke", "yogakilimani", "kilimaniyogahub")) + "</div>"
+    top = ""
+    if offline:
+        top = f'<div>{banner("You’re offline. Creating a space needs a connection.")}</div>'
+    if failed:
+        top = f'<div>{ref_banner("The space wasn’t created. Nothing was saved and no wallet was made.", "req_N8cv2E")}</div>'
+    cta = (btn("Next", disabled=True) + '<div class="cx-footnote" style="padding-top: 8px;">Needs a connection</div>') if offline else btn("Try Again" if failed else "Next")
+    return (create_bar(1) + '<div style="padding: 14px 16px 0; display: flex; flex-direction: column; gap: 16px;">' + top
+            + f'<div style="display: flex; align-items: center; gap: 14px;"><button type="button" class="sp-tile" aria-label="Add a space photo" style="width: 72px; height: 72px; border: 0; border-radius: 22px; color: var(--ink-secondary); background: var(--fill);">{ic("camera", 26, 1.8)}</button>'
+            + f'<div style="flex: 1; min-width: 0;">{field("Space name", "Kilimani Yoga Collective", fid="sn")}</div></div>'
+            + hf
+            + f'<div class="cx-field"><label class="cx-field-label" for="sa">About</label><div class="cx-field-box" style="height: 88px; align-items: flex-start; padding-top: 14px;"><span id="sa" style="font: 400 17px/22px var(--font-sans);">Sunrise yoga in Kilimani, Tuesdays and Saturdays. All levels, mats provided.</span></div><div class="cx-field-hint" style="justify-content: flex-end;">78 / 300</div></div>'
+            + '<div class="cx-field"><div class="cx-field-label">Topic</div><div style="display: flex; gap: 8px; flex-wrap: wrap;">'
+            + "".join(f'<button type="button" class="chip{" chip-on" if t == "Health" else ""}" role="radio" aria-checked="{str(t == "Health").lower()}">{t}</button>' for t in TOPIC_LIST) + "</div></div></div>"
+            + f'<div style="position: absolute; left: 16px; right: 16px; bottom: 34px;">{cta}</div>')
+
+frame(P_SN, "SN1-Details", "SN1 · New space, details",
+      "From + → Space, or Create a Space. Full screen, three short steps (details, who can join, roles), then the wallet PIN. "
+      "Photo, name, a unique @handle checked as you type, about (300 characters), one topic. The handle becomes the link.",
+      create_details(), bg="var(--bg-grouped)", tag=P3)
+frame(P_SN, "SN1b-Handle-taken", "SN1 · Handle taken",
+      "The check answers within a moment; a taken handle turns the field red with three free alternatives as chips. Next "
+      "waits until the handle is free.",
+      create_details("taken").replace(btn("Next"), btn("Next", disabled=True)), bg="var(--bg-grouped)", tag=P3)
+
+def join_opt(kind, title, sub, on, body=""):
+    return (f'<div role="radio" aria-checked="{str(on).lower()}" tabindex="0" class="opt{" opt-on" if on else ""}"><div style="display: flex; gap: 12px; align-items: flex-start;">'
+            f'<span class="cx-icon-btn" style="flex: none;">{kind_icon(kind)}</span><div style="flex: 1;"><div style="font: 600 17px/22px var(--font-sans);">{title}</div>'
+            f'<div class="small" style="font-size: 15px; line-height: 20px;">{sub}</div></div><span class="radio{" radio-on" if on else ""}" style="margin-top: 2px;"></span></div>{body}</div>')
+
+price_body = ('<div style="display: flex; flex-direction: column; gap: 12px;">'
+              + field("Price to join", "10.00", prefix="USDC", fid="pp", hint="About KES 1,292 today. Members see it in their own currency.")
+              + '<div class="cx-field"><div class="cx-field-label">Members pay</div>' + seg(["One time", "Monthly", "Yearly"], 1, "Members pay") + "</div>"
+              + f'<div style="display: flex; gap: 8px; align-items: flex-start; font: 400 13px/18px var(--font-sans); color: var(--ink-secondary);"><span style="display: flex; padding-top: 1px;">{ic("info", 14)}</span>'
+              + "<span>You receive the full 10.00 USDC; members pay Circaso’s 1% fee on top. Renewals are never taken automatically: members are reminded and pay with their PIN, with 3 days’ grace.</span></div></div>")
+frame(P_SN, "SN2-Who-can-join", "SN2 · Who can join",
+      "Three choices as cards, not a dropdown, each saying what it means. Members only opens the price in USDC (the stable "
+      "unit members pay in, with KES beside it) and the period. Changeable later in settings; a price change applies from each member’s next period.",
+      create_bar(2) + '<div style="padding: 14px 16px 0; display: flex; flex-direction: column; gap: 10px;"><div class="sec">Who can join Kilimani Yoga Collective</div>'
+      + join_opt("public", "Public", "Anyone can find it and follow. For shops and open communities.", False)
+      + join_opt("members", "Members only", "Shows in search with its price. People pay to join.", True, price_body)
+      + join_opt("invite", "Invite only", "Hidden from search. Admins invite people or accept requests.", False) + "</div>"
+      + f'<div style="position: absolute; left: 16px; right: 16px; bottom: 34px;">{btn("Next")}</div>', bg="var(--bg-grouped)", tag=P3)
+
+def pick_admin(who, rl):
+    return member_row(who, None, None, f'<button type="button" class="chip" aria-label="{FULL[who]} role: {rl}, change">{rl}{ic("chev_down", 14)}</button>')
+frame(P_SN, "SN3-Roles", "SN3 · Chat and roles",
+      "Who can post (Everyone, or Admins only for an announcement space), and the team: pick contacts and give each a role. "
+      "Optional; more people can be added later. The trust line says plainly that only the owner moves the space’s money.",
+      create_bar(3) + '<div style="padding: 14px 16px 0; display: flex; flex-direction: column; gap: 16px;">'
+      + '<div class="cx-field"><div class="cx-field-label">Who can post in the chat</div>' + seg(["Everyone", "Admins only"], 0, "Who can post") + "</div>"
+      + '<div style="display: flex; flex-direction: column; gap: 6px;"><div class="sec">Team (optional)</div><div class="cx-list">'
+      + member_row("pasaka", "You", "Owner") + pick_admin("achieng", "Admin") + pick_admin("faith", "Moderator")
+      + row("Add People", None, f'<span class="cx-icon-btn">{ic("user_plus", 18, 1.8)}</span>', chev()) + "</div>"
+      + '<p class="small" style="padding: 0 4px;">Admins manage members, invites and reports. Moderators remove posts and mute people.</p></div>'
+      + f'<div style="display: flex; gap: 8px; align-items: flex-start; font: 400 13px/18px var(--font-sans); color: var(--ink-secondary);"><span style="display: flex; padding-top: 1px;">{ic("lock", 14)}</span>'
+      + "<span>Every space has its own wallet. Only you can send from it, with its own PIN; admins can see it but not move it.</span></div></div>"
+      + f'<div style="position: absolute; left: 16px; right: 16px; bottom: 34px;">{btn("Create Space and Set Up Wallet")}</div>', bg="var(--bg-grouped)", tag=P3)
+
+space_badge = (f'<div style="position: relative;">{tile("yoga", 64)}<span style="position: absolute; right: -4px; bottom: -4px; width: 28px; height: 28px; border-radius: 50%; '
+               f'background: var(--action); color: var(--on-action); display: flex; align-items: center; justify-content: center; box-shadow: 0 0 0 3px var(--bg);">{ic("wallet", 15, 2)}</span></div>')
+frame(P_SN, "SN4-Wallet-PIN", "SN4 · Set the space wallet’s PIN",
+      "GW2 for a space: Circle’s PIN screen in Circaso’s skin with the space’s tile and name, so it can’t be mistaken for the "
+      "personal or a group PIN. The space goes live only once its wallet exists (plan §7). The biometrics offer (GW4) follows.",
+      pin_screen("Set a PIN for Kilimani Yoga Collective", "This PIN approves money leaving the space wallet. Use a different one from your personal PIN.", 3, top=space_badge), tag=P3)
+
+frame(P_SN, "SN5-Setting-up", "SN5 · Setting up",
+      "The space exists from step 3; this is the wallet: Circle user, addresses on every network. Steps tick as they finish "
+      "and are announced politely.",
+      '<div style="display: flex; flex-direction: column; align-items: center; gap: 22px; padding: 200px 32px 0; text-align: center;">'
+      + space_badge + '<h1 class="h1" style="font-size: 22px; line-height: 28px;">Setting up Kilimani Yoga Collective</h1>'
+      + '<div role="status" aria-live="polite" style="display: flex; flex-direction: column; gap: 10px; text-align: left; font: 400 15px/20px var(--font-sans);">'
+      + "".join(f'<div style="display: flex; gap: 10px; align-items: center;">{ic("check", 18, 2.4)}{t}</div>' for t in ("Space created", "PIN set", "Wallet created"))
+      + '<div style="display: flex; gap: 10px; align-items: center; color: var(--ink-secondary);"><span class="cx-spin" style="width: 16px; height: 16px;"></span>Adding networks</div></div></div>', tag=P3)
+
+frame(P_SN, "SN5b-Setup-failed", "SN5 · The wallet didn’t finish",
+      "The space was created in step 3, but its wallet set-up failed (or the connection dropped). The space is kept and stays "
+      "hidden: nobody can find, follow or pay it until its wallet exists (plan §7). Finish Wallet Setup carries on where it "
+      "stopped (the PIN isn’t asked again if it was set); Space Settings shows the same row. Copy keyed on the error code, the reference shown.",
+      bar("Kilimani Yoga Collective", left="close")
+      + '<div style="display: flex; flex-direction: column; align-items: center; gap: 14px; padding: 140px 32px 0; text-align: center;">'
+      + space_badge + '<h1 class="h1" style="font-size: 22px; line-height: 28px;">The space is saved. Its wallet isn’t ready yet.</h1>'
+      + '<p class="lead" style="font-size: 15px; line-height: 20px;">Kilimani Yoga Collective goes live once its wallet is set up. Until then nobody else can see it.</p>'
+      + '<div class="rid">Ref req_W5sp3K</div></div>'
+      + f'<div style="position: absolute; left: 20px; right: 20px; bottom: 34px; display: flex; flex-direction: column; gap: 8px;">{btn("Finish Wallet Setup")}{btn("Later", "plain")}</div>', tag=P3)
+
+frame(P_SN, "SN6-Live", "SN6 · Your space is live",
+      "Done. The link and QR to share (a members-only link opens SS2 with the price), Invite People, and Open Space. The "
+      "first post is the owner’s: the space opens with the composer focused and a suggested welcome.",
+      '<div style="display: flex; flex-direction: column; align-items: center; gap: 14px; padding: 150px 28px 0; text-align: center;">'
+      + tile("yoga", 88) + '<h1 class="h1">Kilimani Yoga Collective is live</h1>'
+      + '<p class="lead" style="font-size: 15px; line-height: 20px;">Members only · 10.00 USDC a month. Share the link so people can find and join it.</p>'
+      + f'<div style="display: flex; align-items: center; gap: 10px; width: 100%; padding: 6px 6px 6px 16px; border-radius: var(--radius-md); background: var(--fill);"><span style="flex: 1; text-align: left; font: 400 15px/20px var(--font-sans);">circaso.app/s/kilimaniyoga</span>{btn("Copy", "secondary", "sm", block=False, icon="copy")}</div>'
+      + f'<div style="display: flex; gap: 8px; width: 100%;">{btn("Share", "secondary", "md", icon="share")}{btn("QR Code", "secondary", "md", icon="qr")}</div></div>'
+      + f'<div style="position: absolute; left: 20px; right: 20px; bottom: 34px; display: flex; flex-direction: column; gap: 8px;">{btn("Open Space")}{btn("Invite People", "plain")}</div>', tag=P3)
+
+frame(P_SN, "SN7-Offline", "SN7 · Offline",
+      "Creating a space is online-only (the server checks the handle and makes the space and its wallet). Offline, Next is "
+      "disabled before the tap with the reason; what was typed stays.",
+      create_details(offline=True), bg="var(--bg-grouped)", tag=P3)
+frame(P_SN, "SN7b-Failed", "SN7 · Couldn’t create",
+      "The create call failed after retries (same Idempotency-Key). Nothing was made, no wallet, the form is kept; Try Again "
+      "reuses the key so a slow first attempt can’t make two spaces.",
+      create_details(failed=True), bg="var(--bg-grouped)", tag=P3)
+frame(P_SN, "SN7c-Not-yet", "SN7 · Not allowed yet",
+      "Permission denied by the spam rule: accounts younger than 7 days can’t create spaces (and anyone can create at most 3 "
+      "a day). Said once, with the date, before any typing.",
+      bar("New Space", left="cancel")
+      + center(ic("clock", 40, 1.6), "You can create a space from 11 Nov", "New Circaso accounts wait 7 days before starting a space. It keeps spaces free of spam. You can follow and join spaces now.",
+               btn("Find Spaces", "secondary", "sm", block=False), top=160), tag=P3)
+
+settings_rows = ('<div class="cx-list">'
+                 + row("Details", "Name, photo, @handle, about, topic", f'<span class="cx-icon-btn">{ic("pencil", 17, 1.8)}</span>', chev())
+                 + row("Who can join", "Members only · 10.00 USDC a month", f'<span class="cx-icon-btn">{kind_icon("members")}</span>', chev())
+                 + row("Who can post", "Everyone", f'<span class="cx-icon-btn">{svg(TAB["Chats"], 17, fill=True)}</span>', chev())
+                 + row("Private messages", "From anyone who can see the space", f'<span class="cx-icon-btn">{ic("lock", 17, 1.8)}</span>', chev()) + "</div>"
+                 + '<div class="cx-list">'
+                 + row("Members and roles", "38 · 1 admin, 1 moderator", f'<span class="cx-icon-btn">{ic("people", 17, 1.8)}</span>', chev())
+                 + row("Invites and requests", "2 waiting", f'<span class="cx-icon-btn">{ic("mail", 17, 1.8)}</span>', count(2))
+                 + row("Reports", "None open", f'<span class="cx-icon-btn">{ic("flag", 17, 1.8)}</span>', chev())
+                 + row("Space wallet", "KES 49,096 · only you send", f'<span class="cx-icon-btn">{ic("wallet", 17, 1.8)}</span>', chev()) + "</div>")
+frame(P_SN, "SN8-Settings", "SN8 · Space settings (owner)",
+      "Everything the owner changes later, in one list. Admins see the same screen without Who can join, the wallet’s sending "
+      "and Delete; moderators see Reports only. Delete Space is last and needs the wallet empty first (as group wallets).",
+      bar("Space Settings") + '<div style="padding: 10px 16px 0; display: flex; flex-direction: column; gap: 14px;">'
+      + f'<div style="display: flex; align-items: center; gap: 12px;">{tile("yoga", 52)}<div><div style="font: 600 17px/22px var(--font-sans);">Kilimani Yoga Collective</div><div class="small">@kilimaniyoga · Members only</div></div></div>'
+      + settings_rows + f'<div>{btn("Delete Space", "destructive", "sm", block=False, icon="trash")}</div></div>', bg="var(--bg-grouped)", tag=P3)
+
+frame(P_SN, "SN8b-Price-change", "SN8 · Changing the price",
+      "Who can join, edited: the new price applies from each member’s next period and every member is told before then; "
+      "nobody pays a price they haven’t seen. The confirmation is inline under the field, not a sheet.",
+      bar("Who Can Join", left="back", right=btn("Save", "plain", "sm", block=False))
+      + '<div style="padding: 14px 16px 0; display: flex; flex-direction: column; gap: 10px;">'
+      + join_opt("members", "Members only", "Shows in search with its price. People pay to join.", True,
+                 '<div style="display: flex; flex-direction: column; gap: 12px;">' + field("Price to join", "12.00", prefix="USDC", fid="pc", hint="Was 10.00 USDC. About KES 1,550 today.")
+                 + '<div class="cx-field"><div class="cx-field-label">Members pay</div>' + seg(["One time", "Monthly", "Yearly"], 1, "Members pay") + "</div></div>")
+      + note_box("38 members will be told today", "They keep 10.00 USDC until their current month ends, then renew at 12.00 USDC. New members pay 12.00 USDC from now.", None, icon="bell", tone="ink-secondary")
+      + "</div>", bg="var(--bg-grouped)", tag=P3)
+
+# ================================================================ PAGE SM · Paid entry and membership
+P_SM = "SM"
+BOOK_ROWS = [("Paying from", PERSONAL_FIXED), ("Network", "USDC on Base"), ("For", "Membership · monthly"), ("Member until", "4 Dec"),
+             ("Fee", 'KES 6.46 <span style="color: var(--ink-secondary); font-weight: 400;">· 1%</span>'), ("Total", "KES 652.46"), ("Nairobi Book Club receives", "KES 646")]
+def books_page(button=None, banner_html="", extra="", about=None):
+    # With the card open the page keeps only its head (no about line), so the card never covers the buttons.
+    return (space_head("books", "members", "Members only · 214", about,
+                       button if button is not None else btn("Join · KES 646 a month", "primary", "md", block=False) + btn("Message", "secondary", "md", block=False))
+            + banner_html
+            + f'<div style="position: relative; padding-top: 14px;"><div class="ghost" aria-hidden="true"><i style="width: 70%;"></i><i style="width: 52%;"></i></div></div>' + extra)
+def join_card(**kw):
+    base = dict(title="Join Nairobi Book Club", amount="KES 646", under="5.00 USDC a month · priced in USDC", rows=BOOK_ROWS,
+                button="Pay KES 652.46", lead=tile("books", 44), foot=f"One Circaso fee, network cost included. {RATE3}",
+                status="Never taken automatically.")
+    base.update(kw)
+    return mcard(**base)
+
+frame(P_SM, "SM1-Join-card", "SM1 · Join, the money card",
+      "Join opens the chat’s money card on the space page (D-M3): everything on one card, nothing to type, Pay goes straight "
+      "to the PIN. The price in KES (USDC under it, since the owner set it in USDC), paid from Personal (a membership is "
+      "personal), what renews and when, the 1% space fee on top, the total and what the space receives.",
+      books_page(btn("Join · KES 646 a month", "primary", "md", block=False, busy=False) + btn("Message", "secondary", "md", block=False)) + join_card(), pad_top=0, tag=P3)
+
+frame(P_SM, "SM1b-Approve-PIN", "SM1 · Approve with the PIN",
+      "Pay goes straight to Circle’s PIN, which names the wallet (Pasaka has other wallets, so Personal is named). The card "
+      "behind says Waiting for your PIN. Cancel the PIN and nothing happens; the card stays.",
+      books_page() + join_card(button="Waiting for your PIN…", busy=True, status="")
+      + approve_sheet("Personal", av("pasaka", "md"), "KES 652.46", "Nairobi Book Club", 2, "Your personal PIN.", bio="Use Fingerprint Instead"), pad_top=0, tag=P3)
+
+frame(P_SM, "SM1c-Joining", "SM1 · Joining",
+      "After the PIN the card shows progress and says nothing about membership until the payment is confirmed: the server "
+      "makes the person a member from the confirmed transfer, never from the tap.",
+      books_page(btn("Joining…", "primary", "md", block=False, busy=True)) + join_card(button="Paying Nairobi Book Club…", busy=True, status="This takes a few seconds. You can leave; you’ll be told when you’re in.", foot=""),
+      pad_top=0, tag=P3)
+
+frame(P_SM, "SM1d-Welcome", "SM1 · You’re a member",
+      "Confirmed: the chat opens where the lock was, a system line (seen only by the person who joined) records the membership "
+      "and its end date, and a toast welcomes. The receipt goes to the private chat with the owner (SM2), not to the 214 members.",
+      space_head("books", "members", "Members only · 215", None, btn("Member", "secondary", "md", block=False, icon="check") + btn("Message", "secondary", "md", block=False))
+      + tabs(0) + f'<div class="cx-thread" style="padding: 4px 16px 0;">{day("Today")}'
+      + post("njeri", "November’s book is Kintu by Jennifer Makumbi. Meet-up Saturday 2 pm 📚", "Owner", [("📚", 22, False), ("❤️", 9, False)])
+      + sysline("You joined · member until 4 Dec", "ticket") + "</div>"
+      + space_composer("Message Nairobi Book Club") + toast("Welcome to Nairobi Book Club", top=112), pad_top=0, tag=P3)
+
+frame(P_SM, "SM1e-Not-sent", "SM1 · Not sent",
+      "Refused before the chain (W4 error, SDK failure, expired challenge): the card says Not sent and that nothing was taken, "
+      "Try Again pays the same with a fresh key, and the reference is in the foot.",
+      books_page() + join_card(button="Try Again", status="", foot="Ref req_M1x7Pw",
+                               problem=f'<div class="cx-banner cx-banner-critical" role="alert"><span class="cx-banner-icon">{ic("warning")}</span><span class="cx-banner-text">Not sent. Nothing was taken from your wallet.</span></div>'),
+      pad_top=0, tag=P3)
+
+frame(P_SM, "SM1f-Offline", "SM1 · Offline",
+      "Money never queues. The card still opens so the price is clear, with Pay disabled and G3’s line; it wakes up when the "
+      "connection is back.",
+      books_page() + join_card(disabled=True, button="Pay KES 652.46", status="You’re offline. Money sends only while you’re connected.", tone="warning", foot="1 USDC = KES 129.20 as of 10:42"),
+      pad_top=0, tag=P3)
+
+frame(P_SM, "SM1g-Not-enough", "SM1 · Not enough in the wallet",
+      "The total doesn’t fit the balance: the line says what’s there, Pay is off. Add Money is the honest coming sheet until "
+      "partners exist (D-M5); Receive shows the addresses.",
+      books_page() + join_card(disabled=True, button="Pay KES 652.46", status="You have KES 410 (3.17 USDC). Add money or receive some first.", tone="critical",
+                               foot="", problem="").replace('<div class="mc-foot"></div>', "")
+      .replace(btn("Pay KES 652.46", disabled=True), btn("Pay KES 652.46", disabled=True) + f'<div style="display: flex; gap: 8px;">{btn("Add Money", "secondary", "sm", block=False)}{btn("Receive", "secondary", "sm", block=False)}</div>'),
+      pad_top=0, tag=P3)
+
+def private_bar(owner, key, sub="Private · via "):
+    return bar(FULL[owner].split()[0], sub=f'{ic("lock", 11, 2.4)} Private · via {SPACES[key][0]}'.replace('<svg class="cx-icon"', '<svg class="cx-icon" style="display: inline; vertical-align: -1px;"'),
+               avatar=f'<span style="position: relative; display: inline-flex;">{av(owner, "sm")}<span style="position: absolute; right: -6px; bottom: -4px;">{tile(key, 16, " border-radius: 5px; font-size: 7px; box-shadow: 0 0 0 1.5px var(--bg);")}</span></span>')
+
+member_card = ('<div class="cx-money cx-money-out" role="group" aria-label="Membership paid, KES 646 to Nairobi Book Club, fee KES 6.46" style="width: 280px;">'
+               '<div class="cx-money-head">Membership · Nairobi Book Club</div><div class="cx-money-amount">KES 646</div>'
+               f'<div class="cx-money-note">{ic("ticket", 15, 1.8)}Monthly · member until 4 Dec</div><div class="cx-money-foot">Fee KES 6.46 · 5.00 USDC · 11:20</div></div>')
+frame(P_SM, "SM2-Receipt", "SM2 · The receipt, in the private chat",
+      "Every payment to a space lands in the payer’s private chat with the owner (end-to-end encrypted, like an order card "
+      "later): the membership card names the space, period, end date and fee. Njeri sees the same card in her inbox.",
+      private_bar("njeri", "books")
+      + f'<div class="cx-thread" style="padding: 8px 16px 0;">{sysline("End-to-end encrypted. Only Njeri, the owner, can read this chat.", "lock")}{day("Today")}'
+      + member_card + '<div class="cx-bubble-time cx-bubble-time-out">11:20</div>'
+      + '<div class="cx-bubble cx-bubble-in">Karibu Pasaka! See you Saturday 📚</div></div>'
+      + space_composer("Message Njeri privately"), tag=P3)
+
+renew_banner = (f'<div style="padding: 6px 16px 4px;"><div class="cx-banner cx-banner-warning" role="status"><span class="cx-banner-icon">{ic("clock")}</span>'
+                f'<span class="cx-banner-text">Your membership ends on 4 Dec.</span><button type="button" class="link">Renew</button></div></div>')
+BOOK_CHAT = (f'<div class="cx-thread" style="padding: 4px 16px 0;">{day("Today")}'
+             + post("achieng", "Chapter 7 had me in tears. Who else is done?", None, [("😭", 6, False)])
+             + post("njeri", "Saturday’s meet-up is at 2 pm, Alliance Française garden", "Owner") + "</div>")
+frame(P_SM, "SM3-Renewal-reminder", "SM3 · Renewal reminder",
+      "Three days before the end (seven for a yearly membership) a push, a card in the private chat and this banner in the "
+      "space. Renew opens the same money card. Nothing is ever deducted.",
+      space_bar("books", "215 members") + renew_banner + BOOK_CHAT + space_composer("Message Nairobi Book Club"), tag=P3)
+
+frame(P_SM, "SM3b-Renew-card", "SM3 · Renew, at a new price",
+      "The renewal card, the same as joining. When the owner changed the price, the card says so before the person can pay: "
+      "the new price is the one on the button.",
+      space_bar("books", "215 members") + renew_banner + BOOK_CHAT
+      + mcard("Renew Nairobi Book Club", "KES 775.20", "6.00 USDC a month · was 5.00 USDC", [
+          ("Paying from", PERSONAL_FIXED), ("Network", "USDC on Base"), ("For", "Membership · 4 Dec to 4 Jan"),
+          ("Fee", 'KES 7.75 <span style="color: var(--ink-secondary); font-weight: 400;">· 1%</span>'), ("Total", "KES 782.95"), ("Nairobi Book Club receives", "KES 775.20")],
+          "Pay KES 782.95", tile("books", 44), status="Njeri changed the price to 6.00 USDC from this period. You were told on 12 Nov.", foot=f"One Circaso fee, network cost included. {RATE3}"), tag=P3)
+
+frame(P_SM, "SM4-Grace", "SM4 · Grace period",
+      "The period ended without a renewal: 3 days’ grace in which everything still works, with a warning banner that counts "
+      "down. Renew opens the card; the new period starts from the day paid.",
+      space_bar("books", "215 members")
+      + f'<div style="padding: 6px 16px 4px;"><div class="cx-banner cx-banner-warning" role="status"><span class="cx-banner-icon">{ic("warning")}</span>'
+      + '<span class="cx-banner-text">Your membership ended on 4 Dec. You can still read and post until 7 Dec.</span><button type="button" class="link">Renew</button></div></div>'
+      + BOOK_CHAT + space_composer("Message Nairobi Book Club"), tag=P3)
+
+frame(P_SM, "SM5-Expired", "SM5 · Membership ended",
+      "After the grace: permission denied to the chat (and later shop and lives) until the person pays again. The page says "
+      "what happened and when, keeps their place in the list of spaces, and Rejoin opens the card. Their own posts stay in the space.",
+      space_head("books", "members", "Members only · 214", None, btn("Rejoin · KES 775 a month", "primary", "md", block=False) + btn("Message", "secondary", "md", block=False))
+      + f'<div style="padding: 28px 32px 0; display: flex; flex-direction: column; align-items: center; gap: 8px; text-align: center;"><span style="display: flex; color: var(--ink-secondary);">{ic("lock", 28, 1.8)}</span>'
+      + '<div style="font: 600 17px/22px var(--font-sans);">Your membership ended on 4 Dec</div><div class="small" style="font-size: 15px; line-height: 20px;">The 3 days’ grace ended on 7 Dec. Rejoin to read the chat and take part again; your own posts are still there.</div></div>'
+      + '<div class="ghost" aria-hidden="true" style="padding-top: 22px; opacity: .6;"><i style="width: 70%;"></i><i style="width: 52%;"></i><i style="width: 64%; align-self: flex-end;"></i></div>', pad_top=0, tag=P3)
+
+frame(P_SM, "SM6-Leave-confirm", "SM6 · Leaving a paid membership",
+      "Member opens the same popover as Following (SS1c). Leave confirms inside it, not a sheet, with what is lost: access "
+      "ends now and the rest of the period isn’t refunded. Online-only; offline the item is disabled with the reason.",
+      space_head("books", "members", "Members only · 215", None, btn("Member", "secondary", "md", block=False, icon="chev_down") + btn("Message", "secondary", "md", block=False))
+      + tabs(0) + BOOK_CHAT.replace('<div class="cx-thread" style="padding: 4px 16px 0;">', '<div class="cx-thread" style="padding: 4px 16px 0;">', 1)
+      + space_composer("Message Nairobi Book Club") + '<div class="dim-behind"></div>'
+      + '<div class="pop" role="alertdialog" aria-label="Leave Nairobi Book Club?" style="top: 380px; left: 16px; width: 290px; padding: 14px 16px; gap: 10px;">'
+      + '<div style="font: 600 17px/22px var(--font-sans);">Leave Nairobi Book Club?</div><p class="small" style="font-size: 15px; line-height: 20px;">You paid until 4 Dec. Leaving ends your access now and doesn’t refund the rest of the month. Rejoining means paying again.</p>'
+      + f'<div style="display: flex; gap: 8px;">{btn("Stay", "secondary", "sm", block=False)}{btn("Leave", "destructive", "sm", block=False)}</div></div>', pad_top=0, tag=P3)
+
+# ================================================================ PAGE SI · Invites
+P_SI = "SI"
+def invite_row(who, state):
+    end = {"invite": btn("Invite", "secondary", "sm", block=False), "invited": '<span class="cx-row-meta">Invited</span>',
+           "member": '<span class="cx-row-meta">Member</span>', "busy": btn("Invite", "secondary", "sm", block=False, busy=True)}[state]
+    return member_row(who, f"@{FULL[who].split()[0].lower()}", None, end)
+frame(P_SI, "SI1-Invite-people", "SI1 · Invite people",
+      "Admins invite from contacts or by typing an @username (the server finds the person; phone numbers are never searched "
+      "here). Each row invites in place and turns to Invited. Share Link is for people to ask to join (SS3).",
+      bar("Invite to Founders Circle", left="close")
+      + search_bar("", "Name or @username", cancel=False)
+      + '<div style="padding: 0 16px 10px;"><div class="cx-list">' + row("Share Link", "People who open it can ask to join", '<span class="cx-icon-btn">' + ic("link", 18, 1.8) + "</span>", chev()) + "</div></div>"
+      + '<div class="sec" style="padding: 4px 20px 0;">Your contacts</div><div class="cx-list cx-list-plain">'
+      + invite_row("pasaka", "invited").replace("Pasaka Mutuku", "Pasaka Mutuku") + invite_row("kevin", "invite") + invite_row("faith", "busy")
+      + invite_row("otieno", "invite") + invite_row("wanjiru", "member") + invite_row("juma", "invite") + "</div>", tag=P3)
+
+frame(P_SI, "SI1b-Username", "SI1 · By @username",
+      "Typing @ looks people up by username. A found person shows with photo and name before inviting, so the wrong Kevin "
+      "isn’t let in; a miss says so plainly and suggests contacts.",
+      bar("Invite to Founders Circle", left="close") + search_bar("@kevo254", cancel=False)
+      + center(ic("search", 36, 1.6), "No one is @kevo254 on Circaso", "Check the spelling, or invite them from your contacts. People join Circaso with their phone number, then choose a username.", "", top=40)
+      + '<div class="sec" style="padding: 22px 20px 0;">Close matches</div><div class="cx-list cx-list-plain">' + member_row("kevin", "@kevo · Kevin Ochieng", None, btn("Invite", "secondary", "sm", block=False)) + "</div>", tag=P3)
+
+frame(P_SI, "SI1c-Offline", "SI1 · Offline",
+      "Inviting is online-only (the server checks the person and the space). The list of contacts still shows; Invite buttons "
+      "are disabled with the reason.",
+      bar("Invite to Founders Circle", left="close") + f'<div style="padding: 6px 16px 8px;">{banner("You’re offline. Inviting needs a connection.")}</div>'
+      + '<div class="cx-list cx-list-plain">' + "".join(member_row(w, f"@{FULL[w].split()[0].lower()}", None, btn("Invite", "secondary", "sm", block=False, disabled=True)) for w in ("kevin", "faith", "otieno", "juma")) + "</div>", tag=P3)
+
+def chats_title():
+    return large_title("Chats", icon_btn("sparkle", "Ask Asha") + icon_btn("pencil", "New chat"))
+chat_chips = '<div style="display: flex; gap: 8px; padding: 12px 16px 6px;"><button type="button" class="chip chip-on">All</button><button type="button" class="chip">Unread</button><button type="button" class="chip">Groups</button></div>'
+def invite_card(state="open"):
+    lock = ic("lock", 11, 2.4).replace('<svg class="cx-icon"', '<svg class="cx-icon" style="display: inline; vertical-align: -1px;"')
+    head = (f'<div style="display: flex; gap: 12px; align-items: center;">{tile("founders", 44)}<div style="flex: 1; min-width: 0;"><div style="font: 600 16px/21px var(--font-sans);">Nairobi Founders Circle</div>'
+            f'<div class="small">{lock} Invite only · 48 members</div></div></div>')
+    if state == "open":
+        body = (f'<div style="font: 400 15px/20px var(--font-sans);">{av("wanjiru", "sm", "width: 20px; height: 20px; vertical-align: -5px;")} Wanjiru invited you · expires in 14 days</div>'
+                f'<div style="display: flex; gap: 8px;">{btn("Accept", "primary", "md")}{btn("Decline", "secondary", "md")}</div>')
+    else:
+        body = f'<div style="display: flex; align-items: center; gap: 8px; font: 400 15px/20px var(--font-sans); color: var(--ink-secondary);"><span style="flex: 1;">Invite declined. Wanjiru isn’t told.</span>{btn("Undo", "plain", "sm", block=False)}</div>'
+    return f'<div role="group" aria-label="Space invite" style="margin: 4px 16px 8px; padding: 14px 16px; border-radius: var(--radius-lg); background: var(--surface); box-shadow: inset 0 0 0 1px var(--separator); display: flex; flex-direction: column; gap: 12px;">{head}{body}</div>'
+chat_rows = ('<div class="cx-list cx-list-plain">'
+             + row("Mum", "Mum sent you KES 2,000 · for lunch", av("mum"), meta("21:14") + count(2))
+             + row("Kilimani Chama", "Wanjiru: November contributions are due Friday", av("Kilimani Chama"), meta("19:02"))
+             + row("Otieno", "See you at the venue", av("otieno"), meta("Mon")) + "</div>")
+frame(P_SI, "SI2-Invite-in-chats", "SI2 · The invite, in Chats",
+      "An invite arrives as a card at the top of Chats (the person’s inbox) with a push. Accept and Decline act in place; "
+      "the card opens the space’s preview (SI2b). Several invites stack, newest first.",
+      chats_title() + chat_chips + invite_card() + chat_rows + tabbar("Chats"), tag=P3)
+
+frame(P_SI, "SI2b-Invite-preview", "SI2 · Invite, the preview",
+      "Tapping the card: the space as an invited person sees it, with its about and who they know (more than SS3 shows a "
+      "stranger), and Accept / Decline at the bottom.",
+      space_head("founders", "invite", "Invite only · 48", "Founders building in Nairobi. Monthly dinners, honest numbers, no pitching.", right_btn='<span></span>')
+      + '<div style="padding: 10px 16px 0; display: flex; flex-direction: column; gap: 12px;">' + known(["wanjiru", "otieno", "achieng"], "Wanjiru, Otieno and Achieng are members")
+      + f'<div style="display: flex; gap: 8px; align-items: center; font: 400 15px/20px var(--font-sans);">{av("wanjiru", "sm")}<span>Wanjiru invited you on 2 Nov</span></div>'
+      + f'<div style="display: flex; gap: 8px; align-items: flex-start; font: 400 13px/18px var(--font-sans); color: var(--ink-secondary);"><span style="display: flex; padding-top: 1px;">{ic("info", 14)}</span><span>Chats in spaces are not end-to-end encrypted.</span></div></div>'
+      + f'<div style="position: absolute; left: 16px; right: 16px; bottom: 34px; display: flex; gap: 8px;">{btn("Decline", "secondary")}{btn("Accept")}</div>', pad_top=0, tag=P3)
+
+frame(P_SI, "SI3-Accepted", "SI3 · Accepted",
+      "Accept (online) opens the space at its chat with a system line naming who invited you; the inviter gets a quiet “Pasaka "
+      "joined”. Accept is disabled offline with the reason.",
+      space_bar("founders", "49 members") + f'<div class="cx-thread" style="padding: 8px 16px 0;">{day("Today")}'
+      + post("otieno", "Dinner on the 14th is at Cultiva. Who’s in?", "Admin", [("🙋🏾‍♂️", 11, False)])
+      + sysline("You joined · Wanjiru invited you", "user_plus") + "</div>"
+      + space_composer("Message Nairobi Founders Circle") + toast("You joined Nairobi Founders Circle", top=112), tag=P3)
+
+frame(P_SI, "SI3b-Declined", "SI3 · Declined",
+      "Decline folds the card into one line with Undo for a few seconds, then it goes. The inviter is never told about a "
+      "decline (the invite just shows as not accepted until it expires), so saying no costs nothing socially.",
+      chats_title() + chat_chips + invite_card("declined") + chat_rows + tabbar("Chats"), tag=P3)
+
+def req_row(who, when):
+    return member_row(who, f"Asked to join · {when}", None, f'<div style="display: flex; gap: 6px;">{btn("Decline", "secondary", "sm", block=False)}{btn("Accept", "primary", "sm", block=False)}</div>')
+frame(P_SI, "SI4-Invites-requests", "SI4 · Invites and requests (admins)",
+      "For admins: people asking to join (from a link) with Accept and Decline in place, then the invites sent and their state: "
+      "Joined, Invited (days left) or Expired after 14 days, with Invite Again.",
+      bar("Invites and Requests", right=icon_btn("user_plus", "Invite people")) + '<div style="padding: 8px 16px 0; display: flex; flex-direction: column; gap: 6px;">'
+      + '<div class="sec">Asking to join</div><div class="cx-list">' + req_row("njeri", "today, 09:12") + req_row("baraka", "yesterday") + "</div>"
+      + '<div class="sec" style="padding-top: 10px;">Invited</div><div class="cx-list">'
+      + member_row("kevin", "Joined yesterday", None, "")
+      + member_row("faith", "Invited · 12 days left", None, btn("Cancel", "plain", "sm", block=False))
+      + member_row("juma", "Expired on 1 Nov", None, btn("Invite Again", "secondary", "sm", block=False)) + "</div></div>", bg="var(--bg-grouped)", tag=P3)
+
+frame(P_SI, "SI4b-Empty", "SI4 · Nothing waiting",
+      "Empty: no requests and no invites yet. One line and the way to start.",
+      bar("Invites and Requests") + center(ic("mail", 40, 1.6), "No invites or requests yet", "Invite people from your contacts or by @username, or share the link so they can ask.",
+                                           btn("Invite People", "primary", "md", block=False, icon="user_plus"), top=160), bg="var(--bg-grouped)", tag=P3)
+
+# ================================================================ PAGE SH · Space chat and the private chat
+P_SH = "SH"
+JUMA_POST = post("juma", "Will there be a size 44 in the Chicago colourway?")
+LEARN = sysline('Chats in spaces are not end-to-end encrypted. <a href="#" style="font-weight: 600; text-decoration: underline;">Learn more</a>', "info")
+SNEAK_CHAT = (f'<div class="cx-thread" style="padding: 4px 16px 0;">{LEARN}{day("Today")}'
+              + post("baraka", "New Jordan 1s land Friday 6 pm. Sizes 40 to 45. 🔥", "Owner", [("🔥", 48, True), ("👟", 12, False)])
+              + JUMA_POST
+              + post(AMINA, "Yes, 3 pairs. Message Baraka privately to hold one", "Admin", [("🙏", 4, False)], name="Amina", quote=("Juma", "Will there be a size 44 in the Chicago…"))
+              + mine("Holding a 42 for me? 🙏🏾", "18:04") + "</div>")
+frame(P_SH, "SH1-Space-chat", "SH1 · Space chat",
+      "How a space chat differs from a group: the header is the space (tile, member count), the first line says it isn’t "
+      "end-to-end encrypted, every post carries the sender’s name and role badge, reactions are counted, there are no read "
+      "receipts or typing names (a big room), and # is plain text: money to a space goes through Message privately.",
+      space_bar("sneaker", "1,204 members") + SNEAK_CHAT + space_composer("Message Nairobi Sneaker Drop"), tag=P3)
+
+frame(P_SH, "SH1b-Admins-only", "SH1 · Admins-only space",
+      "When the owner chose Admins only, members read and react; the composer becomes one line with Message Privately, so "
+      "there is always a way to talk to the space.",
+      space_bar("worship", "3,180 members")
+      + f'<div class="cx-thread" style="padding: 4px 16px 0;">{sysline("Only admins post here. Chats in spaces are not end-to-end encrypted.", "info")}{day("Today")}'
+      + post("njeri", "Youth service moves to 4 pm this Sunday. Bring a friend! 🙌🏾", "Admin", [("🙌🏾", 214, True), ("❤️", 96, False)])
+      + post("otieno", "Choir rehearsal: Thursday 6 pm, main hall", "Owner", [("🎶", 58, False)]) + "</div>"
+      + composer_note("Only admins post in this space.", "Message Privately"), tag=P3)
+
+msg_menu = (f'<div class="pop" role="dialog" aria-label="Reactions" style="top: 300px; left: 52px; width: auto; flex-direction: row; gap: 4px; padding: 6px 10px; border-radius: 999px;">'
+            + "".join(f'<span style="font-size: 24px; width: 44px; height: 44px; display: flex; align-items: center; justify-content: center;" role="button" aria-label="React {e}">{e}</span>' for e in ("❤️", "🔥", "😂", "🙏", "👟"))
+            + f'<span class="cx-icon-btn" role="button" aria-label="More reactions" style="width: 44px; height: 44px;">{ic("plus", 16)}</span></div>')
+frame(P_SH, "SH1c-Message-menu", "SH1 · Long-press a post",
+      "Long-press lifts the post with reactions above and a popover menu below it (no sheet). Members see Reply, Copy and "
+      "Report; moderators and admins also see Remove Post and Mute; admins see Remove from Space. Destructive items are last, in red.",
+      space_bar("sneaker", "1,204 members") + SNEAK_CHAT.replace(JUMA_POST, f'<div style="visibility: hidden;">{JUMA_POST}</div>') + space_composer("Message Nairobi Sneaker Drop")
+      + '<div class="dim-behind"></div>'
+      + f'<div style="position: absolute; z-index: 8; top: 358px; left: 16px; right: 60px;">{post("juma", "Will there be a size 44 in the Chicago colourway?")}</div>'
+      + msg_menu
+      + pop([("Reply", "reply"), ("Copy", "copy"), ("Report", "flag"), "-", ("Remove Post", "trash", "pop-crit"), ("Mute Juma", "mute", "pop-crit"), ("Remove from Space", "user_minus", "pop-crit")],
+            top=446, left=52, head="Admin"), tag=P3)
+
+frame(P_SH, "SH1d-Offline", "SH1 · Offline",
+      "A space chat opens from the phone. Posts written offline wait (clock) and go in order on reconnect, as in chats: a "
+      "space post is a safe write, not money. Reactions wait the same way.",
+      space_bar("sneaker", "1,204 members")
+      + f'<div style="padding: 6px 16px 4px;">{banner("You’re offline. Posts send when you reconnect.")}</div>'
+      + f'<div class="cx-thread" style="padding: 4px 16px 0;">{day("Today")}'
+      + post("baraka", "New Jordan 1s land Friday 6 pm. Sizes 40 to 45. 🔥", "Owner", [("🔥", 48, True), ("👟", 12, False)])
+      + mine("Is the CBD shop open Sunday?", state=f'{ic("clock", 12, 2.2)}Waiting') + "</div>"
+      + space_composer("Message Nairobi Sneaker Drop"), tag=P3)
+
+frame(P_SH, "SH1e-Muted", "SH1 · Muted by an admin",
+      "Permission denied to post: a muted member reads and reacts, and the composer says until when. Who muted them isn’t "
+      "shown. Message Privately still works.",
+      space_bar("sneaker", "1,204 members") + SNEAK_CHAT.replace(mine("Holding a 42 for me? 🙏🏾", "18:04"), "")
+      + composer_note("You can’t post here until 20:00 today. An admin muted you.", "Message Privately"), tag=P3)
+
+frame(P_SH, "SH1f-Removed-post", "SH1 · A removed post, and the chat failing",
+      "A post removed by a moderator leaves a tombstone so replies still make sense. Below, a page of older posts that failed "
+      "to load says so in place with Try Again and the reference; the rest of the chat keeps working.",
+      space_bar("sneaker", "1,204 members")
+      + f'<div class="cx-thread" style="padding: 4px 16px 0;">'
+      + f'<div role="alert" style="align-self: stretch; display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 10px 0;"><span class="small">Older posts didn’t load.</span>{btn("Try Again", "secondary", "sm", block=False)}<span class="rid">Ref req_H5tq0B</span></div>'
+      + day("Today")
+      + f'<div class="cx-msg">{av("kevin", "sm")}<div style="display: flex; flex-direction: column;"><div class="who">Kevin</div><div class="cx-bubble" style="background: transparent; box-shadow: inset 0 0 0 1px var(--separator); color: var(--ink-secondary); font-style: italic; display: flex; gap: 6px; align-items: center;">{ic("ban", 15, 1.8)}Removed by a moderator</div></div></div>'
+      + post(AMINA, "Reminder: no reselling posts here. Use your own Moments 🙏", "Admin", name="Amina") + "</div>"
+      + space_composer("Message Nairobi Sneaker Drop"), tag=P3)
+
+PRIV = (f'<div class="cx-thread" style="padding: 8px 16px 0;">{sysline("End-to-end encrypted. Only Baraka, the owner, can read this chat. Other members and admins never see it.", "lock")}{day("Today")}'
+        + mine("Hi Baraka, can you hold the size 42 Jordans for me till Friday?", "18:06")
+        + '<div class="cx-bubble cx-bubble-in">Sure. A KES 2,000 deposit holds them, the rest on pickup</div>')
+frame(P_SH, "SH2-Private-chat", "SH2 · Message privately",
+      "Message (or Message Privately) opens a one-to-one, end-to-end encrypted chat with the space’s owner. The header says "
+      "whose and via which space; the first line says who can read it. Here # pays the space (the composer hint says so).",
+      private_bar("baraka", "sneaker") + PRIV + "</div>" + space_composer("Message, or #amount to pay"), tag=P3)
+
+SNEAK_ROWS = [("Paying from", wchip3("Personal")), ("Network", "USDC on Base"), ("For", "deposit, size 42 Jordans"),
+              ("Fee", 'KES 20 <span style="color: var(--ink-secondary); font-weight: 400;">· 1%</span>'), ("Total", "KES 2,020"), ("Nairobi Sneaker Drop receives", "KES 2,000")]
+frame(P_SH, "SH2b-Pay-the-space", "SH2 · Send money to the space",
+      "“#2000 deposit, size 42 Jordans” makes the money card over the private chat: who (the space, not Baraka’s own wallet), "
+      "the amount, Paying from, the note, the 1% space fee on top, the total and what the space receives. Pay goes to the PIN. "
+      "Only members can pay a space (§8 Q7); a visitor’s card says Follow first.",
+      private_bar("baraka", "sneaker") + PRIV + "</div>"
+      + mcard("Pay Nairobi Sneaker Drop", "KES 2,000", "15.48 USDC", SNEAK_ROWS, "Pay KES 2,020", tile("sneaker", 44), foot=f"One Circaso fee, network cost included. {RATE3}", bottom=96, close=False)
+      + composer("#2,000", "deposit, size 42 Jordans"), tag=P3)
+
+paid_space = ('<div class="cx-money cx-money-out cx-moment" role="group" aria-label="Paid KES 2,000 to Nairobi Sneaker Drop, fee KES 20" style="width: 280px;">'
+              '<div class="cx-money-head">Paid to Nairobi Sneaker Drop</div><div class="cx-money-amount">KES 2,000</div>'
+              '<div class="cx-money-note">deposit, size 42 Jordans</div><div class="cx-money-foot">Fee KES 20 · 15.48 USDC · 18:09</div></div>')
+frame(P_SH, "SH2c-Paid", "SH2 · Paid, in the private chat",
+      "The card in the thread says Sending until the server confirms, then Paid to the space (the moment sweep plays once). "
+      "Baraka sees it as Received into Nairobi Sneaker Drop; it appears in the space wallet’s Recent.",
+      private_bar("baraka", "sneaker") + PRIV + paid_space + '<div class="cx-bubble-time cx-bubble-time-out">18:09</div>'
+      + '<div class="cx-bubble cx-bubble-in">Got it, asante! Pair is yours 👟</div></div>' + space_composer("Message, or #amount to pay"), tag=P3)
+
+owner_rows = ('<div class="cx-list cx-list-plain">'
+              + row('Pasaka <span class="role" style="vertical-align: 2px;">Private · Sneaker Drop</span>', "Paid KES 2,000 · deposit, size 42 Jordans", av("pasaka"), meta("18:09") + count(1))
+              + row('Juma <span class="role" style="vertical-align: 2px;">Private · Sneaker Drop</span>', "Is the 44 Chicago still there?", av("juma"), meta("17:40") + count(2))
+              + row("Mum", "Did you eat?", av("mum"), meta("16:02"))
+              + row("Nairobi Sneaker Drop", "Amina: Size 42 is back in stock", tile("sneaker", 44), meta("15:30")) + "</div>")
+frame(P_SH, "SH2d-Owner-inbox", "SH2 · The owner’s inbox",
+      "Baraka’s Chats: private chats from his space are marked with a small label so they never mix with family, and a "
+      "Spaces filter chip gathers them. The space’s own chat sits in his list like a group.",
+      chats_title() + '<div style="display: flex; gap: 8px; padding: 12px 16px 6px;"><button type="button" class="chip">All</button><button type="button" class="chip">Unread</button><button type="button" class="chip">Groups</button><button type="button" class="chip chip-on">Spaces</button></div>'
+      + owner_rows + tabbar("Chats"), tag=P3)
+
+frame(P_SH, "SH2e-Pay-not-member", "SH2 · Paying a space you’re not in",
+      "Only members can pay a space (§8 Q7). A visitor messaging the owner of a public space who types # gets the card with "
+      "the reason and the way in, instead of Pay: “Follow to pay” for a public space, “Join to pay” (opening SM1) for a "
+      "members-only one. Nothing is quoted, so no fee shows.",
+      private_bar("baraka", "sneaker") + PRIV + "</div>"
+      + mcard("Pay Nairobi Sneaker Drop", "KES 2,000", "15.48 USDC", [("For", "deposit, size 42 Jordans")], "Follow to Pay", tile("sneaker", 44),
+              status="Only people who follow Nairobi Sneaker Drop can pay it. Following is free.", bottom=96, close=False)
+      + composer("#2,000", "deposit, size 42 Jordans"), tag=P3)
+
+# ================================================================ PAGE SR · Roles and moderation
+P_SR = "SR"
+admin_members = ('<div style="padding: 0 16px; display: flex; flex-direction: column; gap: 6px;"><div class="sec">Team</div><div class="cx-list">'
+                 + member_row("baraka", "@barakam", "Owner") + member_row(AMINA, "@amina.w", "Admin", ic("more", 18, 3)) + member_row("kevin", "@kevo", "Moderator", ic("more", 18, 3)) + "</div>"
+                 + '<div class="sec" style="padding-top: 8px;">Members · 1,201</div><div class="cx-list">'
+                 + member_row("juma", "@jumak · muted until 20:00", None, ic("more", 18, 3)) + member_row("faith", "@faithc", None, ic("more", 18, 3)) + member_row("njeri", "@njerim", None, ic("more", 18, 3)) + "</div></div>")
+frame(P_SR, "SR1-Members-admin", "SR1 · Members, as an admin",
+      "Space Settings → Members and roles. Search, the team with roles, then members; each row’s more button opens its "
+      "popover (SR1b). A muted member says until when. Filters: All, Muted, Banned.",
+      bar("Members", right=icon_btn("user_plus", "Invite people")) + search_bar("", "Search members", cancel=False)
+      + '<div style="display: flex; gap: 8px; padding: 0 16px 10px;"><button type="button" class="chip chip-on">All</button><button type="button" class="chip">Muted · 1</button><button type="button" class="chip">Banned · 2</button></div>'
+      + admin_members, bg="var(--bg-grouped)", tag=P3)
+
+frame(P_SR, "SR1b-Member-menu", "SR1 · A member’s popover",
+      "Anchored to the row: change role, mute for a while, remove, ban. Mute opens its durations inline (1 hour, 24 hours, "
+      "7 days, until unmuted). What each does is in SR2; the person is told only that they were muted or removed.",
+      bar("Members", right=icon_btn("user_plus", "Invite people")) + search_bar("", "Search members", cancel=False)
+      + '<div style="display: flex; gap: 8px; padding: 0 16px 10px;"><button type="button" class="chip chip-on">All</button><button type="button" class="chip">Muted · 1</button><button type="button" class="chip">Banned · 2</button></div>'
+      + admin_members + '<div class="dim-behind"></div>'
+      + pop([("Message Faith", None), ("Make Moderator", "shield"), ("Make Admin", "shield"), "-", ("Mute…", "mute"), ("Remove from Space", "user_minus", "pop-crit"), ("Ban", "ban", "pop-crit")],
+            top=214, right=16, head="Faith Chebet · member"), bg="var(--bg-grouped)", tag=P3)
+
+frame(P_SR, "SR1c-Remove-confirm", "SR1 · Remove, confirmed in place",
+      "Remove and Ban confirm inside the popover, not a sheet, saying what happens. In a members-only space the line adds "
+      "“She paid until 4 Dec; removing doesn’t refund it. You can pay her back from your private chat.” Removed can follow again; banned can’t follow, join, ask or be invited.",
+      bar("Members") + search_bar("", "Search members", cancel=False)
+      + '<div style="display: flex; gap: 8px; padding: 0 16px 10px;"><button type="button" class="chip chip-on">All</button><button type="button" class="chip">Muted · 1</button><button type="button" class="chip">Banned · 2</button></div>'
+      + admin_members + '<div class="dim-behind"></div>'
+      + f'<div class="pop" role="alertdialog" aria-label="Remove Faith?" style="top: 400px; right: 16px; width: 280px; padding: 14px 16px; gap: 10px;">'
+      + '<div style="font: 600 17px/22px var(--font-sans);">Remove Faith?</div><p class="small" style="font-size: 15px; line-height: 20px;">She leaves the space and can follow it again. Her posts stay.</p>'
+      + f'<div style="display: flex; gap: 8px;">{btn("Cancel", "secondary", "sm", block=False)}{btn("Remove", "destructive", "sm", block=False)}</div></div>', bg="var(--bg-grouped)", tag=P3)
+
+frame(P_SR, "SR1d-Moderator-view", "SR1 · As a moderator",
+      "Permission denied, shown before the tap: a moderator’s popover has only what they may do (Remove Post from the chat, "
+      "Mute here), and one line says who can do the rest.",
+      bar("Members") + search_bar("", "Search members", cancel=False) + admin_members + '<div class="dim-behind"></div>'
+      + pop([("Message Faith", None), ("Mute…", "mute")], top=384, right=16, head="Faith Chebet · member", note="Only admins can remove people or change roles."), bg="var(--bg-grouped)", tag=P3)
+
+def can_list(title, rl, items):
+    return (f'<div style="display: flex; flex-direction: column; gap: 6px;"><div class="sec" style="display: flex; gap: 6px; align-items: center;">{title} {role(rl) if rl else ""}</div>'
+            f'<div class="cx-list" style="padding: 10px 16px; gap: 6px;">' + "".join(f'<div style="display: flex; gap: 8px; font: 400 15px/20px var(--font-sans);">{ic("check", 15, 2.4)}<span>{t}</span></div>' for t in items) + "</div></div>")
+frame(P_SR, "SR2-Roles", "SR2 · What each role can do",
+      "From Members and roles → Roles. Plain lists, each role adding to the one below it. Only the owner signs for the "
+      "wallet and changes the price; one owner per space.",
+      bar("Roles") + '<div style="padding: 8px 16px 0; display: flex; flex-direction: column; gap: 12px;">'
+      + can_list("Owner", "One per space", ["Everything admins can do", "Send money from the space wallet, with its PIN", "Price and who can join, appoint admins", "Delete the space"])
+      + can_list("Admins", None, ["Everything moderators can do", "Remove and ban members, invite, accept requests", "Edit details and who can post", "See the space wallet (not send)"])
+      + can_list("Moderators", None, ["Remove posts, mute members", "Handle reports"])
+      + can_list("Members", None, ["Post (if everyone can), react, report", "Message the owner privately, pay the space"]) + "</div>", bg="var(--bg-grouped)", tag=P3)
+
+REASONS = ["Spam or a scam", "Fake or counterfeit goods", "Harassment or bullying", "Hate or violence", "Sexual content", "Something else"]
+frame(P_SR, "SR3-Report", "SR3 · Report a post",
+      "From Report on a post (or Report Space in About). A full screen, short: the post quoted, one reason, optional detail, "
+      "Also block. The reporter’s name isn’t shown to the space’s team; Circaso’s team sees it for rule-breaking reports.",
+      bar("Report Post", left="cancel")
+      + '<div style="padding: 10px 16px 0; display: flex; flex-direction: column; gap: 12px;">'
+      + f'<div style="padding: 10px 12px; border-radius: var(--radius-md); background: var(--fill); display: flex; gap: 10px; align-items: flex-start;">{av("kevin", "sm")}<div style="font: 400 15px/20px var(--font-sans);"><b>Kevin</b> · Today<br>DM me for Jordans at half price, pay to my till first 🔥</div></div>'
+      + '<div class="sec">What’s wrong with it?</div><div class="cx-list" role="radiogroup" aria-label="Reason">'
+      + "".join(radio_row(r, None, i == 0) for i, r in enumerate(REASONS)) + "</div>"
+      + f'<div style="display: flex; align-items: center; gap: 12px; padding: 4px;"><span style="flex: 1; font: 400 17px/22px var(--font-sans);">Also block Kevin</span><button type="button" class="sw" role="switch" aria-checked="false" aria-label="Also block Kevin"></button></div></div>'
+      + f'<div style="position: absolute; left: 16px; right: 16px; bottom: 34px; display: flex; flex-direction: column; gap: 8px;">{btn("Send Report")}<p class="small" style="text-align: center;">The space’s team won’t see your name.</p></div>', bg="var(--bg-grouped)", tag=P3)
+
+frame(P_SR, "SR3b-Report-sent", "SR3 · Report sent",
+      "Done: what happens next, in two lines. Reports are online-only; offline, Send Report is disabled with the reason "
+      "(a report that might never arrive is worse than a clear wait).",
+      bar("", left="close") + center(ic("check", 40, 2), "Thanks, Pasaka", "Nairobi Sneaker Drop’s moderators will look at it. If it breaks Circaso’s rules, our team will act too. We’ll tell you what happened.",
+                                     btn("Done", "primary", "md", block=False), top=170), tag=P3)
+
+def report_card(who, text, reason, n, when):
+    return (f'<div role="group" aria-label="Report" style="padding: 14px 16px; border-radius: var(--radius-lg); background: var(--surface); box-shadow: inset 0 0 0 1px var(--separator); display: flex; flex-direction: column; gap: 10px;">'
+            f'<div style="display: flex; justify-content: space-between; align-items: center;"><span style="font: 600 13px/18px var(--font-sans); color: var(--ink-secondary);">{reason} · {n} report{"s" if n > 1 else ""}</span><span class="cx-row-meta">{when}</span></div>'
+            f'<div style="display: flex; gap: 10px;">{av(who, "sm")}<div style="font: 400 15px/20px var(--font-sans);"><b>{NAMES[who]}</b><br>{text}</div></div>'
+            f'<div style="display: flex; gap: 8px; flex-wrap: wrap;">{btn("Keep", "secondary", "sm", block=False)}{btn("Remove Post", "secondary", "sm", block=False)}{btn("Mute", "secondary", "sm", block=False)}{btn("Remove " + NAMES[who], "destructive", "sm", block=False)}</div></div>')
+frame(P_SR, "SR4-Reports", "SR4 · Reports queue",
+      "Moderators and admins: open reports, the most reported first, each with the post, the reason and count, and one-tap "
+      "actions. Acting closes it and tells the reporters. Done keeps a record of who did what.",
+      bar("Reports") + f'<div style="padding: 4px 16px 12px;">{seg(["Open · 2", "Done"], 0, "Reports")}</div>'
+      + '<div style="padding: 0 16px; display: flex; flex-direction: column; gap: 10px;">'
+      + report_card("kevin", "DM me for Jordans at half price, pay to my till first 🔥", "Spam or a scam", 4, "18:20")
+      + report_card("otieno", "Anyone selling fake AF1s? Need 20 pairs for resale", "Fake or counterfeit goods", 1, "16:02") + "</div>", bg="var(--bg-grouped)", tag=P3)
+
+frame(P_SR, "SR4b-Reports-empty", "SR4 · No reports",
+      "Empty queue: calm, one line. Loading uses the card shapes; an error shows Try Again with the reference.",
+      bar("Reports") + f'<div style="padding: 4px 16px 12px;">{seg(["Open", "Done"], 0, "Reports")}</div>'
+      + center(ic("shield", 40, 1.6), "No open reports", "When someone reports a post in Nairobi Sneaker Drop, it shows here for your moderators and admins.", "", top=150), bg="var(--bg-grouped)", tag=P3)
+
+frame(P_SR, "SR3c-Report-offline", "SR3 · Report, offline",
+      "Reports are online-only: the form stays filled in, Send Report is disabled before the tap with the reason, and it wakes "
+      "up when the connection is back.",
+      bar("Report Post", left="cancel")
+      + f'<div style="padding: 10px 16px 0; display: flex; flex-direction: column; gap: 12px;"><div>{banner("You’re offline. Reports need a connection.")}</div>'
+      + f'<div style="padding: 10px 12px; border-radius: var(--radius-md); background: var(--fill); display: flex; gap: 10px; align-items: flex-start;">{av("kevin", "sm")}<div style="font: 400 15px/20px var(--font-sans);"><b>Kevin</b> · Today<br>DM me for Jordans at half price, pay to my till first 🔥</div></div>'
+      + '<div class="sec">What’s wrong with it?</div><div class="cx-list" role="radiogroup" aria-label="Reason">'
+      + "".join(radio_row(r, None, i == 0) for i, r in enumerate(REASONS)) + "</div></div>"
+      + f'<div style="position: absolute; left: 16px; right: 16px; bottom: 34px; display: flex; flex-direction: column; gap: 8px;">{btn("Send Report", disabled=True)}<div class="cx-footnote">Needs a connection</div></div>', bg="var(--bg-grouped)", tag=P3)
+
+sk_report = ('<div aria-hidden="true" style="padding: 14px 16px; border-radius: var(--radius-lg); background: var(--surface); display: flex; flex-direction: column; gap: 10px;">'
+             '<span class="sk" style="width: 50%; height: 12px;"></span><div style="display: flex; gap: 10px;"><span class="sk" style="width: 28px; height: 28px; border-radius: 50%;"></span>'
+             '<div style="flex: 1; display: flex; flex-direction: column; gap: 6px;"><span class="sk" style="width: 40%; height: 12px;"></span><span class="sk" style="width: 90%; height: 12px;"></span></div></div>'
+             '<div style="display: flex; gap: 8px;"><span class="sk" style="width: 60px; height: 34px; border-radius: 999px;"></span><span class="sk" style="width: 110px; height: 34px; border-radius: 999px;"></span></div></div>')
+frame(P_SR, "SR4c-Reports-loading", "SR4 · Reports, loading",
+      "First open: skeletons in the report cards’ own shape, no spinner. Afterwards the queue opens from the phone and refreshes.",
+      bar("Reports") + f'<div style="padding: 4px 16px 12px;">{seg(["Open", "Done"], 0, "Reports")}</div>'
+      + f'<div style="padding: 0 16px; display: flex; flex-direction: column; gap: 10px;" aria-busy="true" aria-label="Loading reports">{sk_report * 2}</div>', bg="var(--bg-grouped)", tag=P3)
+
+frame(P_SR, "SR4d-Reports-error", "SR4 · Reports didn’t load",
+      "The queue failed after retries and nothing is cached: plain words, Try Again, the reference. Offline it shows the "
+      "cached queue with actions disabled (“Needs a connection”).",
+      bar("Reports") + f'<div style="padding: 4px 16px 12px;">{seg(["Open", "Done"], 0, "Reports")}</div>'
+      + '<div style="padding-top: 90px;">' + err_box("Reports didn’t load", "Something went wrong on our side. No report is lost.", "req_R4q8Vn") + "</div>", bg="var(--bg-grouped)", tag=P3)
+
+# ================================================================ PAGE SW · The space wallet
+P_SW = "SW"
+def wallet_top(name, key=None, open_=False):
+    glyph = tile(key, 22, " border-radius: 6px;") if key else f'<span style="display: flex;">{svg(TAB["Wallet"], 18, fill=True)}</span>'
+    return (f'<div style="height: 44px; display: flex; justify-content: flex-end; align-items: center; gap: 8px; padding: 0 16px;">'
+            f'{icon_btn("eye", "Hide balances")}<button type="button" class="wpill" aria-label="Wallet: {name}. Switch wallet" aria-expanded="{str(open_).lower()}">{glyph}'
+            f'<span style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">{name}</span>{ic("chev_down", 14, 2.4)}</button></div>')
+
+def ncard(net, kes, usdc, owner_line):
+    return (f'<div style="position: relative; padding: 0 16px;"><div class="ncard-peek" style="right: -12px;"></div><div class="ncard" role="group" aria-label="{net}, KES {kes}">'
+            f'<div style="display: flex; justify-content: space-between; align-items: center;"><span style="font: 600 15px/20px var(--font-sans);">{net}</span><span class="dim" style="font: 400 13px/18px var(--font-sans);">{owner_line}</span></div>'
+            f'<div><div class="dim" style="font: 400 13px/18px var(--font-sans);">USDC</div><div style="font: 600 40px/44px var(--font-rounded); letter-spacing: -0.5px; font-variant-numeric: tabular-nums;"><span style="font-size: 20px;">KES </span>{kes}</div>'
+            f'<div class="dim" style="font: 400 13px/18px var(--font-sans); font-variant-numeric: tabular-nums;">{usdc} USDC</div></div></div></div>')
+
+def w_acts(items, off=()):
+    return ('<div style="display: flex; justify-content: space-between; padding: 18px 24px 4px;">'
+            + "".join('<button type="button" class="act"' + (' disabled aria-disabled="true" style="opacity: .4;"' if n in off else "") + f'><span class="act-c">{ic(i, 20, 1.9)}</span>{n}</button>' for i, n in items) + "</div>")
+
+SPACE_RECENT = ('<div class="cx-list">'
+                + row("Pasaka", "Payment · deposit, size 42 Jordans", av("pasaka"), '<span class="cx-row-amount cx-in">+KES 2,000</span>' + meta("18:09"))
+                + row("Faith", "Payment · Air Force 1, size 39", av("faith"), '<span class="cx-row-amount cx-in">+KES 6,500</span>' + meta("14:30"))
+                + row("Juma", "Sent · stock for Friday · fee KES 500", av("juma"), '<span class="cx-row-amount">−KES 50,500</span>' + meta("Mon")) + "</div>")
+def space_wallet(caption, acts_off=(), banner_html="", pop_html="", recent=SPACE_RECENT, kes="210,600", usdc="1,630.03"):
+    return (wallet_top("Sneaker Drop", "sneaker", bool(pop_html)) + banner_html
+            + f'<div style="padding: 8px 20px 10px; font: 400 15px/20px var(--font-sans); color: var(--ink-secondary);">{caption}</div>'
+            + ncard("Base", kes, usdc, "Space wallet")
+            + w_acts([("plus", "Add"), ("send", "Send"), ("down", "Receive"), ("bank", "Cash Out")], acts_off)
+            + '<div style="padding: 14px 16px 0; display: flex; flex-direction: column; gap: 8px;"><div class="sec-row"><span style="font: 600 20px/25px var(--font-sans); letter-spacing: -0.45px;">Recent</span><button type="button" class="link">See All</button></div>'
+            + recent + "</div>" + tabbar("Wallet") + pop_html)
+
+frame(P_SW, "SW1-Space-wallet", "SW1 · Wallet tab, the space wallet",
+      "Baraka’s phone (he owns the space). The one wallet design (D-M9): no title, the corner switcher names the wallet, the same metal card per network, actions "
+      "and Recent. For a space: Add, Send (no approvals and no daily cap for spaces, §7a), Receive, Cash Out (coming). The "
+      "caption leads with whose money it is. Payments in are named by what they were (Payment, Membership, Renewal).",
+      space_wallet("Nairobi Sneaker Drop · space wallet · only you send"), bg="var(--bg-grouped)", tag=P3)
+
+wallet_pop = ('<div class="dim-behind"></div><div class="pop" role="menu" aria-label="Wallets" style="top: 103px; right: 16px; width: 300px;"><div class="pop-head" style="font: 600 15px/20px var(--font-sans); color: var(--ink);">Wallets</div>'
+              + "".join(f'<div role="menuitemradio" aria-checked="{str(on).lower()}" class="pop-item" style="min-height: 60px; gap: 12px;">{a}<div style="flex: 1; min-width: 0;"><div style="font: 600 15px/20px var(--font-sans);">{n}</div><div style="font: 400 13px/18px var(--font-sans); color: var(--ink-secondary);">{s}</div></div>'
+                        + (ic("check", 16, 2.6).replace('class="cx-icon"', 'class="cx-icon" style="color: var(--ink); margin-left: 0;"') if on else "") + "</div>"
+                        for a, n, s, on in [(av("baraka", "sm"), "Personal", "Your own money · KES 9,870", False),
+                                            (av("Mwita Family", "sm"), "Mwita Family", "View only · payouts need approval · KES 14,200", False),
+                                            (tile("sneaker", 28, " border-radius: 8px;"), "Nairobi Sneaker Drop", "Space wallet · you send · KES 210,600", True),
+                                            (tile("runners", 28, " border-radius: 8px;"), "Karura Runners", "Space wallet · being set up", False)])
+              + "</div>")
+frame(P_SW, "SW1b-Switcher", "SW1 · Switching wallets",
+      "Baraka’s phone. The corner opens D-M9’s popover (not a sheet): every wallet he can see, with what they can do and the last "
+      "balance, a tick on the one on screen. A space wallet still being set up says so and opens Finish Setup.",
+      space_wallet("Nairobi Sneaker Drop · space wallet · only you send", pop_html=wallet_pop), bg="var(--bg-grouped)", tag=P3)
+
+frame(P_SW, "SW1c-Admin-view", "SW1 · An admin’s view",
+      "Admins see the space wallet so the team can follow the money; only the owner sends. Send is off with the reason in the "
+      "caption, never failed after a tap. Members don’t see the space wallet at all, only their own payments to it.",
+      space_wallet("Nairobi Sneaker Drop · view only · only Baraka (owner) can send", acts_off=("Send", "Cash Out")), bg="var(--bg-grouped)", tag=P3)
+
+frame(P_SW, "SW1d-Offline", "SW1 · Offline",
+      "Balances from the phone, as of the time shown; every money action is off with the reason under the caption. Money never queues.",
+      space_wallet("Nairobi Sneaker Drop · space wallet · only you send<br><span style=\"font-size: 12px; line-height: 16px;\">Offline · balances as of 10:42. Sending needs a connection.</span>", acts_off=("Add", "Send", "Cash Out")),
+      bg="var(--bg-grouped)", tag=P3)
+
+frame(P_SW, "SW1e-Loading", "SW1 · Opening the space wallet",
+      "Switching to a wallet not read yet: the wallet’s own shape in skeletons (caption, card, actions, rows), crossfading "
+      "in. The corner already names it.",
+      wallet_top("Sneaker Drop", "sneaker") + '<div style="padding: 10px 20px 12px;" aria-busy="true" aria-label="Opening Nairobi Sneaker Drop’s wallet"><span class="sk" style="display: block; width: 70%; height: 14px;"></span></div>'
+      + '<div style="padding: 0 16px;"><div class="sk" style="height: 196px; border-radius: 22px;"></div></div>'
+      + '<div style="display: flex; justify-content: space-between; padding: 18px 24px 4px;">' + '<span class="sk" style="width: 58px; height: 58px; border-radius: 50%;"></span>' * 4 + "</div>"
+      + f'<div style="padding: 24px 16px 0;"><div class="cx-list">{sk_row * 2}</div></div>' + tabbar("Wallet"), bg="var(--bg-grouped)", tag=P3)
+
+frame(P_SW, "SW1f-Empty", "SW1 · A new space wallet",
+      "Pasaka’s new space, just set up: zero on the card, Receive first, Send off until there is money (the caption says so). The empty line says how money arrives (members pay with # in their "
+      "private chat, joining, renewals).",
+      wallet_top("Yoga Collective", "yoga")
+      + '<div style="padding: 8px 20px 10px; font: 400 15px/20px var(--font-sans); color: var(--ink-secondary);">Kilimani Yoga Collective · space wallet · only you send<br><span style="font-size: 12px; line-height: 16px;">Nothing to send yet.</span></div>'
+      + ncard("Base", "0", "0.00", "Space wallet") + w_acts([("plus", "Add"), ("send", "Send"), ("down", "Receive"), ("bank", "Cash Out")], ("Send",))
+      + '<div style="padding: 14px 16px 0; display: flex; flex-direction: column; gap: 8px;"><span style="font: 600 20px/25px var(--font-sans); letter-spacing: -0.45px; padding: 0 4px;">Recent</span>'
+      + '<p class="small" style="padding: 0 4px; font-size: 15px; line-height: 20px;">No payments yet. Members pay when they join and renew, or with # in their private chat with you.</p></div>' + tabbar("Wallet"),
+      bg="var(--bg-grouped)", tag=P3)
+
+JUMA_ROWS = [("Paying from", wchip3("Nairobi Sneaker Drop", "sneaker", "baraka")), ("Network", "USDC on Base"), ("For", "stock for Friday"),
+             ("Fee", 'KES 500 <span style="color: var(--ink-secondary); font-weight: 400;">· 1%</span>'), ("Total", "KES 50,500"), ("Juma receives", "KES 50,000")]
+frame(P_SW, "SW2-Send-from-space", "SW2 · Paying a supplier from the space",
+      "In Juma’s chat Baraka types “#50000 stock for Friday” and switches Paying from to the space wallet: the card re-quotes "
+      "at the space rate (1%) and Pay sends directly (no approvals, no daily cap for spaces). The PIN is the space wallet’s, named.",
+      bar("Juma", sub="Online", avatar=av("juma", "sm"))
+      + '<div class="cx-thread" style="padding: 8px 16px 0;"><div class="cx-bubble cx-bubble-in">20 pairs ready for Friday. Send when you can</div></div>'
+      + mcard("Send to Juma", "KES 50,000", "387.00 USDC", JUMA_ROWS, "Send KES 50,500", av("juma", "md"), foot=f"One Circaso fee, network cost included. {RATE3}", bottom=96, close=False)
+      + composer("#50,000", "stock for Friday"), tag=P3)
+
+frame(P_SW, "SW2b-Approve-space", "SW2 · Approve from the space wallet",
+      "Circle’s PIN names the space wallet with its tile: “Approve from Nairobi Sneaker Drop”, its PIN, not the personal one. "
+      "Fingerprint is offered when it’s on for this wallet (GW4, per wallet).",
+      bar("Juma", sub="Online", avatar=av("juma", "sm"))
+      + '<div class="cx-thread" style="padding: 8px 16px 0;"><div class="cx-bubble cx-bubble-in">20 pairs ready for Friday. Send when you can</div></div>'
+      + mcard("Send to Juma", "KES 50,000", "387.00 USDC", JUMA_ROWS, "Waiting for Nairobi Sneaker Drop’s PIN…", av("juma", "md"), busy=True, bottom=96, close=False)
+      + composer("#50,000", "stock for Friday")
+      + approve_sheet("Nairobi Sneaker Drop", tile("sneaker", 44), "KES 50,500", "Juma", 4, "Nairobi Sneaker Drop’s PIN, not your personal one."), tag=P3)
+
 # ================================================================ assemble
 PAGES = [
     (P_S, "S · Spaces tab", "Phase 1",
@@ -1195,13 +2368,29 @@ PAGES = [
      "Under You → Privacy. The audience is chosen on the poster's phone; the server never learns anyone's contacts."),
     (P_G, "GW · Groups with wallets, fees and limits", "Phase 2 and 2F",
      "Chamas and groups become one Group. A wallet is optional (a switch at creation, or later from group info) and a target needs one. Every approval names the wallet. The Pay screen gains Paying from and one fee line (gas included); group daily caps show before signing."),
+    (P_SD, "SD · Discover and search", "Phase 3",
+     "The Spaces tab's spaces sections populated: your spaces (newest activity first, unread counts, Renew when a membership ends soon) and suggestions (public and members-only; contacts first, then popular in Kenya). Search covers spaces by name, topic and <code>@handle</code>, and people whose moments you can see. Invite-only spaces never appear."),
+    (P_SS, "SS · The space page", "Phase 3",
+     "One page for every join type: <strong>public</strong> (Follow; visitors read the latest posts), <strong>members only</strong> (the price, what members get, the chat behind a lock; Join opens the money card) and <strong>invite only</strong> (from a link: name and size only, Request to Join, pending). Chat, About and Members are a segmented control on the page. Following, notifications and other menus are popovers, not sheets."),
+    (P_SN, "SN · Create a space", "Phase 3",
+     "Three short full-screen steps (details with a live @handle check, who can join with the price and period for members only, chat and roles), then the space wallet's PIN (every space has a wallet, plan §7), setting up and live. Space Settings holds every later change; a price change applies from each member's next period."),
+    (P_SM, "SM · Paid entry and membership", "Phase 3",
+     "Joining a members-only space is the chat's money card on the space page (D-M3): everything on one card, Pay goes straight to the Circle PIN, the space fee (seed 1 %, §7b) on top. Renewals are never deducted: a reminder 3 days before (7 for yearly), a 3-day grace period, then the membership ends until paid again. The receipt lands in the private chat with the owner."),
+    (P_SI, "SI · Invites", "Phase 3",
+     "Admins invite from contacts or by <code>@username</code>; an invite is a card at the top of Chats with Accept and Decline in place, and expires after 14 days. People who open an invite-only link can ask to join; admins answer requests and see invites in one list."),
+    (P_SH, "SH · Space chat and the private chat", "Phase 3",
+     "<strong>How a space chat differs from a group chat:</strong> it isn't end-to-end encrypted (said on its first line and in About); the header is the space with its member count; every post shows the sender's name and role; reactions are counted; no read receipts or typing names; admins choose who posts (Everyone or Admins only); moderators remove posts (a tombstone stays) and mute people; <code>#</code> is plain text there. <strong>Message privately</strong> is a one-to-one, end-to-end encrypted chat with the owner, marked \"Private · via the space\" on both sides; money to a space and its receipts happen there."),
+    (P_SR, "SR · Roles and moderation", "Phase 3",
+     "Owner (one; signs for the wallet, price, appoints admins, deletes), admins (members, invites, requests, settings; see the wallet), moderators (remove posts, mute, reports). Member actions are popovers anchored to the row, with destructive confirms inside them. Reports go to the space's moderators and to Circaso; the reporter's name isn't shown to the space."),
+    (P_SW, "SW · The space wallet", "Phase 3",
+     "The one wallet design (D-M9, project-status \"Wallet tab\"): no title, the corner switcher and its popover, the metal card per network, the same actions and Recent. A space wallet sends directly (no approvals, no daily cap, §7a) and only its owner signs; admins see it, members don't. Paying from a space wallet in a chat is the same money card, with the space wallet's PIN named."),
 ]
 
 DECISIONS = """
 <ul>
 <li><strong>Money leaves a group wallet only through an approved request</strong> (option A in the plan). When the owner switches Paying from to a group wallet, Send becomes Request Payout; the PIN signs only from an approved card (Pay Payout, amount locked). Space wallets have no approval rule and keep Send.</li>
 <li><strong>Money always starts in the chat</strong>, exactly as today (C3): <code>#amount</code> becomes the chip, <code>@</code> picks the coin, the rest of the line is the note, and the glass preview's arrow opens a <strong>review sheet with nothing to type</strong>: who, amount, Paying from, network, the note as "For", fee, total. In a group with a wallet, <code>#</code> contributes to the group wallet (today <code>#</code> is off in groups). An approved payout's review opens from its D5 card instead.</li>
-<li><strong>The review is the C4 sheet</strong> ("Send", "Pay Payout", "Request Payout", "Contribute"), over the chat it was opened from. Once quoted, the fee and the rate are held for the challenge's 15 minutes, so the rate line counts that down instead of C4's 30-second refresh.</li>
+<li><strong>The review is the C4 sheet</strong> ("Send", "Pay Payout", "Request Payout", "Contribute"), over the chat it was opened from. <em>Superseded 2026-11-04 (D-M3): from a chat, the chat's money card is the review and Pay goes straight to the PIN; the GW sheet frames show its rows, and the phase 3 frames draw the card itself.</em> Once quoted, the fee and the rate are held for the challenge's 15 minutes, so the rate line counts that down instead of C4's 30-second refresh.</li>
 <li><strong>The daily cap counts what leaves the wallet, fee included</strong>, over a rolling 24 hours. The server's <code>resetsAt</code> means "when this amount fits", not when the whole cap clears; the copy says "available from 14:30" accordingly.</li>
 <li><strong>Creating a group, setting up a group wallet and adding a target are online-only</strong> (the server creates the group and needs the members' keys; Circle needs a live challenge). They are disabled offline with "Needs a connection", never failed after the tap. Recorded in <code>offline-first.md</code>.</li>
 <li><strong>A group is kept when its wallet set-up fails or the connection drops mid-way.</strong> The wallet waits for the person (Finish Wallet Setup) and is never made silently.</li>
@@ -1215,6 +2404,35 @@ DECISIONS = """
 <li><strong>Posting a moment is a queueable write</strong> (not money): optimistic, Waiting offline, posts on reconnect; its 24 hours start when it posts.</li>
 <li><strong>The Spaces tab icon</strong> is a ring with a centre and two small circles: people around a place, drawn from the Circaso mark.</li>
 </ul>
+<h3 id="dec-3">Phase 3, Spaces core (phase 0b)</h3>
+<ul>
+<li><strong>Money to a space happens in the private chat with its owner</strong>, never in the public space chat: <code>#</code> there pays the space wallet and the receipt card stays between the payer and the owner (a payment broadcast to 1,200 members would expose people). The money card is the same one as in chats (D-M3). Joining is the one exception: the card opens on the space page, because a non-member has no chat yet; its receipt still lands in the private chat.</li>
+<li><strong>Entry fees and renewals are paid from the personal wallet only</strong> (a membership is the person's own), so the card's Paying from is fixed, with no chip. A group wallet could only pay by payout request; a space wallet paying for a personal membership would mix business and personal money.</li>
+<li><strong>The price is set in USDC and shown in the payer's currency first</strong> ("KES 646", with "5.00 USDC a month · priced in USDC" under it), so the owner always receives what they set and the payer sees the KES of today, held for the 15-minute quote.</li>
+<li><strong>Membership comes from the confirmed payment, never from the tap</strong>: the card says Joining until the transfer confirms; Not sent says nothing was taken, as G2.</li>
+<li><strong>Renewal timing</strong>: reminder 3 days before the end of a monthly period, 7 days before a yearly one (push, a card in the private chat, a banner in the space); 3 days' grace in which everything still works; then the membership ends (chat locked, own posts kept, Rejoin opens the card). A price change applies from each member's next period and is announced the day it's made.</li>
+<li><strong>Paid entry is for members-only spaces only</strong> in v1; invite-only spaces are free to join. Removing a paying member doesn't refund automatically; the confirm says so and the owner can pay them back from the private chat.</li>
+<li><strong>Join requests</strong>: an invite-only space is hidden from search but its link or QR opens a minimal page (name, photo, size, a known member) with Request to Join; admins answer in Invites and Requests. A declined request can ask again after 30 days.</li>
+<li><strong>Invites</strong> arrive as a card at the top of Chats (the inbox) and by push, expire after 14 days, and a decline is never announced to the inviter (it shows as Invited until it expires), so saying no costs nothing.</li>
+<li><strong>Visitors read a public space's latest posts</strong> read-only before following; a members-only space shows only the shape of a chat behind a lock, never real posts.</li>
+<li><strong>Message privately is open to anyone who can see the space</strong> (people ask before they pay); the owner can limit it to members in Space Settings. An invite-only space's owner is reachable by members only.</li>
+<li><strong>Who sees the space wallet</strong>: the owner (signs) and admins (view only, Send off with the reason); members see only their own payments to it. Spaces send directly (no approvals, no daily cap, §7a), so Send stays Send.</li>
+<li><strong>Roles</strong>: one owner; admins remove and ban members, invite, accept requests, edit details and who can post; moderators remove posts, mute (1 hour, 24 hours, 7 days, until unmuted) and handle reports. Remove lets the person follow again; Ban stops follow, join, requests and invites.</li>
+<li><strong>Reports</strong> go to the space's moderators and admins and to Circaso's review queue; the reporter's name isn't shown to the space's team. Sending a report is online-only (disabled offline with the reason), so a report never silently fails to arrive.</li>
+<li><strong>Space chat posts and reactions are queueable writes</strong> (not money, not end-to-end encrypted): they wait offline with a clock, as chat messages do. Follow, Join, Request, Accept, Invite, create and every role change are online-only and disabled offline before the tap.</li>
+<li><strong>No bottom sheets for menus in spaces</strong>: Following, a post's long-press, a member's actions and the wallet switcher are popovers anchored to what opened them; destructive confirms happen inside the popover. The only sheet left is Circle's PIN, as GW11.</li>
+<li><strong>Creating a space is three full-screen steps</strong> with a progress bar, ending in the space wallet's PIN; the space exists after step 3 and goes live once its wallet is set up. Accounts younger than 7 days can't create one (proposed spam rule, said with the date); at most 3 a day.</li>
+<li><strong>A default cover drawn from tokens</strong> (the brand's rings on a quiet fill) until the owner adds a photo, so a new space never looks broken; space photos are rounded squares, people are circles.</li>
+<li><strong>Private chats from a space carry a small "Private · {space}" label</strong> in the owner's inbox, and Chats gains a Spaces filter chip for owners and admins, so business chats never mix with family.</li>
+<li><strong>One topic list</strong> everywhere (create, Discover chips, search): Business, Shopping, Farming, Health, Faith, Sport, Books, Chamas, Music, Other.</li>
+<li><strong>A ban also stops private messages to the owner</strong> (it has to end harassment); a banned person can raise it with Circaso through Asha. A removed person can follow again and message as before.</li>
+<li><strong>Join, leave and renewal lines in a space chat are seen only by that person</strong>; other members never learn who paid. The space’s member count changes, nothing else.</li>
+<li><strong>Leaving a paid membership confirms in the popover</strong> (access ends now, no refund for the rest of the period); leaving a public space doesn’t confirm (Unfollow with Undo).</li>
+<li><strong>A space whose wallet set-up failed is kept but hidden</strong> until its wallet exists, with Finish Wallet Setup (as GW5b for groups).</li>
+<li><strong>Non-members can’t pay a space</strong>: the card shows the reason and Follow to Pay (public) or Join to Pay (members only) in place of Pay, with no quote.</li>
+<li><strong>Rows show a members-only price as USDC with KES beside it</strong> ("5 USDC (KES 646) a month"), as the plan asks; the join card leads with KES because that is what the person compares with their balance.</li>
+<li><strong>Removed posts leave a tombstone</strong> ("Removed by a moderator") so replies still read; the moderator isn't named.</li>
+</ul>
 """
 
 def esc_title(t):
@@ -1222,12 +2440,12 @@ def esc_title(t):
 
 parts = [head_css, EXTRA_CSS, GALLERY_CSS, "</style>\n"]
 nav = "".join(f'<a href="#p-{pid}">{title.split(" · ")[0]} · {title.split(" · ")[1]}</a>' for pid, title, _, _ in PAGES)
-parts.append(f'<div class="top"><div class="top-in"><div class="brand">Circaso <small>Spaces · phase 0a design · {len(FRAMES)} frames</small></div>'
+parts.append(f'<div class="top"><div class="top-in"><div class="brand">Circaso <small>Spaces · phase 0a and 0b design · {len(FRAMES)} frames</small></div>'
              f'<div class="ctrls"><div class="seg" role="group" aria-label="Zoom"><button type="button" data-z="0.44">S</button><button type="button" data-z="0.62" aria-pressed="true">M</button><button type="button" data-z="0.8">L</button></div>'
              f'<div class="seg" role="group" aria-label="Screen appearance"><button type="button" data-a="light" aria-pressed="true">Light</button><button type="button" data-a="dark">Dark</button><button type="button" data-a="light-hc">Light HC</button><button type="button" data-a="dark-hc">Dark HC</button></div></div>'
              f'<nav class="nav">{nav}<a href="#p-dec">Decisions</a></nav></div></div>')
 parts.append('<main style="padding-top:40px">\n<div class="lede"><h1>Spaces, Moments and group wallets.</h1>'
-             '<p>Phase 0a frames for Spaces phases 1 and 2, in the Circaso design system (tokens and components copied from the canvas). Every flow has its empty, loading, offline and error states. Plan: <code>references/spaces-plan.md</code>.</p></div>\n')
+             '<p>Phase 0a frames for Spaces phases 1 and 2, and phase 0b frames for phase 3 (Spaces core: discover, the space page, create, paid entry, invites, space chat, roles and moderation, the space wallet), in the Circaso design system (tokens and components copied from the canvas). Every flow has its empty, loading, offline and error states. Plan: <code>references/spaces-plan.md</code>.</p></div>\n')
 for pid, title, phase, intro in PAGES:
     fr = [f for f in FRAMES if f[0] == pid]
     parts.append(f'<section class="page" id="p-{pid}"><header class="ph"><h2>{title}</h2><span class="count">{len(fr)} screens · {phase}</span></header><div class="intro"><p>{intro}</p></div><div class="grid">')
