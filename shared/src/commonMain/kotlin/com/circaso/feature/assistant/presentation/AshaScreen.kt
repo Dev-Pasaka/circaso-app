@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
@@ -54,7 +55,7 @@ fun AshaScreen(viewModel: AshaViewModel, onBack: () -> Unit, onVoice: (() -> Uni
         state, onBack, viewModel::onDraft, viewModel::onSend, viewModel::onClearRequested, viewModel::onClearConfirmed, viewModel::onClearDismissed,
         onMic = viewModel::onMic, onSpeak = viewModel::onSpeak, onSuggestion = viewModel::onSuggestion, onVoice = onVoice,
         onHistory = viewModel::onHistory, onNewChat = viewModel::onNewChat, onOpenConversation = viewModel::onOpenConversation,
-        onDeleteConversation = viewModel::onDeleteConversation,
+        onDeleteConversation = viewModel::onDeleteConversation, reactions = viewModel.reactions,
     )
 }
 
@@ -79,6 +80,8 @@ fun AshaContent(
     onNewChat: () -> Unit = {},
     onOpenConversation: (String) -> Unit = {},
     onDeleteConversation: (String) -> Unit = {},
+    /** One-shot mascot reactions (the server's `reaction` tags). */
+    reactions: kotlinx.coroutines.flow.Flow<com.circaso.feature.assistant.domain.AshaReaction> = kotlinx.coroutines.flow.emptyFlow(),
 ) {
     val c = CircasoTheme.colors
     val t = CircasoTheme.typography
@@ -88,7 +91,8 @@ fun AshaContent(
                 title = "Asha",
                 subtitle = state.conversationTitle ?: "Reads your activity · can't move money",
                 onBack = onBack,
-                avatar = { AshaMark(size = CircasoSizes.avatarSm) },
+                // Her animated head (asha.riv, `AshaIcon`) at the header size; her mark if the file can't be drawn.
+                avatar = { AshaAvatar(state.mascot, AshaAvatarVariant.Icon, Modifier.size(CircasoSizes.avatarSm), reactions) { AshaMark(size = CircasoSizes.avatarSm) } },
                 trailing = {
                     // Past conversations, and a fresh one (as Claude): each keeps its own context.
                     CircasoIconButton(CircasoIcon.Clock, "Past conversations", { onHistory(true) })

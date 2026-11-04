@@ -8,6 +8,14 @@ import com.circaso.core.platform.LiveMicrophone
 import com.circaso.core.platform.LiveSpeaker
 import com.circaso.core.platform.Mulaw
 import com.circaso.core.sync.nowMillis
+import com.circaso.feature.assistant.domain.AshaActivity
+import com.circaso.feature.assistant.domain.AshaAvatarState
+import com.circaso.feature.assistant.domain.AshaLook
+import com.circaso.feature.assistant.domain.AshaLookSource
+import com.circaso.feature.assistant.domain.AshaMascotContext
+import com.circaso.feature.assistant.domain.AshaMascotRules
+import com.circaso.feature.assistant.domain.AshaMascotTags
+import com.circaso.feature.assistant.domain.AshaReaction
 import com.circaso.feature.assistant.domain.LiveVoiceEvent
 import com.circaso.feature.assistant.domain.LiveVoiceSession
 import com.circaso.feature.assistant.domain.LiveVoiceStart
@@ -16,7 +24,10 @@ import com.circaso.feature.assistant.domain.TalkToAshaUseCase
 import kotlinx.coroutines.DelicateCoroutinesApi
 import kotlinx.coroutines.GlobalScope
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
@@ -78,8 +89,31 @@ data class VoiceUiState(
     val notice: String? = null,
     /** Debug builds only: the last turn's delays ("model 420 · voice 610 · sent 780 · heard 830 ms"). */
     val timing: String? = null,
+    /** What the server's tags have said so far (scene, mood, activity). */
+    val mascotTags: AshaMascotTags = AshaMascotTags(),
+    val look: AshaLook = AshaLook.Asha,
 ) {
     val live get() = phase != VoicePhase.Connecting && phase != VoicePhase.Ended
+
+    /**
+     * The mascot on the stage: listening while the person talks, the server's activity (or thinking) while she works,
+     * speaking with her voice's loudness while she talks, a small wave at the end. A dropped connection is the
+     * offline pose.
+     */
+    val mascot: AshaAvatarState
+        get() = AshaMascotRules.resolve(
+            look = look,
+            tags = mascotTags,
+            context = AshaMascotContext(online = ending != VoiceEnding.Offline),
+            appActivity = when (phase) {
+                VoicePhase.Connecting -> AshaActivity.Idle
+                VoicePhase.Listening -> AshaActivity.Listening
+                VoicePhase.Thinking -> AshaActivity.Thinking
+                VoicePhase.Speaking -> AshaActivity.Speaking
+                VoicePhase.Ended -> AshaActivity.Done
+            },
+            voiceLevel = voiceLevel,
+        )
 }
 
 /**
@@ -94,7 +128,13 @@ class VoiceViewModel(
     private val microphone: LiveMicrophone,
     private val speaker: LiveSpeaker,
     private val client: com.circaso.core.platform.ClientInfo? = null,
+    /** The mascot's look from the chosen voice; absent in previews and tests, which show Asha. */
+    private val look: AshaLookSource? = null,
 ) : ViewModel() {
+    private val _reactions = MutableSharedFlow<AshaReaction>(extraBufferCapacity = 4)
+    /** One-shot mascot reactions the server asked for. */
+    val reactions: Flow<AshaReaction> = _reactions
+
     /** When this phone got the turn, and how long until its first sound played; for the debug timing line. */
     private var turnAt = 0L
     private var heardAfterMs: Long? = null
@@ -106,11 +146,14 @@ class VoiceViewModel(
     private var ended = false
 
     // The server's `reply_done` ends the speaking phase, not a gap between sentences, so the phase is never read off the player.
-    val state: StateFlow<VoiceUiState> = combine(local, microphone.level, speaker.level) { ui, mic, voice ->
-        ui.copy(micLevel = if (ui.muted || ui.phase != VoicePhase.Listening) 0f else mic, voiceLevel = if (ui.phase == VoicePhase.Speaking) voice else 0f)
+    val state: StateFlow<VoiceUiState> = combine(local, microphone.level, speaker.level, look?.look ?: flowOf(AshaLook.Asha)) { ui, mic, voice, shownLook ->
+        ui.copy(micLevel = if (ui.muted || ui.phase != VoicePhase.Listening) 0f else mic, voiceLevel = if (ui.phase == VoicePhase.Speaking) voice else 0f, look = shownLook)
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), VoiceUiState())
 
-    init { start() }
+    init {
+        start()
+        look?.let { l -> viewModelScope.launch { l.refresh() } }
+    }
 
     /** Starts (or, after a quiet hang-up, restarts) the conversation. */
     fun start() {
@@ -153,17 +196,20 @@ class VoiceViewModel(
             is LiveVoiceEvent.Transcript -> local.update { it.copy(heard = event.text, heardFinal = event.final, notice = null) }
             is LiveVoiceEvent.Turn -> Diagnostics.note("voice: turn").also {
                 turnAt = nowMillis(); heardAfterMs = null; serverTiming = null
-                local.update { it.copy(phase = VoicePhase.Thinking, question = event.text, heard = "", heardFinal = false, reply = emptyList(), status = null) } }
+                local.update { it.copy(phase = VoicePhase.Thinking, question = event.text, heard = "", heardFinal = false, reply = emptyList(), status = null, mascotTags = it.mascotTags.turnDone()) } }
             is LiveVoiceEvent.Reply -> local.update { it.copy(phase = VoicePhase.Speaking, reply = it.reply + event.text, status = null) }
             is LiveVoiceEvent.UsingTool -> local.update { it.copy(status = "Reading your chats…") }
-            is LiveVoiceEvent.Status -> local.update { it.copy(status = event.label) }
-            is LiveVoiceEvent.Interrupted -> { Diagnostics.note("voice: interrupted"); speaker.flush(); local.update { it.copy(phase = VoicePhase.Listening) } }
+            is LiveVoiceEvent.Status -> {
+                local.update { it.copy(status = event.label, mascotTags = it.mascotTags.merge(event.tags)) }
+                event.tags?.reaction?.let { r -> if (AshaMascotRules.allowReaction(r, AshaMascotContext(online = true))) _reactions.tryEmit(r) }
+            }
+            is LiveVoiceEvent.Interrupted -> { Diagnostics.note("voice: interrupted"); speaker.flush(); local.update { it.copy(phase = VoicePhase.Listening, mascotTags = it.mascotTags.turnDone()) } }
             is LiveVoiceEvent.ReplyDone -> {
                 Diagnostics.note("voice: reply done, spoken=${event.spoken}")
-                local.update { it.copy(phase = VoicePhase.Listening, status = null, reply = if (it.reply.isEmpty()) listOf(event.message.text) else it.reply) }
+                local.update { it.copy(phase = VoicePhase.Listening, status = null, reply = if (it.reply.isEmpty()) listOf(event.message.text) else it.reply, mascotTags = it.mascotTags.turnDone()) }
                 viewModelScope.launch { refreshHistory() }
             }
-            is LiveVoiceEvent.Error -> Diagnostics.note("voice: error ${event.code}").also { local.update { it.copy(phase = VoicePhase.Listening, status = null, notice = noticeFor(event.code)) } }
+            is LiveVoiceEvent.Error -> Diagnostics.note("voice: error ${event.code}").also { local.update { it.copy(phase = VoicePhase.Listening, status = null, notice = noticeFor(event.code), mascotTags = it.mascotTags.turnDone()) } }
             is LiveVoiceEvent.Closing -> { Diagnostics.note("voice: closing ${event.reason}"); finish(endingFor(event)) }
             is LiveVoiceEvent.Closed -> if (!ended) finish(closedEnding(event))
             is LiveVoiceEvent.ToolRequest -> Unit // answered inside the use case

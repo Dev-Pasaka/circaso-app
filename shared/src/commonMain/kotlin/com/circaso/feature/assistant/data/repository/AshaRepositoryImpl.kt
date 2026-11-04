@@ -134,8 +134,11 @@ class AshaRepositoryImpl(
             "tool_request" -> json.decodeFromString(ToolRequestData.serializer(), data).let {
                 AshaEvent.ToolRequest(it.turnId, it.callId, it.name, (it.arguments ?: JsonNull).toString())
             }
-            "tool_status" -> AshaEvent.Status(json.parseToJsonElement(data).jsonObject["label"]?.jsonPrimitive?.contentOrNull)
-            "tool_done" -> AshaEvent.Status(null)
+            "tool_status" -> json.parseToJsonElement(data).jsonObject.let { o ->
+                AshaEvent.Status(o["label"]?.jsonPrimitive?.contentOrNull, com.circaso.feature.assistant.data.remote.AshaTagsParser.parse(o))
+            }
+            // The mascot's tags may ride on tool_done too; its body was never read before, so a bare one stays quiet.
+            "tool_done" -> AshaEvent.Status(null, runCatching { com.circaso.feature.assistant.data.remote.AshaTagsParser.parse(json.parseToJsonElement(data).jsonObject) }.getOrNull())
             "done" -> AshaEvent.Done(json.decodeFromString(DoneData.serializer(), data).message.toDomain())
             else -> null
         }

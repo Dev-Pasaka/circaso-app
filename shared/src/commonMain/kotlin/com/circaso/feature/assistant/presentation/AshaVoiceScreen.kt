@@ -46,6 +46,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
@@ -74,14 +75,18 @@ class AshaVoiceViewModel(private val remote: AshaRemote, private val prefs: AppP
     init {
         viewModelScope.launch {
             when (val r = remote.voices()) {
-                is AppResult.Success -> local.update { it.copy(voices = r.value.voices, loading = false) }
+                is AppResult.Success -> {
+                    local.update { it.copy(voices = r.value.voices, loading = false) }
+                    // The mascot's look follows the voice in use (asha-next.md part B).
+                    prefs.setAshaVoiceGender(com.circaso.feature.assistant.data.repository.AshaLookRepository.genderInUse(r.value, prefs.ashaVoice.first()))
+                }
                 is AppResult.Failure -> local.update { it.copy(loading = false, error = ErrorMessages.forError(r.error)) }
             }
         }
     }
 
     fun onChoose(voice: VoiceDto) {
-        viewModelScope.launch { prefs.setAshaVoice(if (voice.default) null else voice.id) }
+        viewModelScope.launch { prefs.setAshaVoice(if (voice.default) null else voice.id); prefs.setAshaVoiceGender(voice.gender) }
         onPreview(voice)
     }
 
