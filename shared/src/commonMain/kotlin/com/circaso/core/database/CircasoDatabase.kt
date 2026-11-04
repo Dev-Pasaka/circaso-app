@@ -60,8 +60,11 @@ import kotlinx.coroutines.Dispatchers
         com.circaso.feature.status.data.local.MomentEntity::class, com.circaso.feature.status.data.local.PendingMomentEntity::class,
         com.circaso.feature.status.data.local.MutedPosterEntity::class, com.circaso.feature.status.data.local.MomentPrivacyEntity::class,
         com.circaso.feature.messaging.data.local.MessageReactionEntity::class,
+        com.circaso.feature.spaces.data.local.SpaceEntity::class, com.circaso.feature.spaces.data.local.MySpaceEntity::class,
+        com.circaso.feature.spaces.data.local.SpacePostEntity::class, com.circaso.feature.spaces.data.local.SpaceInviteEntity::class,
+        com.circaso.feature.spaces.data.local.SpaceReceiptEntity::class, com.circaso.feature.spaces.data.local.SpaceMetaEntity::class,
     ],
-    version = 17,
+    version = 18,
     autoMigrations = [
         AutoMigration(from = 1, to = 2), AutoMigration(from = 2, to = 3),
         AutoMigration(from = 3, to = 4), AutoMigration(from = 4, to = 5),
@@ -69,6 +72,8 @@ import kotlinx.coroutines.Dispatchers
         AutoMigration(from = 7, to = 8), AutoMigration(from = 8, to = 9), AutoMigration(from = 9, to = 10), AutoMigration(from = 10, to = 11), AutoMigration(from = 11, to = 12), AutoMigration(from = 12, to = 13), AutoMigration(from = 13, to = 14), AutoMigration(from = 14, to = 15), AutoMigration(from = 15, to = 16),
         // 17: group wallets (Spaces phase 2): wallet_cache, wallet_list, wallet_activity, group_money, transfer.walletId.
         AutoMigration(from = 16, to = 17),
+        // 18: Spaces core (phase 3): space, space_mine, space_post, space_invite, space_receipt, space_meta, chat.viaSpaceId.
+        AutoMigration(from = 17, to = 18),
     ],
 )
 @ConstructedBy(CircasoDatabaseConstructor::class)
@@ -85,6 +90,7 @@ abstract class CircasoDatabase : RoomDatabase() {
     abstract fun chamaDao(): ChamaDao
     abstract fun momentsDao(): com.circaso.feature.status.data.local.MomentsDao
     abstract fun reactionsDao(): com.circaso.feature.messaging.data.local.ReactionsDao
+    abstract fun spacesDao(): com.circaso.feature.spaces.data.local.SpacesDao
 }
 
 // Room generates the actual for each platform.

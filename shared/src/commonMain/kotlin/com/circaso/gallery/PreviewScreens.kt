@@ -387,7 +387,7 @@ fun PreviewScreens(name: String) {
             null, sampleChama(),
         )
         "transfer" -> TransferContent(TransferUiState(transfer = sampleTransfers().first(), fiat = sampleWallet().fiat), {})
-        else -> if (!GroupWalletPreview(name) && !ChatMoneyPreview(name)) BasicText("Unknown preview: $name")
+        else -> if (!GroupWalletPreview(name) && !ChatMoneyPreview(name) && !SpacesPreview(name)) BasicText("Unknown preview: $name")
     }
 }
 

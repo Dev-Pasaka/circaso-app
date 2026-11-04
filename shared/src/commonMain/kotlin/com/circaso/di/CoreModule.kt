@@ -109,6 +109,8 @@ val coreModule = module {
     single { AppPreferences(get()) }
     // Group wallets (phase 2): on in debug builds, off in release; turns itself off on a server without them.
     single { com.circaso.core.flags.GroupWalletsFlag(defaultOn = get<ClientInfo>().debugBuild, override = get<AppPreferences>().groupWalletsOverride, scope = get()) }
+    // Spaces core (phase 3): on in debug builds, off in release; turns itself off on a server without the spaces module.
+    single { com.circaso.core.flags.SpacesFlag(defaultOn = get<ClientInfo>().debugBuild, override = get<AppPreferences>().spacesOverride, scope = get()) }
     single {
         val auth = get<AuthManager>(); val api = get<CircasoApi>(); val connection = get<ConnectionState>()
         PushTokenRegistrar(
@@ -135,7 +137,7 @@ private var started = false
 fun initKoin(platform: Module) {
     if (started) return
     started = true
-    val koin = startKoin { modules(coreModule, authModule, profileModule, contactsModule, accountModule, assistantModule, realtimeModule, messagingModule, walletModule, chamaModule, statusModule, callsModule, homeModule, platform) }.koin
+    val koin = startKoin { modules(coreModule, authModule, profileModule, contactsModule, accountModule, assistantModule, realtimeModule, messagingModule, walletModule, chamaModule, statusModule, spacesModule, callsModule, homeModule, platform) }.koin
     // Open the stores off the main thread while the first frame is being prepared, and put any write that a
     // crash left half-sent back in line (its Idempotency-Key makes the retry safe).
     val scope = koin.get<CoroutineScope>()

@@ -22,6 +22,8 @@ class RealtimeDispatcher(
     private val onCallsFrame: suspend (type: String, data: kotlinx.serialization.json.JsonObject?) -> Unit = { _, _ -> },
     /** Moments (`status.posted`, `status.deleted`, `status.viewed`); also called on its `resync` with type `resync`. */
     private val onStatusFrame: suspend (type: String, data: kotlinx.serialization.json.JsonObject?) -> Unit = { _, _ -> },
+    /** Spaces (`space.*`, phase 3); also called on its `resync` with type `resync`. */
+    private val onSpacesFrame: suspend (type: String, data: kotlinx.serialization.json.JsonObject?) -> Unit = { _, _ -> },
 ) {
     fun start() {
         scope.launch { frames.collect { handle(it) } }
@@ -34,6 +36,7 @@ class RealtimeDispatcher(
                 "messaging" -> reloadMessaging()
                 "wallet" -> reloadWallet()
                 "status" -> onStatusFrame("resync", null)
+                "spaces" -> onSpacesFrame("resync", null)
                 else -> { refreshContacts(); refreshBlocks(); refreshOwnProfile() }
             }
             frame.module == "messaging" -> onMessagingFrame(frame.type, frame.data)
@@ -41,6 +44,7 @@ class RealtimeDispatcher(
             frame.module == "chama" -> onChamaFrame(frame.type, frame.data)
             frame.module == "calls" -> onCallsFrame(frame.type, frame.data)
             frame.module == "status" -> onStatusFrame(frame.type, frame.data)
+            frame.module == "spaces" -> onSpacesFrame(frame.type, frame.data)
             frame.module == "users" && frame.type in setOf("contact.joined", "connection.added") -> refreshContacts()
             frame.module == "users" && frame.type == "profile.updated" -> {
                 val userId = frame.data?.get("userId")?.jsonPrimitive?.content

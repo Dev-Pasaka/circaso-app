@@ -76,7 +76,13 @@ class SpacesActions(
 )
 
 @Composable
-fun SpacesTab(viewModel: SpacesViewModel, bottomPadding: PaddingValues, actions: SpacesActions) {
+fun SpacesTab(
+    viewModel: SpacesViewModel,
+    bottomPadding: PaddingValues,
+    actions: SpacesActions,
+    /** Spaces core (phase 3): where the spaces sections go; null keeps phase 1's "Spaces are coming" card. */
+    @Suppress("UNUSED_PARAMETER") spacesNav: com.circaso.feature.spaces.presentation.SpacesNav? = null,
+) {
     val state by viewModel.state.collectAsState()
     // Always current (Pasaka, 2026-11-03): fetched each time the tab shows and each time the app comes back to the
     // front. New moments posted meanwhile also arrive as status.posted frames; offline, the stored ones show.

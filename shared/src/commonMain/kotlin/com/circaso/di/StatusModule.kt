@@ -65,7 +65,7 @@ val statusModule = module {
             startAt = params.values.getOrNull(1) as? String,
             replyInChat = { posterId, text, moment ->
                 // The 1:1 chat on this phone if there is one (so a reply waits offline like any message), else open it.
-                val existing = chats.chats.first().firstOrNull { it.chat.peerId == posterId }?.chat?.chatId
+                val existing = chats.chats.first().firstOrNull { it.chat.peerId == posterId && it.chat.viaSpaceId == null }?.chat?.chatId
                 val chatId = existing ?: when (val r = chats.openDirect(posterId)) {
                     is com.circaso.core.common.AppResult.Success -> r.value.chatId
                     is com.circaso.core.common.AppResult.Failure -> return@MomentViewerViewModel r
