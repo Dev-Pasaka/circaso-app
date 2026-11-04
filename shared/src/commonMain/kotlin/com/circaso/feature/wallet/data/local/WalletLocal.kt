@@ -104,6 +104,10 @@ interface WalletDao {
     @Query("SELECT * FROM transfer WHERE transferId = :id")
     suspend fun transfer(id: String): TransferEntity?
 
+    /** The payments a thread's money cards point at, for their Sending / Sent / Not sent line. */
+    @Query("SELECT * FROM transfer WHERE transferId IN (:ids)")
+    fun observeTransfersIn(ids: List<String>): Flow<List<TransferEntity>>
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsert(row: TransferEntity)
 

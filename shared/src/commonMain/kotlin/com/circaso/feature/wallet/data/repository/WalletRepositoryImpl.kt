@@ -82,6 +82,10 @@ class WalletRepositoryImpl(
     /** Money arrived while the app is open (the frame, not a push): the coins sound, if the person has it on. */
     private val onMoneyReceived: suspend () -> Unit = {},
 ) : WalletRepository {
+    // Before init: a frame handled on Main.immediate could reach [save] while the class is still being built.
+    private val settledOut = kotlinx.coroutines.flow.MutableSharedFlow<Transfer>(extraBufferCapacity = 16)
+    override val settled: Flow<Transfer> = settledOut
+
     init { scope?.launch { com.circaso.feature.wallet.domain.WalletSignerBridge.biometricsLost.collect { onBiometricsLost(it.walletId) } } }
 
     /**
@@ -345,8 +349,18 @@ class WalletRepositoryImpl(
     override suspend fun loadTransfer(transferId: String): AppResult<Transfer> = remote.transfer(transferId).map { dto ->
         val existing = dao.transfer(transferId)
         val row = dto.toEntity(existing)
-        dao.upsert(row)
+        save(row, existing)
         row.toDomain()
+    }
+
+    override fun transfers(ids: Collection<String>): Flow<List<Transfer>> =
+        if (ids.isEmpty()) kotlinx.coroutines.flow.flowOf(emptyList()) else dao.observeTransfersIn(ids.distinct()).map { rows -> rows.map { it.toDomain() } }
+
+    /** Saves the row; an outgoing payment that has just been confirmed or failed is announced on [settled]. */
+    private suspend fun save(row: TransferEntity, existing: TransferEntity?) {
+        dao.upsert(row)
+        val ended = row.state == "CONFIRMED" || row.state == "FAILED"
+        if (ended && existing?.state != row.state && row.direction == TransferDirection.Out.name) settledOut.tryEmit(row.toDomain())
     }
 
     override suspend fun onFrame(type: String, data: JsonObject?) {
@@ -362,7 +376,7 @@ class WalletRepositoryImpl(
                     if (walletId != null) dao.transfer(id)?.let { dao.upsert(it.copy(walletId = walletId)) }
                     return
                 }
-                dao.upsert(existing.copy(state = str("state") ?: existing.state, txHash = str("txHash") ?: existing.txHash, failureReason = str("failureReason") ?: existing.failureReason, updatedAt = nowMillis()))
+                save(existing.copy(state = str("state") ?: existing.state, txHash = str("txHash") ?: existing.txHash, failureReason = str("failureReason") ?: existing.failureReason, updatedAt = nowMillis()), existing)
                 if (str("state") == "CONFIRMED" || str("state") == "FAILED") { refreshWallet(walletId); if (walletId != null) refreshActivity(walletId) }
             }
             "payment.received" -> {

@@ -141,6 +141,7 @@ fun initKoin(platform: Module) {
     val scope = koin.get<CoroutineScope>()
     scope.launch { koin.get<AuthManager>().restore() } // the session first: it decides what the person sees
     koin.get<RealtimeDispatcher>().start()
+    koin.get<com.circaso.feature.chama.data.repository.GroupMoneyLive>().start() // a group's money moves live on every screen
     koin.get<RealtimeSupervisor>().start()
     koin.get<PushTokenRegistrar>().start()
     koin.get<KeyMaintainer>().start() // encryption keys on the server, whenever signed in and online

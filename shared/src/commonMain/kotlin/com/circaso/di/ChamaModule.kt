@@ -21,6 +21,11 @@ import org.koin.dsl.module
 val chamaModule = module {
     single { get<CircasoDatabase>().chamaDao() }
     single<ChamaRemote> { KtorChamaRemote(get()) }
+    single {
+        com.circaso.feature.chama.data.repository.GroupMoneyLive(
+            get(), get(), scope = get(), groupWallets = { get<com.circaso.core.flags.GroupWalletsFlag>().isOn },
+        )
+    }
     single { ChamaRepositoryImpl(get(), get(), get(), links = get<com.circaso.core.datastore.AppPreferences>(), scope = get(), groupWallets = { get<com.circaso.core.flags.GroupWalletsFlag>().isOn }) }
     single<ChamaRepository> { get<ChamaRepositoryImpl>() }
     factory { ObserveChamaUseCase(get()) }

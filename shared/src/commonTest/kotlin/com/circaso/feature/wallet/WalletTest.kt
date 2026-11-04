@@ -47,6 +47,7 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonObject
+import kotlinx.coroutines.launch
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
@@ -117,6 +118,7 @@ internal class FakeWalletDao : WalletDao {
     override suspend fun clearActivity() { activity.value = emptyList() }
     override fun observeTransfer(id: String): Flow<TransferEntity?> = transfers.map { it[id] }
     override suspend fun transfer(id: String) = transfers.value[id]
+    override fun observeTransfersIn(ids: List<String>): Flow<List<TransferEntity>> = transfers.map { m -> ids.mapNotNull { m[it] } }
     override suspend fun upsert(row: TransferEntity) { transfers.value = transfers.value + (row.transferId to row) }
     override suspend fun clearSnapshot() { snapshot.value = null }
     override suspend fun clearTransfers() { transfers.value = emptyMap() }
@@ -248,6 +250,21 @@ class WalletRepositoryTest {
         assertEquals(TransferState.Submitted, t.state)
         assertEquals("lunch", t.note); assertEquals("Mum", t.counterpartName)
         assertEquals(TransferDirection.Out, t.direction)
+    }
+
+    @Test fun myPaymentReachingTheChainIsAnnouncedOnce() = runTest {
+        remote.status = "ACTIVE"; repo.refresh()
+        remote.transferState = "SUBMITTED"
+        repo.pay(PaymentRequest("BASE-SEPOLIA", null, null, "5000000", chatId = "g1", toGroupId = "g1"), "key-1")
+        val heard = mutableListOf<com.circaso.feature.wallet.domain.Transfer>()
+        val job = backgroundScope.launch(kotlinx.coroutines.test.UnconfinedTestDispatcher(testScheduler)) { repo.settled.collect { heard += it } }
+        val id = repo.transfers.first().single().transferId
+        repo.onFrame("transfer.updated", buildJsonObject { put("transferId", id); put("state", "CONFIRMED") })
+        repo.onFrame("transfer.updated", buildJsonObject { put("transferId", id); put("state", "CONFIRMED") }) // replayed after a reconnect
+        assertEquals(1, heard.size, "once per change, so the group reloads once")
+        assertEquals("g1", heard.single().toGroupId)
+        assertEquals(listOf(id), repo.transfers(listOf(id)).first().map { it.transferId }, "the thread's cards read it by id")
+        job.cancel()
     }
 
     @Test fun framesUpdateTheCopyAndUnknownTransfersAreRead() = runTest {

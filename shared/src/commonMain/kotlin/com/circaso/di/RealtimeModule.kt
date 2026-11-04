@@ -42,7 +42,10 @@ val realtimeModule = module {
             reloadMessaging = { get<com.circaso.feature.messaging.domain.ChatsRepository>().refresh(); get<com.circaso.feature.messaging.domain.MessagesRepository>().syncInbox() },
             onWalletFrame = { type, data -> get<com.circaso.feature.wallet.domain.WalletRepository>().onFrame(type, data) },
             reloadWallet = { get<com.circaso.feature.wallet.domain.WalletRepository>().refresh() },
-            onChamaFrame = { type, data -> get<com.circaso.feature.chama.domain.ChamaRepository>().onFrame(type, data) },
+            onChamaFrame = { type, data ->
+                get<com.circaso.feature.chama.domain.ChamaRepository>().onFrame(type, data)
+                get<com.circaso.feature.chama.data.repository.GroupMoneyLive>().onChamaFrame(type, data)
+            },
             onCallsFrame = { type, data -> get<com.circaso.feature.calls.CallController>().onFrame(type, data) },
             onStatusFrame = { type, data ->
                 val field = { k: String -> (data?.get(k) as? kotlinx.serialization.json.JsonPrimitive)?.content }

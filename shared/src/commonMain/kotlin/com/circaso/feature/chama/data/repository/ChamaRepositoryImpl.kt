@@ -118,8 +118,9 @@ class ChamaRepositoryImpl(
             "goal.updated", "contribution.added", "request.updated" -> {
                 if (groupWallets()) refreshMoney(chatId) else { refresh(chatId); retryPendingLinks() }
             }
-            // Phase 2: who approves payouts changed, or the target was removed.
-            "group.updated" -> if (groupWallets()) refreshMoney(chatId)
+            // Phase 2: who approves payouts changed, or the target was removed; money moved in or out (`money.updated`,
+            // to every member, target or not).
+            "group.updated", "money.updated" -> if (groupWallets()) refreshMoney(chatId)
         }
     }
 

@@ -16,6 +16,15 @@ interface WalletRepository {
 
     fun transfer(transferId: String): Flow<Transfer?>
 
+    /** The phone's copies of these transfers (any wallet), for the money cards in a chat. */
+    fun transfers(ids: Collection<String>): Flow<List<Transfer>>
+
+    /**
+     * An outgoing payment this phone knows just reached the end: confirmed on chain, or failed. Heard once per change,
+     * from a frame or a W5 read, so whatever shows that money (the group's balance and target) can reload at once.
+     */
+    val settled: Flow<Transfer>
+
     /** W1 with the person's currency. */
     suspend fun refresh(): AppResult<Wallet>
 
