@@ -132,7 +132,8 @@ enum class QuoteProblem { InsufficientFunds, PerPaymentLimit, DailyLimit }
  */
 data class PaymentQuote(
     val feeMinor: String,
-    val rateBps: Int,
+    /** Null when the server didn't say (a repeat); the row then shows the fee alone. */
+    val rateBps: Int?,
     val minimum: Boolean,
     val totalMinor: String,
     val balanceMinor: String?,

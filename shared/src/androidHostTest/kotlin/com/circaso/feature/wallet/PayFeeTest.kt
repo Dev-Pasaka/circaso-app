@@ -56,6 +56,7 @@ import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.resetMain
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
 import java.lang.reflect.Proxy
@@ -88,10 +89,13 @@ private val wallet = Wallet(
     fetchedAt = 0,
 )
 
+/** The tests' "now": 10:00 UTC on the day of the quotes, moved by virtual time. */
+private val Base = kotlin.time.Instant.parse("2026-11-04T10:00:00Z").toEpochMilliseconds()
+
 private class FeeTestMonitor : ConnectivityMonitor { override val osStatus = MutableStateFlow(ConnectionStatus.Online) }
 
-private fun quote(fee: String, rate: Int = 50, minimum: Boolean = false, problem: QuoteProblem? = null, max: String? = null, fitsAt: String? = null, id: String = "q1") =
-    PaymentQuote(fee, rate, minimum, "0", "500000000", max, problem, fitsAt, "4900000", "15000000", null, id, "2026-11-04T10:15:00Z")
+private fun quote(fee: String, rate: Int = 50, minimum: Boolean = false, problem: QuoteProblem? = null, max: String? = null, fitsAt: String? = null, id: String = "q1", expiresAt: String? = null) =
+    PaymentQuote(fee, rate, minimum, "0", "500000000", max, problem, fitsAt, "4900000", "15000000", null, id, expiresAt)
 
 /**
  * Phase 2F in the review (the chat's money card and the Pay screen share PayViewModel): W17's fee after a short pause,
@@ -132,6 +136,7 @@ class PayFeeTest {
         RemindRecipientUseCase(walletRepo), PayUseCase(walletRepo), ObserveContactsUseCase(contacts), connection, SendPaymentCardUseCase(messages),
         OpenDirectChatUseCase(chats), AttachChamaPaymentUseCase(chamas), ObserveChamaUseCase(chamas),
         quotePayment = QuotePaymentUseCase(walletRepo), quoteDelayMillis = 400,
+        now = { Base + dispatcher.scheduler.currentTime },
     )
 
     private fun TestScope.keep(vm: PayViewModel) { backgroundScope.launch { vm.state.collect { } } }
@@ -151,7 +156,7 @@ class PayFeeTest {
 
         assertEquals(listOf(vm.state.value.amountMinor), asked.map { it.amountMinor }, "one question, for what the person last typed")
         val s = vm.state.value
-        assertEquals(PayFee.Quoted("20000", 50, false, "q1", "2026-11-04T10:15:00Z"), s.fee)
+        assertEquals(PayFee.Quoted("20000", 50, false, "q1", null), s.fee)
         assertTrue(s.canPay)
         assertEquals("KES 2.58 · 0.5%", s.feeText)
         assertEquals("KES 502.58", totalValue(s))
@@ -235,6 +240,32 @@ class PayFeeTest {
         assertEquals(listOf("q1", "q2"), paid.map { it.quoteId })
     }
 
+    @Test fun whenTheHoldRunsOutTheFeeIsAskedAgainAndAChangeIsShownBeforePay() = runTest(dispatcher) {
+        fallback = AppResult.Success(quote("20000", expiresAt = "2026-11-04T10:15:00Z"))
+        val vm = vm(); keep(vm); advanceUntilIdle()
+        vm.onAmount("500"); advanceTimeBy(1_000)
+        assertEquals("20000", vm.state.value.feeMinor)
+
+        fallback = AppResult.Success(quote("25000", id = "q2"))
+        advanceUntilIdle()
+
+        assertEquals(2, asked.size, "asked again once the 15 minutes were up")
+        assertEquals("q2", (vm.state.value.fee as PayFee.Quoted).quoteId)
+        assertEquals("The fee changed: KES 2.58 → KES 3.23. New total KES 503.23.", feeChangeText(vm.state.value), "GW13c, before Pay")
+    }
+
+    @Test fun aStaleFeeCantBeSignedForANewAmount() = runTest(dispatcher) {
+        val vm = vm(); keep(vm); advanceUntilIdle()
+        vm.onAmount("500"); advanceUntilIdle()
+        assertTrue(vm.state.value.canPay)
+        vm.onAmount("600"); runCurrent()
+        assertTrue(vm.state.value.feeStale)
+        assertFalse(vm.state.value.canPay, "the old quote is for 500")
+        assertEquals("Send", com.circaso.feature.messaging.presentation.payLabel(vm.state.value), "GW13: a bare verb until the fee is known")
+        advanceUntilIdle()
+        assertTrue(vm.state.value.canPay)
+    }
+
     @Test fun overTheDailyLimitPayWaitsAndSaysWhen() = runTest(dispatcher) {
         fallback = AppResult.Success(quote("20000", problem = QuoteProblem.DailyLimit, max = "4800000", fitsAt = "2026-11-05T14:30:00Z"))
         val vm = vm(); keep(vm); advanceUntilIdle()
@@ -243,7 +274,7 @@ class PayFeeTest {
         val s = vm.state.value
         assertTrue(s.block is PayBlock.Daily)
         assertFalse(s.canPay)
-        assertTrue(blockedLabel(s)!!.startsWith("Send After "))
+        assertTrue(blockedLabel(s)!!.startsWith("Send ") && "After " in blockedLabel(s)!!, blockedLabel(s))
         val note = blockNote(s)!!
         assertEquals("You can send KES 632.10 more today", note.title, "4.90 USDC left, at 129")
         assertTrue(note.action!!.startsWith("Send KES "), note.action)
@@ -256,7 +287,7 @@ class PayFeeTest {
         vm.onToggleUnit()
         vm.onAmount("500"); advanceUntilIdle()
         assertTrue(vm.state.value.block is PayBlock.Funds)
-        assertEquals("Send KES 64,467.75 Instead", blockNote(vm.state.value)!!.action, "said in the person's currency")
+        assertEquals("Send 499.75 USDC Instead", blockNote(vm.state.value)!!.action, "in the unit being typed: exactly what it fills in")
 
         vm.onUseMax(); advanceUntilIdle()
         assertEquals("499.75", vm.state.value.amountText)

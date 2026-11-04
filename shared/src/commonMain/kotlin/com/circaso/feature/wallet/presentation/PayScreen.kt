@@ -252,6 +252,8 @@ private fun AmountStep(state: PayUiState, padding: PaddingValues, onAmount: (Str
             null -> Unit
         }
 
+        // GW13c / GW14 / GW14b / GW20, above the details as the frames put them.
+        FeeProblems(state, onUseMax)
         // Design `.cx-details`: a raised card with hairlines between the rows.
         Column(Modifier.fillMaxWidth().clip(CircasoShapes.md).background(c.surfaceRaised).border(1.dp, c.separator, CircasoShapes.md)) {
             if (state.showPayingFrom) {
@@ -276,17 +278,11 @@ private fun AmountStep(state: PayUiState, padding: PaddingValues, onAmount: (Str
             (state.chama?.memberCount ?: state.groupMoney?.memberCount?.takeIf { state.toGroup || state.fromGroupWallet })?.let { RowDivider(); DetailRow("Visible to", "All $it members") }
             RowDivider()
             // §7b's one fee, network cost included, worked out by W17 for exactly this payment (GW13*).
-            Row(Modifier.fillMaxWidth().padding(horizontal = CircasoSpacing.s4, vertical = 10.dp).semantics(mergeDescendants = true) {}, horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                BasicText("Fee", style = t.body.copy(color = c.inkSecondary))
-                FeeValue(state, onRetryQuote)
-            }
+            DetailRow("Fee", Modifier.semantics(mergeDescendants = true) {}) { FeeValue(state, onRetryQuote, t.subhead) }
             totalValue(state)?.let { RowDivider(); DetailRow("Total", it) }
             RowDivider()
             DetailRow("${payee?.displayName?.substringBefore(' ') ?: "They"} receive${if (payee == null) "" else "s"}", state.usdcText ?: "—")
         }
-        // GW13c: the fee rose after its 15 minutes; GW14 / GW14b / GW20: a limit or the balance with the fee.
-        feeChangeText(state)?.let { com.circaso.designsystem.chrome.Banner(it, CircasoIcon.Clock, tone = com.circaso.designsystem.chrome.BannerTone.Warning) }
-        blockNote(state)?.let { BlockNoteView(it, onUseMax) }
         // GW9d: the target as it will stand once this lands.
         val groupGoal = state.groupMoney?.goal?.takeIf { state.toGroup }
         val groupAfter = state.progressAfter
@@ -313,7 +309,8 @@ private fun AmountStep(state: PayUiState, padding: PaddingValues, onAmount: (Str
         }
         Spacer(Modifier.height(CircasoSpacing.s2))
         // The button carries the total (the amount plus §7b's fee); the same as the amount while there is no fee.
-        val amount = state.totalText ?: if (state.inFiat && state.fiatText != null) state.fiatText else state.usdcText
+        // GW13 / GW13d: a bare verb until the fee for what is typed is known.
+        val amount = buttonTotal(state)
         CircasoButton(
             text = blockedLabel(state)?.takeIf { state.step == PayStep.Amount && state.failure == null } ?: when {
                 state.step == PayStep.Sending -> "Sending from ${if (state.fromGroupWallet) state.walletName else "your wallet"}…"

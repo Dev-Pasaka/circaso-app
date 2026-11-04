@@ -180,12 +180,20 @@ class ThreadViewModel(
         if (money.wallet?.active != true) return
         val approved = money.openRequests.filter { it.state == com.circaso.feature.chama.domain.RequestState.Approved && it.transferId == null }
         _state.update { s -> s.copy(payoutWaits = s.payoutWaits.filterKeys { id -> approved.any { it.requestId == id } }) }
+        // Offline nothing is asked, and nothing is marked asked: the next read once back online asks.
+        if (!_state.value.online) return
         for (request in approved) {
             if (!payoutsChecked.add("${request.requestId}@${money.fetchedAt}")) continue
             viewModelScope.launch {
-                if (!_state.value.online) return@launch
-                val until = chama.payoutWaitsUntil(money, request)
-                _state.update { s -> s.copy(payoutWaits = if (until != null) s.payoutWaits + (request.requestId to until) else s.payoutWaits - request.requestId) }
+                // GW14c: "the button wakes up at the time the server gives": wait for it, then ask again.
+                while (true) {
+                    val until = chama.payoutWaitsUntil(money, request)
+                    _state.update { s -> s.copy(payoutWaits = if (until != null) s.payoutWaits + (request.requestId to until) else s.payoutWaits - request.requestId) }
+                    val wait = until?.let { runCatching { kotlin.time.Instant.parse(it).toEpochMilliseconds() - com.circaso.core.sync.nowMillis() }.getOrNull() } ?: break
+                    kotlinx.coroutines.delay(wait.coerceAtLeast(0) + 1_000)
+                    _state.update { s -> s.copy(payoutWaits = s.payoutWaits - request.requestId) }
+                    if (!_state.value.online) break
+                }
             }
         }
     }

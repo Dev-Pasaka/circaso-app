@@ -62,7 +62,13 @@ fun ListRow(
 
 /** Key on the left, value on the right. */
 @Composable
-fun DetailRow(key: String, value: String, modifier: Modifier = Modifier) {
+fun DetailRow(key: String, value: String, modifier: Modifier = Modifier) = DetailRow(key, modifier) {
+    BasicText(value, style = CircasoTheme.typography.subhead.copy(color = CircasoTheme.colors.ink))
+}
+
+/** A detail row whose value is drawn (a spinner while it is worked out, an action when it couldn't be). */
+@Composable
+fun DetailRow(key: String, modifier: Modifier = Modifier, value: @Composable () -> Unit) {
     val c = CircasoTheme.colors
     val t = CircasoTheme.typography
     Row(
@@ -71,7 +77,7 @@ fun DetailRow(key: String, value: String, modifier: Modifier = Modifier) {
         verticalAlignment = Alignment.CenterVertically,
     ) {
         BasicText(key, style = t.subhead.copy(color = c.inkSecondary))
-        Box(Modifier.padding(start = CircasoSpacing.s4)) { BasicText(value, style = t.subhead.copy(color = c.ink)) }
+        Box(Modifier.padding(start = CircasoSpacing.s4).weight(1f, fill = false)) { value() }
     }
 }
 

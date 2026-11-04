@@ -159,7 +159,7 @@ fun RequestCard(
             if (waits != null) "It fits the group wallet’s daily limit from $waits; ${if (isTreasurer) "you" else signerName ?: "its signer"} can pay it then." else null,
             if (waits == null && request.state == RequestState.Approved && isTreasurer && request.transferId == null) (if (inGroupWallet) "It’s ready for you to pay from the group wallet" else "Waiting for you to pay it") else null,
             if (waits == null && request.state == RequestState.Approved && !isTreasurer && inGroupWallet && request.transferId == null) "Paid from the group wallet once its signer sends it" else null,
-        ).joinToString(" · ")
+        ).joinToString(if (waits != null) ". " else " · ")
         if (line.isNotEmpty()) BasicText(line, style = t.footnote.copy(color = c.inkSecondary))
         val canDecide = request.state == RequestState.Pending && isAdmin && !decided
         val canPay = request.state == RequestState.Approved && isTreasurer && request.transferId == null

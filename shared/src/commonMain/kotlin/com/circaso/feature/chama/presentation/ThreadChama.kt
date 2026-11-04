@@ -69,20 +69,28 @@ class ThreadChama(
      * does (ISO), so every member sees why it hasn't been paid; null when it fits, can't be asked (offline, no wallet
      * yet) or the server takes no fees. Online-only and read-only: W17 as a member.
      */
-    suspend fun payoutWaitsUntil(money: com.circaso.feature.chama.domain.GroupMoney, request: ChamaRequest): String? {
-        val quote = quotePayment ?: return null
-        val wallet = money.wallet?.takeIf { it.active } ?: return null
-        val chain = observeWalletOf?.invoke(wallet.walletId)?.firstOrNull()?.chainsReceiving?.firstOrNull()?.blockchain
-            ?: observeWallet().firstOrNull()?.chainsReceiving?.firstOrNull()?.blockchain ?: return null
-        val asked = com.circaso.feature.wallet.domain.PaymentRequest(
-            blockchain = chain, toUserId = request.payeeUserId, toAddress = request.payeeAddress.takeIf { request.payeeUserId == null },
-            amountMinor = request.amountMinor, chatId = money.chatId, fromWalletId = wallet.walletId,
-        )
-        val answer = (quote(asked) as? AppResult.Success)?.value ?: return null
-        return answer.fitsAt.takeIf { answer.problem == com.circaso.feature.wallet.domain.QuoteProblem.DailyLimit }
-    }
+    suspend fun payoutWaitsUntil(money: com.circaso.feature.chama.domain.GroupMoney, request: ChamaRequest): String? =
+        payoutWaitsUntil(quotePayment ?: return null, observeWalletOf ?: return null, money, request)
 
     suspend fun introSeen(chatId: String) = prefs.setFlag(introFlag(chatId), true)
 
     private fun introFlag(chatId: String) = "chama.intro.$chatId"
+}
+
+/** [ThreadChama.payoutWaitsUntil] on its own ports, so it can be tested without the thread's other parts. */
+internal suspend fun payoutWaitsUntil(
+    quote: com.circaso.feature.wallet.domain.QuotePaymentUseCase,
+    observeWalletOf: com.circaso.feature.wallet.domain.ObserveWalletOfUseCase,
+    money: com.circaso.feature.chama.domain.GroupMoney,
+    request: ChamaRequest,
+): String? {
+    val wallet = money.wallet?.takeIf { it.active } ?: return null
+    // The group wallet's own network; without its copy on this phone there is nothing right to ask.
+    val chain = observeWalletOf(wallet.walletId).firstOrNull()?.chainsReceiving?.firstOrNull()?.blockchain ?: return null
+    val asked = com.circaso.feature.wallet.domain.PaymentRequest(
+        blockchain = chain, toUserId = request.payeeUserId, toAddress = request.payeeAddress.takeIf { request.payeeUserId == null },
+        amountMinor = request.amountMinor, chatId = money.chatId, fromWalletId = wallet.walletId,
+    )
+    val answer = (quote(asked) as? AppResult.Success)?.value ?: return null
+    return answer.fitsAt.takeIf { answer.problem == com.circaso.feature.wallet.domain.QuoteProblem.DailyLimit }
 }

@@ -217,7 +217,7 @@ fun CircasoIconImage(icon: CircasoIcon, tint: Color, modifier: Modifier = Modifi
                 }
                 // The design's `info`: a ring with the i's stem and dot (GW20).
                 CircasoIcon.Info -> {
-                    p.addOval(Rect(4f, 4f, 20f, 20f))
+                    p.addOval(Rect(3.5f, 3.5f, 20.5f, 20.5f))
                     p.moveTo(12f, 11f); p.lineTo(12f, 16f); p.moveTo(12f, 8f); p.lineTo(12f, 8.1f)
                 }
             }

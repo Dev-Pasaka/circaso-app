@@ -547,7 +547,7 @@ internal fun TransferEntity.toDomain() = Transfer(
 )
 
 private fun QuoteTransferResponse.toDomain() = PaymentQuote(
-    feeMinor = fee.amountMinor, rateBps = fee.rateBps ?: 0, minimum = fee.minimum == true, totalMinor = total.amountMinor,
+    feeMinor = fee.amountMinor, rateBps = fee.rateBps, minimum = fee.minimum == true, totalMinor = total.amountMinor,
     balanceMinor = balance?.amountMinor, maxAmountMinor = maxAmount?.amountMinor,
     problem = when (problem) {
         "INSUFFICIENT_FUNDS" -> QuoteProblem.InsufficientFunds
