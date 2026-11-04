@@ -11,6 +11,9 @@ on every non-GET (the gateway replays the first answer for 24 h), ids are UUIDv7
 `{ asset: "USDC", amountMinor: "5000000", amount: "5" }` (strings, as the wallet), pages `?cursor=&limit=` (default 50,
 max 200) answering `next` (null on the last page).
 
+Error `details` are the shared shape: `fields` is a list of `{ field, problem }`, so "`details.fields.availableAt`"
+below means the entry whose `field` is `availableAt` (its `problem` holds the value, an ISO time or a list).
+
 ## Model
 
 - A **space** has a unique **@handle** (its own namespace, separate from people's handles; 3–30 characters `a-z`, `0-9`,
@@ -241,15 +244,15 @@ action, by: Person, at } }`.
 
 | Type | To | `data` |
 | --- | --- | --- |
-| `space.post_new` | every member (not visitors) | `{ spaceId, post: Post }` (the author's own phone gets it too: match `clientPostId`) |
+| `space.post_new` | every member (not visitors) | `{ spaceId, spaceName, post: Post, notify }` (`notify`: whether this post was pushed to you; ignore it) (the author's own phone gets it too: match `clientPostId`) |
 | `space.post_updated` | every member | `{ spaceId, postId, reactions, removed? }` (reactions changed, or the post was removed) |
 | `space.updated` | every member (and the team of a `SETTING_UP` space) | `{ spaceId, version, state }`: read SP3 again (details, posting mode, price, `LIVE`, `DELETED`, `REMOVED`) |
-| `space.membership_updated` | the person | `{ spaceId, reason, me: Me }`. `reason`: `JOINED` (paid, accepted, or invite accepted), `RENEWED`, `ROLE_CHANGED`, `MUTED`, `UNMUTED`, `REMOVED`, `BANNED`, `UNBANNED`, `REQUEST_DECLINED`, `RENEWAL_DUE`, `GRACE_STARTED`, `ENDED`, `LEFT` |
+| `space.membership_updated` | the person | `{ spaceId, spaceName, reason, until? }`: read SP3 again for your `Me` (`until`: the mute's end, the paid period's end or the grace's end, when the reason has one). `reason`: `JOINED` (paid, accepted, or invite accepted), `RENEWED`, `ROLE_CHANGED`, `MUTED`, `UNMUTED`, `REMOVED`, `BANNED`, `UNBANNED`, `REQUEST_DECLINED`, `RENEWAL_DUE`, `GRACE_STARTED`, `ENDED`, `LEFT` |
 | `space.price_changed` | every member | `{ spaceId, price: Price, previous: Price }` |
-| `space.invited` | the invitee | `{ invite: ReceivedInvite }` |
+| `space.invited` | the invitee | `{ inviteId, spaceId, spaceName, inviterId, inviterName }`: read SP20 for the card |
 | `space.invite_removed` | the invitee | `{ inviteId, spaceId }` (cancelled by an admin, or the space went) |
-| `space.invite_accepted` | the inviter | `{ spaceId, user: Person }` (SI3: "Pasaka joined") |
-| `space.request_new` | the owner and admins | `{ spaceId, request: JoinRequest }` |
+| `space.invite_accepted` | the inviter | `{ spaceId, spaceName, userId, name }` (SI3: "Pasaka joined") |
+| `space.request_new` | the owner and admins | `{ spaceId, spaceName, userId, name }` |
 | `space.report_new` | the team (moderators and up) | `{ spaceId, postId, count }` |
 | `space.report_resolved` | each reporter | `{ spaceId, reportId, action }` |
 
