@@ -1,31 +1,20 @@
 package com.circaso.feature.chama.presentation
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
-import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.text.BasicText
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.ui.Alignment
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalClipboardManager
-import androidx.compose.ui.semantics.heading
-import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.AnnotatedString
-import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.unit.dp
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.circaso.core.common.AppResult
@@ -38,23 +27,13 @@ import com.circaso.core.sync.ConnectionBanner
 import com.circaso.core.sync.ConnectionState
 import com.circaso.designsystem.chrome.CircasoNavBar
 import com.circaso.designsystem.chrome.CircasoScaffold
-import com.circaso.designsystem.chrome.CircasoSheet
 import com.circaso.designsystem.chrome.SheetHead
-import com.circaso.designsystem.chrome.ToastHost
-import com.circaso.designsystem.chrome.rememberToastState
-import com.circaso.designsystem.components.ActionButton
-import com.circaso.designsystem.components.AmountDisplay
-import com.circaso.designsystem.components.AmountSize
 import com.circaso.designsystem.components.ButtonSize
 import com.circaso.designsystem.components.ButtonStyle
 import com.circaso.designsystem.components.CircasoButton
-import com.circaso.designsystem.components.CircasoIcon
-import com.circaso.designsystem.components.GoalProgress
 import com.circaso.designsystem.components.ListRow
 import com.circaso.designsystem.components.RowDivider
-import com.circaso.designsystem.components.Spinner
 import com.circaso.designsystem.theme.CircasoShapes
-import com.circaso.designsystem.theme.CircasoSpacing
 import com.circaso.designsystem.theme.CircasoTheme
 import com.circaso.feature.chama.domain.ChamaRequest
 import com.circaso.feature.chama.domain.DecideChamaRequestUseCase
@@ -63,22 +42,29 @@ import com.circaso.feature.chama.domain.ObserveGroupMoneyUseCase
 import com.circaso.feature.chama.domain.RefreshGroupMoneyUseCase
 import com.circaso.feature.messaging.domain.Chat
 import com.circaso.feature.messaging.domain.ObserveChatUseCase
-import com.circaso.feature.wallet.domain.MinorUnits
 import com.circaso.feature.wallet.domain.ObserveWalletActivityUseCase
 import com.circaso.feature.wallet.domain.ObserveWalletOfUseCase
 import com.circaso.feature.wallet.domain.RefreshWalletActivityUseCase
 import com.circaso.feature.wallet.domain.RefreshWalletOfUseCase
 import com.circaso.feature.wallet.domain.Transfer
 import com.circaso.feature.wallet.domain.Wallet
+import com.circaso.feature.wallet.domain.WalletOwnerType
+import com.circaso.feature.wallet.domain.WalletStatus
 import com.circaso.feature.wallet.domain.chainName
 import com.circaso.feature.wallet.domain.shortAddress
-import com.circaso.feature.wallet.presentation.TransferRow
+import com.circaso.feature.wallet.presentation.WalletActions
+import com.circaso.feature.wallet.presentation.WalletContent
+import com.circaso.feature.wallet.presentation.WalletSheets
+import com.circaso.feature.wallet.presentation.WalletUiState
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
@@ -97,59 +83,100 @@ data class GroupWalletUiState(
     val message: String? = null,
     val receiving: Boolean = false,
     val myUserId: String? = null,
+    /** The wallet's name before its chat is read (W16 named from the chat list, in the Wallet tab's switcher). */
+    val nameHint: String? = null,
 ) {
-    val name get() = chat?.title ?: "Group wallet"
-    val walletId get() = money?.wallet?.walletId
+    val name get() = chat?.title ?: nameHint ?: "Group wallet"
+    val walletId get() = money?.wallet?.walletId ?: wallet?.walletId
     val locked get() = signerLeft(chat, money)
     val signerName get() = chat?.members?.firstOrNull { it.userId == money?.wallet?.signerUserId }?.displayName?.substringBefore(' ') ?: "the signer"
     fun memberName(id: String?) = chat?.members?.firstOrNull { it.userId == id }?.displayName ?: "Someone"
     /** Nothing on the phone and nothing from the server yet. */
     val empty get() = money == null && wallet == null
+    val active get() = money?.walletActive ?: (wallet?.status == WalletStatus.Active)
+    val settingUp get() = money?.settingUp == true || wallet?.status == WalletStatus.SettingUp
+    /** A space's wallet sends to anyone (Send); a group's sends only approved payouts (Payout, a request). */
+    val space get() = wallet?.owner?.type == WalletOwnerType.Space
+
+    /** GW16's caption: whose money it is and who can move it. */
+    val caption: String get() = when {
+        settingUp -> "Group wallet · being set up"
+        locked -> "Group wallet · locked: $signerName signs for it and has left the group"
+        money?.isSigner == true -> "Group wallet · only you can send, after approval"
+        money != null -> "Group wallet · only $signerName can send, after approval"
+        else -> "Group wallet"
+    }
+
+    /** Payments as the group wallet lists them (GW16): who, and whether it was a contribution or a payout. */
+    val rows: List<Pair<Transfer, String>> get() = activity.map { tr ->
+        val who = tr.counterpartName ?: tr.counterpartGroupId?.let { "A group" } ?: shortAddress(if (tr.outgoing) tr.toAddress else tr.from).ifEmpty { "Someone" }
+        tr.copy(counterpartName = who) to (if (tr.outgoing) "Payout" else "Contribution")
+    }
 }
 
+/** What the phone holds about one group's wallet: its chat, CH7, W1 and W6 `?walletId=`. */
+data class GroupWalletData(val chat: Chat?, val money: GroupMoney?, val wallet: Wallet?, val activity: List<Transfer>)
+
 /**
- * A group's wallet (GW16's structure, opened from group info, the goal strip or the Wallet tab): its balance and who
- * can send, Add (contribute), Payout (a request), Receive, the target, open requests and its payments. Reads come
- * from the phone's copy (CH7, W1 and W6 `?walletId=`); approving and paying are online-only.
+ * Reads one group's wallet for every screen that shows it: the Wallet tab (a group picked in its switcher) and the
+ * pushed group wallet (group info, the goal strip). Reads come from the phone's copy; approving is online-only.
  */
 @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
-class GroupWalletViewModel(
-    private val chatId: String,
-    observeChat: ObserveChatUseCase,
-    observeMoney: ObserveGroupMoneyUseCase,
+class GroupWalletReader(
+    private val observeChat: ObserveChatUseCase,
+    private val observeMoney: ObserveGroupMoneyUseCase,
     private val refreshMoney: RefreshGroupMoneyUseCase,
     private val observeWallet: ObserveWalletOfUseCase,
     private val refreshWallet: RefreshWalletOfUseCase,
     private val observeActivity: ObserveWalletActivityUseCase,
     private val refreshActivity: RefreshWalletActivityUseCase,
-    private val decide: DecideChamaRequestUseCase,
-    connection: ConnectionState,
+    private val decideRequest: DecideChamaRequestUseCase,
     auth: AuthManager?,
-) : ViewModel() {
-    private val local = MutableStateFlow(GroupWalletUiState(myUserId = auth?.userId))
+) {
+    val myUserId: String? = auth?.userId
 
-    private val money = observeMoney(chatId)
-    private val walletSide = money.flatMapLatest { m ->
-        val id = m?.wallet?.walletId
-        if (id == null) flowOf(null to emptyList()) else combine(observeWallet(id), observeActivity(id)) { w, a -> w to a }
+    /** [walletId] from W16 when the caller knows it; otherwise the one CH7 names. */
+    fun observe(chatId: String, walletId: String? = null): Flow<GroupWalletData> {
+        val money = observeMoney(chatId)
+        val id: Flow<String?> = if (walletId != null) flowOf(walletId) else money.map { it?.wallet?.walletId }.distinctUntilChanged()
+        val side = id.flatMapLatest { w -> if (w == null) flowOf(null to emptyList()) else combine(observeWallet(w), observeActivity(w)) { a, b -> a to b } }
+        return combine(observeChat(chatId), money, side) { chat, m, s -> GroupWalletData(chat, m, s.first, s.second) }
     }
 
-    val state: StateFlow<GroupWalletUiState> = combine(local, observeChat(chatId), money, walletSide, connection.status) { ui, chat, m, side, c ->
-        ui.copy(chat = chat, money = m, wallet = side.first, activity = side.second, online = c == ConnectionStatus.Online)
+    /** CH7, then the wallet's W1 and W6. The wallet is read even when CH7 fails, so its balance stays fresh. */
+    suspend fun refresh(chatId: String, walletId: String? = null): AppResult<Unit> {
+        val m = refreshMoney(chatId)
+        val id = walletId ?: (m as? AppResult.Success)?.value?.wallet?.walletId
+        if (id != null) { refreshWallet(id); refreshActivity(id) }
+        return when (m) {
+            is AppResult.Success -> AppResult.Success(Unit)
+            is AppResult.Failure -> m
+        }
+    }
+
+    /** CH5, online-only. */
+    suspend fun decide(request: ChamaRequest, approve: Boolean) = decideRequest(request.requestId, approve)
+}
+
+/** The pushed group wallet (GroupWalletRoute): one group's wallet, in the Wallet tab's own design. */
+class GroupWalletViewModel(
+    private val chatId: String,
+    private val reader: GroupWalletReader,
+    connection: ConnectionState,
+) : ViewModel() {
+    private val local = MutableStateFlow(GroupWalletUiState(myUserId = reader.myUserId))
+
+    val state: StateFlow<GroupWalletUiState> = combine(local, reader.observe(chatId), connection.status) { ui, d, c ->
+        ui.copy(chat = d.chat, money = d.money, wallet = d.wallet, activity = d.activity, online = c == ConnectionStatus.Online)
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), local.value)
 
     init { refresh() }
 
     fun refresh() {
+        local.update { it.copy(loading = true) }
         viewModelScope.launch {
-            when (val r = refreshMoney(chatId)) {
-                is AppResult.Success -> {
-                    local.update { it.copy(error = null, reference = null) }
-                    r.value.wallet?.walletId?.let { id -> refreshWallet(id); refreshActivity(id) }
-                }
-                is AppResult.Failure -> local.update { it.copy(error = ErrorMessages.forError(r.error), reference = ErrorMessages.reference(r.error)) }
-            }
-            local.update { it.copy(loading = false) }
+            val f = reader.refresh(chatId) as? AppResult.Failure
+            local.update { it.copy(loading = false, error = f?.let { e -> ErrorMessages.forError(e.error) }, reference = f?.let { e -> ErrorMessages.reference(e.error) }) }
         }
     }
 
@@ -158,8 +185,8 @@ class GroupWalletViewModel(
         if (local.value.busy || !state.value.online) return
         local.update { it.copy(busy = true) }
         viewModelScope.launch {
-            val r = decide(request.requestId, approve)
-            local.update { it.copy(busy = false, message = (r as? AppResult.Failure)?.let { f -> ErrorMessages.forError(f.error) + (ErrorMessages.reference(f.error)?.let { " Ref $it" } ?: "") }) }
+            val r = reader.decide(request, approve)
+            local.update { it.copy(busy = false, message = (r as? AppResult.Failure)?.let(::decideFailed)) }
         }
     }
 
@@ -167,7 +194,10 @@ class GroupWalletViewModel(
     fun onMessageShown() = local.update { it.copy(message = null) }
 }
 
-/** What the group wallet asks of the app's navigation. */
+/** A failed approval, said with its reference. */
+internal fun decideFailed(f: AppResult.Failure) = ErrorMessages.forError(f.error) + (ErrorMessages.reference(f.error)?.let { " Ref $it" } ?: "")
+
+/** What a group wallet asks of the app's navigation beyond the wallet's own links (See All, assets). */
 class GroupWalletActions(
     val onAdd: () -> Unit,
     val onPayout: () -> Unit,
@@ -176,141 +206,45 @@ class GroupWalletActions(
     val onTarget: () -> Unit,
 )
 
+/** The group-only parts of the one wallet design: its actions, approving payout requests, retrying, its messages. */
+class GroupWalletHooks(
+    val actions: GroupWalletActions,
+    val onDecide: (ChamaRequest, Boolean) -> Unit,
+    val onRetry: () -> Unit,
+    val onMessageShown: () -> Unit = {},
+)
+
+/**
+ * The group wallet pushed from group info or the goal strip: the same Wallet screen as the tab (Pasaka, 2026-11-04),
+ * under a bar with Back and the group's name. No switcher here: the person came for this group's wallet.
+ */
 @Composable
-fun GroupWalletScreen(viewModel: GroupWalletViewModel, onBack: () -> Unit, actions: GroupWalletActions) {
+fun GroupWalletScreen(viewModel: GroupWalletViewModel, onBack: () -> Unit, actions: GroupWalletActions, walletActions: WalletActions) {
     val state by viewModel.state.collectAsState()
-    val toast = rememberToastState()
-    LaunchedEffect(state.message) { state.message?.let { toast.show(it); viewModel.onMessageShown() } }
+    var hidden by rememberSaveable { mutableStateOf(false) }
+    val ui = WalletUiState(group = state, online = state.online, hidden = hidden, receiveSheet = state.receiving)
+    val hooks = GroupWalletHooks(actions, viewModel::onDecide, viewModel::refresh, viewModel::onMessageShown)
     CircasoScaffold(
-        grouped = true,
         topBar = { CircasoNavBar(title = state.name, onBack = onBack) },
         banner = { ConnectionBanner(showing = state.wallet?.let { "Showing the wallet as of " + formatLocalTime(it.fetchedAt, LocalTimeStyle.Clock) } ?: "Showing what is saved on this phone") },
-        toast = { ToastHost(toast, Modifier.align(Alignment.TopCenter).padding(top = 8.dp)) },
-        overlay = {
-            CircasoSheet(visible = state.receiving, onDismiss = { viewModel.onReceive(false) }, label = "Receive into ${state.name}") {
-                GroupReceiveContent(state, onClose = { viewModel.onReceive(false) })
-            }
-        },
+        overlay = { WalletSheets(ui, walletActions, viewModel::onReceive, {}) },
     ) { padding ->
-        GroupWalletContent(state, PaddingValues(bottom = padding.calculateBottomPadding()), actions, viewModel::onDecide, { viewModel.onReceive(true) }, viewModel::refresh)
-    }
-}
-
-/** The group wallet's body: also the Wallet tab's view when a group wallet is chosen in its switcher (GW16). */
-@Composable
-fun GroupWalletContent(state: GroupWalletUiState, padding: PaddingValues, actions: GroupWalletActions, onDecide: (ChamaRequest, Boolean) -> Unit, onReceive: () -> Unit, onRetry: () -> Unit) {
-    val c = CircasoTheme.colors
-    val t = CircasoTheme.typography
-    val money = state.money
-    LazyColumn(
-        Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(start = CircasoSpacing.s4, end = CircasoSpacing.s4, top = CircasoSpacing.s3, bottom = padding.calculateBottomPadding() + CircasoSpacing.s6),
-        verticalArrangement = Arrangement.spacedBy(CircasoSpacing.s5),
-    ) {
-        when {
-            state.empty && state.loading -> item {
-                Column(Modifier.fillMaxWidth().padding(vertical = 80.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(CircasoSpacing.s3)) {
-                    Spinner(c.inkSecondary)
-                    BasicText("Loading ${state.name}’s wallet…", style = t.subhead.copy(color = c.inkSecondary))
-                }
-            }
-            state.empty -> item {
-                Column(Modifier.fillMaxWidth().padding(vertical = 64.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(CircasoSpacing.s3)) {
-                    BasicText(if (state.online) "Couldn’t load the wallet" else "You’re offline", Modifier.semantics { heading() }, style = t.title3.copy(color = c.ink))
-                    BasicText(
-                        if (state.online) (state.error ?: ErrorMessages.SomethingWrong) else "The wallet shows here once it has been read with a connection.",
-                        style = t.subhead.copy(color = c.inkSecondary, textAlign = TextAlign.Center),
-                    )
-                    state.reference?.let { BasicText("Ref $it", style = t.caption1.copy(color = c.inkTertiary)) }
-                    if (state.online) CircasoButton("Try Again", onRetry, style = ButtonStyle.Secondary)
-                }
-            }
-            money?.wallet == null && money != null -> item {
-                // A group without a wallet shows no money anywhere (GW6): only reachable through an old link.
-                BasicText("${state.name} doesn’t have a wallet.", style = t.body.copy(color = c.inkSecondary))
-            }
-            else -> {
-                item { Header(state, actions, onReceive) }
-                money?.goal?.let { g ->
-                    item {
-                        Column(Modifier.fillMaxWidth().clip(CircasoShapes.lg).background(c.surface).padding(CircasoSpacing.s4)) {
-                            GoalProgress(
-                                amountText(money.contributedMinor, state.wallet?.fiat), amountNumber(g.targetMinor, state.wallet?.fiat), money.progress,
-                                meta = g.name, label = "${g.name} progress",
-                            )
-                        }
-                    }
-                }
-                if (money != null && money.openRequests.isNotEmpty()) {
-                    item { BasicText("Payout requests", Modifier.semantics { heading() }, style = t.title3.copy(color = c.ink)) }
-                    items(money.openRequests, key = { "req-" + it.requestId }) { r ->
-                        RequestCard(
-                            r, state.wallet?.fiat, nameOf = state::memberName, isAdmin = money.isAdmin, isTreasurer = money.isSigner && !state.locked, myUserId = state.myUserId,
-                            busy = state.busy, online = state.online, onApprove = { onDecide(r, true) }, onDecline = { onDecide(r, false) }, onPay = { actions.onPayRequest(r) },
-                            inGroupWallet = true,
-                        )
-                    }
-                }
-                item { BasicText("Recent", Modifier.semantics { heading() }, style = t.title3.copy(color = c.ink)) }
-                if (state.activity.isEmpty()) {
-                    item { BasicText("No payments yet. Members add money with # in the group chat.", style = t.subhead.copy(color = c.inkSecondary)) }
-                } else item {
-                    Column(Modifier.fillMaxWidth().clip(CircasoShapes.lg).background(c.surface)) {
-                        state.activity.take(20).forEachIndexed { i, tr ->
-                            if (i > 0) RowDivider(Modifier.padding(start = 72.dp))
-                            val who = tr.counterpartName ?: tr.counterpartGroupId?.let { "A group" } ?: shortAddress(if (tr.outgoing) tr.toAddress else tr.from).ifEmpty { "Someone" }
-                            val kind = if (tr.outgoing) "Payout" else "Contribution"
-                            TransferRow(tr.copy(counterpartName = who), state.wallet?.fiat, hidden = false, meta = kind, onClick = { actions.onOpenTransfer(tr.transferId) })
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
-/** GW16's top: whose money it is, the balance, and Add / Payout / Receive (a group's Send is a request). */
-@Composable
-private fun Header(state: GroupWalletUiState, actions: GroupWalletActions, onReceive: () -> Unit) {
-    val c = CircasoTheme.colors
-    val t = CircasoTheme.typography
-    val money = state.money
-    val usdc = state.wallet?.usdc
-    val fiat = state.wallet?.fiat
-    val active = money?.walletActive == true
-    Column(verticalArrangement = Arrangement.spacedBy(CircasoSpacing.s4)) {
-        val caption = when {
-            money?.settingUp == true -> "Group wallet · being set up"
-            state.locked -> "Group wallet · locked: ${state.signerName} signs for it and has left the group"
-            money?.isSigner == true -> "Group wallet · only you can send, after approval"
-            else -> "Group wallet · only ${state.signerName} can send, after approval"
-        }
-        val held = usdc?.let { amountText(it.amountMinor, fiat) } ?: "—"
-        Column(verticalArrangement = Arrangement.spacedBy(CircasoSpacing.s1)) {
-            BasicText(caption, style = t.subhead.copy(color = if (state.locked) c.warning else c.inkSecondary))
-            AmountDisplay(
-                currency = held.substringBefore(' ', ""), number = held.substringAfter(' '),
-                sub = usdc?.takeIf { fiat != null }?.let { MinorUnits.toDisplay(it.amountMinor, 6) + " USDC" },
-                size = AmountSize.Hero, centred = false,
-            )
-        }
-        Row(Modifier.fillMaxWidth().padding(horizontal = CircasoSpacing.s6), horizontalArrangement = Arrangement.SpaceAround) {
-            ActionButton(CircasoIcon.Plus, "Add", actions.onAdd, enabled = active && state.online)
-            ActionButton(CircasoIcon.Send, "Payout", actions.onPayout, enabled = active && state.online && !state.locked)
-            ActionButton(CircasoIcon.ArrowDown, "Receive", onReceive, enabled = active)
-        }
-        if (!state.online) BasicText("Money moves only while you’re connected.", style = t.footnote.copy(color = c.inkSecondary))
+        WalletContent(
+            ui, padding, walletActions, onCreate = {}, onRefresh = viewModel::refresh, onReceive = viewModel::onReceive, onComing = {},
+            sheets = false, onToggleHidden = { hidden = !hidden }, group = hooks,
+        )
     }
 }
 
 /** Receiving into the group wallet from outside Circaso: its address on each network. Members pay with # in the chat. */
 @Composable
-private fun ColumnScope.GroupReceiveContent(state: GroupWalletUiState, onClose: () -> Unit) {
+fun ColumnScope.GroupReceiveContent(state: GroupWalletUiState, onClose: () -> Unit) {
     val c = CircasoTheme.colors
     val t = CircasoTheme.typography
     val clipboard = LocalClipboardManager.current
     SheetHead("Receive into ${state.name}", onClose)
     BasicText("Members pay in with # in the group chat. From outside Circaso, send USDC to the group wallet’s address on the same network.", style = t.subhead.copy(color = c.inkSecondary))
+    if (state.locked) BasicText("${state.signerName} signs for this wallet and has left the group, so nothing can leave it for now. Don’t send money in until it’s sorted.", style = t.footnote.copy(color = c.warning))
     val chains = state.wallet?.chainsReceiving.orEmpty()
     if (chains.isEmpty()) BasicText("The wallet’s addresses appear here once it’s on a network.", style = t.subhead.copy(color = c.inkSecondary))
     Column(Modifier.fillMaxWidth().clip(CircasoShapes.lg).background(c.surfaceRaised)) {

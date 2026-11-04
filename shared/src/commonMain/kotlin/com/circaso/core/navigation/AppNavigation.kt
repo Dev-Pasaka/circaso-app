@@ -217,46 +217,17 @@ fun AppNavigation(forceUpdate: Boolean, home: @Composable () -> Unit) {
                     spacesBanner = { com.circaso.feature.status.presentation.SpacesBanner() },
                     spacesUnread = spacesViewModel.state.collectAsState().value.rings.any { it.unseen && !it.muted },
                     wallet = { bottomPadding ->
+                        // GW16 (Pasaka, 2026-11-04): one wallet design for every wallet; the corner switcher picks which.
                         WalletTab(
                             walletViewModel, bottomPadding,
-                            WalletActions(
-                                onPay = { backStack.add(PayRoute()) },
-                                onSendToWallet = { backStack.add(SendToWalletRoute) },
-                                onTransfer = { id -> backStack.add(TransferRoute(id)) },
-                                onActivity = { backStack.add(ActivityRoute) },
-                                onNetworks = { backStack.add(NetworksRoute) },
-                                onAsset = { chain, symbol -> backStack.add(AssetActivityRoute(chain, symbol)) },
-                                onAssets = { chain -> backStack.add(NetworkAssetsRoute(chain)) },
-                                onNetworkActivity = { chain -> backStack.add(NetworkActivityRoute(chain)) },
-                            ),
-                            // GW16: a group wallet picked in the tab's switcher, with its own view model per group.
-                            groupWallet = { chatId, pad ->
-                                val gvm = koinViewModel<com.circaso.feature.chama.presentation.GroupWalletViewModel>(key = "group-wallet-$chatId", parameters = { parametersOf(chatId) })
-                                val gw by gvm.state.collectAsState()
-                                com.circaso.feature.chama.presentation.GroupWalletContent(
-                                    gw, pad, groupWalletActions(chatId, gw, backStack::add), gvm::onDecide,
-                                    onReceive = { backStack.add(GroupWalletRoute(chatId)) }, onRetry = gvm::refresh,
-                                )
-                            },
+                            actions = { walletId -> walletActions(walletId, backStack::add) },
+                            groupActions = { chatId, gw -> groupWalletActions(chatId, gw, backStack::add) },
                         )
                     },
                     walletActions = { WalletTitleActions(walletViewModel) },
                     chatsOverlay = { ChatsOverlay(chatsViewModel, onAsha = { backStack.add(AshaRoute) }, onVoice = { backStack.add(AshaRoute); backStack.add(VoiceRoute) }) },
                     walletOverlay = {
-                        WalletOverlay(
-                            walletViewModel,
-                            WalletActions(
-                                onPay = { backStack.add(PayRoute()) },
-                                onSendToWallet = { backStack.add(SendToWalletRoute) },
-                                onTransfer = { id -> backStack.add(TransferRoute(id)) },
-                                onActivity = { backStack.add(ActivityRoute) },
-                                onNetworks = { backStack.add(NetworksRoute) },
-                                onAsset = { chain, symbol -> backStack.add(AssetActivityRoute(chain, symbol)) },
-                                onAssets = { chain -> backStack.add(NetworkAssetsRoute(chain)) },
-                                onNetworkActivity = { chain -> backStack.add(NetworkActivityRoute(chain)) },
-                            ),
-                            biometrics = koinViewModel(),
-                        )
+                        WalletOverlay(walletViewModel, walletActions(null, backStack::add), biometrics = koinViewModel())
                     },
                 ) { bottomPadding ->
                     val youViewModel: com.circaso.feature.home.presentation.YouViewModel = koinViewModel()
@@ -411,6 +382,7 @@ fun AppNavigation(forceUpdate: Boolean, home: @Composable () -> Unit) {
                 com.circaso.feature.chama.presentation.GroupWalletScreen(
                     vm, onBack = ::pop,
                     actions = groupWalletActions(route.chatId, gw, backStack::add),
+                    walletActions = walletActions(gw.walletId, backStack::add),
                 )
             }
             entry<TargetRoute> { route ->
@@ -468,25 +440,25 @@ fun AppNavigation(forceUpdate: Boolean, home: @Composable () -> Unit) {
             entry<SendToWalletRoute>(metadata = Panes.FullScreen) { SendToWalletScreen(koinViewModel(), onBack = ::pop, onOpenTransfer = { id -> pop(); backStack.add(TransferRoute(id)) }) }
             entry<TransferRoute> { route -> TransferScreen(koinViewModel<TransferViewModel>(key = route.transferId, parameters = { parametersOf(route.transferId) }), onBack = ::pop) }
             entry<NetworksRoute> { NetworksScreen(koinViewModel(), onBack = ::pop) }
-            entry<ActivityRoute> { ActivityScreen(koinViewModel(parameters = { parametersOf(null, null) }), onBack = ::pop, onOpen = { id -> backStack.add(TransferRoute(id)) }) }
+            entry<ActivityRoute> { ActivityScreen(koinViewModel(parameters = { parametersOf(null, null, null) }), onBack = ::pop, onOpen = { id -> backStack.add(TransferRoute(id)) }) }
             entry<AshaVoiceRoute> { com.circaso.feature.assistant.presentation.AshaVoiceScreen(koinViewModel(), onBack = ::pop) }
             entry<CurrencyRoute> { com.circaso.feature.wallet.presentation.CurrencyScreen(koinViewModel(), onBack = ::pop) }
             entry<AssetActivityRoute> { route ->
                 ActivityScreen(
-                    koinViewModel(key = route.blockchain + route.symbol, parameters = { parametersOf(route.blockchain, route.symbol) }),
+                    koinViewModel(key = route.blockchain + route.symbol + route.walletId, parameters = { parametersOf(route.blockchain, route.symbol, route.walletId) }),
                     onBack = ::pop, onOpen = { id -> backStack.add(TransferRoute(id)) },
                 )
             }
             entry<NetworkActivityRoute> { route ->
                 ActivityScreen(
-                    koinViewModel(key = "activity-" + route.blockchain, parameters = { parametersOf(route.blockchain, null) }),
+                    koinViewModel(key = "activity-" + route.blockchain + route.walletId, parameters = { parametersOf(route.blockchain, null, route.walletId) }),
                     onBack = ::pop, onOpen = { id -> backStack.add(TransferRoute(id)) },
                 )
             }
             entry<NetworkAssetsRoute> { route ->
                 com.circaso.feature.wallet.presentation.NetworkAssetsScreen(
-                    koinViewModel(key = "assets-" + route.blockchain, parameters = { parametersOf(route.blockchain) }),
-                    onBack = ::pop, onAsset = { chain, symbol -> backStack.add(AssetActivityRoute(chain, symbol)) },
+                    koinViewModel(key = "assets-" + route.blockchain + route.walletId, parameters = { parametersOf(route.blockchain, route.walletId) }),
+                    onBack = ::pop, onAsset = { chain, symbol -> backStack.add(AssetActivityRoute(chain, symbol, route.walletId)) },
                 )
             }
             entry<PreviewRoute> { route -> PreviewScreens(route.name) }
@@ -559,6 +531,21 @@ private fun androidx.compose.foundation.layout.BoxScope.CallLayer(backStack: Mut
 
 /** The treasurer paying an approved request (design D5): a member, or an outside address with its name. */
 /** The group wallet's actions (GW16): Add contributes, Payout asks the admins, a request's Pay leaves the group wallet. */
+/**
+ * One wallet's links ([walletId] null: the personal wallet): its payments, its assets and their statements open for
+ * that wallet. Send, Send to a wallet and Networks are the personal wallet's (a group's own row replaces them).
+ */
+internal fun walletActions(walletId: String?, open: (Route) -> Unit) = WalletActions(
+    onPay = { open(PayRoute()) },
+    onSendToWallet = { open(SendToWalletRoute) },
+    onTransfer = { id -> open(TransferRoute(id)) },
+    onActivity = { open(ActivityRoute) },
+    onNetworks = { open(NetworksRoute) },
+    onAsset = { chain, symbol -> open(AssetActivityRoute(chain, symbol, walletId)) },
+    onAssets = { chain -> open(NetworkAssetsRoute(chain, walletId)) },
+    onNetworkActivity = { chain -> open(NetworkActivityRoute(chain, walletId)) },
+)
+
 internal fun groupWalletActions(chatId: String, state: com.circaso.feature.chama.presentation.GroupWalletUiState, open: (Route) -> Unit) =
     com.circaso.feature.chama.presentation.GroupWalletActions(
         onAdd = { open(PayRoute(groupId = chatId, chatId = chatId, displayName = state.chat?.title, goalName = state.money?.goal?.name)) },

@@ -6,6 +6,10 @@ import com.circaso.core.common.AppResult
 import com.circaso.core.common.ErrorMessages
 import com.circaso.core.platform.ConnectionStatus
 import com.circaso.core.sync.ConnectionState
+import com.circaso.feature.chama.domain.ChamaRequest
+import com.circaso.feature.chama.presentation.GroupWalletReader
+import com.circaso.feature.chama.presentation.GroupWalletUiState
+import com.circaso.feature.chama.presentation.decideFailed
 import com.circaso.feature.profile.domain.ObserveProfileUseCase
 import com.circaso.feature.wallet.data.repository.WalletRepositoryImpl
 import com.circaso.feature.wallet.domain.CreateWalletUseCase
@@ -19,6 +23,10 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
@@ -50,7 +58,17 @@ data class WalletUiState(
     val wallets: List<NamedWallet> = emptyList(),
     /** The wallet the tab shows; null is the person's own. */
     val selectedWalletId: String? = null,
+    /** The switcher's popover is open. */
     val switching: Boolean = false,
+    /**
+     * The group wallet on screen, drawn with the personal wallet's own design (Pasaka, 2026-11-04); null for the
+     * person's own. Set by the tab when a group is picked in the switcher, and by the pushed group wallet.
+     */
+    val group: GroupWalletUiState? = null,
+    /** The last balance this phone read for each wallet in the switcher (null key: the personal wallet). */
+    val balances: Map<String?, Wallet?> = emptyMap(),
+    /** Group wallets whose signer has left the group: nothing can leave them (GW8b). */
+    val lockedWallets: Set<String> = emptySet(),
 ) {
     val selected: NamedWallet get() = wallets.firstOrNull { it.walletId == selectedWalletId } ?: NamedWallet.Personal
     /** The chosen group's chat, when the tab shows a group wallet. */
@@ -61,7 +79,11 @@ data class WalletUiState(
     val canSend get() = active && online && wallet?.holdUntil == null
 }
 
-/** The Wallet tab (design E1): balance, the four actions, coins, recent payments; create and set-up states before that. */
+/**
+ * The Wallet tab (design E1): balance, the four actions, coins, recent payments; create and set-up states before that.
+ * With group wallets (GW16) it drives the corner switcher too: the picked wallet's money, in the same design.
+ */
+@OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
 class WalletViewModel(
     observeWallet: ObserveWalletUseCase,
     private val refreshWallet: RefreshWalletUseCase,
@@ -74,32 +96,84 @@ class WalletViewModel(
     private val addMissingChains: com.circaso.feature.wallet.domain.AddMissingChainsUseCase? = null,
     private val groupWallets: com.circaso.core.flags.GroupWalletsFlag = com.circaso.core.flags.GroupWalletsFlag.off(),
     private val sources: GroupWalletSources? = null,
+    /** Reads the group wallet picked in the switcher; null where group wallets aren't wired. */
+    private val groupReader: GroupWalletReader? = null,
 ) : ViewModel() {
     private val local = MutableStateFlow(WalletUiState())
+    /** The picked group wallet's own refresh, approval and message state; fresh whenever another wallet is picked. */
+    private val groupLocal = MutableStateFlow(GroupWalletUiState(myUserId = groupReader?.myUserId))
 
     init {
-        // GW16: the title becomes a switcher once the person can see another wallet (W16, named from their chats).
+        // GW16: a switcher in the corner once the person can see another wallet (W16, named from their chats). With
+        // the flag off the list is empty, so there is no switcher and the tab is the personal wallet.
         sources?.let { src ->
             viewModelScope.launch {
-                kotlinx.coroutines.flow.combine(groupWallets.enabled, src.named) { on, named -> if (on) named else emptyList() }
-                    .collect { named -> local.update { s -> s.copy(wallets = named, selectedWalletId = s.selectedWalletId?.takeIf { id -> named.any { it.walletId == id } }) } }
+                combine(groupWallets.enabled, src.named) { on, named -> if (on) named else emptyList() }
+                    .collect { named ->
+                        local.update { s ->
+                            // A wallet that went away (the group was left, the flag went off) falls back to Personal.
+                            val keep = s.selectedWalletId?.takeIf { id -> named.any { it.walletId == id } }
+                            s.copy(wallets = named, selectedWalletId = keep, switching = s.switching && named.size > 1)
+                        }
+                    }
             }
         }
     }
 
+    /** The switcher's popover (GW16): it opens only when there is another wallet to pick. */
     fun onSwitching(open: Boolean) = local.update { it.copy(switching = open && it.showSwitcher) }
-    fun onSelectWallet(wallet: NamedWallet) = local.update { it.copy(selectedWalletId = wallet.walletId, switching = false) }
 
-    val state: StateFlow<WalletUiState> = combine(local, observeWallet(), observeTransfers(), connection.status, observeProfile(), repository.setupRequestedBy) { values ->
+    /** Picks the wallet the tab shows. The layout stays; only its money, payments and group-only parts change. */
+    fun onSelectWallet(wallet: NamedWallet) {
+        val before = local.value.selectedWalletId
+        local.update { it.copy(selectedWalletId = wallet.walletId, switching = false, receiveSheet = false) }
+        if (wallet.walletId == before) return
+        groupLocal.value = GroupWalletUiState(myUserId = groupReader?.myUserId, nameHint = wallet.name)
+        if (!wallet.personal) refreshGroup()
+    }
+
+    private val selection = local.map { it.selected }.distinctUntilChanged { a, b -> a.walletId == b.walletId && a.chatId == b.chatId }
+
+    /** The picked group's wallet from the phone's copy; null for Personal. */
+    private val groupSide = selection.flatMapLatest { sel ->
+        val chat = sel.chatId
+        val reader = groupReader
+        if (sel.personal || chat == null || reader == null) flowOf(null)
+        else combine(groupLocal, reader.observe(chat, sel.walletId)) { ui, d ->
+            ui.copy(chat = d.chat, money = d.money, wallet = d.wallet, activity = d.activity, nameHint = sel.name)
+        }
+    }
+
+    /** The switcher's small balances and its locked marks, from what the phone already holds. */
+    private val switcherSide = local.map { it.wallets }.distinctUntilChanged().flatMapLatest { ws ->
+        val src = sources
+        if (ws.size < 2 || src == null) flowOf(emptyMap<String?, Wallet?>() to emptySet())
+        else {
+            val groups = ws.filter { !it.personal && it.chatId != null && it.signerUserId != null }
+            val locked = if (groups.isEmpty()) flowOf(emptySet())
+            else combine(groups.map { w -> src.chat(w.chatId!!).map { chat -> w.walletId.takeIf { signerGone(chat, w.signerUserId) } } }) { ids -> ids.filterNotNull().toSet() }
+            combine(src.balances(ws), locked) { b, l -> b to l }
+        }
+    }
+
+    val state: StateFlow<WalletUiState> = combine(
+        local, observeWallet(), observeTransfers(), connection.status, observeProfile(), repository.setupRequestedBy, groupSide, switcherSide,
+    ) { values ->
         @Suppress("UNCHECKED_CAST")
         val ui = values[0] as WalletUiState
+        val online = values[3] == ConnectionStatus.Online
+        @Suppress("UNCHECKED_CAST")
+        val switcher = values[7] as Pair<Map<String?, Wallet?>, Set<String>>
         ui.copy(
             wallet = values[1] as Wallet?,
             // Enough for every network's five: the wallet tab shows the five of the card in front.
             recent = (values[2] as List<Transfer>).take(60),
-            online = values[3] == ConnectionStatus.Online,
+            online = online,
             handle = (values[4] as com.circaso.feature.profile.domain.Profile?)?.handle,
             setupRequestedBy = values[5] as String?,
+            group = (values[6] as GroupWalletUiState?)?.copy(online = online),
+            balances = switcher.first,
+            lockedWallets = switcher.second,
         )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), WalletUiState())
 
@@ -107,6 +181,7 @@ class WalletViewModel(
 
     /** [fromPull]: the person asked, so a failure is said out loud; the quiet background refreshes stay quiet. */
     fun refresh(fromPull: Boolean = false) {
+        if (!local.value.selected.personal) refreshGroup()
         if (local.value.loading) return
         local.update { it.copy(loading = true, error = null) }
         viewModelScope.launch {
@@ -116,6 +191,33 @@ class WalletViewModel(
             local.update { it.copy(loading = false, error = (result as? AppResult.Failure)?.let { f -> ErrorMessages.forError(f.error) }?.takeIf { _ -> fromPull || state.value.wallet == null }) }
         }
     }
+
+    /** The picked group's CH7, W1 and W6. Its failure shows only while the phone has nothing of that wallet. */
+    private fun refreshGroup() {
+        val sel = local.value.selected
+        val chat = sel.chatId ?: return
+        val reader = groupReader ?: return
+        groupLocal.update { it.copy(loading = true) }
+        viewModelScope.launch {
+            val f = reader.refresh(chat, sel.walletId) as? AppResult.Failure
+            // The answer belongs to the wallet that asked: if another was picked meanwhile, it isn't shown.
+            if (local.value.selectedWalletId != sel.walletId) return@launch
+            groupLocal.update { it.copy(loading = false, error = f?.let { e -> ErrorMessages.forError(e.error) }, reference = f?.let { e -> ErrorMessages.reference(e.error) }) }
+        }
+    }
+
+    /** CH5 on the picked group's payout request, online-only. */
+    fun onDecide(request: ChamaRequest, approve: Boolean) {
+        val reader = groupReader ?: return
+        if (groupLocal.value.busy || !state.value.online) return
+        groupLocal.update { it.copy(busy = true) }
+        viewModelScope.launch {
+            val r = reader.decide(request, approve)
+            groupLocal.update { it.copy(busy = false, message = (r as? AppResult.Failure)?.let(::decideFailed)) }
+        }
+    }
+
+    fun onGroupMessageShown() = groupLocal.update { it.copy(message = null) }
 
     /** W2 then the Circle SDK: the person sets a PIN and security questions, Circle makes the wallet on Base. */
     fun onCreate() {
@@ -156,3 +258,7 @@ class WalletViewModel(
     fun onErrorShown() = local.update { it.copy(error = null) }
     fun onBiometricsOffered() = local.update { it.copy(offerBiometrics = false) }
 }
+
+/** The signer is no longer in the group (the same rule as group info's locked wallet, GW8b). */
+internal fun signerGone(chat: com.circaso.feature.messaging.domain.Chat?, signerUserId: String?): Boolean =
+    signerUserId != null && chat != null && chat.members.isNotEmpty() && chat.members.none { it.userId == signerUserId }

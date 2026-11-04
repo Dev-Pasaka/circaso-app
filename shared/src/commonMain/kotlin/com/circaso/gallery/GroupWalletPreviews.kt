@@ -27,7 +27,7 @@ import com.circaso.feature.chama.presentation.GroupInfoMoney
 import com.circaso.feature.chama.presentation.GroupMoneyActions
 import com.circaso.feature.chama.presentation.GroupMoneyRows
 import com.circaso.feature.chama.presentation.GroupWalletActions
-import com.circaso.feature.chama.presentation.GroupWalletContent
+import com.circaso.feature.chama.presentation.GroupWalletHooks
 import com.circaso.feature.chama.presentation.GroupWalletSetupContent
 import com.circaso.feature.chama.presentation.GroupWalletSetupState
 import com.circaso.feature.chama.presentation.GroupWalletUiState
@@ -62,6 +62,10 @@ import com.circaso.feature.wallet.presentation.PayContent
 import com.circaso.feature.wallet.presentation.PayFailure
 import com.circaso.feature.wallet.presentation.PayUiState
 import com.circaso.feature.wallet.presentation.PayStep
+import com.circaso.feature.wallet.presentation.WalletActions
+import com.circaso.feature.wallet.presentation.WalletContent
+import com.circaso.feature.wallet.presentation.WalletTabContent
+import com.circaso.feature.wallet.presentation.WalletUiState
 
 // Debug previews for group wallets (Spaces phase 2, frames GW1–GW19): `-preview=gw-…` on iOS, `--es preview gw-…` on Android.
 
@@ -132,6 +136,68 @@ private val kilimaniWallet = NamedWallet("gw-1", "g1", "Kilimani Chama", null, W
 @Composable
 private fun PayPreview(state: PayUiState) = PayContent(state, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, null)
 
+private val noActions = WalletActions({}, {}, {}, {}, {})
+
+private fun memberState(s: GroupWalletUiState) = s.copy(money = gwMoney(signer = false).copy(isAdmin = false, isOwner = false), chat = kilimani.copy(myRole = MemberRole.Member))
+
+/** Otieno signs for the wallet and has left the group (GW8b). */
+private fun lockedState(s: GroupWalletUiState) = s.copy(money = gwMoney(signer = false), chat = kilimani.copy(members = kilimani.members.filter { it.userId != "2" }))
+
+private fun personalWallet() = gwWallet("141180000", null).copy(
+    chains = gwWallet("141180000", null).chains + WalletChain("MATIC-AMOY", "0x7a3000000000000000000000000000000000b9e2", "ACTIVE", listOf(Asset("USDC", "0xusdc", 6, "25000000", "", null)), true),
+)
+
+/** The tab's state with Personal and Kilimani Chama (and two more groups when [three]), Kilimani's wallet as [group]. */
+private fun tabState(group: GroupWalletUiState, three: Boolean = false, member: Boolean = false, locked: Boolean = false): WalletUiState {
+    val kili = kilimaniWallet.copy(canSign = !member, signerUserId = if (member || locked) "2" else "me")
+    val more = if (three) listOf(
+        NamedWallet("gw-2", "g2", "Westlands Book Club", null, WalletOwnerType.Group, false, WalletStatus.Active, "7"),
+        NamedWallet("gw-3", "g3", "Mama Mboga Savings Group", null, WalletOwnerType.Group, true, WalletStatus.SettingUp, "me"),
+    ) else emptyList()
+    return WalletUiState(
+        wallet = personalWallet(),
+        recent = listOf(
+            Transfer("p1", TransferDirection.In, TransferState.Confirmed, "BASE-SEPOLIA", "", null, "", Amount("USDC", "15500000", "15.50"), null, null, null, null, "Amina Wanjiku", "lunch", nowMillis() - 5_400_000, 0),
+            Transfer("p2", TransferDirection.Out, TransferState.Confirmed, "BASE-SEPOLIA", "", null, "", Amount("USDC", "3870000", "3.87"), null, null, null, null, "Mum", null, nowMillis() - 90_000_000, 0),
+        ),
+        wallets = listOf(NamedWallet.Personal, kili) + more,
+        group = group,
+        balances = mapOf(null to personalWallet(), "gw-1" to gwWallet(), "gw-2" to gwWallet("38760000", "gw-2")),
+        lockedWallets = if (locked) setOf("gw-1") else emptySet(),
+        loading = false,
+    )
+}
+
+/** The Wallet tab in Home, as the person sees it, with the tab's state drawn without a view model. */
+@Composable
+private fun TabPreview(state: WalletUiState, gwActions: GroupWalletActions = GroupWalletActions({}, {}, {}, {}, {})) {
+    com.circaso.feature.home.presentation.HomeScreen(
+        initialTab = 2,
+        chats = {}, chatsActions = {}, chatsBanner = {},
+        wallet = { pad ->
+            // The tab draws the group only while one is picked, as the view model does.
+            val shown = if (state.selectedGroupChat == null) state.copy(group = null) else state
+            WalletTabContent(
+                shown, pad, { noActions }, groupHooks = { _, _ -> GroupWalletHooks(gwActions, { _, _ -> }, {}) },
+                onSwitching = {}, onSelectWallet = {}, onCreate = {}, onRefresh = {}, onReceive = {}, onComing = {},
+            )
+        },
+        walletActions = {},
+        you = {},
+    )
+}
+
+/** GroupWalletRoute without its view model. */
+@Composable
+private fun PushedWallet(state: GroupWalletUiState, gwActions: GroupWalletActions) {
+    CircasoScaffold(topBar = { CircasoNavBar(state.name, onBack = {}) }) { p ->
+        WalletContent(
+            WalletUiState(group = state, online = state.online), p, noActions, onCreate = {}, onRefresh = {}, onReceive = {}, onComing = {},
+            sheets = false, group = GroupWalletHooks(gwActions, { _, _ -> }, {}),
+        )
+    }
+}
+
 /** Draws a group-wallet preview; false when [name] isn't one. */
 @Composable
 internal fun GroupWalletPreview(name: String): Boolean {
@@ -164,10 +230,23 @@ internal fun GroupWalletPreview(name: String): Boolean {
         "gw-target-needs-wallet" -> InfoPreview(GroupInfoMoney(true, gwMoney(wallet = false, goal = false))) { TargetNeedsWalletContent(kilimani, {}, {}) }
         "gw-leave-blocked" -> InfoPreview(GroupInfoMoney(true, gwMoney(), gwWallet())) { LeaveBlockedContent(kilimani, "KES 32,400", {}, {}) }
         "gw-target" -> TargetContent(TargetUiState(groupName = "Kilimani Chama", name = "December trip to the coast", amountText = "50000", fiat = gwFiat, money = gwMoney(goal = false), walletJustReady = true), {}, {}, {}, {}, {}, {})
-        "gw-wallet" -> CircasoScaffold(grouped = true, topBar = { CircasoNavBar("Kilimani Chama", onBack = {}) }) { p -> GroupWalletContent(gwState, PaddingValues(bottom = p.calculateBottomPadding()), gwActions, { _, _ -> }, {}, {}) }
-        "gw-wallet-member" -> CircasoScaffold(grouped = true, topBar = { CircasoNavBar("Kilimani Chama", onBack = {}) }) { p -> GroupWalletContent(gwState.copy(money = gwMoney(signer = false).copy(isAdmin = false)), PaddingValues(bottom = p.calculateBottomPadding()), gwActions, { _, _ -> }, {}, {}) }
-        "gw-wallet-loading" -> CircasoScaffold(grouped = true, topBar = { CircasoNavBar("Kilimani Chama", onBack = {}) }) { p -> GroupWalletContent(GroupWalletUiState(chat = kilimani), PaddingValues(bottom = p.calculateBottomPadding()), gwActions, { _, _ -> }, {}, {}) }
-        "gw-wallet-error" -> CircasoScaffold(grouped = true, topBar = { CircasoNavBar("Kilimani Chama", onBack = {}) }) { p -> GroupWalletContent(GroupWalletUiState(chat = kilimani, loading = false, error = "Circaso is busy right now. Please try again in a moment.", reference = "req_W9s"), PaddingValues(bottom = p.calculateBottomPadding()), gwActions, { _, _ -> }, {}, {}) }
+        // The pushed group wallet (group info, the goal strip): the Wallet tab's own design under a bar.
+        "gw-wallet" -> PushedWallet(gwState, gwActions)
+        "gw-wallet-member" -> PushedWallet(memberState(gwState), gwActions)
+        "gw-wallet-loading" -> PushedWallet(GroupWalletUiState(chat = kilimani, money = gwMoney()), gwActions)
+        "gw-wallet-error" -> PushedWallet(GroupWalletUiState(chat = kilimani, loading = false, error = "Circaso is busy right now. Please try again in a moment.", reference = "req_W9s"), gwActions)
+        // The Wallet tab with the corner switcher (Pasaka, 2026-11-04): closed, open, three groups, a locked wallet.
+        "wallet-switcher" -> TabPreview(tabState(gwState))
+        "wallet-switcher-open" -> TabPreview(tabState(gwState).copy(switching = true))
+        "wallet-switcher-three" -> TabPreview(tabState(gwState, three = true).copy(switching = true))
+        "wallet-switcher-locked" -> TabPreview(tabState(lockedState(gwState), three = true, locked = true).copy(selectedWalletId = "gw-1", switching = true), gwActions)
+        // One wallet design for every wallet: personal, a group's signer, a member, offline, locked.
+        "wallet-unified-personal" -> TabPreview(tabState(gwState))
+        "wallet-unified-signer" -> TabPreview(tabState(gwState).copy(selectedWalletId = "gw-1"), gwActions)
+        "wallet-unified-member" -> TabPreview(tabState(memberState(gwState), member = true).copy(selectedWalletId = "gw-1"), gwActions)
+        "wallet-unified-offline" -> TabPreview(tabState(gwState.copy(online = false)).copy(selectedWalletId = "gw-1", online = false), gwActions)
+        "wallet-unified-locked" -> TabPreview(tabState(lockedState(gwState), locked = true).copy(selectedWalletId = "gw-1"), gwActions)
+        "wallet-unified-loading" -> TabPreview(tabState(GroupWalletUiState(chat = kilimani, money = gwMoney())).copy(selectedWalletId = "gw-1"), gwActions)
         "gw-contribute" -> PayPreview(payState(PayUiState(groupId = "g1", chatId = "g1", payee = Person("", "Kilimani Chama", null, null, null), amountText = "1000", note = "November", groupMoney = gwMoney())))
         "gw-pay-payout" -> PayPreview(payState(PayUiState(payee = Person("", "Coast Bus", null, null, null), chatId = "g1", amountText = "92.879", inFiat = false, requestId = "r1", goalName = "December trip", groupMoney = gwMoney())).copy(payingFrom = kilimaniWallet, wallet = gwWallet()))
         "gw-pay-signing" -> PayPreview(payState(PayUiState(payee = Person("", "Coast Bus", null, null, null), chatId = "g1", amountText = "92.879", inFiat = false, requestId = "r1", groupMoney = gwMoney(), step = PayStep.Signing)).copy(payingFrom = kilimaniWallet, wallet = gwWallet()))

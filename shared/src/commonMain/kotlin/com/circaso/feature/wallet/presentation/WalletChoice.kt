@@ -175,36 +175,3 @@ fun RadioMark(on: Boolean) {
         contentAlignment = Alignment.Center,
     ) { if (on) Box(Modifier.size(12.dp).clip(CircasoShapes.circle).background(c.action)) }
 }
-
-/** GW16's switcher: every wallet the person can see. Members can look at a group's wallet; only its signer sends. */
-@Composable
-fun ColumnScope.WalletPickContent(wallets: List<NamedWallet>, selected: String?, onPick: (NamedWallet) -> Unit, onClose: () -> Unit) {
-    val c = CircasoTheme.colors
-    val t = CircasoTheme.typography
-    SheetHead("Wallets", onClose)
-    Column(Modifier.fillMaxWidth().clip(CircasoShapes.lg).background(c.surfaceRaised).border(1.dp, c.separator, CircasoShapes.lg)) {
-        wallets.forEachIndexed { i, w ->
-            if (i > 0) RowDivider(Modifier.padding(start = 72.dp))
-            val on = w.walletId == selected
-            val sub = when {
-                w.personal -> "Your own money"
-                w.status == WalletStatus.SettingUp -> "Group wallet · being set up"
-                w.canSign -> "Group wallet · you send, after approval"
-                else -> "Group wallet · you can see it"
-            }
-            Row(
-                Modifier.fillMaxWidth().pressable(role = Role.RadioButton, onClick = { onPick(w) })
-                    .semantics(mergeDescendants = true) { this.selected = on }
-                    .padding(horizontal = CircasoSpacing.s4, vertical = CircasoSpacing.s3),
-                verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(CircasoSpacing.s3),
-            ) {
-                WalletAvatar(w.name, w.avatarUrl, group = !w.personal, size = CircasoSizes.avatarMd)
-                Column(Modifier.weight(1f)) {
-                    BasicText(w.name, style = t.body.copy(color = c.ink), maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    BasicText(sub, style = t.subhead.copy(color = c.inkSecondary))
-                }
-                RadioMark(on)
-            }
-        }
-    }
-}

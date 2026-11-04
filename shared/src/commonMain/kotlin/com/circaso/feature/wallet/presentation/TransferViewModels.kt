@@ -65,10 +65,16 @@ class ActivityViewModel(
     /** One network's payments (blockchain alone), or one asset's statement on it (both); neither for everything. */
     private val blockchain: String? = null,
     private val symbol: String? = null,
+    /** A group wallet's payments (its W6 copy) instead of the person's own; null for the personal wallet. */
+    walletId: String? = null,
+    observeWalletOf: com.circaso.feature.wallet.domain.ObserveWalletOfUseCase? = null,
+    observeActivity: com.circaso.feature.wallet.domain.ObserveWalletActivityUseCase? = null,
 ) : ViewModel() {
     private val filter = MutableStateFlow(ActivityFilter.All)
     private val query = MutableStateFlow("")
-    val state: StateFlow<ActivityUiState> = combine(observeTransfers(), filter, observeWallet(), query) { transfers, f, wallet, q ->
+    private val payments = if (walletId != null && observeActivity != null) observeActivity(walletId) else observeTransfers()
+    private val held = if (walletId != null && observeWalletOf != null) observeWalletOf(walletId) else observeWallet()
+    val state: StateFlow<ActivityUiState> = combine(payments, filter, held, query) { transfers, f, wallet, q ->
         val mine = transfers.filter { t ->
             (blockchain == null || t.blockchain == blockchain) && (symbol == null || t.amount.asset.equals(symbol, ignoreCase = true))
         }

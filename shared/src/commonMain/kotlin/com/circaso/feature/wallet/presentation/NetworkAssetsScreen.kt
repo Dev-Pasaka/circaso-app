@@ -48,9 +48,16 @@ data class NetworkAssetsUiState(
 }
 
 /** Every asset on one network, from the wallet's copy on the phone; See All under a card opens it. */
-class NetworkAssetsViewModel(observeWallet: ObserveWalletUseCase, private val blockchain: String) : ViewModel() {
+class NetworkAssetsViewModel(
+    observeWallet: ObserveWalletUseCase,
+    private val blockchain: String,
+    /** A group wallet's assets instead of the person's own; null for the personal wallet. */
+    walletId: String? = null,
+    observeWalletOf: com.circaso.feature.wallet.domain.ObserveWalletOfUseCase? = null,
+) : ViewModel() {
     private val query = MutableStateFlow("")
-    val state: StateFlow<NetworkAssetsUiState> = combine(observeWallet(), query) { wallet, q ->
+    private val held = if (walletId != null && observeWalletOf != null) observeWalletOf(walletId) else observeWallet()
+    val state: StateFlow<NetworkAssetsUiState> = combine(held, query) { wallet, q ->
         NetworkAssetsUiState(wallet?.chains?.firstOrNull { it.blockchain == blockchain }, wallet?.fiat, q)
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), NetworkAssetsUiState())
 

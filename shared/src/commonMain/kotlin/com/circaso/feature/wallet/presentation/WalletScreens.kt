@@ -47,6 +47,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.circaso.core.platform.LocalTimeStyle
+import androidx.compose.animation.togetherWith
+import com.circaso.feature.chama.presentation.GroupReceiveContent
 import com.circaso.core.platform.chatListTime
 import com.circaso.core.platform.formatLocalTime
 import com.circaso.core.platform.shareText
@@ -107,13 +109,16 @@ fun RowScope.WalletTitleActions(viewModel: WalletViewModel) {
     CircasoIconButton(CircasoIcon.Plus, "Add money", { viewModel.onComing(ComingFlow.AddMoney) })
 }
 
+/**
+ * The Wallet tab. [actions] are the links for one wallet ([walletId] null: the personal one), so See All and the
+ * asset screens open the wallet on screen; [groupActions] are a group wallet's own (contribute, payout, target).
+ */
 @Composable
 fun WalletTab(
     viewModel: WalletViewModel,
     bottomPadding: PaddingValues,
-    actions: WalletActions,
-    /** GW16: a group wallet chosen in the switcher, drawn by the app (it has its own view model per group). */
-    groupWallet: (@Composable (chatId: String, bottomPadding: PaddingValues) -> Unit)? = null,
+    actions: (walletId: String?) -> WalletActions,
+    groupActions: ((chatId: String, group: com.circaso.feature.chama.presentation.GroupWalletUiState) -> com.circaso.feature.chama.presentation.GroupWalletActions)? = null,
 ) {
     val state by viewModel.state.collectAsState()
     // Fresh whenever the tab is in front: on coming back to the app, and quietly every 30 seconds while it stays open,
@@ -124,36 +129,71 @@ fun WalletTab(
             while (true) { viewModel.refresh(); kotlinx.coroutines.delay(30_000) }
         }
     }
-    Column(Modifier.fillMaxSize()) {
-        if (state.showSwitcher) WalletSwitcherTitle(state.selected, onClick = { viewModel.onSwitching(true) })
-        val group = state.selectedGroupChat
-        Box(Modifier.weight(1f)) {
-            if (group != null && groupWallet != null) groupWallet(group, bottomPadding)
-            else WalletContent(
-                state, bottomPadding, actions,
-                onCreate = viewModel::onCreate, onRefresh = { viewModel.refresh(fromPull = true) }, onReceive = viewModel::onReceive, onComing = viewModel::onComing, onErrorShown = viewModel::onErrorShown,
-                sheets = false, onAddNetworks = viewModel::onAddMissingNetworks, onToggleHidden = viewModel::onToggleHidden,
-            )
-        }
-    }
+    WalletTabContent(
+        state, bottomPadding, actions,
+        groupHooks = { chatId, g ->
+            groupActions?.let { make ->
+                com.circaso.feature.chama.presentation.GroupWalletHooks(make(chatId, g), viewModel::onDecide, { viewModel.refresh(fromPull = true) }, viewModel::onGroupMessageShown)
+            }
+        },
+        onSwitching = viewModel::onSwitching, onSelectWallet = viewModel::onSelectWallet,
+        onCreate = viewModel::onCreate, onRefresh = { viewModel.refresh(fromPull = true) }, onReceive = viewModel::onReceive, onComing = viewModel::onComing,
+        onErrorShown = viewModel::onErrorShown, onAddNetworks = viewModel::onAddMissingNetworks, onToggleHidden = viewModel::onToggleHidden,
+    )
 }
 
 /**
- * GW16: the tab's title is the switcher ("Wallet ▾") for someone with other wallets; it truncates a long group name.
- * Tabs have no title bar otherwise (Pasaka, 2026-10-30), so it shows only when there is something to switch to.
+ * The tab without its view model (previews): the wallet switcher in the top-right corner when there is another wallet
+ * (GW16, as Pasaka redrew it on 2026-11-04: no title), and the picked wallet in the one wallet design. Switching
+ * crossfades the body; the layout itself never changes, only the money, the payments and a group's own parts.
  */
 @Composable
-private fun WalletSwitcherTitle(selected: NamedWallet, onClick: () -> Unit) {
-    val c = CircasoTheme.colors
-    val t = CircasoTheme.typography
-    Row(
-        Modifier.fillMaxWidth().padding(start = CircasoSpacing.s4, end = CircasoSpacing.s4, top = CircasoSpacing.s2, bottom = CircasoSpacing.s1)
-            .pressable(role = Role.Button, onClick = onClick)
-            .semantics(mergeDescendants = true) { contentDescription = "Wallet: ${if (selected.personal) "Personal" else selected.name}, change" },
-        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp),
-    ) {
-        BasicText(if (selected.personal) "Wallet" else selected.name, Modifier.weight(1f, fill = false).semantics { heading() }, style = t.largeTitle.copy(color = c.ink), maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
-        com.circaso.designsystem.components.CircasoIconImage(CircasoIcon.ChevronDown, c.ink, Modifier.padding(top = 4.dp).size(22.dp))
+fun WalletTabContent(
+    state: WalletUiState,
+    bottomPadding: PaddingValues,
+    actions: (walletId: String?) -> WalletActions,
+    groupHooks: (chatId: String, group: com.circaso.feature.chama.presentation.GroupWalletUiState) -> com.circaso.feature.chama.presentation.GroupWalletHooks?,
+    onSwitching: (Boolean) -> Unit,
+    onSelectWallet: (NamedWallet) -> Unit,
+    onCreate: () -> Unit,
+    onRefresh: () -> Unit,
+    onReceive: (Boolean) -> Unit,
+    onComing: (ComingFlow?) -> Unit,
+    onErrorShown: () -> Unit = {},
+    onAddNetworks: () -> Unit = {},
+    onToggleHidden: () -> Unit = {},
+) {
+    Column(Modifier.fillMaxSize()) {
+        if (state.showSwitcher) {
+            Row(Modifier.fillMaxWidth().padding(horizontal = CircasoSpacing.s4), horizontalArrangement = Arrangement.End, verticalAlignment = Alignment.CenterVertically) {
+                WalletSwitcher(
+                    wallets = state.wallets, selected = state.selected, open = state.switching, balances = state.balances, locked = state.lockedWallets,
+                    hidden = state.hidden, onOpen = onSwitching, onPick = onSelectWallet,
+                )
+            }
+        }
+        // A group picked a moment ago may not be read yet: its own skeleton, named, until it is.
+        val shown = state.selectedGroupChat?.let { chat ->
+            state.copy(group = state.group ?: com.circaso.feature.chama.presentation.GroupWalletUiState(nameHint = state.selected.name, online = state.online)) to chat
+        }
+        androidx.compose.animation.AnimatedContent(
+            targetState = shown?.first ?: state.copy(group = null),
+            contentKey = { it.selectedWalletId },
+            transitionSpec = {
+                androidx.compose.animation.fadeIn(tween(CircasoMotion.BaseMs)) togetherWith androidx.compose.animation.fadeOut(tween(CircasoMotion.QuickMs))
+            },
+            label = "wallet",
+            modifier = Modifier.weight(1f),
+        ) { s ->
+            val chat = s.selectedGroupChat
+            val g = s.group
+            WalletContent(
+                s, bottomPadding, actions(s.selectedWalletId),
+                onCreate = onCreate, onRefresh = onRefresh, onReceive = onReceive, onComing = onComing, onErrorShown = onErrorShown,
+                sheets = false, onAddNetworks = onAddNetworks, onToggleHidden = onToggleHidden,
+                group = if (chat != null && g != null) groupHooks(chat, g) else null,
+            )
+        }
     }
 }
 
@@ -166,10 +206,6 @@ fun androidx.compose.foundation.layout.BoxScope.WalletOverlay(
 ) {
     val state by viewModel.state.collectAsState()
     WalletSheets(state, actions, viewModel::onReceive, viewModel::onComing)
-    // GW16: every wallet the person can see; a group's is read-only for its members, sent from by its signer.
-    CircasoSheet(state.switching, { viewModel.onSwitching(false) }, label = "Wallets") {
-        WalletPickContent(state.wallets, state.selectedWalletId, onPick = viewModel::onSelectWallet, onClose = { viewModel.onSwitching(false) })
-    }
     if (biometrics != null) {
         val bio by biometrics.state.collectAsState()
         // Asked once, right after the wallet is made; later it lives in You → Security → Payments. The sheet stays up
@@ -206,9 +242,14 @@ fun BiometricOfferContent(bio: com.circaso.feature.account.presentation.Biometri
     }
 }
 
+/** Receive (E4, or the group's addresses) and the coming sheets, for whichever wallet is on screen. */
 @Composable
-private fun androidx.compose.foundation.layout.BoxScope.WalletSheets(state: WalletUiState, actions: WalletActions, onReceive: (Boolean) -> Unit, onComing: (ComingFlow?) -> Unit) {
-    CircasoSheet(state.receiveSheet, { onReceive(false) }, label = "Receive") { ReceiveSheetContent(state.wallet, state.handle, onClose = { onReceive(false) }) }
+fun androidx.compose.foundation.layout.BoxScope.WalletSheets(state: WalletUiState, actions: WalletActions, onReceive: (Boolean) -> Unit, onComing: (ComingFlow?) -> Unit) {
+    val group = state.group
+    CircasoSheet(state.receiveSheet, { onReceive(false) }, label = group?.let { "Receive into ${it.name}" } ?: "Receive") {
+        if (group != null) GroupReceiveContent(group, onClose = { onReceive(false) })
+        else ReceiveSheetContent(state.wallet, state.handle, onClose = { onReceive(false) })
+    }
     CircasoSheet(state.coming != null, { onComing(null) }, label = "Coming soon") { state.coming?.let { ComingSheetContent(it, onSendToWallet = { onComing(null); actions.onSendToWallet() }) } }
 }
 
@@ -227,37 +268,80 @@ fun WalletContent(
     sheets: Boolean = true,
     onAddNetworks: () -> Unit = {},
     onToggleHidden: () -> Unit = {},
+    /**
+     * A group wallet's own parts (with [WalletUiState.group] set): the same screen, with its money, its payments, its
+     * caption, Add / Payout / Receive / Target, the target and the payout requests (Pasaka, 2026-11-04).
+     */
+    group: com.circaso.feature.chama.presentation.GroupWalletHooks? = null,
 ) {
     val c = CircasoTheme.colors
     val t = CircasoTheme.typography
     val toast = rememberToastState()
+    val g = state.group
     // The create screen shows its error inline; an active wallet shows a passing toast instead.
-    LaunchedEffect(state.error) { state.error?.let { if (state.active) { toast.show(it); onErrorShown() } } }
-    val wallet = state.wallet
+    LaunchedEffect(state.error, g == null) { if (g == null) state.error?.let { if (state.active) { toast.show(it); onErrorShown() } } }
+    LaunchedEffect(g?.message) { g?.message?.let { toast.show(it); group?.onMessageShown?.invoke() } }
+    val wallet = g?.wallet ?: state.wallet.takeIf { g == null }
     val bottom = bottomPadding.calculateBottomPadding() + CircasoSpacing.s4
     androidx.compose.foundation.layout.Box(Modifier.fillMaxSize()) {
         when {
             // The wallet's own shape while it opens (a card, the actions, two rows), so nothing jumps when it arrives.
-            wallet == null && state.loading -> Column(
-                Modifier.fillMaxSize().padding(horizontal = CircasoSpacing.s6, vertical = 10.dp)
-                    .semantics(mergeDescendants = true) { contentDescription = "Opening your wallet" },
-                verticalArrangement = Arrangement.spacedBy(22.dp),
-            ) {
-                Box(Modifier.fillMaxWidth().aspectRatio(1.586f).clip(com.circaso.designsystem.theme.CircasoShapes.lg).background(c.fill))
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                    repeat(4) { Box(Modifier.size(CircasoSizes.controlMd + 12.dp).clip(com.circaso.designsystem.theme.CircasoShapes.circle).background(c.fill)) }
-                }
-                repeat(2) { Box(Modifier.fillMaxWidth().height(56.dp).clip(com.circaso.designsystem.theme.CircasoShapes.md).background(c.fill)) }
-            }
+            wallet == null && (if (g != null) g.loading && g.money?.wallet != null || g.empty && g.loading else state.loading) ->
+                WalletSkeleton(if (g != null) "Opening ${g.name}’s wallet" else "Opening your wallet")
+            g != null && wallet == null -> GroupWalletProblem(g, bottom, group?.onRetry ?: onRefresh)
             wallet == null -> Column(Modifier.fillMaxSize().padding(horizontal = CircasoSpacing.s6), verticalArrangement = Arrangement.spacedBy(CircasoSpacing.s3, Alignment.CenterVertically), horizontalAlignment = Alignment.CenterHorizontally) {
                 BasicText(state.error ?: "Couldn't open your wallet.", style = t.body.copy(color = c.inkSecondary, textAlign = TextAlign.Center))
                 CircasoButton("Try Again", onRefresh, style = ButtonStyle.Secondary, enabled = state.online)
             }
+            g != null && wallet.status != WalletStatus.Active -> GroupWalletProblem(g, bottom, group?.onRetry ?: onRefresh)
             wallet.status != WalletStatus.Active -> CreateWallet(state, bottom, onCreate)
-            else -> ActiveWallet(state, wallet, bottom, actions, onReceive, onComing, onRefresh, onAddNetworks, onToggleHidden)
+            else -> ActiveWallet(state, wallet, bottom, actions, onReceive, onComing, group?.onRetry ?: onRefresh, onAddNetworks, onToggleHidden, group)
         }
         ToastHost(toast, Modifier.align(Alignment.TopCenter).padding(top = 8.dp))
         if (sheets) WalletSheets(state, actions, onReceive, onComing)
+    }
+}
+
+/** The wallet's own shape while it opens: a card, the actions and two rows, so nothing jumps when it arrives. */
+@Composable
+private fun WalletSkeleton(label: String) {
+    val c = CircasoTheme.colors
+    Column(
+        Modifier.fillMaxSize().padding(horizontal = CircasoSpacing.s6, vertical = 10.dp)
+            .semantics(mergeDescendants = true) { contentDescription = label },
+        verticalArrangement = Arrangement.spacedBy(22.dp),
+    ) {
+        Box(Modifier.fillMaxWidth().aspectRatio(1.586f).clip(com.circaso.designsystem.theme.CircasoShapes.lg).background(c.fill))
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+            repeat(4) { Box(Modifier.size(CircasoSizes.controlMd + 12.dp).clip(com.circaso.designsystem.theme.CircasoShapes.circle).background(c.fill)) }
+        }
+        repeat(2) { Box(Modifier.fillMaxWidth().height(56.dp).clip(com.circaso.designsystem.theme.CircasoShapes.md).background(c.fill)) }
+    }
+}
+
+/**
+ * A group wallet with nothing to draw yet, said plainly in the personal wallet's error shape: offline before it was
+ * ever read, a failed read (with its reference), a group without a wallet, or a wallet its signer hasn't finished.
+ */
+@Composable
+private fun GroupWalletProblem(g: com.circaso.feature.chama.presentation.GroupWalletUiState, bottom: androidx.compose.ui.unit.Dp, onRetry: () -> Unit) {
+    val c = CircasoTheme.colors
+    val t = CircasoTheme.typography
+    val noWallet = g.money != null && g.money.wallet == null
+    val (title, line) = when {
+        noWallet -> "No wallet yet" to "${g.name} doesn’t have a wallet. An admin can add one from group info."
+        g.settingUp -> "Being set up" to (if (g.money?.isSigner == true) "Finish setting up ${g.name}’s wallet from group info." else "${g.signerName.replaceFirstChar { it.uppercase() }} is still setting up ${g.name}’s wallet.")
+        !g.online -> "You’re offline" to "${g.name}’s wallet shows here once it has been read with a connection."
+        else -> "Couldn’t open the wallet" to (g.error ?: com.circaso.core.common.ErrorMessages.SomethingWrong)
+    }
+    Column(
+        Modifier.fillMaxSize().padding(horizontal = CircasoSpacing.s6).padding(bottom = bottom),
+        verticalArrangement = Arrangement.spacedBy(CircasoSpacing.s3, Alignment.CenterVertically), horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        BasicText(title, Modifier.semantics { heading() }, style = t.title3.copy(color = c.ink, textAlign = TextAlign.Center))
+        BasicText(line, style = t.body.copy(color = c.inkSecondary, textAlign = TextAlign.Center))
+        if (!noWallet && !g.settingUp) g.reference?.let { BasicText("Ref $it", style = t.caption1.copy(color = c.inkTertiary)) }
+        if (!noWallet && !g.settingUp && g.online) CircasoButton("Try Again", onRetry, style = ButtonStyle.Secondary, busy = g.loading)
     }
 }
 
@@ -289,16 +373,30 @@ private fun CreateWallet(state: WalletUiState, bottom: androidx.compose.ui.unit.
 }
 
 @Composable
-private fun ActiveWallet(state: WalletUiState, wallet: Wallet, bottom: androidx.compose.ui.unit.Dp, actions: WalletActions, onReceive: (Boolean) -> Unit, onComing: (ComingFlow?) -> Unit, onRefresh: () -> Unit, onAddNetworks: () -> Unit = {}, onToggleHidden: () -> Unit = {}) {
+private fun ActiveWallet(
+    state: WalletUiState,
+    wallet: Wallet,
+    bottom: androidx.compose.ui.unit.Dp,
+    actions: WalletActions,
+    onReceive: (Boolean) -> Unit,
+    onComing: (ComingFlow?) -> Unit,
+    onRefresh: () -> Unit,
+    onAddNetworks: () -> Unit = {},
+    onToggleHidden: () -> Unit = {},
+    group: com.circaso.feature.chama.presentation.GroupWalletHooks? = null,
+) {
     val c = CircasoTheme.colors
     val t = CircasoTheme.typography
     val hidden = state.hidden
     val fiat = wallet.fiat
     val now = com.circaso.core.sync.nowMillis()
-    val usdcTotal = wallet.usdc
+    // A group's wallet in the same design: its own payments, named (GW16: "Contribution", "Payout").
+    val g = state.group
+    val payments: List<Pair<Transfer, String?>> = g?.rows ?: state.recent.map { it to null }
+    val loading = g?.loading ?: state.loading
     // Pull down to check for new money now. The spinner shows only for a pull, not for the quiet background refreshes.
     var pulled by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(false) }
-    androidx.compose.runtime.LaunchedEffect(state.loading) { if (!state.loading) pulled = false }
+    androidx.compose.runtime.LaunchedEffect(loading) { if (!loading) pulled = false }
     val pull = androidx.compose.material3.pulltorefresh.rememberPullToRefreshState()
     @OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
     androidx.compose.material3.pulltorefresh.PullToRefreshBox(
@@ -316,7 +414,7 @@ private fun ActiveWallet(state: WalletUiState, wallet: Wallet, bottom: androidx.
     // The card in front picks the payments listed under it (the user, 2026-10-31): swipe to Ethereum, see Ethereum's.
     // Starts on the card shown first (the richest), so the list doesn't show every network for a frame and then shrink.
     var network by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(byValue(wallet.chains, fiat).firstOrNull()?.blockchain) }
-    val recent = state.recent.filter { network == null || it.blockchain == network }.take(5)
+    val recent = payments.filter { network == null || it.first.blockchain == network }.take(5)
     // Behind the cards, the front card's colour from under the status bar, fading out by the end of the cards.
     var glow by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(androidx.compose.ui.graphics.Color.Transparent) }
     var cardsBottom by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(0f) }
@@ -357,7 +455,8 @@ private fun ActiveWallet(state: WalletUiState, wallet: Wallet, bottom: androidx.
                     },
                 ) {
                     ChainCards(byValue(wallet.chains, fiat), fiat, hidden, onToggleHidden, onFocus = { network = it }, onAsset = actions.onAsset, onAssets = actions.onAssets, onGlow = { glow = it }) {
-                        Row(Modifier.fillMaxWidth().padding(horizontal = CircasoSpacing.s2), horizontalArrangement = Arrangement.SpaceBetween) {
+                        if (g != null && group != null) GroupActionsRow(g, group.actions, onReceive = { onReceive(true) })
+                        else Row(Modifier.fillMaxWidth().padding(horizontal = CircasoSpacing.s2), horizontalArrangement = Arrangement.SpaceBetween) {
                             ActionButton(CircasoIcon.Plus, "Add", { onComing(ComingFlow.AddMoney) })
                             ActionButton(CircasoIcon.ArrowUp, "Send", actions.onPay, enabled = state.canSend)
                             ActionButton(CircasoIcon.ArrowDown, "Receive", { onReceive(true) })
@@ -366,7 +465,7 @@ private fun ActiveWallet(state: WalletUiState, wallet: Wallet, bottom: androidx.
                     }
                 }
                 // Everyone holds every supported network (decision 2026-10-30): the ones missing are one tap and the PIN away.
-                if (state.missingNetworks.isNotEmpty()) {
+                if (g == null && state.missingNetworks.isNotEmpty()) {
                     val names = state.missingNetworks.map { chainName(it).substringBefore(" (") }
                     val list = if (names.size == 1) names[0] else names.dropLast(1).joinToString(", ") + " and " + names.last()
                     Row(
@@ -380,42 +479,77 @@ private fun ActiveWallet(state: WalletUiState, wallet: Wallet, bottom: androidx.
                         CircasoButton("Add Networks", onAddNetworks, size = ButtonSize.Small, enabled = state.online && !state.addingNetworks, busy = state.addingNetworks)
                     }
                 }
-                // The rate credit lives on the Currency screen now (the user, 2026-10-31).
-                Row(Modifier.fillMaxWidth().padding(horizontal = 4.dp), horizontalArrangement = Arrangement.End, verticalAlignment = Alignment.CenterVertically) {
+                // The rate credit lives on the Currency screen now (the user, 2026-10-31). Networks are the person's own
+                // (W12 has no walletId), so a group wallet's row is left out rather than opening the wrong wallet's.
+                if (g == null) Row(Modifier.fillMaxWidth().padding(horizontal = 4.dp), horizontalArrangement = Arrangement.End, verticalAlignment = Alignment.CenterVertically) {
                     BasicText("Manage networks", style = t.footnote.copy(color = c.action, fontWeight = FontWeight.SemiBold), modifier = Modifier.clickableText(actions.onNetworks))
                 }
             }
     }
     val statusItems: androidx.compose.foundation.lazy.LazyListScope.() -> Unit = {
         // No overall total (Pasaka, 2026-10-30): each network's card carries its own balance, the richest first.
-        if (!state.online || wallet.holdUntil != null) {
-            item {
+        if (!state.online || wallet.holdUntil != null || g != null) {
+            item(key = "status") {
                 Column(verticalArrangement = Arrangement.spacedBy(4.dp), modifier = Modifier.padding(horizontal = 4.dp)) {
+                    // GW16's caption: whose money it is and who can move it (warning when its signer has left).
+                    if (g != null) BasicText(g.caption, style = t.subhead.copy(color = if (g.locked) c.warning else c.inkSecondary))
                     if (!state.online) BasicText("Offline · balances as of ${formatLocalTime(wallet.fetchedAt, LocalTimeStyle.Clock)}", style = t.caption1.copy(color = c.inkSecondary))
                     wallet.holdUntil?.let { BasicText("Payments are paused for a short while after a restore.", style = t.footnote.copy(color = c.warning)) }
                 }
             }
         }
     }
+    // A group's target and its payout requests sit between the wallet and its payments (GW16 / D4).
+    val groupItems: androidx.compose.foundation.lazy.LazyListScope.() -> Unit = {
+        val money = g?.money
+        if (g != null && group != null && money != null) {
+            money.goal?.let { goal ->
+                item(key = "goal") {
+                    Column(Modifier.fillMaxWidth().clip(com.circaso.designsystem.theme.CircasoShapes.md).background(c.surface).padding(CircasoSpacing.s4)) {
+                        com.circaso.designsystem.components.GoalProgress(
+                            if (hidden) "••••" else com.circaso.feature.chama.presentation.amountText(money.contributedMinor, fiat),
+                            if (hidden) "••••" else com.circaso.feature.chama.presentation.amountNumber(goal.targetMinor, fiat), money.progress,
+                            meta = goal.name, label = "${goal.name} progress",
+                        )
+                    }
+                }
+            }
+            if (money.openRequests.isNotEmpty()) {
+                item(key = "requests-head") { BasicText("Payout requests", Modifier.padding(horizontal = 4.dp).semantics { heading() }, style = t.title3.copy(color = c.ink)) }
+                items(money.openRequests, key = { "req-" + it.requestId }) { r ->
+                    com.circaso.feature.chama.presentation.RequestCard(
+                        r, fiat, nameOf = g::memberName, isAdmin = money.isAdmin, isTreasurer = money.isSigner && !g.locked, myUserId = g.myUserId,
+                        busy = g.busy, online = state.online, onApprove = { group.onDecide(r, true) }, onDecline = { group.onDecide(r, false) },
+                        onPay = { group.actions.onPayRequest(r) }, inGroupWallet = true,
+                    )
+                }
+            }
+        }
+    }
     val recentItems: androidx.compose.foundation.lazy.LazyListScope.() -> Unit = {
-        item {
+        item(key = "recent-head") {
             Row(Modifier.fillMaxWidth().padding(horizontal = 4.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.Bottom) {
-                BasicText("Recent", style = t.title3.copy(color = c.ink))
-                if (recent.isNotEmpty()) BasicText("See All", style = t.callout.copy(color = c.action, fontWeight = FontWeight.SemiBold), modifier = Modifier.padding(bottom = 2.dp).clickableText { network?.let(actions.onNetworkActivity) ?: actions.onActivity() })
+                BasicText("Recent", Modifier.semantics { heading() }, style = t.title3.copy(color = c.ink))
+                if (recent.isNotEmpty() && (g == null || network != null)) BasicText("See All", style = t.callout.copy(color = c.action, fontWeight = FontWeight.SemiBold), modifier = Modifier.padding(bottom = 2.dp).clickableText { network?.let(actions.onNetworkActivity) ?: actions.onActivity() })
             }
         }
         if (recent.isEmpty()) {
             item(key = "recent-empty") {
                 BasicText(
-                    if (network != null) "Nothing on ${chainName(network!!).substringBefore(" (")} yet." else "Payments you send and receive will show here.",
+                    when {
+                        network != null && g != null && payments.isEmpty() -> "No payments yet. Members add money with # in the group chat."
+                        network != null -> "Nothing on ${chainName(network!!).substringBefore(" (")} yet."
+                        g != null -> "No payments yet. Members add money with # in the group chat."
+                        else -> "Payments you send and receive will show here."
+                    },
                     style = t.footnote.copy(color = c.inkSecondary), modifier = Modifier.padding(horizontal = 4.dp).animateItem(fadeInSpec = androidx.compose.animation.core.tween(CircasoMotion.BaseMs), fadeOutSpec = androidx.compose.animation.core.tween(CircasoMotion.QuickMs), placementSpec = if (CircasoTheme.reduceMotion) null else androidx.compose.animation.core.tween(CircasoMotion.BaseMs)),
                 )
             }
         } else {
-            items(recent, key = { it.transferId }) { transfer ->
+            items(recent, key = { it.first.transferId }) { (transfer, kind) ->
                 // Rows fade and slide as the card in front changes, instead of the list jumping.
                 Box(Modifier.animateItem(fadeInSpec = androidx.compose.animation.core.tween(CircasoMotion.BaseMs), fadeOutSpec = androidx.compose.animation.core.tween(CircasoMotion.QuickMs), placementSpec = if (CircasoTheme.reduceMotion) null else androidx.compose.animation.core.tween(CircasoMotion.BaseMs))) {
-                    TransferRow(transfer, fiat, hidden, meta = chatListTime(transfer.createdAt, now), onClick = { actions.onTransfer(transfer.transferId) })
+                    TransferRow(transfer, fiat, hidden, meta = chatListTime(transfer.createdAt, now), onClick = { (group?.actions?.onOpenTransfer ?: actions.onTransfer)(transfer.transferId) }, kind = kind)
                 }
             }
         }
@@ -432,16 +566,34 @@ private fun ActiveWallet(state: WalletUiState, wallet: Wallet, bottom: androidx.
                 verticalArrangement = Arrangement.spacedBy(22.dp),
             ) {
                 statusItems()
+                groupItems()
                 recentItems()
             }
         }
     } else {
         LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(start = CircasoSpacing.s4, end = CircasoSpacing.s4, top = 10.dp, bottom = bottom), verticalArrangement = Arrangement.spacedBy(22.dp)) {
             statusItems()
-            item { cardsBlock() }
+            item(key = "cards") { cardsBlock() }
+            groupItems()
             recentItems()
         }
     }
+    }
+}
+
+/**
+ * A group wallet's actions in the personal wallet's row: Add (contribute), Payout (a request; Send for a space), Receive
+ * and, for admins, Target. Money never moves offline; nothing leaves a locked wallet, and nothing is invited into it.
+ */
+@Composable
+private fun GroupActionsRow(g: com.circaso.feature.chama.presentation.GroupWalletUiState, actions: com.circaso.feature.chama.presentation.GroupWalletActions, onReceive: () -> Unit) {
+    val live = g.active && g.online && !g.locked
+    val admin = g.money?.isAdmin == true
+    Row(Modifier.fillMaxWidth().padding(horizontal = CircasoSpacing.s2), horizontalArrangement = if (admin) Arrangement.SpaceBetween else Arrangement.SpaceAround) {
+        ActionButton(CircasoIcon.Plus, "Add", actions.onAdd, enabled = live)
+        ActionButton(CircasoIcon.ArrowUp, if (g.space) "Send" else "Payout", actions.onPayout, enabled = live)
+        ActionButton(CircasoIcon.ArrowDown, "Receive", onReceive, enabled = g.active)
+        if (admin) ActionButton(CircasoIcon.Target, "Target", actions.onTarget, enabled = g.online)
     }
 }
 
@@ -461,11 +613,19 @@ internal fun balanceLine(wallet: Wallet, hidden: Boolean): Triple<String, String
 
 /** A payment as the wallet lists it (design `cx-row` with `cx-row-amount`). */
 @Composable
-fun TransferRow(transfer: Transfer, fiat: FiatValue?, hidden: Boolean, meta: String?, onClick: () -> Unit) {
+fun TransferRow(
+    transfer: Transfer,
+    fiat: FiatValue?,
+    hidden: Boolean,
+    meta: String?,
+    onClick: () -> Unit,
+    /** What it was to a group wallet ("Contribution", "Payout"), in place of Sent / Received. */
+    kind: String? = null,
+) {
     val incoming = transfer.direction == TransferDirection.In
     val name = transfer.counterpartName ?: if (transfer.toUserId == null && transfer.toAddress.isNotEmpty()) shortAddress(transfer.toAddress) else if (incoming) "Received" else "Sent"
     val sub = buildString {
-        append(if (incoming) "Received" else "Sent")
+        append(kind ?: if (incoming) "Received" else "Sent")
         // Between two Circaso people the @handle tells same-named contacts apart.
         transfer.counterpartHandle?.takeIf { transfer.counterpartName != null }?.let { append(" · @").append(it) }
         transfer.note?.let { append(" · ").append(it) }
