@@ -61,6 +61,8 @@ data class ThreadUiState(
     val chamaBusy: Boolean = false,
     /** Group wallets (GW9a2, GW9): the group's money; a wallet that's active turns `#` into a contribution. */
     val groupMoney: com.circaso.feature.chama.domain.GroupMoney? = null,
+    /** GW14c: approved payouts that wait for the group wallet's daily limit, by request id, and when they fit (ISO). */
+    val payoutWaits: Map<String, String> = emptyMap(),
     /** SP05: the person said that's all; ask whether it was sorted. */
     val supportEnding: Boolean = false,
     /** A voice note is being recorded (the mic is held). */
@@ -166,6 +168,28 @@ class ThreadViewModel(
         }
     }
 
+    /** What the payout limit checks last asked about: each approved request, at the group money's read it saw. */
+    private val payoutsChecked = mutableSetOf<String>()
+
+    /**
+     * GW14c: every approved payout not yet paid is asked about once per read of the group's money (a payment that
+     * confirms reads it again), so its card can say "waits for the limit" and when it fits. Online only; nothing is
+     * shown on a failure or offline, rather than a guess.
+     */
+    private fun checkPayoutWaits(chama: ThreadChama, money: com.circaso.feature.chama.domain.GroupMoney) {
+        if (money.wallet?.active != true) return
+        val approved = money.openRequests.filter { it.state == com.circaso.feature.chama.domain.RequestState.Approved && it.transferId == null }
+        _state.update { s -> s.copy(payoutWaits = s.payoutWaits.filterKeys { id -> approved.any { it.requestId == id } }) }
+        for (request in approved) {
+            if (!payoutsChecked.add("${request.requestId}@${money.fetchedAt}")) continue
+            viewModelScope.launch {
+                if (!_state.value.online) return@launch
+                val until = chama.payoutWaitsUntil(money, request)
+                _state.update { s -> s.copy(payoutWaits = if (until != null) s.payoutWaits + (request.requestId to until) else s.payoutWaits - request.requestId) }
+            }
+        }
+    }
+
     /** React to a message (WhatsApp-style); null takes my reaction back. Queued like any message. */
     fun onReactTo(messageId: String, emoji: String?) { viewModelScope.launch { messagesRepository?.react(chatId, messageId, emoji) } }
 
@@ -198,7 +222,12 @@ class ThreadViewModel(
                 if (chat?.kind == ChatKind.Group && chama != null && !chamaRefreshed) { chamaRefreshed = true; launch { chama.refresh(chatId) } }
             }
         }
-        if (chama != null) viewModelScope.launch { chama.observe(chatId).collect { s -> _state.update { it.copy(chama = s.chama, fiat = s.fiat, showIntro = s.showIntro, myUserId = s.myUserId, groupMoney = s.groupMoney) } } }
+        if (chama != null) viewModelScope.launch {
+            chama.observe(chatId).collect { s ->
+                _state.update { it.copy(chama = s.chama, fiat = s.fiat, showIntro = s.showIntro, myUserId = s.myUserId, groupMoney = s.groupMoney) }
+                s.groupMoney?.let { checkPayoutWaits(chama, it) }
+            }
+        }
         viewModelScope.launch {
             // A window of the newest messages that grows by a page as the person scrolls up (onLoadOlder).
             @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)

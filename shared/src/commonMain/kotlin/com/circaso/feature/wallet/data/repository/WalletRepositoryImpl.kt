@@ -25,6 +25,9 @@ import com.circaso.feature.wallet.domain.ChainStatus
 import com.circaso.feature.wallet.domain.Chains
 import com.circaso.feature.wallet.domain.FiatValue
 import com.circaso.feature.wallet.domain.PaymentRequest
+import com.circaso.feature.wallet.domain.PaymentQuote
+import com.circaso.feature.wallet.domain.QuoteProblem
+import com.circaso.feature.wallet.data.remote.QuoteTransferResponse
 import com.circaso.feature.wallet.domain.Recipient
 import com.circaso.feature.wallet.domain.RecipientStatus
 import com.circaso.feature.wallet.domain.RemindOutcome
@@ -237,6 +240,7 @@ class WalletRepositoryImpl(
             chatId = request.chatId,
             walletId = request.fromWalletId,
             payoutRequestId = request.payoutRequestId,
+            quoteId = request.quoteId,
         )
         val prepared = when (val r = remote.prepare(body, idempotencyKey)) { is AppResult.Failure -> return r; is AppResult.Success -> r.value }
         val now = nowMillis()
@@ -263,6 +267,18 @@ class WalletRepositoryImpl(
         // The frames carry the rest; one read a moment later covers a socket that is not connected.
         val fresh = loadTransfer(prepared.transferId)
         return if (fresh is AppResult.Success) fresh else AppResult.Success(dao.transfer(prepared.transferId)!!.toDomain())
+    }
+
+    override suspend fun quote(request: PaymentRequest): AppResult<PaymentQuote?> {
+        val body = PrepareTransferRequest(
+            blockchain = request.blockchain,
+            to = PayeeRequest(userId = request.toUserId, address = request.toAddress, groupId = request.toGroupId),
+            amount = AmountRequest(request.asset, request.amountMinor),
+            chatId = request.chatId,
+            walletId = request.fromWalletId,
+        )
+        // Nothing is created, so every quote takes a fresh key (a repeated one would be answered from the replay cache).
+        return remote.quote(body, newIdempotencyKey()).map { it?.toDomain() }
     }
 
     // ---- Group wallets (phase 2)
@@ -528,5 +544,18 @@ internal fun TransferEntity.toDomain() = Transfer(
     chatId = chatId, txHash = txHash, failureReason = failureReason, counterpartName = counterpartName, note = note,
     createdAt = createdAt, updatedAt = updatedAt, counterpartHandle = counterpartHandle, counterpartAvatar = counterpartAvatar,
     walletId = walletId, fromGroupId = fromGroupId, toGroupId = toGroupId, payoutRequestId = payoutRequestId,
+)
+
+private fun QuoteTransferResponse.toDomain() = PaymentQuote(
+    feeMinor = fee.amountMinor, rateBps = fee.rateBps ?: 0, minimum = fee.minimum == true, totalMinor = total.amountMinor,
+    balanceMinor = balance?.amountMinor, maxAmountMinor = maxAmount?.amountMinor,
+    problem = when (problem) {
+        "INSUFFICIENT_FUNDS" -> QuoteProblem.InsufficientFunds
+        "PER_PAYMENT_LIMIT" -> QuoteProblem.PerPaymentLimit
+        "DAILY_LIMIT" -> QuoteProblem.DailyLimit
+        else -> null
+    },
+    fitsAt = fitsAt, leftMinor = limit?.left?.amountMinor, dailyMaxMinor = limit?.dailyMax?.amountMinor, moreAt = limit?.moreAt,
+    quoteId = quoteId, expiresAt = expiresAt,
 )
 

@@ -408,7 +408,7 @@ fee for a payment that failed, never pay without the fee).
 | 0. Design | Frames for the Spaces tab, Moments composer and viewer, space page, create space, live room, group wallet set-up and switcher, in Circaso's system (the canvas has none of these). Reviewed with Pasaka before code. | Answers to §8 |
 | 1. Tab + Moments | Spaces tab shell (Moments row + empty spaces section), Moments end to end (backend `status` + app). | Phase 0 |
 | 2. Groups with wallets | Wallet owner model, optional group wallet at creation or later (owner PIN, biometrics per wallet), wallet names on every approval, wallet switcher, pay to a group, chamas merged into groups with an optional target. | — |
-| 2F. Fees and limits | Spike on what one signed challenge can hold per chain; `fee_rule` and limit-rule tables with seeds; quote and lock at W4; payment contract (EVM) or batch; fee wallet and ledger; group daily limits; app shows fee and limits before signing. | Phase 2, Q11–Q14 |
+| 2F. Fees and limits | Spike on what one signed challenge can hold per chain; `fee_rule` and limit-rule tables with seeds; quote and lock at W4; payment contract (EVM) or batch; fee wallet and ledger; group daily limits; app shows fee and limits before signing. | Phase 2, Q11–Q14. **Built 2026-11-04, backend PR #31 (§11.10).** |
 | 3. Spaces core | Create (public / members only / invite only), discover, search, follow and join requests, paid entry for members-only spaces (one-time, monthly or yearly, renewal reminders and grace period), invites by contact or @username, space chat, private chat with the owner, roles, moderation and reports, space wallet (reuses phase 2), send money to the space. | Phase 2 |
 | 3S. Shop | Catalog (products and services, photos, USDC price, optional stock shown or hidden), cart, buy with reservation, orders and refunds, order cards, share items. | Phase 3, 2F |
 | 4. Live | Audio and video live rooms with speakers and listeners, pushes, pay during live. | Phase 3 |
@@ -541,7 +541,7 @@ columns: personal rows are untouched.
 | GW9c, GW14 (request part) | Paying from a group wallet = Request Payout, posts the D5 card | CH4 |
 | GW9, GW11, GW12, GW12b, GW17–GW19 | Pay Payout from the D5 card: locked amount/payee, named-wallet approval, sending, paid card, not sent | W4 `walletId` + `payoutRequestId`, W3 `?walletId=`, W5 |
 | GW9b, GW10, GW11b, GW16 | Paying from switcher (personal default), Wallet tab title switcher | W16, W1 `?walletId=` |
-| GW13–GW13d, GW14b–c, GW20 (fee and cap lines) | Fee quote, minimum, expired quote, daily cap | **2F** (until then: `fee` zero, no cap line) |
+| GW13–GW13d, GW14b–c, GW20 (fee and cap lines) | Fee quote, minimum, expired quote, daily cap | **2F, built 2026-11-04** (W17 + W4 `quoteId`, §11.10) |
 | GW15 | Offline: preview dimmed, nothing opens | none (money never queues) |
 
 `feature/chama` folds into group info and the thread: the goal strip reads CH7, "held by Otieno" becomes "in the group
@@ -572,6 +572,33 @@ only to show "Paying" early).
 - **Fee rules** match the sender's owner type (`wallet_owners`) and the receiver's (`to_group_id` set ⇒ `GROUP`,
   a person ⇒ `PERSON`, an address ⇒ `EXTERNAL`); the quote is added to W4's answer and locked on the transfer row
   (new columns in 2F), and the batch challenge replaces the plain transfer.
+
+### 11.10 Phase 2F built (2026-11-04)
+
+**Backend PR #31** (`feat/fees-limits`, worktree `circaso-fees`), **not merged or deployed**. Contract:
+`mobile-integration.md` → "Fees and limits". In short:
+- V4: `fee_rules` (versioned rows, `fee_bounds` + trigger), `limit_rules`, `fee_quotes`, `fee_ledger`; `transfers` gains
+  `fee_minor`, `fee_address`. Seeds as §8 Q12/Q13 (Solana 0 %; spaces no limit; people keep 500/1 000).
+- **W17 `POST /v1/wallet/transfers/quote`** (W4's body) → fee (`rateBps`, `minimum`), total, balance, `maxAmount`,
+  limit, `problem` + `fitsAt`, `quoteId` (signer only, 15 minutes). Members may quote a group wallet.
+- **W4 `quoteId`**: charged exactly; without a valid one a higher fee is `wallet.fee_changed` (409, new quote in
+  `details.fields`). EVM with a fee: one `contractExecution` (`executeBatch` on the sender's SCA: payee + fee wallet).
+- Limits: rolling 24 h under a row lock, fees included; `wallet.limit_exceeded` / `wallet.insufficient_funds` carry
+  `details.fields` (`limit`, `leftMinor`, `maxAmountMinor`, `resetsAt`, `moreAt` / `balanceMinor`, `feeMinor`).
+- Decisions taken (premium standard): **a separate quote route** (W17) rather than quoting through W4, because W4
+  creates a transfer and a challenge and the card re-quotes as the person types; **the gas estimate uses one minor
+  unit per leg** (gas doesn't follow the amount, so a quote holds whatever is typed, and the balance check is ours);
+  **native coin prices are configured** (deliberately high) until a price feed is chosen; **a chain without a
+  configured fee wallet takes no fee**; **first-payment SCA deployment gas is charged as estimated** (honest; Base and
+  Polygon cost cents); **the per-payment cap is on the amount, the daily cap on amount + fee** (GW14: "fee
+  included"); **error numbers ride in `details.fields`** (`{field, problem}` = name/value) so no shared envelope change.
+- Before fees appear on dev: create a Circle developer-controlled fee wallet per chain and set
+  `WALLET_FEES_CHAIN_BASE_SEPOLIA_ADDRESS` (Pasaka). Still to check on a device: signing a batch challenge, its webhook.
+
+**App** (same day): the chat's money card and the Pay screen quote W17 after a 400 ms pause (GW13), show fee,
+total, "One Circaso fee, network cost included.", "minimum" (GW13b), the fee change (GW13c), Try Again with the
+reference (GW13d), GW14/GW14b/GW20 notes with "… Instead", "Pay After 14:30"; the thread's D5 card says "Approved ·
+waits for the limit" (GW14c). See `project-status.md`.
 
 ### 11.8 Decisions taken while planning (premium standard, Pasaka's delegation)
 

@@ -150,7 +150,7 @@ fun ThreadScreen(
     val state by viewModel.state.collectAsState()
     val pay = quickPay?.let { vm ->
         val payState by vm.state.collectAsState()
-        QuickPay(payState, vm::onAmount, vm::onNote, vm::onPay, vm::onQuickReset, vm::onErrorShown, vm::onAssetTag, vm::onChoosing, vm::onPayFrom, vm::onRetryExact)
+        QuickPay(payState, vm::onAmount, vm::onNote, vm::onPay, vm::onQuickReset, vm::onErrorShown, vm::onAssetTag, vm::onChoosing, vm::onPayFrom, vm::onRetryExact, vm::onRetryQuote, vm::onUseMax)
     }
     // Opening a request's Pay again: its card starts over only if its last payment didn't go (the approval still stands).
     // If that payment is on its way or confirmed, it isn't paid twice: say so and put the card away.
@@ -163,7 +163,7 @@ fun ThreadScreen(
     }
     val paying = payout?.let { vm ->
         val payState by vm.state.collectAsState()
-        QuickPay(payState, vm::onAmount, vm::onNote, vm::onPay, vm::onQuickReset, vm::onErrorShown, vm::onAssetTag, vm::onChoosing, vm::onPayFrom, vm::onRetryExact)
+        QuickPay(payState, vm::onAmount, vm::onNote, vm::onPay, vm::onQuickReset, vm::onErrorShown, vm::onAssetTag, vm::onChoosing, vm::onPayFrom, vm::onRetryExact, vm::onRetryQuote, vm::onUseMax)
     }
     ThreadContent(
         state, onBack, onInfo, onAsha, viewModel::onDraft, viewModel::onSend, viewModel::onSelect, viewModel::onRetry, viewModel::onDiscard, viewModel::onDeleteForEveryone, viewModel::onMessageShown,
@@ -747,13 +747,13 @@ fun ThreadContent(
                         paying && quickPay != null,
                         enter = if (CircasoTheme.reduceMotion) fadeIn(tween(CircasoMotion.QuickMs)) else fadeIn(tween(CircasoMotion.QuickMs)) + androidx.compose.animation.slideInVertically(tween(CircasoMotion.QuickMs)) { it / 2 },
                         exit = fadeOut(tween(CircasoMotion.QuickMs / 2)),
-                    ) { quickPay?.let { q -> ChatMoneyCard(q.state, q.onPay, { q.onChoosing(true) }, cardMotion, maxHeight = cardMax) } }
+                    ) { quickPay?.let { q -> ChatMoneyCard(q.state, q.onPay, { q.onChoosing(true) }, cardMotion, maxHeight = cardMax, onRetryQuote = q.onRetryQuote, onUseMax = q.onUseMax) } }
                     // An approved request's Pay (D5/GW9): the same card, the amount and payee locked by the approval.
                     AnimatedVisibility(
                         payout != null,
                         enter = if (CircasoTheme.reduceMotion) fadeIn(tween(CircasoMotion.QuickMs)) else fadeIn(tween(CircasoMotion.QuickMs)) + androidx.compose.animation.slideInVertically(tween(CircasoMotion.QuickMs)) { it / 2 },
                         exit = fadeOut(tween(CircasoMotion.QuickMs / 2)),
-                    ) { payout?.let { q -> ChatMoneyCard(q.state, q.onPay, { q.onChoosing(true) }, cardMotion, onClose = onPayoutClose, maxHeight = cardMax) } }
+                    ) { payout?.let { q -> ChatMoneyCard(q.state, q.onPay, { q.onChoosing(true) }, cardMotion, onClose = onPayoutClose, maxHeight = cardMax, onRetryQuote = q.onRetryQuote, onUseMax = q.onUseMax) } }
                 },
                 above = {
                     // Support never takes money (so nobody pretending to be Circaso can ask for it): say so the moment
@@ -1061,6 +1061,10 @@ class QuickPay(
     val onPayFrom: (com.circaso.feature.wallet.presentation.NamedWallet) -> Unit = {},
     /** A Not sent card's Try Again: exactly its coin amount back on the money card. */
     val onRetryExact: (amountMinor: String, asset: String, note: String?) -> Unit = { _, _, _ -> },
+    /** GW13d's Try Again on the fee. */
+    val onRetryQuote: () -> Unit = {},
+    /** GW14 / GW20's "… Instead". */
+    val onUseMax: () -> Unit = {},
 )
 
 /** The amount while it is still being typed: "#5", "#12.", "#12.5" (no space yet). */
@@ -1615,6 +1619,8 @@ private fun androidx.compose.foundation.lazy.LazyListScope.threadTail(
             request, state.fiat, nameOf = state::memberName,
             isAdmin = state.requestsAdmin, isTreasurer = state.requestsPayer, myUserId = state.myUserId, busy = state.chamaBusy, online = state.online,
             inGroupWallet = state.groupMoney != null,
+            waitsUntil = state.payoutWaits[request.requestId],
+            signerName = state.groupMoney?.wallet?.signerUserId?.let { state.memberName(it).substringBefore(' ') },
             onApprove = { onDecide(request, true) }, onDecline = { onDecide(request, false) }, onPay = { onPayRequest?.invoke(request) },
             modifier = Modifier.animateItem(),
         )

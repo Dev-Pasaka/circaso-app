@@ -13,6 +13,7 @@ import com.circaso.feature.wallet.domain.ObserveWalletUseCase
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.firstOrNull
 
 /** What a group thread shows of its chama (designs D2, D5, D6). */
 data class ThreadChamaState(
@@ -36,6 +37,9 @@ class ThreadChama(
     private val groupWallets: com.circaso.core.flags.GroupWalletsFlag = com.circaso.core.flags.GroupWalletsFlag.off(),
     private val observeMoney: com.circaso.feature.chama.domain.ObserveGroupMoneyUseCase? = null,
     private val refreshMoney: com.circaso.feature.chama.domain.RefreshGroupMoneyUseCase? = null,
+    /** W17, for an approved payout that waits for the group's daily limit (GW14c); absent in older tests. */
+    private val quotePayment: com.circaso.feature.wallet.domain.QuotePaymentUseCase? = null,
+    private val observeWalletOf: com.circaso.feature.wallet.domain.ObserveWalletOfUseCase? = null,
 ) {
     /**
      * With group wallets the thread reads the group's money (CH7): the goal strip and request cards see it as a
@@ -59,6 +63,24 @@ class ThreadChama(
     }
 
     suspend fun decide(request: ChamaRequest, approve: Boolean): AppResult<ChamaRequest> = decideRequest(request.requestId, approve)
+
+    /**
+     * GW14c: when an approved payout [request] doesn't fit the group wallet's rolling 24-hour limit now, the time it
+     * does (ISO), so every member sees why it hasn't been paid; null when it fits, can't be asked (offline, no wallet
+     * yet) or the server takes no fees. Online-only and read-only: W17 as a member.
+     */
+    suspend fun payoutWaitsUntil(money: com.circaso.feature.chama.domain.GroupMoney, request: ChamaRequest): String? {
+        val quote = quotePayment ?: return null
+        val wallet = money.wallet?.takeIf { it.active } ?: return null
+        val chain = observeWalletOf?.invoke(wallet.walletId)?.firstOrNull()?.chainsReceiving?.firstOrNull()?.blockchain
+            ?: observeWallet().firstOrNull()?.chainsReceiving?.firstOrNull()?.blockchain ?: return null
+        val asked = com.circaso.feature.wallet.domain.PaymentRequest(
+            blockchain = chain, toUserId = request.payeeUserId, toAddress = request.payeeAddress.takeIf { request.payeeUserId == null },
+            amountMinor = request.amountMinor, chatId = money.chatId, fromWalletId = wallet.walletId,
+        )
+        val answer = (quote(asked) as? AppResult.Success)?.value ?: return null
+        return answer.fitsAt.takeIf { answer.problem == com.circaso.feature.wallet.domain.QuoteProblem.DailyLimit }
+    }
 
     suspend fun introSeen(chatId: String) = prefs.setFlag(introFlag(chatId), true)
 

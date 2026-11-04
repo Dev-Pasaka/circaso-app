@@ -15,6 +15,8 @@ class ValidateAddressUseCase(private val wallet: WalletRepository) { suspend ope
 
 /** Online-only: the person signs in the Circle SDK. One [idempotencyKey] per payment, kept by the screen across retries. */
 class PayUseCase(private val wallet: WalletRepository) { suspend operator fun invoke(request: PaymentRequest, idempotencyKey: String) = wallet.pay(request, idempotencyKey) }
+/** Online-only, read: W17, the fee and the limits for exactly this payment before it is signed (phase 2F). */
+class QuotePaymentUseCase(private val wallet: WalletRepository) { suspend operator fun invoke(request: PaymentRequest) = wallet.quote(request) }
 
 // ---- Group wallets (phase 2). Reads come from the phone's copy; every write is online-only and never queued.
 

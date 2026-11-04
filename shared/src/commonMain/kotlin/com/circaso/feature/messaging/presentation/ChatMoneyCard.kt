@@ -73,6 +73,10 @@ internal fun ChatMoneyCard(
      * the keyboard up, the rows scroll while who, how much and Pay stay in view.
      */
     maxHeight: androidx.compose.ui.unit.Dp = androidx.compose.ui.unit.Dp.Unspecified,
+    /** GW13d's Try Again on the fee. */
+    onRetryQuote: () -> Unit = {},
+    /** GW14 / GW20's "… Instead": the most that fits, with its fee. */
+    onUseMax: () -> Unit = {},
 ) {
     val c = CircasoTheme.colors
     val t = CircasoTheme.typography
@@ -143,9 +147,10 @@ internal fun ChatMoneyCard(
                 }
                 if (s.requestPayout) CardRow("Approvals", if (s.groupMoney?.approvalPolicy == ApprovalPolicy.AnyAdmin) "Any admin" else "2 admins")
                 // Only once there is an amount: "receives —" beside "Type an amount" says nothing.
-                if (!s.requestPayout && amount != null) {
-                    CardRow("Fee", s.feeText)
-                    if (s.fee is com.circaso.feature.wallet.presentation.PayFee.Quoted) s.totalText?.let { CardRow("Total", it) }
+                if (amount != null) {
+                    // §7b's one fee (GW13*): worked out by W17 for exactly this payment; a request's is "about", set when paid.
+                    CardRowContent("Fee") { com.circaso.feature.wallet.presentation.FeeValue(s, onRetryQuote) }
+                    com.circaso.feature.wallet.presentation.totalValue(s)?.let { CardRow("Total", it) }
                     CardRow(if (s.toGroup) "$group receives" else "$first receives", amount)
                 }
             }
@@ -161,6 +166,12 @@ internal fun ChatMoneyCard(
                     GoalProgress(amountText(got, s.wallet?.fiat), amountNumber(ch.goal.targetMinor, s.wallet?.fiat), after, meta = "After your contribution", label = "${ch.goal.name} after your contribution")
                 }
             }
+            // GW13c: the fee rose after its 15 minutes; shown before anything can be signed.
+            com.circaso.feature.wallet.presentation.feeChangeText(s)?.let {
+                com.circaso.designsystem.chrome.Banner(it, CircasoIcon.Clock, tone = com.circaso.designsystem.chrome.BannerTone.Warning)
+            }
+            // GW14 / GW14b / GW20: a limit, or the balance with the fee, with the numbers and the one-tap offer.
+            com.circaso.feature.wallet.presentation.blockNote(s)?.let { com.circaso.feature.wallet.presentation.BlockNoteView(it, onUseMax) }
             // Why it can't go yet, or what's happening: one line, announced when it changes.
             val (line, tone) = statusLine(s, first)
             if (line != null) {
@@ -176,17 +187,13 @@ internal fun ChatMoneyCard(
             text = payLabel(s, amount, total),
             onClick = onPay, size = ButtonSize.Large, block = true, enabled = s.canPay, busy = signing,
         )
-        val foot = listOfNotNull(
-            s.failure?.reference?.let { "Ref $it" },
-            "One Circaso fee, network cost included.".takeIf { s.fee is com.circaso.feature.wallet.presentation.PayFee.Quoted },
-            s.rate?.takeIf { s.tagged == null && s.currency != null }?.let { "1 USDC = ${s.currency} ${com.circaso.feature.wallet.presentation.formatRate(it)}" },
-        ).joinToString(" · ")
+        val foot = com.circaso.feature.wallet.presentation.feeFootnote(s)
         if (foot.isNotEmpty()) BasicText(foot, style = t.caption1.copy(color = c.inkTertiary, fontFeatureSettings = "tnum"))
     }
 }
 
 /** The card's button, and the composer arrow's spoken label while a payment is in the field. */
-internal fun payLabel(s: PayUiState, amount: String? = s.fiatText ?: s.usdcText, total: String? = s.totalText ?: amount): String = when {
+internal fun payLabel(s: PayUiState, amount: String? = s.fiatText ?: s.usdcText, total: String? = s.totalText ?: amount): String = com.circaso.feature.wallet.presentation.blockedLabel(s)?.takeIf { s.step == PayStep.Amount && s.failure == null } ?: when {
     s.step == PayStep.Signing && s.requestPayout -> "Asking the admins…"
     s.step == PayStep.Signing && s.fromGroupWallet -> "Waiting for ${s.walletName}’s PIN…"
     s.step == PayStep.Signing -> "Waiting for your PIN…"
@@ -211,6 +218,7 @@ private fun statusLine(s: PayUiState, first: String): Pair<String?, Tone> = when
     s.problem is PayeeProblem.NotOnChain -> "$first can’t receive on this network yet." to Tone.Critical
     s.problem is PayeeProblem.Other -> s.problem.message to Tone.Critical
     s.assetMissing -> "You don’t have ${s.assetTag?.uppercase()} in this wallet." to Tone.Critical
+    s.block != null && !s.requestPayout -> null to Tone.Quiet
     s.overBalance -> ((if (s.fromGroupWallet) "${s.walletName} has" else "You have") + " ${MinorUnits.toDisplay(s.balanceMinor, s.tagged?.second?.decimals ?: 6)} ${s.asset}.") to Tone.Critical
     s.requestPayout -> (if (s.payingFrom.canSign) "Admins approve in the group chat. Then you pay it with ${s.walletName}’s PIN." else "Admins approve in the group chat. Then ${s.signerName} pays it from ${s.walletName}’s wallet.") to Tone.Quiet
     else -> null to Tone.Quiet
@@ -227,6 +235,20 @@ private fun CardRow(label: String, value: String) {
     ) {
         BasicText(label, style = t.footnote.copy(color = c.inkSecondary))
         BasicText(value, Modifier.weight(1f), style = t.footnote.copy(color = c.ink, textAlign = androidx.compose.ui.text.style.TextAlign.End, fontFeatureSettings = "tnum"))
+    }
+}
+
+/** A row whose value is drawn (the fee: a spinner while it is worked out, Try Again when it couldn't be). */
+@Composable
+private fun CardRowContent(label: String, value: @Composable () -> Unit) {
+    val c = CircasoTheme.colors
+    val t = CircasoTheme.typography
+    Row(
+        Modifier.fillMaxWidth().semantics(mergeDescendants = true) {},
+        horizontalArrangement = Arrangement.spacedBy(CircasoSpacing.s3), verticalAlignment = Alignment.CenterVertically,
+    ) {
+        BasicText(label, Modifier.weight(1f), style = t.footnote.copy(color = c.inkSecondary))
+        value()
     }
 }
 
