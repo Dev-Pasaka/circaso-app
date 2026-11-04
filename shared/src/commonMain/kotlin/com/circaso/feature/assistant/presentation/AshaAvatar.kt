@@ -108,6 +108,8 @@ fun AshaAvatar(
         viewModel = "Asha",
         enums = mapOf(
             "framing" to variant.framing,
+            // Reduced motion: the file holds a clean rest pose (eyes open, no sway) before the frame is held.
+            "motion" to if (still) "still" else "moving",
             // The head crop never shows a scene: at 28 dp it would only be noise behind her face.
             "scene" to if (icon) AshaScene.None.rive else state.scene.rive,
             "look" to state.look.rive,
