@@ -1,5 +1,9 @@
 package com.circaso.feature.messaging.presentation
 
+import androidx.compose.foundation.border
+import androidx.compose.foundation.background
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import com.circaso.designsystem.components.GoalProgress
@@ -86,7 +90,10 @@ internal fun ChatMoneyCard(
     Column(
         modifier.fillMaxWidth().padding(horizontal = CircasoSpacing.s3).padding(bottom = CircasoSpacing.s2)
             .then(if (maxHeight != androidx.compose.ui.unit.Dp.Unspecified) Modifier.heightIn(max = maxHeight) else Modifier)
-            .glass(CircasoShapes.lg, floating = true, edge = false)
+            // Solid, not glass: on Android the glass has no blur, so the chat behind read through the money rows.
+            .shadow(12.dp, CircasoShapes.lg, ambientColor = androidx.compose.ui.graphics.Color.Black.copy(alpha = 0.25f), spotColor = androidx.compose.ui.graphics.Color.Black.copy(alpha = 0.25f))
+            .clip(CircasoShapes.lg).background(CircasoTheme.colors.surfaceRaised)
+            .then(if (CircasoTheme.colors.isHighContrast) Modifier.border(1.dp, CircasoTheme.colors.separator, CircasoShapes.lg) else Modifier)
             .padding(start = CircasoSpacing.s4, end = CircasoSpacing.s3, top = CircasoSpacing.s3, bottom = CircasoSpacing.s3),
         verticalArrangement = Arrangement.spacedBy(CircasoSpacing.s2),
     ) {
