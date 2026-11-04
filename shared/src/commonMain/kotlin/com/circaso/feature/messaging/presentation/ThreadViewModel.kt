@@ -27,6 +27,8 @@ import com.circaso.feature.chama.domain.ChamaRequest
 import com.circaso.feature.chama.presentation.ThreadChama
 import com.circaso.feature.wallet.domain.FiatValue
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -77,6 +79,8 @@ data class ThreadUiState(
     /** A picked photo shown for a caption before it's sent (WhatsApp-style). */
     val pendingPhoto: com.circaso.core.platform.PickedImage? = null,
     val photoCaption: String = "",
+    /** Each money card's payment as this phone knows it (transferId → state): Sending, Sent or Not sent. */
+    val paymentStates: Map<String, com.circaso.feature.wallet.domain.TransferState> = emptyMap(),
     /** The voice note playing now, by local id. */
     val playing: Long? = null,
     /** When that note's sound started, epoch millis (null while it loads): drives the progress and the count-up. */
@@ -131,6 +135,9 @@ class ThreadViewModel(
     /** Presence of the person on the other side ("Online" / "last seen"). */
     private val messagesRepository: com.circaso.feature.messaging.domain.MessagesRepository? = null,
     private val contacts: com.circaso.feature.contacts.domain.ContactsRepository? = null,
+    /** The money cards' payment states (Sending → Sent once confirmed); absent in previews and older tests. */
+    private val payments: ThreadPayments? = null,
+    private val checkEveryMillis: Long = PaymentCheckEveryMillis,
 ) : ViewModel() {
     private val _state = MutableStateFlow(ThreadUiState())
 
@@ -199,6 +206,28 @@ class ThreadViewModel(
             }
         }
         viewModelScope.launch { connection.status.collect { s -> _state.update { it.copy(online = s == ConnectionStatus.Online) } } }
+        payments?.let { p ->
+            viewModelScope.launch {
+                @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+                _state.map { s -> s.messages.mapNotNull { (it as? Message.Payment)?.transferId }.toSet() }
+                    .distinctUntilChanged()
+                    .flatMapLatest { ids -> if (ids.isEmpty()) kotlinx.coroutines.flow.flowOf(emptyMap()) else p.states(ids) }
+                    .collect { states -> _state.update { it.copy(paymentStates = states) } }
+            }
+            // A card still on its way while the chat is open: read W5 now and then, so a missed frame never leaves
+            // it saying Sending (the frame usually lands first; this is the fallback).
+            viewModelScope.launch {
+                while (true) {
+                    delay(checkEveryMillis)
+                    val s = _state.value
+                    if (!s.online) continue
+                    s.messages.filterIsInstance<Message.Payment>()
+                        .filter { m -> nowMillis() - m.orderAt < PaymentCheckWindowMillis && s.paymentStates[m.transferId].let { it == null || it.inFlight } }
+                        .takeLast(PaymentChecksAtOnce)
+                        .forEach { m -> p.check(m.transferId) }
+                }
+            }
+        }
     }
 
     /** Typing goes out at most every few seconds and stops a moment after the last keystroke (guide, section 8). */
@@ -416,6 +445,10 @@ class ThreadViewModel(
     }
 
     private companion object {
+        const val PaymentCheckEveryMillis = 8_000L
+        /** Only recent cards are followed this way; older ones settled long ago or are read when opened. */
+        const val PaymentCheckWindowMillis = 30L * 60 * 1000
+        const val PaymentChecksAtOnce = 3
         const val TypingEveryMillis = 4_000L
         const val TypingStopAfterMillis = 5_000L
     }

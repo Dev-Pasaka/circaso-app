@@ -31,6 +31,7 @@ import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.runtime.setValue
@@ -189,6 +190,8 @@ fun ComposerBar(
      * keeps its size and the card sits on top of the last messages.
      */
     floating: (@Composable ColumnScope.() -> Unit)? = null,
+    /** Lets the screen put the cursor in the field (a payment started from the goal strip or the profile). */
+    focusRequester: androidx.compose.ui.focus.FocusRequester? = null,
 ) {
     val c = CircasoTheme.colors
     val t = CircasoTheme.typography
@@ -240,7 +243,7 @@ fun ComposerBar(
                             BasicTextField(
                                 value = field, onValueChange = { field = it; if (it.text != value) onValueChange(it.text) }, enabled = enabled, maxLines = 5,
                                 textStyle = t.body.copy(color = c.ink), cursorBrush = SolidColor(c.ink),
-                                modifier = Modifier.fillMaxWidth().onPreviewKeyEvent { e ->
+                                modifier = Modifier.fillMaxWidth().then(if (focusRequester != null) Modifier.focusRequester(focusRequester) else Modifier).onPreviewKeyEvent { e ->
                                     (chip != null && value.isEmpty() && e.key == androidx.compose.ui.input.key.Key.Backspace && e.type == androidx.compose.ui.input.key.KeyEventType.KeyDown)
                                         .also { if (it) onChipEdit() }
                                 },

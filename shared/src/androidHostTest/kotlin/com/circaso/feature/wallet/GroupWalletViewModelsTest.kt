@@ -97,6 +97,11 @@ import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
 import java.lang.reflect.Proxy
 import kotlin.test.AfterTest
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.test.runCurrent
+import kotlinx.coroutines.test.advanceTimeBy
+import androidx.lifecycle.viewModelScope
+import com.circaso.feature.wallet.presentation.PayUiState
 import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -304,6 +309,101 @@ class GroupWalletPayViewModelTest {
         assertNotNull(vm.state.value.requested)
     }
 
+    // ---- Money in the chat (Pasaka, 2026-11-04): the chat's money card is the review; Pay goes straight to the PIN.
+
+    @Test fun inTheChatAContributionIsDoneOnceSignedAndTheCardFollowsIt() = runTest(dispatcher) {
+        val vm = vm(PayIntent(chatId = "g1", displayName = "Kilimani Chama", groupId = "g1", inChat = true))
+        keep(vm)
+        vm.onAmount("1000"); vm.onNote("November")
+        val s = vm.state.value
+        assertEquals("No fee", s.feeText, "§7b's one fee: none until 2F quotes it")
+        assertEquals(s.fiatText, s.totalText, "with no fee the total is the amount")
+        assertTrue(s.canPay)
+        vm.onPay()
+        assertEquals("Added to Holiday Fund · November", payments.single().note)
+        assertEquals("g1", cards.single().first, "the card lands in the group, where it shows Sending until confirmed")
+        assertEquals(PayStep.Done, vm.state.value.step, "no GW17 wait in the chat: the card carries it")
+        vm.onQuickReset()
+        assertEquals(PayStep.Amount, vm.state.value.step)
+        assertEquals("", vm.state.value.amountText, "ready for the next #")
+    }
+
+    @Test fun aRefusalBeforeTheChainStaysOnTheChatCardWithItsReferenceAndTryAgainSigns() = runTest(dispatcher) {
+        payAnswer = { AppResult.Failure(AppError.Api("wallet.sdk_failed", 400, "req_N2sX8c", null, emptyMap())) }
+        val vm = vm(PayIntent(userId = "otieno", chatId = "dm-otieno", displayName = "Otieno", inChat = true))
+        keep(vm)
+        vm.onAmount("500")
+        vm.onPay()
+        val f = assertNotNull(vm.state.value.failure)
+        assertEquals("your wallet", f.wallet)
+        assertEquals("req_N2sX8c", f.reference)
+        assertTrue(cards.isEmpty(), "nothing went, so no card")
+        assertEquals(PayStep.Amount, vm.state.value.step)
+        assertTrue(vm.state.value.canPay, "Try Again is the same Pay")
+        payAnswer = { r -> AppResult.Success(transfer("t${payments.size}", r.amountMinor)) }
+        vm.onPay()
+        assertEquals(2, payments.size)
+        assertEquals(PayStep.Done, vm.state.value.step)
+        assertNull(vm.state.value.failure)
+        assertEquals("dm-otieno", cards.single().first)
+    }
+
+    @Test fun offlineTheChatCardCantPayBeforeTheTap() = runTest(dispatcher) {
+        val monitor = GwMonitor().also { it.osStatus.value = ConnectionStatus.Offline }
+        connection = ConnectionState(monitor, NetworkHealth(), CoroutineScope(dispatcher), offlineDelayMs = 0)
+        val vm = vm(PayIntent(userId = "otieno", chatId = "dm-otieno", inChat = true))
+        keep(vm)
+        vm.onAmount("500")
+        assertFalse(vm.state.value.online)
+        assertFalse(vm.state.value.canPay)
+        vm.onPay()
+        assertTrue(payments.isEmpty(), "money never queues")
+    }
+
+    @Test fun payingFromInTheChatGoesBackToPersonalForTheNextPayment() = runTest(dispatcher) {
+        val vm = vm(PayIntent(userId = "otieno", chatId = "dm-otieno", inChat = true))
+        keep(vm)
+        vm.onAmount("500")
+        vm.onChoosing(true)
+        assertTrue(vm.state.value.choosing, "GW10 opens over the chat")
+        vm.onPayFrom(vm.state.value.choices.first { !it.personal })
+        assertTrue(vm.state.value.requestPayout)
+        vm.onQuickReset()
+        assertTrue(vm.state.value.payingFrom.personal)
+    }
+
+    @Test fun aPayoutCardFromTheChatKeepsTheApprovedAmountAfterAReset() = runTest(dispatcher) {
+        val vm = vm(PayIntent(userId = "achieng", chatId = "g1", amount = "12", requestId = "r1", fromWalletId = "gw-1", inChat = true))
+        keep(vm)
+        vm.onPay()
+        assertEquals(PayStep.Done, vm.state.value.step, "signed: the card in the chat follows it")
+        assertEquals("Paid from Kilimani Chama", cards.single().second.note)
+        vm.onQuickReset()
+        assertEquals("12000000", vm.state.value.amountMinor, "the approval's amount, not an empty card")
+        assertEquals("gw-1", vm.state.value.payingFrom.walletId)
+    }
+
+    @Test fun aQuotedFeeIsAddedOnTopAndPayWaitsWhileItsWorkedOut() {
+        val base = PayUiState(
+            payee = com.circaso.feature.contacts.domain.Person("6", "Mum", null, null, null), wallet = personal, blockchain = "BASE-SEPOLIA", amountText = "500",
+        )
+        assertEquals("KES 500", base.fiatText, "as typed, not 499.99 back from USDC")
+        assertEquals("KES 500", base.totalText)
+        val quoted = base.copy(fee = com.circaso.feature.wallet.presentation.PayFee.Quoted("19380", 50))
+        assertEquals(com.circaso.feature.wallet.domain.MinorUnits.add(base.amountMinor!!, "19380"), quoted.totalMinor, "the sender pays the fee on top")
+        assertTrue(quoted.feeText.endsWith("· 0.5%"))
+        assertTrue(base.canPay)
+        assertFalse(base.copy(fee = com.circaso.feature.wallet.presentation.PayFee.Quoting).canPay, "GW13: Send waits for the quote")
+        assertEquals("Working it out", base.copy(fee = com.circaso.feature.wallet.presentation.PayFee.Quoting).feeText)
+    }
+
+    @Test fun tryAgainOnACardKeepsOnlyWhatThePersonTyped() {
+        assertEquals("November", com.circaso.feature.wallet.presentation.cardNoteTyped("Added to Holiday Fund · November"))
+        assertEquals("", com.circaso.feature.wallet.presentation.cardNoteTyped("Added to Holiday Fund"))
+        assertEquals("for lunch", com.circaso.feature.wallet.presentation.cardNoteTyped("for lunch"))
+        assertEquals("", com.circaso.feature.wallet.presentation.cardNoteTyped(null))
+    }
+
     @Test fun personalStaysTheDefault() = runTest(dispatcher) {
         val vm = vm(PayIntent(userId = "otieno", chatId = "dm-otieno", amount = "500"))
         keep(vm)
@@ -311,6 +411,118 @@ class GroupWalletPayViewModelTest {
         vm.onPay()
         assertNull(payments.single().fromWalletId)
         assertEquals(NamedWallet.Personal.subject, payments.single().subject, "with several wallets even Personal is named (GW11b)")
+    }
+}
+
+/** A group's money moves live (Pasaka, 2026-11-04): frames and my own confirmed payments reload the copies screens read. */
+@OptIn(ExperimentalCoroutinesApi::class)
+class GroupMoneyLiveTest {
+    private val calls = mutableListOf<String>()
+    private val settled = kotlinx.coroutines.flow.MutableSharedFlow<Transfer>(extraBufferCapacity = 4)
+    private val walletRepo = fake<WalletRepository> { name, args ->
+        when (name) {
+            "getSettled" -> settled
+            "refreshWallet" -> { calls += "W1 ${args[0]}"; AppResult.Success(groupBalance) }
+            "refreshActivity" -> { calls += "W6 ${args[0]}"; AppResult.Success(Unit) }
+            else -> null
+        }
+    }
+    private val chamas = fake<ChamaRepository> { name, args ->
+        when (name) {
+            "money" -> flowOf(money())
+            "refreshMoney" -> { calls += "CH7 ${args[0]}"; AppResult.Success(money()) }
+            else -> null
+        }
+    }
+
+    private fun frame(vararg pairs: Pair<String, String>) = kotlinx.serialization.json.JsonObject(pairs.associate { (k, v) -> k to kotlinx.serialization.json.JsonPrimitive(v) })
+
+    @Test fun someoneElsesContributionReloadsTheGroupWallet() = runTest {
+        val live = com.circaso.feature.chama.data.repository.GroupMoneyLive(walletRepo, chamas, backgroundScope, groupWallets = { true })
+        live.onChamaFrame("money.updated", frame("chatId" to "g1", "kind" to "CONTRIBUTION"))
+        assertEquals(listOf("W1 gw-1", "W6 gw-1"), calls, "balance and history behind CH7 (the repository reloads CH7 itself)")
+        calls.clear()
+        live.onChamaFrame("request.updated", frame("chatId" to "g1", "state" to "APPROVED"))
+        assertTrue(calls.isEmpty(), "an approval moves no money")
+        live.onChamaFrame("request.updated", frame("chatId" to "g1", "state" to "PAID"))
+        assertEquals(listOf("W1 gw-1", "W6 gw-1"), calls, "a paid payout left the wallet")
+    }
+
+    @Test fun myOwnContributionReloadsTheGroupAtOnceAndAgainAMomentLater() = runTest {
+        val live = com.circaso.feature.chama.data.repository.GroupMoneyLive(walletRepo, chamas, backgroundScope, groupWallets = { true }, againAfterMillis = 2_000)
+        live.start()
+        runCurrent()
+        settled.emit(transfer("t1", "7751937").copy(state = TransferState.Confirmed, toGroupId = "g1"))
+        runCurrent()
+        assertEquals(listOf("CH7 g1", "W1 gw-1", "W6 gw-1"), calls, "no waiting for the group's frame")
+        advanceTimeBy(2_100)
+        assertEquals(6, calls.size, "once more, after the server has recorded it")
+        calls.clear()
+        settled.emit(transfer("t2", "1").copy(state = TransferState.Confirmed))
+        runCurrent()
+        assertTrue(calls.isEmpty(), "a payment to a person touches no group")
+    }
+
+    @Test fun nothingWithoutGroupWallets() = runTest {
+        val live = com.circaso.feature.chama.data.repository.GroupMoneyLive(walletRepo, chamas, backgroundScope, groupWallets = { false })
+        live.onChamaFrame("money.updated", frame("chatId" to "g1"))
+        live.onSettled(transfer("t1", "1").copy(state = TransferState.Confirmed, toGroupId = "g1"))
+        assertTrue(calls.isEmpty())
+    }
+}
+
+/** The thread's money cards (Pasaka, 2026-11-04): Sending until confirmed, then Sent; a card on its way is checked with W5. */
+@OptIn(ExperimentalCoroutinesApi::class)
+class ThreadPaymentStatesTest {
+    private val dispatcher = kotlinx.coroutines.test.StandardTestDispatcher()
+    private val states = MutableStateFlow(mapOf("t1" to TransferState.Submitted))
+    private val checked = mutableListOf<String>()
+    private val asked = mutableListOf<Collection<*>>()
+    private val walletRepo = fake<WalletRepository> { name, args ->
+        when (name) {
+            "transfers" -> { asked += args[0] as Collection<*>; states.map { m -> m.map { (id, st) -> transfer(id, "1").copy(state = st) } } }
+            "loadTransfer" -> { checked += args[0] as String; AppResult.Success(transfer(args[0] as String, "1")) }
+            else -> null
+        }
+    }
+    private val card = com.circaso.feature.messaging.domain.Message.Payment(
+        1, "dm", com.circaso.core.sync.nowMillis(), null, "m1", "me", "Me", true, "t1", "3870000", "USDC", "BASE-SEPOLIA", "lunch",
+        com.circaso.feature.messaging.domain.DeliveryState.Delivered, null,
+    )
+    private val messagesRepo = fake<MessagesRepository> { name, _ ->
+        when (name) {
+            "thread" -> flowOf(listOf(card))
+            "typing" -> flowOf(emptyList<String>())
+            else -> Unit
+        }
+    }
+    private val chats = fake<ChatsRepository> { name, _ -> if (name == "chat") flowOf(null) else null }
+
+    @BeforeTest fun setUp() { Dispatchers.setMain(dispatcher) }
+    @AfterTest fun tearDown() = Dispatchers.resetMain()
+
+    @Test fun aCardSaysSendingUntilTheChainConfirmsAndIsCheckedWhileOnItsWay() = runTest(dispatcher) {
+        val connection = ConnectionState(GwMonitor(), NetworkHealth(), CoroutineScope(dispatcher), offlineDelayMs = 0)
+        val m = com.circaso.feature.messaging.domain.ObserveThreadUseCase(messagesRepo)
+        val vm = com.circaso.feature.messaging.presentation.ThreadViewModel(
+            "dm", com.circaso.feature.messaging.domain.ObserveChatUseCase(chats), m, com.circaso.feature.messaging.domain.ObserveTypingUseCase(messagesRepo),
+            com.circaso.feature.messaging.domain.SendMessageUseCase(messagesRepo), com.circaso.feature.messaging.domain.RetryMessageUseCase(messagesRepo),
+            com.circaso.feature.messaging.domain.DiscardMessageUseCase(messagesRepo), com.circaso.feature.messaging.domain.DeleteForEveryoneUseCase(messagesRepo),
+            com.circaso.feature.messaging.domain.MarkReadUseCase(messagesRepo), com.circaso.feature.messaging.domain.SetTypingUseCase(messagesRepo),
+            connection, com.circaso.core.platform.NoChatNotifications,
+            payments = com.circaso.feature.messaging.presentation.ThreadPayments(walletRepo), checkEveryMillis = 1_000,
+        )
+        runCurrent()
+        assertEquals(TransferState.Submitted, vm.state.value.paymentStates["t1"], "Sending: signed, not yet on chain")
+        assertEquals(setOf("t1"), asked.last().toSet())
+        advanceTimeBy(1_100)
+        assertEquals(listOf("t1"), checked, "a card on its way is read again in case a frame was missed")
+        states.value = mapOf("t1" to TransferState.Confirmed)
+        runCurrent()
+        assertEquals(TransferState.Confirmed, vm.state.value.paymentStates["t1"], "Sent only now")
+        advanceTimeBy(3_000)
+        assertEquals(listOf("t1"), checked, "a confirmed card isn't checked again")
+        vm.viewModelScope.coroutineContext[kotlinx.coroutines.Job]?.cancel()
     }
 }
 

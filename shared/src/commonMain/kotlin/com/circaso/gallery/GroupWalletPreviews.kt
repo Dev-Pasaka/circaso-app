@@ -180,3 +180,79 @@ internal fun GroupWalletPreview(name: String): Boolean {
     }
     return true
 }
+
+// ---- Money in the chat (Pasaka, 2026-11-04): the chat's money card is the review; Pay goes straight to the PIN.
+
+private val mum = com.circaso.feature.messaging.domain.Chat(
+    "dm", ChatKind.Direct, "Mum", null, listOf(gwMember("me", "Pasaka Mutuku"), gwMember("6", "Mum")), false, 1, 0, MemberRole.Member, "6",
+)
+
+private fun gwPayment(id: Long, transferId: String, minor: String, outgoing: Boolean, note: String?, minutesAgo: Long, chat: String = "dm", sender: String = "me") =
+    com.circaso.feature.messaging.domain.Message.Payment(
+        id, chat, nowMillis() - minutesAgo * 60_000, null, "m$id", sender, if (sender == "me") "Pasaka" else "Mum", outgoing, transferId, minor, "USDC", "BASE-SEPOLIA", note,
+        com.circaso.feature.messaging.domain.DeliveryState.Delivered, null,
+    )
+
+private fun gwText(id: Long, text: String, outgoing: Boolean, minutesAgo: Long, chat: String = "dm") =
+    com.circaso.feature.messaging.domain.Message.Text(
+        id, chat, nowMillis() - minutesAgo * 60_000, null, "t$id", if (outgoing) "me" else "6", if (outgoing) "Pasaka" else "Mum", outgoing, text,
+        com.circaso.feature.messaging.domain.DeliveryState.Read, null, null,
+    )
+
+private val mumThread = listOf(gwText(1, "Habari ya leo? Did you eat?", false, 9), gwText(2, "Not yet, still in a meeting", true, 8))
+
+private fun quick(s: PayUiState) = com.circaso.feature.messaging.presentation.QuickPay(s, {}, {}, {}, {}, {}, {})
+
+@Composable
+private fun ChatPreview(
+    state: com.circaso.feature.messaging.presentation.ThreadUiState,
+    pay: PayUiState? = null,
+    payout: PayUiState? = null,
+) = com.circaso.feature.messaging.presentation.ThreadContent(
+    state, {}, {}, null, {}, {}, {}, {}, {}, {}, {},
+    quickPay = pay?.let { quick(it) }, payout = payout?.let { quick(it) },
+)
+
+/** Draws a chat-money preview; false when [name] isn't one. */
+@Composable
+internal fun ChatMoneyPreview(name: String): Boolean {
+    val mumPay = payState(PayUiState(payee = Person("6", "Mum", null, null, null), chatId = "dm", amountText = "500", note = "for lunch tomorrow"))
+    val direct = com.circaso.feature.messaging.presentation.ThreadUiState(chat = mum, messages = mumThread, draft = "#500 for lunch tomorrow", fiat = gwFiat)
+    val group = com.circaso.feature.messaging.presentation.ThreadUiState(
+        chat = kilimani, messages = listOf(gwText(1, "November contributions are due Friday", false, 30, "g1")), groupMoney = gwMoney(), fiat = gwFiat, myUserId = "me",
+        chama = gwMoney().asChama(), draft = "#1000 November",
+    )
+    val contribute = payState(PayUiState(groupId = "g1", chatId = "g1", payee = Person("", "Kilimani Chama", null, null, null), amountText = "1000", note = "November", groupMoney = gwMoney()))
+    when (name) {
+        // GW9a/GW9b in the chat: the whole review on the card; Personal by default with the switch.
+        "chat-pay" -> ChatPreview(direct, mumPay)
+        "chat-pay-from" -> ChatPreview(direct, mumPay.copy(choosing = true))
+        "chat-pay-signing" -> ChatPreview(direct, mumPay.copy(step = PayStep.Signing))
+        "chat-pay-failed" -> ChatPreview(direct, mumPay.copy(failure = PayFailure("your wallet", "Something went wrong while signing. Nothing was sent.", "req_N2sX8c")))
+        "chat-pay-offline" -> ChatPreview(direct.copy(online = false), mumPay.copy(online = false))
+        "chat-pay-personal-only" -> ChatPreview(direct, mumPay.copy(choices = listOf(NamedWallet.Personal), groupWallets = false))
+        // GW9a2/GW9d: a contribution, with where the target will stand.
+        "chat-contribute" -> ChatPreview(group, contribute)
+        // GW9 from the D5 card: an approved payout paid from the chat.
+        "chat-payout" -> ChatPreview(
+            group.copy(draft = ""),
+            payout = payState(PayUiState(payee = Person("", "Coast Bus", null, null, null), chatId = "g1", amountText = "92.879", inFiat = false, requestId = "r1", goalName = "December trip", groupMoney = gwMoney(), note = "the bus deposit"))
+                .copy(payingFrom = kilimaniWallet, wallet = gwWallet()),
+        )
+        // After the PIN: Sending until confirmed, then Sent; Not sent with Try Again when the chain refused it.
+        "chat-cards" -> ChatPreview(
+            direct.copy(
+                draft = "",
+                messages = mumThread + listOf(
+                    gwPayment(3, "tx-sent", "3870000", true, "for lunch", 6),
+                    gwPayment(4, "tx-sending", "7740000", true, "fare", 2),
+                    gwPayment(5, "tx-failed", "3870000", true, "for lunch tomorrow", 1),
+                ),
+                paymentStates = mapOf("tx-sent" to TransferState.Confirmed, "tx-sending" to TransferState.Submitted, "tx-failed" to TransferState.Failed),
+            ),
+            mumPay,
+        )
+        else -> return false
+    }
+    return true
+}

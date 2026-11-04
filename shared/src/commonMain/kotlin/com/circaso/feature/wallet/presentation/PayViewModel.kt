@@ -63,6 +63,11 @@ data class PayIntent(
     val fromWalletId: String? = null,
     /** The note typed after the amount in the chat ("#1000 November"). */
     val note: String? = null,
+    /**
+     * Driven from a chat (Pasaka, 2026-11-04): the chat's money card is the review, so once the PIN is done the card in
+     * the thread carries Sending → Sent and this resets for the next payment, rather than waiting here (GW17).
+     */
+    val inChat: Boolean = false,
 ) {
     val contribution get() = groupId != null || (goalName != null && requestId == null)
     val payout get() = requestId != null
@@ -70,6 +75,19 @@ data class PayIntent(
 
 /** GW19 (and G2): the payment didn't go. Nothing was taken from [wallet]; [reference] is the request id for support. */
 data class PayFailure(val wallet: String, val message: String, val reference: String?)
+
+/**
+ * The one Circaso fee (spaces-plan §7b: gas included, the sender pays it on top, quoted by W4 for this exact payment
+ * and held 15 minutes). Phase 2F fills [Quoting] and [Quoted] from W4's `fee`; until then the server charges none.
+ */
+sealed interface PayFee {
+    /** No fee on this payment (today, before 2F; also a 0 % rule). */
+    data object None : PayFee
+    /** GW13: being worked out; Pay waits. */
+    data object Quoting : PayFee
+    /** GW9b/GW9d: [amountMinor] in USDC minor units at [rateBps] (0..200). */
+    data class Quoted(val amountMinor: String, val rateBps: Int) : PayFee
+}
 
 /** Why the chosen person can't be paid right now, and what the screen offers. */
 sealed interface PayeeProblem {
@@ -135,6 +153,8 @@ data class PayUiState(
     val requested: com.circaso.feature.chama.domain.ChamaRequest? = null,
     /** When the wallets' balances were read, for "as of" offline. */
     val asOf: String? = null,
+    /** §7b's fee line; [PayFee.None] until phase 2F quotes it. */
+    val fee: PayFee = PayFee.None,
 ) {
     /** Paying from a group wallet (only ever its signer). */
     val fromGroupWallet get() = !payingFrom.personal
@@ -193,10 +213,37 @@ data class PayUiState(
     val payChain: String? get() = tagged?.first ?: blockchain
 
     val usdcText: String? get() = amountMinor?.let { MinorUnits.toDisplay(it, decimals) + " " + asset }
-    val fiatText: String? get() = if (inUsdc && currency != null && rate != null) amountMinor?.let { usdcToFiat(it, rate!!) }?.let { "$currency $it" } else null
-    val overBalance: Boolean get() = amountMinor?.let { MinorUnits.lessThan(balanceMinor, it) } ?: false
+
+    /** The fee row's words: "No fee", "Working it out", or "KES 2.50 · 0.5%" (in the person's currency when there is a rate). */
+    val feeText: String
+        get() = when (val f = fee) {
+            PayFee.None -> "No fee"
+            PayFee.Quoting -> "Working it out"
+            is PayFee.Quoted -> (rate?.let { r -> currency?.let { cur -> usdcToFiat(f.amountMinor, r)?.let { "$cur $it" } } } ?: (MinorUnits.toDisplay(f.amountMinor, 6) + " USDC")) +
+                " · " + (f.rateBps / 100.0).toString().removeSuffix(".0") + "%"
+        }
+
+    /** What leaves the wallet: the amount plus the fee (the receiver gets exactly the amount, §7b). */
+    val totalMinor: String? get() = amountMinor?.let { a -> (fee as? PayFee.Quoted)?.let { MinorUnits.add(a, it.amountMinor) } ?: a }
+
+    /** The button's amount: the total, in the person's currency when typed in it. */
+    val totalText: String?
+        get() {
+            val feeMinor = (fee as? PayFee.Quoted)?.amountMinor
+            typedFiatCents?.let { cents ->
+                val feeCents = feeMinor?.let { f -> usdcToFiat(f, rate!!)?.let { MinorUnits.fromDisplay(it, 2) } } ?: "0"
+                return "$currency ${fiatDisplay(MinorUnits.add(cents, feeCents))}"
+            }
+            return totalMinor?.let { t -> if (inUsdc && currency != null && rate != null && inFiat) usdcToFiat(t, rate!!)?.let { "$currency $it" } else MinorUnits.toDisplay(t, decimals) + " " + asset }
+        }
+    /** Typed in the person's currency: what they typed ("#500" is KES 500, never the 499.99 a round trip through USDC gives). */
+    private val typedFiatCents: String? get() = if (inUsdc && inFiat && rate != null && currency != null) MinorUnits.fromDisplay(amountText, 2) else null
+    val fiatText: String?
+        get() = typedFiatCents?.let { "$currency ${fiatDisplay(it)}" }
+            ?: if (inUsdc && currency != null && rate != null) amountMinor?.let { usdcToFiat(it, rate!!) }?.let { "$currency $it" } else null
+    val overBalance: Boolean get() = totalMinor?.let { MinorUnits.lessThan(balanceMinor, it) } ?: false
     val onHold: Boolean get() = wallet?.holdUntil != null
-    val canPay: Boolean get() = online && !onHold && payee != null && payChain != null && problem == null && !checking && !assetMissing && amountMinor?.let { !MinorUnits.isZero(it) } == true && !overBalance && step == PayStep.Amount &&
+    val canPay: Boolean get() = online && !onHold && payee != null && payChain != null && problem == null && !checking && !assetMissing && amountMinor?.let { !MinorUnits.isZero(it) } == true && !overBalance && step == PayStep.Amount && fee != PayFee.Quoting &&
         // A request needs the group's own chat to post in; a payout needs the request it pays.
         (!requestPayout || payingFrom.chatId != null)
     val filteredContacts get() = contacts.filter { query.isBlank() || it.displayName.contains(query, true) || it.handle?.contains(query.trimStart('@'), true) == true }
@@ -474,7 +521,7 @@ class PayViewModel(
                     val target = chatId ?: if (toAddress == null && !s.toGroup) (openDirectChat(payee.userId) as? AppResult.Success)?.value?.chatId else null
                     if (target != null) sendCard(target, PaymentCard(transfer.transferId, transfer.amount.amountMinor, transfer.amount.asset, transfer.blockchain, note))
                     val follow = observeTransfer
-                    if ((s.groupPayout || s.toGroup) && follow != null && !transfer.settled) {
+                    if ((s.groupPayout || s.toGroup) && follow != null && !transfer.settled && !intent.inChat) {
                         // GW17: signed, not yet on chain. The review stays, named; nothing says paid until the server does.
                         local.update { it.copy(step = PayStep.Sending, result = transfer, chatId = it.chatId ?: target) }
                         followTransfer(follow, transfer.transferId, s)
@@ -564,7 +611,16 @@ class PayViewModel(
      */
     fun onQuickReset() {
         idempotencyKey = newIdempotencyKey()
-        local.update { it.copy(step = PayStep.Amount, amountText = "", note = "", result = null, error = null, assetTag = null) }
+        // Personal again (GW9b's default) unless the chat fixes the wallet (a payout from the group's).
+        if (fromId.value != intent.fromWalletId) fromId.value = intent.fromWalletId
+        local.update {
+            it.copy(
+                // A payout's amount is the approved one (CH3), so it comes back with it; a `#` card starts empty.
+                step = PayStep.Amount, amountText = if (intent.payout) intent.amount?.filter { c -> c.isDigit() || c == '.' }.orEmpty() else "", note = "",
+                result = null, error = null, assetTag = null, failure = null, choosing = false, requested = null,
+                inFiat = !intent.payout, blockchain = null,
+            )
+        }
     }
 
     private companion object {
@@ -574,6 +630,20 @@ class PayViewModel(
 }
 
 /** What the group-wallet side of the review reads, combined. */
+/** "500", "1,000", "502.50": whole amounts as the design writes them, cents only when there are some. */
+internal fun fiatDisplay(cents: String): String {
+    val digits = cents.trimStart('0')
+    val whole = digits.isEmpty() || digits.endsWith("00")
+    return MinorUnits.toDisplay(cents, 2, minFraction = if (whole) 0 else 2)
+}
+
+/** What the person typed, from a card's note ("Added to Holiday Fund · November" → "November"). */
+internal fun cardNoteTyped(note: String?): String {
+    val n = note?.trim().orEmpty()
+    if (!n.startsWith("Added to ") && !n.startsWith("Paid from ")) return n
+    return n.substringAfter(" · ", "")
+}
+
 private data class GroupSide(
     val on: Boolean = false,
     val choices: List<NamedWallet> = emptyList(),

@@ -18,6 +18,7 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.remember
 import androidx.lifecycle.viewmodel.navigation3.rememberViewModelStoreNavEntryDecorator
 import androidx.navigation3.runtime.NavKey
@@ -135,6 +136,8 @@ fun AppNavigation(forceUpdate: Boolean, home: @Composable () -> Unit) {
         backStack.add(ChatRoute(id))
     }
     val calls = koinInject<com.circaso.feature.calls.CallController>()
+    // A Pay tapped on a chat's profile starts the payment in that chat's composer (money starts in the chat).
+    val moneyPrompts = androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateMapOf<String, Long>() }
     // Typing /asha in any text field opens Asha, but only with a full session (she needs the server) and never twice.
     val asha = if (state == AuthState.Active) AshaLauncher { if (backStack.lastOrNull() != AshaRoute) backStack.add(AshaRoute) } else null
     val announcements: SyncAnnouncements = koinInject()
@@ -338,6 +341,7 @@ fun AppNavigation(forceUpdate: Boolean, home: @Composable () -> Unit) {
                 val groupMoney = thread.groupMoney
                 val intoGroup = groupMoney?.walletActive == true
                 val callNow by calls.state.collectAsState()
+                var payingRequest by androidx.compose.runtime.remember(route.chatId) { androidx.compose.runtime.mutableStateOf<ChamaRequest?>(null) }
                 ThreadScreen(
                     threadViewModel,
                     onBack = ::pop,
@@ -353,29 +357,37 @@ fun AppNavigation(forceUpdate: Boolean, home: @Composable () -> Unit) {
                         goal != null && groupMoney == null -> ({ amount -> backStack.add(PayRoute(userId = goal.treasurerUserId, chatId = route.chatId, displayName = thread.memberName(goal.treasurerUserId), amount = amount, goalName = goal.name)) })
                         else -> null
                     },
-                    onPayRequest = { r -> backStack.add(payRequestRoute(route.chatId, goal?.name, r, thread::memberName, fromWalletId = groupMoney?.wallet?.walletId)) },
-                    // GW9a: the preview's arrow opens the review with what was typed in the chat.
-                    onReview = { amount, note ->
-                        backStack.add(
-                            if (intoGroup) PayRoute(groupId = route.chatId, chatId = route.chatId, displayName = thread.chat?.title, amount = amount, goalName = goal?.name, note = note)
-                            else PayRoute(userId = peer, chatId = route.chatId, displayName = thread.chat?.title, amount = amount, note = note),
+                    // D5/GW9: an approved request's Pay opens its money card over this chat; the PIN is the only step after it.
+                    onPayRequest = { r -> payingRequest = r },
+                    payout = payingRequest?.let { r ->
+                        val pr = payRequestRoute(route.chatId, goal?.name, r, thread::memberName, fromWalletId = groupMoney?.wallet?.walletId)
+                        koinViewModel<com.circaso.feature.wallet.presentation.PayViewModel>(
+                            key = "payout-${route.chatId}-${r.requestId}",
+                            parameters = { parametersOf(PayIntent(pr.userId, pr.chatId, pr.displayName, pr.amount, pr.address, pr.goalName, pr.requestId, fromWalletId = pr.fromWalletId, inChat = true)) },
                         )
                     },
+                    onPayoutClose = { payingRequest = null },
+                    moneyPrompt = moneyPrompts[route.chatId],
                     onCall = if (calls.available) ({ video -> calls.start(route.chatId, video) }) else null,
                     ongoingCall = callNow?.takeIf { it.chatId == route.chatId && it.minimised && it.phase != com.circaso.feature.calls.CallPhase.Ended }?.let { if (it.video || it.camera) "Ongoing video call" else "Ongoing voice call" },
                     onReturnToCall = { calls.minimise(false) },
                     focusLocalId = route.focusLocalId,
                     onOpenLocation = { m -> backStack.add(LocationMapRoute(route.chatId, m.localId)) },
-                    // C3: `#500` pays the other person without leaving the chat; one per chat, reset after each payment.
+                    // C3: `#500` pays without leaving the chat; the chat's money card is the review. One per chat, reset after each payment.
                     quickPay = when {
                         peer != null -> koinViewModel<com.circaso.feature.wallet.presentation.PayViewModel>(
                             key = "quickpay-${route.chatId}",
-                            parameters = { parametersOf(com.circaso.feature.wallet.presentation.PayIntent(userId = peer, chatId = route.chatId, displayName = thread.chat?.title)) },
+                            parameters = { parametersOf(PayIntent(userId = peer, chatId = route.chatId, displayName = thread.chat?.title, inChat = true)) },
                         )
                         // GW9a2: `#1000` in a group with a wallet is a contribution into it.
                         intoGroup -> koinViewModel<com.circaso.feature.wallet.presentation.PayViewModel>(
                             key = "quickpay-group-${route.chatId}",
-                            parameters = { parametersOf(com.circaso.feature.wallet.presentation.PayIntent(chatId = route.chatId, displayName = thread.chat?.title, groupId = route.chatId)) },
+                            parameters = { parametersOf(PayIntent(chatId = route.chatId, displayName = thread.chat?.title, groupId = route.chatId, goalName = goal?.name, inChat = true)) },
+                        )
+                        // D3, treasurer model (a server without group wallets): `#1000` is a contribution to the treasurer.
+                        goal != null && groupMoney == null && thread.canContribute -> koinViewModel<com.circaso.feature.wallet.presentation.PayViewModel>(
+                            key = "quickpay-chama-${route.chatId}",
+                            parameters = { parametersOf(PayIntent(userId = goal.treasurerUserId, chatId = route.chatId, displayName = thread.memberName(goal.treasurerUserId), goalName = goal.name, inChat = true)) },
                         )
                         else -> null
                     },
@@ -433,7 +445,12 @@ fun AppNavigation(forceUpdate: Boolean, home: @Composable () -> Unit) {
                     onSetUpWallet = { thenTarget -> backStack.add(GroupWalletSetupRoute(route.chatId, thenTarget = thenTarget)) },
                     onTarget = { backStack.add(TargetRoute(route.chatId)) },
                     onCall = if (calls.available) ({ video -> calls.start(route.chatId, video) }) else null,
-                    onPay = if (peer != null) ({ backStack.add(PayRoute(userId = peer, chatId = route.chatId, displayName = info.chat?.title)) }) else null,
+                    // Money starts in the chat: Pay goes back to it with `#` in the composer, ready for the amount.
+                    onPay = if (peer != null) ({
+                        moneyPrompts[route.chatId] = com.circaso.core.sync.nowMillis()
+                        pop()
+                        if (backStack.lastOrNull().let { it !is ChatRoute || it.chatId != route.chatId }) backStack.add(ChatRoute(route.chatId))
+                    }) else null,
                     onOpenLocation = { m -> backStack.add(LocationMapRoute(route.chatId, m.localId)) },
                     onOpenMessage = { id ->
                         pop()

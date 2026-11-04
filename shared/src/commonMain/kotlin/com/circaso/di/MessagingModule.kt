@@ -136,7 +136,8 @@ val messagingModule = module {
             gallery = getOrNull<com.circaso.core.platform.MediaGallery>() ?: com.circaso.core.platform.NoMediaGallery,
         )
     }
-    viewModel { params -> ThreadViewModel(params.get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), contacts = get()) }
+    factory { com.circaso.feature.messaging.presentation.ThreadPayments(get()) }
+    viewModel { params -> ThreadViewModel(params.get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), contacts = get(), payments = get()) }
     viewModel { params ->
         com.circaso.feature.messaging.presentation.map.LocationMapViewModel(params.get(), params.get(), get(), get(), getOrNull())
     }

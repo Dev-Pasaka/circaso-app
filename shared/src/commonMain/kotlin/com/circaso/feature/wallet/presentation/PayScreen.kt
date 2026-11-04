@@ -270,8 +270,8 @@ private fun AmountStep(state: PayUiState, padding: PaddingValues, onAmount: (Str
             }
             (state.chama?.memberCount ?: state.groupMoney?.memberCount?.takeIf { state.toGroup || state.fromGroupWallet })?.let { RowDivider(); DetailRow("Visible to", "All $it members") }
             RowDivider()
-            // Phase 2F puts the quoted fee and the total here (GW13); until then W4's fee is zero.
-            DetailRow("Fee", "No fee")
+            // §7b's one fee (gas included): PayFee.None until phase 2F quotes it (GW13).
+            DetailRow("Fee", state.feeText)
             RowDivider()
             DetailRow("${payee?.displayName?.substringBefore(' ') ?: "They"} receive${if (payee == null) "" else "s"}", state.usdcText ?: "—")
         }
@@ -300,7 +300,8 @@ private fun AmountStep(state: PayUiState, padding: PaddingValues, onAmount: (Str
             }
         }
         Spacer(Modifier.height(CircasoSpacing.s2))
-        val amount = if (state.inFiat && state.fiatText != null) state.fiatText else state.usdcText
+        // The button carries the total (the amount plus §7b's fee); the same as the amount while there is no fee.
+        val amount = state.totalText ?: if (state.inFiat && state.fiatText != null) state.fiatText else state.usdcText
         CircasoButton(
             text = when {
                 state.step == PayStep.Sending -> "Sending from ${if (state.fromGroupWallet) state.walletName else "your wallet"}…"
