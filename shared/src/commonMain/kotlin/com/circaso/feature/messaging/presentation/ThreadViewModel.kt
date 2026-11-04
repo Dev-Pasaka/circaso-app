@@ -29,6 +29,7 @@ import com.circaso.feature.wallet.domain.FiatValue
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -81,6 +82,8 @@ data class ThreadUiState(
     val photoCaption: String = "",
     /** Each money card's payment as this phone knows it (transferId → state): Sending, Sent or Not sent. */
     val paymentStates: Map<String, com.circaso.feature.wallet.domain.TransferState> = emptyMap(),
+    /** Cards whose payment the server won't show this phone (403/404): shown as they were, never left "on its way". */
+    val paymentsUnreadable: Set<String> = emptySet(),
     /** The voice note playing now, by local id. */
     val playing: Long? = null,
     /** When that note's sound started, epoch millis (null while it loads): drives the progress and the count-up. */
@@ -110,6 +113,13 @@ data class ThreadUiState(
             presence?.lastSeenAt != null -> lastSeenText(presence.lastSeenAt)
             else -> ""
         }
+    /**
+     * A money card that can't say Sent / Received yet: its payment is on its way, or this phone hasn't read it yet and
+     * the card is recent (a new card is never shown as arrived before the chain has it).
+     */
+    fun paymentPending(m: Message.Payment, now: Long = nowMillis()): Boolean =
+        paymentStates[m.transferId].let { it?.inFlight == true || (it == null && m.transferId !in paymentsUnreadable && now - m.orderAt < PaymentFreshMillis) }
+
     /** Delete for everyone: my own, sent, within 48 hours (guide, M14). The control is hidden otherwise, never failed after. */
     fun canDeleteForEveryone(m: Message, now: Long): Boolean {
         val (outgoing, messageId) = when (m) { is Message.Text -> m.outgoing to m.messageId; is Message.Media -> m.outgoing to m.messageId; else -> return false }
@@ -214,17 +224,21 @@ class ThreadViewModel(
                     .flatMapLatest { ids -> if (ids.isEmpty()) kotlinx.coroutines.flow.flowOf(emptyMap()) else p.states(ids) }
                     .collect { states -> _state.update { it.copy(paymentStates = states) } }
             }
-            // A card still on its way while the chat is open: read W5 now and then, so a missed frame never leaves
-            // it saying Sending (the frame usually lands first; this is the fallback).
+            // A card still on its way while the chat is on screen: read W5 at once and now and then, so a missed frame
+            // never leaves it Sending. Not after the server says this phone may not read it.
             viewModelScope.launch {
+                // Once the thread has loaded; then while someone is looking at it (the chat is on screen).
+                _state.first { it.messages.isNotEmpty() }
                 while (true) {
-                    delay(checkEveryMillis)
+                    _state.subscriptionCount.first { it > 0 }
                     val s = _state.value
-                    if (!s.online) continue
-                    s.messages.filterIsInstance<Message.Payment>()
-                        .filter { m -> nowMillis() - m.orderAt < PaymentCheckWindowMillis && s.paymentStates[m.transferId].let { it == null || it.inFlight } }
-                        .takeLast(PaymentChecksAtOnce)
-                        .forEach { m -> p.check(m.transferId) }
+                    if (s.online) {
+                        s.messages.filterIsInstance<Message.Payment>()
+                            .filter { m -> s.paymentPending(m) }
+                            .takeLast(PaymentChecksAtOnce)
+                            .forEach { m -> if (!p.check(m.transferId)) _state.update { it.copy(paymentsUnreadable = it.paymentsUnreadable + m.transferId) } }
+                    }
+                    delay(checkEveryMillis)
                 }
             }
         }
@@ -446,8 +460,6 @@ class ThreadViewModel(
 
     private companion object {
         const val PaymentCheckEveryMillis = 8_000L
-        /** Only recent cards are followed this way; older ones settled long ago or are read when opened. */
-        const val PaymentCheckWindowMillis = 30L * 60 * 1000
         const val PaymentChecksAtOnce = 3
         const val TypingEveryMillis = 4_000L
         const val TypingStopAfterMillis = 5_000L
@@ -456,6 +468,9 @@ class ThreadViewModel(
 
 /** WhatsApp's limit for one send from the gallery. */
 private const val MaxGalleryPick = 30
+
+/** Cards younger than this with no state yet count as on their way; older ones settled long ago. */
+internal const val PaymentFreshMillis = 30L * 60 * 1000
 
 /** Messages per page of a thread: what opens, and what each scroll up adds. */
 private const val ThreadPage = 100

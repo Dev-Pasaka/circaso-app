@@ -623,6 +623,23 @@ class PayViewModel(
         }
     }
 
+    /**
+     * A card in the chat said Not sent (the chain refused it; nothing was taken): Try Again puts exactly that payment
+     * back on the chat's money card, in its coin amount, so a rounding or a rate move can't change what is sent. It is
+     * signed again with a fresh key; nothing repeats on its own.
+     */
+    fun onRetryExact(amountMinor: String, asset: String, note: String?) {
+        idempotencyKey = newIdempotencyKey()
+        val decimals = state.value.wallet?.chains.orEmpty().flatMap { it.assets }.firstOrNull { it.symbol.equals(asset, true) }?.decimals ?: 6
+        local.update {
+            it.copy(
+                step = PayStep.Amount, inFiat = false, amountText = MinorUnits.toDisplay(amountMinor, decimals).replace(",", ""),
+                assetTag = asset.lowercase().takeIf { a -> a != "usdc" }, note = cardNoteTyped(note), failure = null, result = null, error = null,
+            )
+        }
+        state.value.payee?.userId?.takeIf { it.isNotEmpty() }?.let { check(it, state.value.payChain) }
+    }
+
     private companion object {
         const val AttachAttempts = 3
         const val AttachBackoffMillis = 1_000L

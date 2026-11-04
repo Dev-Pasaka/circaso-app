@@ -14,7 +14,11 @@ class ThreadPayments(private val wallet: WalletRepository) {
     fun states(transferIds: Set<String>): Flow<Map<String, TransferState>> =
         wallet.transfers(transferIds).map { list -> list.associate { it.transferId to it.state } }
 
-    suspend fun check(transferId: String) { wallet.loadTransfer(transferId) }
+    /** W5; false when the server says this phone may not read it, or it isn't there (stop asking). */
+    suspend fun check(transferId: String): Boolean = when (val r = wallet.loadTransfer(transferId)) {
+        is com.circaso.core.common.AppResult.Success -> true
+        is com.circaso.core.common.AppResult.Failure -> (r.error as? com.circaso.core.common.AppError.Api)?.httpStatus?.let { it != 403 && it != 404 } ?: true
+    }
 }
 
 /** On its way: signed (or about to be) and not yet on chain. */

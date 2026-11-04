@@ -78,6 +78,9 @@ class MoneyMathTest {
     @Test fun usdcAndFiatConvertWithoutFloats() {
         assertEquals("2580.00", usdcToFiat("20000000", "129.00"))
         assertEquals("1935.00", usdcToFiat("15000000", "129"))
+        // KES 500 at 129 is 3.875968 USDC (rounded down); back to fiat it reads 500.00, not 499.99.
+        assertEquals("500.00", usdcToFiat(fiatToUsdcMinor("500", "129.00")!!, "129.00"))
+        assertEquals("0.00", usdcToFiat("0", "129.00"))
         assertEquals("3875968", fiatToUsdcMinor("500", "129.00"), "KES 500 at 129 is 3.875968… USDC, rounded down")
         assertEquals("20000000", fiatToUsdcMinor("2580", "129"))
         assertNull(fiatToUsdcMinor("10", "0"))

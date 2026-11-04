@@ -14,6 +14,8 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.text.BasicText
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.shadow
@@ -30,6 +32,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.circaso.designsystem.motion.pressable
+import com.circaso.designsystem.theme.CircasoMotion
 import com.circaso.designsystem.theme.CircasoShapes
 import com.circaso.designsystem.theme.CircasoSpacing
 import com.circaso.designsystem.theme.CircasoTheme
@@ -124,6 +127,8 @@ fun MoneyCard(
     onLongClick: (() -> Unit)? = null,
     /** The coin it moved in: its mark sits at the card's top right, beside "Sent" / "Received". */
     symbol: String? = null,
+    /** Read the head out when it changes (Sending → Sent), for the card the person just sent. */
+    announce: Boolean = false,
 ) {
     val c = CircasoTheme.colors
     val t = CircasoTheme.typography
@@ -157,18 +162,26 @@ fun MoneyCard(
     val glintAlpha = when { received && !c.isDark -> 0.16f; received -> 0.28f; c.isDark -> 0f; else -> 0.28f }
     val glint = Brush.radialGradient(listOf(Color.White.copy(alpha = glintAlpha), Color.White.copy(alpha = 0f)), center = Offset.Zero, radius = 520f)
     val lift = if (failed) 0.dp else if (c.isDark) 2.dp else 6.dp
+    // Sending → Sent settles in rather than jumping; at once under reduced motion.
+    val still = CircasoTheme.reduceMotion
+    val shown by androidx.compose.animation.core.animateFloatAsState(if (pending) 0.7f else 1f, androidx.compose.animation.core.tween(if (still) 0 else CircasoMotion.BaseMs), label = "pending")
     Column(
-        modifier.widthIn(max = 264.dp).fillMaxWidth(0.8f).alpha(if (pending) 0.7f else 1f)
+        modifier.widthIn(max = 264.dp).fillMaxWidth(0.8f).alpha(shown)
             .shadow(lift, CircasoShapes.lg, ambientColor = Color.Black.copy(alpha = 0.18f), spotColor = Color.Black.copy(alpha = 0.18f))
             .clip(CircasoShapes.lg).background(metal).then(if (failed || glintAlpha == 0f) Modifier else Modifier.background(glint))
             .then(if (c.isHighContrast && !received) Modifier.border(1.dp, c.separator, CircasoShapes.lg) else Modifier)
             .then(if (onClick != null) Modifier.pressable(role = Role.Button, onLongClick = onLongClick, onClick = onClick) else Modifier)
             .padding(horizontal = CircasoSpacing.s5, vertical = CircasoSpacing.s4)
-            .semantics { contentDescription = listOfNotNull(head, amount, note, foot).joinToString(", ") },
+            .semantics {
+                contentDescription = listOfNotNull(head, amount, note, foot).joinToString(", ")
+                if (announce) liveRegion = androidx.compose.ui.semantics.LiveRegionMode.Polite
+            },
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            BasicText(head, style = t.footnote.copy(color = soft, fontWeight = FontWeight.SemiBold), modifier = Modifier.weight(1f))
+            androidx.compose.animation.Crossfade(head, Modifier.weight(1f), androidx.compose.animation.core.tween(if (still) 0 else CircasoMotion.BaseMs), label = "head") { h ->
+                BasicText(h, style = t.footnote.copy(color = soft, fontWeight = FontWeight.SemiBold))
+            }
             if (symbol != null) CoinDisc(symbol, Modifier.size(28.dp))
         }
         BasicText(amount, style = t.amountMedium.copy(color = if (failed) c.inkSecondary else ink), maxLines = 1)

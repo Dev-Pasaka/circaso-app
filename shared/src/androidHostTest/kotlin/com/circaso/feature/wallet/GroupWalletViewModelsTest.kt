@@ -481,7 +481,7 @@ class ThreadPaymentStatesTest {
     private val walletRepo = fake<WalletRepository> { name, args ->
         when (name) {
             "transfers" -> { asked += args[0] as Collection<*>; states.map { m -> m.map { (id, st) -> transfer(id, "1").copy(state = st) } } }
-            "loadTransfer" -> { checked += args[0] as String; AppResult.Success(transfer(args[0] as String, "1")) }
+            "loadTransfer" -> { checked += args[0] as String; loadAnswer(args[0] as String) }
             else -> null
         }
     }
@@ -501,28 +501,59 @@ class ThreadPaymentStatesTest {
     @BeforeTest fun setUp() { Dispatchers.setMain(dispatcher) }
     @AfterTest fun tearDown() = Dispatchers.resetMain()
 
-    @Test fun aCardSaysSendingUntilTheChainConfirmsAndIsCheckedWhileOnItsWay() = runTest(dispatcher) {
+    private var loadAnswer: (String) -> AppResult<Transfer> = { AppResult.Success(transfer(it, "1")) }
+
+    private fun TestScope.thread(): com.circaso.feature.messaging.presentation.ThreadViewModel {
         val connection = ConnectionState(GwMonitor(), NetworkHealth(), CoroutineScope(dispatcher), offlineDelayMs = 0)
-        val m = com.circaso.feature.messaging.domain.ObserveThreadUseCase(messagesRepo)
         val vm = com.circaso.feature.messaging.presentation.ThreadViewModel(
-            "dm", com.circaso.feature.messaging.domain.ObserveChatUseCase(chats), m, com.circaso.feature.messaging.domain.ObserveTypingUseCase(messagesRepo),
+            "dm", com.circaso.feature.messaging.domain.ObserveChatUseCase(chats), com.circaso.feature.messaging.domain.ObserveThreadUseCase(messagesRepo),
+            com.circaso.feature.messaging.domain.ObserveTypingUseCase(messagesRepo),
             com.circaso.feature.messaging.domain.SendMessageUseCase(messagesRepo), com.circaso.feature.messaging.domain.RetryMessageUseCase(messagesRepo),
             com.circaso.feature.messaging.domain.DiscardMessageUseCase(messagesRepo), com.circaso.feature.messaging.domain.DeleteForEveryoneUseCase(messagesRepo),
             com.circaso.feature.messaging.domain.MarkReadUseCase(messagesRepo), com.circaso.feature.messaging.domain.SetTypingUseCase(messagesRepo),
             connection, com.circaso.core.platform.NoChatNotifications,
             payments = com.circaso.feature.messaging.presentation.ThreadPayments(walletRepo), checkEveryMillis = 1_000,
         )
-        runCurrent()
-        assertEquals(TransferState.Submitted, vm.state.value.paymentStates["t1"], "Sending: signed, not yet on chain")
-        assertEquals(setOf("t1"), asked.last().toSet())
-        advanceTimeBy(1_100)
-        assertEquals(listOf("t1"), checked, "a card on its way is read again in case a frame was missed")
-        states.value = mapOf("t1" to TransferState.Confirmed)
-        runCurrent()
-        assertEquals(TransferState.Confirmed, vm.state.value.paymentStates["t1"], "Sent only now")
-        advanceTimeBy(3_000)
-        assertEquals(listOf("t1"), checked, "a confirmed card isn't checked again")
-        vm.viewModelScope.coroutineContext[kotlinx.coroutines.Job]?.cancel()
+        // On screen: the chat is being looked at (the W5 checks pause when nothing collects it).
+        backgroundScope.launch { vm.state.collect { } }
+        return vm
+    }
+
+    @Test fun aCardSaysSendingUntilTheChainConfirmsAndIsCheckedWhileOnItsWay() = runTest(dispatcher) {
+        val vm = thread()
+        // The VM checks W5 on a timer: always stop it, or a failed assertion leaves runTest skipping time forever.
+        try {
+            runCurrent()
+            assertEquals(TransferState.Submitted, vm.state.value.paymentStates["t1"], "Sending: signed, not yet on chain")
+            assertTrue(vm.state.value.paymentPending(card))
+            assertEquals(setOf("t1"), asked.last().toSet())
+            assertEquals(listOf("t1"), checked, "read at once, in case a frame was missed")
+            advanceTimeBy(1_100)
+            assertEquals(listOf("t1", "t1"), checked, "and again while it is on its way")
+            states.value = mapOf("t1" to TransferState.Confirmed)
+            runCurrent()
+            assertEquals(TransferState.Confirmed, vm.state.value.paymentStates["t1"], "Sent only now")
+            assertFalse(vm.state.value.paymentPending(card))
+            advanceTimeBy(3_000)
+            assertEquals(2, checked.size, "a confirmed card isn't checked again")
+        } finally { vm.viewModelScope.coroutineContext[kotlinx.coroutines.Job]?.cancel() }
+    }
+
+    @Test fun aNewCardThisPhoneHasntReadIsNeverShownAsArrived() = runTest(dispatcher) {
+        states.value = emptyMap()
+        loadAnswer = { AppResult.Failure(AppError.Api("wallet.transfer_not_found", 404, null, null, emptyMap())) }
+        val vm = thread()
+        // The VM checks W5 on a timer: always stop it, or a failed assertion leaves runTest skipping time forever.
+        try {
+            assertTrue(com.circaso.feature.messaging.presentation.ThreadUiState(paymentStates = emptyMap()).paymentPending(card), "no state yet: on its way, not Received")
+            assertFalse(com.circaso.feature.messaging.presentation.ThreadUiState().paymentPending(card.copy(orderAt = 0)), "an old card with no state reads as it always did")
+            runCurrent()
+            assertEquals(listOf("t1"), checked)
+            assertTrue("t1" in vm.state.value.paymentsUnreadable, "the server won't show it: stop asking")
+            assertFalse(vm.state.value.paymentPending(card), "and don't leave it on its way")
+            advanceTimeBy(3_000)
+            assertEquals(1, checked.size)
+        } finally { vm.viewModelScope.coroutineContext[kotlinx.coroutines.Job]?.cancel() }
     }
 }
 

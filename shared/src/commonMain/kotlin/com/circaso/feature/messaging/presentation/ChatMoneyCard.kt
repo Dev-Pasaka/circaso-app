@@ -2,6 +2,12 @@ package com.circaso.feature.messaging.presentation
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import com.circaso.designsystem.components.GoalProgress
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.defaultMinSize
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -58,6 +64,11 @@ internal fun ChatMoneyCard(
     modifier: Modifier = Modifier,
     /** A payout card opened from a request (D5) can be put away; a `#` card goes when the chip does. */
     onClose: (() -> Unit)? = null,
+    /**
+     * The room between the header and the composer. The card never grows past it: with large text on a small phone and
+     * the keyboard up, the rows scroll while who, how much and Pay stay in view.
+     */
+    maxHeight: androidx.compose.ui.unit.Dp = androidx.compose.ui.unit.Dp.Unspecified,
 ) {
     val c = CircasoTheme.colors
     val t = CircasoTheme.typography
@@ -74,6 +85,7 @@ internal fun ChatMoneyCard(
     }
     Column(
         modifier.fillMaxWidth().padding(horizontal = CircasoSpacing.s3).padding(bottom = CircasoSpacing.s2)
+            .then(if (maxHeight != androidx.compose.ui.unit.Dp.Unspecified) Modifier.heightIn(max = maxHeight) else Modifier)
             .glass(CircasoShapes.lg, floating = true, edge = false)
             .padding(start = CircasoSpacing.s4, end = CircasoSpacing.s3, top = CircasoSpacing.s3, bottom = CircasoSpacing.s3),
         verticalArrangement = Arrangement.spacedBy(CircasoSpacing.s2),
@@ -84,80 +96,109 @@ internal fun ChatMoneyCard(
             else Avatar(payee?.displayName ?: "", size = CircasoSizes.avatarMd, imageUrl = payee?.avatarUrl)
             Column(Modifier.weight(1f).semantics(mergeDescendants = true) {
                 heading()
-                contentDescription = listOfNotNull(title, amount, s.usdcText.takeIf { s.fiatText != null }).joinToString(", ")
+                contentDescription = listOfNotNull(title, amount, s.usdcText.takeIf { s.fiatText != null }, "the amount the admins approved".takeIf { s.payout }).joinToString(", ")
             }) {
                 BasicText(title, style = t.subhead.copy(color = c.inkSecondary), maxLines = 1, overflow = TextOverflow.Ellipsis)
                 BasicText(amount ?: "Type an amount after #", style = (if (amount != null) t.title2 else t.callout).copy(color = if (amount != null) c.ink else c.inkSecondary, fontWeight = FontWeight.SemiBold, fontFeatureSettings = "tnum"))
-                if (s.fiatText != null) BasicText(s.usdcText.orEmpty(), style = t.footnote.copy(color = c.inkSecondary, fontFeatureSettings = "tnum"))
+                val under = listOfNotNull(s.usdcText.takeIf { s.fiatText != null }, "The amount the admins approved".takeIf { s.payout }).joinToString(" · ")
+                if (under.isNotEmpty()) BasicText(under, style = t.footnote.copy(color = c.inkSecondary, fontFeatureSettings = "tnum"))
             }
             if (onClose != null && !signing) CircasoIconButton(CircasoIcon.Close, "Close", onClose)
         }
-        // The review's rows, compact (GW9b / GW9d / GW9): nothing here is typed, it all came from the chat.
-        Column(Modifier.fillMaxWidth().padding(top = CircasoSpacing.s1)) {
-            if (s.showPayingFrom) {
-                Row(Modifier.fillMaxWidth().padding(vertical = 2.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(CircasoSpacing.s2)) {
-                    BasicText("Paying from", Modifier.weight(1f), style = t.footnote.copy(color = c.inkSecondary))
-                    PayingFromChip(s.payingFrom, if (s.canSwitch && !signing) onChoose else null)
+        // The middle scrolls when there isn't room for it all; the header above and Pay below stay put.
+        Column(
+            Modifier.fillMaxWidth().weight(1f, fill = false).verticalScroll(rememberScrollState()),
+            verticalArrangement = Arrangement.spacedBy(CircasoSpacing.s2),
+        ) {
+            // GW19 / G2: refused before it reached the chain. Nothing was taken; a payout's approval stands.
+            s.failure?.let { f ->
+                com.circaso.designsystem.chrome.Banner(
+                    "Not sent. Nothing was taken from ${f.wallet}." + (if (s.payout) " The approval still stands." else "") +
+                        (f.message.takeIf { it != com.circaso.core.common.ErrorMessages.SomethingWrong && !it.contains("Nothing was sent") && !it.contains("Nothing was taken") }?.let { " $it" } ?: ""),
+                    CircasoIcon.Warning, tone = com.circaso.designsystem.chrome.BannerTone.Critical,
+                )
+            }
+            // The review's rows, compact (GW9b / GW9d / GW9): nothing here is typed, it all came from the chat.
+            Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(CircasoSpacing.s1)) {
+                if (s.showPayingFrom) {
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(CircasoSpacing.s2)) {
+                        BasicText("Paying from", Modifier.weight(1f), style = t.footnote.copy(color = c.inkSecondary))
+                        Box(Modifier.defaultMinSize(minHeight = CircasoSizes.controlMd), contentAlignment = Alignment.Center) {
+                            PayingFromChip(s.payingFrom, if (s.canSwitch && !signing) onChoose else null)
+                        }
+                    }
+                }
+                s.payChain?.let { CardRow("Network", "${s.asset} on ${chainName(it)}") }
+                s.note.trim().takeIf { it.isNotEmpty() }?.let { CardRow("For", it) }
+                s.payoutRequest?.takeIf { s.groupPayout }?.let { r ->
+                    val names = r.approvedBy.map { s.memberNames[it]?.substringBefore(' ') ?: "an admin" }
+                    CardRow("Request", if (names.isEmpty()) "Approved" else "Approved by " + names.joinToString(" and "))
+                }
+                if (s.requestPayout) CardRow("Approvals", if (s.groupMoney?.approvalPolicy == ApprovalPolicy.AnyAdmin) "Any admin" else "2 admins")
+                // Only once there is an amount: "receives —" beside "Type an amount" says nothing.
+                if (!s.requestPayout && amount != null) {
+                    CardRow("Fee", s.feeText)
+                    if (s.fee is com.circaso.feature.wallet.presentation.PayFee.Quoted) s.totalText?.let { CardRow("Total", it) }
+                    CardRow(if (s.toGroup) "$group receives" else "$first receives", amount)
                 }
             }
-            s.payChain?.let { CardRow("Network", "${s.asset} on ${chainName(it)}") }
-            s.note.trim().takeIf { it.isNotEmpty() }?.let { CardRow("For", it) }
-            s.payoutRequest?.takeIf { s.groupPayout }?.let { r ->
-                val names = r.approvedBy.map { s.memberNames[it]?.substringBefore(' ') ?: "an admin" }
-                CardRow("Request", if (names.isEmpty()) "Approved" else "Approved by " + names.joinToString(" and "))
-            }
-            if (s.requestPayout) CardRow("Approvals", if (s.groupMoney?.approvalPolicy == ApprovalPolicy.AnyAdmin) "Any admin" else "2 admins")
             // GW9a2/GW9d: where the group's target will stand once this lands.
-            val goal = s.groupMoney?.goal?.takeIf { s.toGroup }
             val after = s.progressAfter
-            if (s.toGroup && goal != null && after != null) {
-                val got = MinorUnits.add(s.groupMoney!!.contributedMinor, s.amountMinor ?: "0")
-                CardRow("Target", "${amountText(got, s.wallet?.fiat)} of ${amountNumber(goal.targetMinor, s.wallet?.fiat)} · ${(after * 100).toInt()}% after this")
-            } else if (!s.toGroup && s.contribution && s.chama != null && after != null) {
-                CardRow(s.goalName ?: "Goal", "${(after * 100).toInt()}% after this")
+            val goal = s.groupMoney?.goal?.takeIf { s.toGroup }
+            if (after != null && amount != null) {
+                if (goal != null) {
+                    val got = MinorUnits.add(s.groupMoney!!.contributedMinor, s.amountMinor ?: "0")
+                    GoalProgress(amountText(got, s.wallet?.fiat), amountNumber(goal.targetMinor, s.wallet?.fiat), after, meta = "After your contribution", label = "Target after your contribution")
+                } else s.chama?.takeIf { s.contribution }?.let { ch ->
+                    val got = MinorUnits.add(ch.contributedMinor, s.amountMinor ?: "0")
+                    GoalProgress(amountText(got, s.wallet?.fiat), amountNumber(ch.goal.targetMinor, s.wallet?.fiat), after, meta = "After your contribution", label = "${ch.goal.name} after your contribution")
+                }
             }
-            if (!s.requestPayout) {
-                CardRow("Fee", s.feeText)
-                CardRow(if (s.toGroup) "$group receives" else "$first receives", amount ?: "—")
+            // Why it can't go yet, or what's happening: one line, announced when it changes.
+            val (line, tone) = statusLine(s, first)
+            if (line != null) {
+                BasicText(
+                    line,
+                    Modifier.semantics { liveRegion = LiveRegionMode.Polite },
+                    style = t.footnote.copy(color = when (tone) { Tone.Critical -> c.critical; Tone.Warning -> c.warning; Tone.Quiet -> c.inkSecondary }),
+                )
             }
-        }
-        // Why it can't go yet, or what's happening: one line, announced when it changes.
-        val (line, tone) = statusLine(s, first)
-        if (line != null) {
-            BasicText(
-                line,
-                Modifier.semantics { liveRegion = LiveRegionMode.Polite },
-                style = t.footnote.copy(color = when (tone) { Tone.Critical -> c.critical; Tone.Warning -> c.warning; Tone.Quiet -> c.inkSecondary }),
-            )
         }
         val total = s.totalText ?: amount
         CircasoButton(
-            text = when {
-                signing && s.requestPayout -> "Asking the admins…"
-                signing && s.fromGroupWallet -> "Waiting for ${s.walletName}’s PIN…"
-                signing -> "Waiting for your PIN…"
-                s.failure != null -> "Try Again"
-                s.requestPayout -> if (amount != null) "Request $amount Payout" else "Request Payout"
-                s.toGroup || s.contribution || s.payout -> if (total != null) "Pay $total" else "Pay"
-                else -> if (total != null) "Send $total" else "Send"
-            },
+            text = payLabel(s, amount, total),
             onClick = onPay, size = ButtonSize.Large, block = true, enabled = s.canPay, busy = signing,
         )
-        s.failure?.reference?.let { BasicText("Ref $it", style = t.caption1.copy(color = c.inkTertiary, fontFeatureSettings = "tnum")) }
+        val foot = listOfNotNull(
+            s.failure?.reference?.let { "Ref $it" },
+            "One Circaso fee, network cost included.".takeIf { s.fee is com.circaso.feature.wallet.presentation.PayFee.Quoted },
+            s.rate?.takeIf { s.tagged == null && s.currency != null }?.let { "1 USDC = ${s.currency} ${com.circaso.feature.wallet.presentation.formatRate(it)}" },
+        ).joinToString(" · ")
+        if (foot.isNotEmpty()) BasicText(foot, style = t.caption1.copy(color = c.inkTertiary, fontFeatureSettings = "tnum"))
     }
+}
+
+/** The card's button, and the composer arrow's spoken label while a payment is in the field. */
+internal fun payLabel(s: PayUiState, amount: String? = s.fiatText ?: s.usdcText, total: String? = s.totalText ?: amount): String = when {
+    s.step == PayStep.Signing && s.requestPayout -> "Asking the admins…"
+    s.step == PayStep.Signing && s.fromGroupWallet -> "Waiting for ${s.walletName}’s PIN…"
+    s.step == PayStep.Signing -> "Waiting for your PIN…"
+    s.failure != null -> "Try Again"
+    s.requestPayout -> if (amount != null) "Request $amount Payout" else "Request Payout"
+    s.toGroup || s.contribution || s.payout -> if (total != null) "Pay $total" else "Pay"
+    else -> if (total != null) "Send $total" else "Send"
 }
 
 private enum class Tone { Quiet, Warning, Critical }
 
-/** The card's one status line: offline and hold first (amber, they pass), then what's wrong (red), then guidance. */
+/** The card's status line: offline and hold first (amber, they pass and explain a dimmed Pay), then what's wrong (red). */
 private fun statusLine(s: PayUiState, first: String): Pair<String?, Tone> = when {
     s.step == PayStep.Signing && s.fromGroupWallet && !s.requestPayout -> "Approve from ${s.walletName} · ${s.walletName}’s PIN, not your personal one." to Tone.Quiet
     s.step == PayStep.Signing -> null to Tone.Quiet
-    // GW19 / G2: refused before it reached the chain. Nothing was taken; a payout's approval stands.
-    s.failure != null -> ("Not sent. Nothing was taken from ${s.failure.wallet}." + (if (s.payout) " The approval still stands." else "") +
-        (s.failure.message.takeIf { it != com.circaso.core.common.ErrorMessages.SomethingWrong && !it.contains("Nothing was sent") && !it.contains("Nothing was taken") }?.let { " $it" } ?: "")) to Tone.Critical
     !s.online -> "You’re offline. Money sends only while you’re connected." to Tone.Warning
     s.onHold -> "Sending is paused for a short while after your account was recovered. You can still receive money." to Tone.Warning
+    // The banner above says what happened; nothing more to add here.
+    s.failure != null -> null to Tone.Quiet
     s.checking -> "Checking $first’s wallet…" to Tone.Quiet
     s.problem is PayeeProblem.NoWallet -> "$first doesn’t have a Circaso wallet yet." to Tone.Critical
     s.problem is PayeeProblem.NotOnChain -> "$first can’t receive on this network yet." to Tone.Critical
@@ -174,7 +215,7 @@ private fun CardRow(label: String, value: String) {
     val c = CircasoTheme.colors
     val t = CircasoTheme.typography
     Row(
-        Modifier.fillMaxWidth().padding(vertical = 2.dp).semantics(mergeDescendants = true) {},
+        Modifier.fillMaxWidth().semantics(mergeDescendants = true) {},
         horizontalArrangement = Arrangement.spacedBy(CircasoSpacing.s3), verticalAlignment = Alignment.Top,
     ) {
         BasicText(label, style = t.footnote.copy(color = c.inkSecondary))
@@ -182,14 +223,14 @@ private fun CardRow(label: String, value: String) {
     }
 }
 
-/** The money line for a card the chain didn't take, drawn under it: "Not sent · Nothing was taken" and Try Again. */
+/** Under a card the chain didn't take (its head says Not sent): nothing was taken, and Try Again. */
 @Composable
 internal fun NotSentLine(outgoing: Boolean, onRetry: (() -> Unit)?) {
     val c = CircasoTheme.colors
     val t = CircasoTheme.typography
     Row(Modifier.padding(top = CircasoSpacing.s1), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(CircasoSpacing.s2)) {
         CircasoIconImage(CircasoIcon.Warning, c.critical, Modifier.size(14.dp))
-        BasicText(if (outgoing) "Not sent. Nothing was taken." else "This payment didn’t go through.", style = t.footnote.copy(color = c.critical))
+        BasicText(if (outgoing) "Nothing was taken." else "Nothing reached you.", style = t.footnote.copy(color = c.critical))
     }
     if (onRetry != null) com.circaso.designsystem.components.SuggestionChip("Try Again", onRetry, Modifier.padding(top = CircasoSpacing.s1))
 }

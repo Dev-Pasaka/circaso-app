@@ -199,11 +199,17 @@ fun formatFiat(currency: String, amount: String): String {
     return "$currency " + MinorUnits.group(whole) + if (frac.isEmpty()) "" else "." + frac.padEnd(2, '0')
 }
 
-/** Multiplies a USDC amount (minor units, 6 decimals) by a decimal rate string → fiat amount string with 2 decimals. */
+/**
+ * Multiplies a USDC amount (minor units, 6 decimals) by a decimal rate string → fiat amount string with 2 decimals,
+ * to the nearest cent: `#500` sent as 3.875968 USDC (rounded down to the micro-USDC) reads KES 500.00 again on both
+ * phones, not 499.99. Display only; what moves is always the USDC amount.
+ */
 fun usdcToFiat(amountMinor: String, rate: String): String? {
     val r = MinorUnits.fromDisplay(rate, 6) ?: return null
-    val product = bigMultiply(amountMinor.trimStart('0').ifEmpty { "0" }, r) // 12 decimals
-    return MinorUnits.toDisplay(product.dropLast(10).ifEmpty { "0" }, 2, minFraction = 2).replace(",", "")
+    val product = bigMultiply(amountMinor.trimStart('0').ifEmpty { "0" }, r).padStart(11, '0') // 12 decimals
+    val cents = product.dropLast(10).ifEmpty { "0" }
+    val rounded = if (product[product.length - 10] >= '5') MinorUnits.add(cents, "1") else cents
+    return MinorUnits.toDisplay(rounded, 2, minFraction = 2).replace(",", "")
 }
 
 /** Divides a fiat amount (2 decimals) by a decimal rate → USDC minor units (6 decimals), rounded down. */

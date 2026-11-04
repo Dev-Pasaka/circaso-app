@@ -238,7 +238,7 @@ A Circle user-controlled wallet: the server makes challenges, the person signs t
     Theme and words in `CirclePWTheme.json` and `CirclePWLocalizable.strings`.
 - **Fiat**: the phone's region currency (`localCurrencyCode()`, Kenya → KES) goes as `?currency=`; USDC = 1 USD at the server's rate. Amount maths is decimal-string only (`MinorUnits`, `usdcToFiat`, `fiatToUsdcMinor`): no float ever touches money. "Rates by Exchange Rate API" is credited under the total.
 - **Screens**: Wallet tab (E1: balance, Add/Send/Receive/Cash Out, Coins per network, Recent from the local table, Networks link; create and setting-up states before a wallet; hide balances), Receive sheet (E4: @handle to share or copy, or the address per network; QR needs a library and is not added), Pay (C4 → the SDK's C5 → C6: pick a contact or arrive from a chat, type in fiat or USDC, note, W9 check with "Remind them" on `NO_WALLET` and a network pick on `NO_WALLET_ON_CHAIN`, W4 then the SDK, then the card into the chat), Send to a wallet (E5: address with paste, network, amount, warning, W11 check, review, sign), Payment (C7: amount, details, status, network, share receipt), Activity (E7, from the local table until W6 ships), Networks (W12: add a chain runs a challenge). Add money (E2) and Cash out (E6) open sheets that say the rails are coming; Cash out offers "Send to an Exchange".
-- **In chats**: the direct thread's header has the money action, `#500 ` in the composer opens Pay with 500 filled (C3), and a payment is an encrypted `payment` payload (`transferId`, `amountMinor`, `asset`, `blockchain`, the note as `text`) shown as `MoneyCard` on both sides; the receiver reads W5 from the card. The note never reaches the wallet API.
+- **In chats** (superseded 2026-11-04 by "Money in the chat" below: no Pay screen from a chat): a payment is an encrypted `payment` payload (`transferId`, `amountMinor`, `asset`, `blockchain`, the note as `text`) shown as `MoneyCard` on both sides; the receiver reads W5 from the card. The note never reaches the wallet API.
 - **Realtime**: `wallet` joined `KnownModules` (its `seq` is kept); `transfer.updated`, `payment.received`, `wallet.ready` (ends the create/add polling at once) and `setup.requested` (the tab's nudge "Amina wants to send you money") are handled in the repository.
 - **Previews**: `wallet`, `wallet-create`, `wallet-offline`, `transfer`.
 - **Tests** (`commonTest/feature/wallet/WalletTest.kt`): the money maths, and the repository with fakes: refresh with currency, create (challenge → SDK → active), a cancelled PIN sends nothing, pay keeps note and name on the phone only, frames update the copy.
@@ -297,10 +297,68 @@ signer, admins approve payouts). The treasurer model above stays only for a serv
   (GW9a2) and the preview's arrow opens the review; in a direct chat it does too when there is another wallet to pay
   from, otherwise the PIN as before (GW11b).
 - **Money never queues**: every write here is online-only and disabled offline before the tap; reads come from Room.
-- **Fees and caps (2F)**: not built. The seams: the review's "Fee" row, `PrepareTransferResponse.fee`, `PayFailure`.
+- **Fees and caps (2F)**: not built. The seams: `PayUiState.fee` (`PayFee.None | Quoting | Quoted(amountMinor, rateBps)`,
+  read by both the chat's money card and the Pay screen through `feeText` / `totalText`, and `canPay` waits while
+  `Quoting`), `PrepareTransferResponse.fee`, `PayFailure`.
 - **Tests**: `commonTest/feature/wallet/GroupWalletTest.kt` (flag, repository), `commonTest/feature/chama/ChamaTest.kt`
   `GroupMoneyTest`, `androidHostTest/feature/wallet/GroupWalletViewModelsTest.kt` (Pay, set-up, group info rules).
 - **Previews**: `gw-*` in `gallery/GroupWalletPreviews.kt` (listed in `project-status.md`).
+
+## Money in the chat (2026-11-04, Pasaka's correction; C3–C6, GW9a/GW9a2/GW9b/GW9d/GW15/GW17–GW19)
+
+Money starts and ends in the chat: **no review page** between a chat and the Circle PIN, and no note field (the note
+is the text typed after the amount, `#500 for lunch`).
+- **The chat's money card** (`feature/messaging/presentation/ChatMoneyCard.kt`) floats over the thread while a `#`
+  amount is in the composer. It is the whole review: who (or the group, with "Target … · 67% after this"), the amount
+  in the person's currency (as typed: `#500` is KES 500) and in the coin, Network (`@asset` on its chain), Paying from
+  (`PayingFromChip`; the GW10 sheet opens over the chat; a group wallet turns it into Request Payout), For (the note),
+  Request (who approved, for a payout), Fee (`PayFee`, "No fee" until 2F), "{name} receives". Pay (or the composer's
+  arrow) goes straight to the Circle PIN, which names the wallet. Offline the button is disabled with G3's line.
+  A refusal before the chain (W4 error, SDK failure) stays on the card: "Not sent. Nothing was taken from …", Try
+  Again (the same Pay, fresh key) and "Ref …".
+- **Entry points**: composer `#amount` in a direct chat, in a group with an active wallet (contribution) and in a
+  treasurer-model group (contribution to the treasurer); the goal strip's Add and a direct chat profile's Pay put `#`
+  in the composer and focus it (`ThreadScreen.moneyPrompt`, `ComposerBar.focusRequester`); an approved request's Pay
+  (D5) opens the same card over the group chat (`ThreadScreen.payout`, a `PayViewModel` keyed per request). `PayRoute`
+  stays for what isn't a chat: the Wallet tab's Send, the group wallet screen (Add, Payout, a request's Pay), calls
+  (H1/H5) and the treasurer-model chama screen.
+- **One engine**: `PayViewModel` drives both the card and the Pay screen. `PayIntent.inChat` makes it finish once the
+  PIN is done (the card is in the thread; no GW17 wait on the card), and `onQuickReset` readies it for the next `#`
+  (Personal again; a payout keeps its approved amount).
+- **The card in the thread** (`PaymentMessage`): `ThreadViewModel` follows each card's transfer from Room
+  (`ThreadPayments`, `WalletRepository.transfers(ids)`): "Sending" (or "On its way" for the receiver) while
+  `AWAITING_SIGNATURE`/`SUBMITTED`, the kind ("Sent", "Contribution", "Paid from …", "Received") only once
+  `CONFIRMED`, "Not sent" + "Nothing was taken." + Try Again when `FAILED`/`EXPIRED` (Try Again puts exactly the
+  same coin amount back on the money card, `PayViewModel.onRetryExact`, with `@asset` and the typed note). A card
+  younger than 30 minutes that this phone hasn't read yet also counts as on its way (`ThreadUiState.paymentPending`),
+  so nothing reads Sent/Received early. Pending cards are read with W5 as soon as the thread loads and every 8 s, only
+  while the chat is on screen, and never again after a 403/404 (`paymentsUnreadable`). The head crossfades and my
+  latest card's head is a polite live region. C6's chips show only once it has arrived.
+- **Fitting the screen**: the card is capped at the room between the header and the composer; who, how much and Pay
+  stay pinned and the rows scroll (large text, small phone, keyboard up). A failure is GW19's critical banner; the
+  foot carries the reference and "1 USDC = KES …". A request's Pay reopened while its payment is on its way or
+  confirmed is not offered again ("This payout is already on its way").
+- **Fiat display rounds to the nearest cent** (`usdcToFiat`), so `#500` (3.875968 USDC, rounded down) reads KES 500 on
+  both phones, not 499.99. Display only; the USDC amount is what moves.
+- **Tests**: `GroupWalletViewModelsTest.kt` (`GroupWalletPayViewModelTest` chat cases, `ThreadPaymentStatesTest`).
+  **Previews**: `chat-pay`, `chat-pay-from`, `chat-pay-signing`, `chat-pay-failed`, `chat-pay-offline`,
+  `chat-pay-personal-only`, `chat-contribute`, `chat-payout`, `chat-cards`.
+
+## Group money live (2026-11-04)
+
+Every screen that shows a group's money reads Room (CH7 in `group_money`, the group wallet's W1 in `wallet_cache`, W6
+in `wallet_activity`), so live means reloading those copies when money moves:
+- **Others' money**: backend PR #30 adds `chama` / `money.updated` `{ chatId, transferId, kind, amount, userId?,
+  requestId? }` to every member for each confirmed contribution (target or not) and paid payout. `ChamaRepositoryImpl`
+  reloads CH7 on it (as on `contribution.added`, `request.updated`, `group.updated`); `GroupMoneyLive.onChamaFrame`
+  then reloads the group wallet's W1 and W6 (`money.updated`, `contribution.added`, `request.updated` PAID).
+  Until PR #30 is deployed, a contribution to a group **without a target** reaches the other members only when they
+  reopen the group (the old server sends them nothing).
+- **My own money**: `WalletRepository.settled` announces an outgoing transfer the moment the phone learns it is
+  `CONFIRMED` or `FAILED` (my `transfer.updated`, or a W5 read); `GroupMoneyLive` reloads that group's CH7, W1 and W6
+  at once and again 2.5 s later (the server records the contribution just after the chain confirms it).
+- Started at launch next to the realtime dispatcher (`initKoin`). Tests: `GroupMoneyLiveTest`,
+  `WalletTest.myPaymentReachingTheChainIsAnnouncedOnce`.
 
 ## Phase 1 design gaps closed in the app (2026-10-29)
 

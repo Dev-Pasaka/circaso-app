@@ -192,6 +192,8 @@ fun ComposerBar(
     floating: (@Composable ColumnScope.() -> Unit)? = null,
     /** Lets the screen put the cursor in the field (a payment started from the goal strip or the profile). */
     focusRequester: androidx.compose.ui.focus.FocusRequester? = null,
+    /** What the arrow does, for a screen reader ("Send KES 500 to Mum" while a payment is in the field). */
+    sendLabel: String = "Send",
 ) {
     val c = CircasoTheme.colors
     val t = CircasoTheme.typography
@@ -254,7 +256,7 @@ fun ComposerBar(
                 }
                 Row(buttonLift, horizontalArrangement = Arrangement.spacedBy(CircasoSpacing.s2)) {
                     trailing?.invoke(this)
-                    if (showSend) CircasoIconButton(CircasoIcon.Send, "Send", onSend, emphasised = canSend)
+                    if (showSend) CircasoIconButton(CircasoIcon.Send, sendLabel, onSend, emphasised = canSend)
                 }
             }
         }

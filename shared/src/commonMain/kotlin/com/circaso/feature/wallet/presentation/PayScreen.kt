@@ -335,7 +335,7 @@ private fun AmountStep(state: PayUiState, padding: PaddingValues, onAmount: (Str
     }
 }
 
-private fun formatRate(rate: String) = rate.substringBefore('.') + "." + rate.substringAfter('.', "00").take(2).padEnd(2, '0')
+internal fun formatRate(rate: String) = rate.substringBefore('.') + "." + rate.substringAfter('.', "00").take(2).padEnd(2, '0')
 
 
 @Composable

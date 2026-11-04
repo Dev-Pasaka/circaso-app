@@ -368,6 +368,7 @@ fun AppNavigation(forceUpdate: Boolean, home: @Composable () -> Unit) {
                     },
                     onPayoutClose = { payingRequest = null },
                     moneyPrompt = moneyPrompts[route.chatId],
+                    onMoneyPromptHandled = { moneyPrompts.remove(route.chatId) },
                     onCall = if (calls.available) ({ video -> calls.start(route.chatId, video) }) else null,
                     ongoingCall = callNow?.takeIf { it.chatId == route.chatId && it.minimised && it.phase != com.circaso.feature.calls.CallPhase.Ended }?.let { if (it.video || it.camera) "Ongoing video call" else "Ongoing voice call" },
                     onReturnToCall = { calls.minimise(false) },

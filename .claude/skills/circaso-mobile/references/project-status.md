@@ -53,8 +53,11 @@ Media3 1.4.1, multiplatform-markdown-renderer 0.46.0.
 - D-M1 Circle user-controlled wallets: the server makes challenges, the person signs with a PIN in Circle's SDK; the
   server never holds keys. Testnet on dev (Base Sepolia default, USDC). Circle's own social login removed.
 - D-M2 Amounts are decimal strings, never floats. Fiat is the phone's region currency (USDC = 1 USD), credited "Rates by Exchange Rate API".
-- D-M3 Pay from chats: money button in the direct thread header, `#500` in the composer opens Pay with 500 filled.
-  Payments travel as an encrypted `payment` message; the note never reaches the wallet API.
+- D-M3 Pay from chats: **money starts and ends in the chat** (Pasaka, 2026-11-04): `#500 @usdc for lunch` makes the
+  chat's money card, which is the whole review (who, amount in currency and coin, network, Paying from, the note,
+  the fee, what they receive); Pay goes straight to the Circle PIN. No review page, no note field. The card in the
+  thread says Sending until confirmed, then Sent; Not sent with Try Again. Payments travel as an encrypted `payment`
+  message; the note never reaches the wallet API. See `app-architecture.md` → "Money in the chat".
 - D-M4 ~~Chamas use the treasurer model~~ **Retired by Spaces phase 2 (2026-11-03)**: chamas and groups are one Group; a
   group may have its own wallet (its own Circle user, own PIN and biometrics), the owner is its only signer and pays
   only payouts the admins approved (two admins, or any one admin, CH9). The treasurer flow stays in the app only for a
@@ -252,8 +255,9 @@ Nothing to show is never an error screen. The first moment was posted through th
   contributions into the group wallet and payouts from it (request with CH4, approve per CH9, the signer pays with
   W4 `walletId` + `payoutRequestId`); 2g Paying from and the Wallet tab's title switcher. 33 new tests; previews
   `-preview=gw-new-group|gw-new-group-wallet|gw-new-group-offline|gw-new-group-failed|gw-setup|gw-setup-bio|gw-setup-face-id|gw-setup-failed|gw-setup-offline|gw-setup-cancelled|gw-info-none|gw-info-finish|gw-info-offline|gw-info-loading|gw-info-error|gw-info-wallet|gw-info-bio-lost|gw-info-member|gw-info-locked|gw-target-needs-wallet|gw-leave-blocked|gw-target|gw-wallet|gw-wallet-member|gw-wallet-loading|gw-wallet-error|gw-contribute|gw-pay-payout|gw-pay-signing|gw-not-sent|gw-request-payout|gw-pay-personal|gw-pay-from|gw-pay-offline`.
-- Departures (decided at the premium standard): the review is the existing full-screen Pay screen (C4 was built as a
-  screen, not a sheet) with GW9's rows; GW1's group photo isn't offered (no backend for it at create); GW1's daily-cap
+- Departures (decided at the premium standard): ~~the review is the existing full-screen Pay screen~~ **superseded
+  2026-11-04: from a chat there is no review page; the chat's money card carries GW9's rows** (the Pay screen stays
+  for the Wallet tab, the group wallet screen and calls); GW1's group photo isn't offered (no backend for it at create); GW1's daily-cap
   sentence waits for 2F (the cap isn't enforced yet, so saying it would be untrue); iOS Circle PIN texts can't name a
   group wallet (static strings), so the app's own screen behind the PIN names it; Change PIN is a coming sheet (no
   W8 route); GW1's "By" date is the existing month choices, not a calendar.
@@ -263,12 +267,28 @@ Nothing to show is never an error screen. The first moment was posted through th
   named on Circle's PIN screen when there are other wallets, a member's Request Payout names the signer, GW19's Try
   Again and Ref caption, references on every error, GW16's caption above the amount, money rows straight under group
   info's header, bottom-anchored set-up buttons and a finishing tick, thinner hero glyphs. Still open (polish): the
-  chat payment card's head reads the note ("Paid from …") rather than W5's `fromGroupId`, and doesn't wait for
-  confirmation; skeleton loading rows; Wallet tab crossfade between wallets; SegmentedControl radio semantics; GW5's
+  chat payment card's head reads the note ("Paid from …") rather than W5's `fromGroupId` (it now waits for
+  confirmation: Sending, then the kind); skeleton loading rows; Wallet tab crossfade between wallets; SegmentedControl radio semantics; GW5's
   "3 of 5" network count; previews for GW9a2/GW18/GW16-in-tab.
 - To finish: device check on the emulator with two accounts (owner and member) against the sandbox once PR #28 is
   live; the Circle SDK paths (`:circlewallet/src/circle`, the Swift `canImport` branch) only build with the GitHub
   Packages token and the pods, so naming the wallet on Circle's screens is untested until then. Then 2F (fees, caps).
+
+**Pasaka's corrections (2026-11-04), built on `main`, not yet on a device:**
+- **No review page from a chat** (one-to-one and groups): the chat's money card is the review and Pay opens the
+  Circle PIN; the card in the thread is Sending → Sent only once confirmed, Not sent with Try Again; failures before
+  the chain stay on the card with the reference. Every chat entry (composer `#`, goal strip Add, profile Pay,
+  contributions, an approved request's Pay) is in the chat. Details: `app-architecture.md` → "Money in the chat".
+- **Group money live**: contributions and payouts update the balance and target on every member's open screens.
+  Backend **PR #30** (`feat/group-money-live`, worktree `circaso-group-live`): `chama` / `money.updated` to every
+  member, target or not; **not merged or deployed**. The app handles it already, and reloads the group at once when
+  my own payment confirms. Details: `app-architecture.md` → "Group money live".
+- To test on two devices (owner A and member B in a group with a wallet and a target, plus a group without a target):
+  B types `#100 test` in the group: the card shows the group, target after, Paying from Personal, No fee; Pay → PIN →
+  the card in the chat says Sending, then Contribution; A's goal strip, group info and group wallet screen move
+  without leaving (needs PR #30 for the group without a target); B's own goal strip moves at once. Offline: Pay is
+  dimmed with the offline line. Cancel the PIN: nothing in the chat. A direct chat: `#50 lunch @usdc`, Paying from
+  switch to the group wallet → Request Payout; A's profile Pay puts `#` in the composer.
 
 ### Backend gaps (design exists, no API yet)
 - W7/W8: statements on the server, PIN change and restore.
