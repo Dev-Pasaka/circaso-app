@@ -31,6 +31,15 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
+/**
+ * Hide balances, once for every wallet screen (a Koin single): someone who hid them on the Wallet tab doesn't see a
+ * group's money in full after tapping in from group info. Per run, as before.
+ */
+class BalancePrivacy {
+    val hidden = MutableStateFlow(false)
+    fun toggle() { hidden.value = !hidden.value }
+}
+
 /** A sheet that says a designed flow has no backend yet (E2 Add money, E6 Cash out). */
 enum class ComingFlow { AddMoney, CashOut }
 
@@ -98,6 +107,7 @@ class WalletViewModel(
     private val sources: GroupWalletSources? = null,
     /** Reads the group wallet picked in the switcher; null where group wallets aren't wired. */
     private val groupReader: GroupWalletReader? = null,
+    private val privacy: BalancePrivacy = BalancePrivacy(),
 ) : ViewModel() {
     private val local = MutableStateFlow(WalletUiState())
     /** The picked group wallet's own refresh, approval and message state; fresh whenever another wallet is picked. */
@@ -157,7 +167,7 @@ class WalletViewModel(
     }
 
     val state: StateFlow<WalletUiState> = combine(
-        local, observeWallet(), observeTransfers(), connection.status, observeProfile(), repository.setupRequestedBy, groupSide, switcherSide,
+        local, observeWallet(), observeTransfers(), connection.status, observeProfile(), repository.setupRequestedBy, groupSide, switcherSide, privacy.hidden,
     ) { values ->
         @Suppress("UNCHECKED_CAST")
         val ui = values[0] as WalletUiState
@@ -174,6 +184,7 @@ class WalletViewModel(
             group = (values[6] as GroupWalletUiState?)?.copy(online = online),
             balances = switcher.first,
             lockedWallets = switcher.second,
+            hidden = values[8] as Boolean,
         )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), WalletUiState())
 
@@ -252,7 +263,7 @@ class WalletViewModel(
         }
     }
 
-    fun onToggleHidden() = local.update { it.copy(hidden = !it.hidden) }
+    fun onToggleHidden() = privacy.toggle()
     fun onReceive(open: Boolean) = local.update { it.copy(receiveSheet = open) }
     fun onComing(flow: ComingFlow?) = local.update { it.copy(coming = flow) }
     fun onErrorShown() = local.update { it.copy(error = null) }

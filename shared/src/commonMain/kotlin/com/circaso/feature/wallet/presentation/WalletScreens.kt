@@ -164,7 +164,16 @@ fun WalletTabContent(
     onToggleHidden: () -> Unit = {},
 ) {
     Column(Modifier.fillMaxSize()) {
-        if (state.showSwitcher) {
+        // The corner row. Already there when the tab opens with the list known, it doesn't move anything; when the
+        // list arrives (or the last group wallet goes) after the page is up, the row eases open or closed instead of
+        // the page jumping by its height (a fade alone with reduced motion is still a resize, so it eases too).
+        val row = remember { androidx.compose.animation.core.MutableTransitionState(state.showSwitcher) }
+        row.targetState = state.showSwitcher
+        androidx.compose.animation.AnimatedVisibility(
+            row,
+            enter = androidx.compose.animation.expandVertically(tween(CircasoMotion.BaseMs)) + androidx.compose.animation.fadeIn(tween(CircasoMotion.BaseMs)),
+            exit = androidx.compose.animation.shrinkVertically(tween(CircasoMotion.QuickMs)) + androidx.compose.animation.fadeOut(tween(CircasoMotion.QuickMs)),
+        ) {
             Row(Modifier.fillMaxWidth().padding(horizontal = CircasoSpacing.s4), horizontalArrangement = Arrangement.End, verticalAlignment = Alignment.CenterVertically) {
                 WalletSwitcher(
                     wallets = state.wallets, selected = state.selected, open = state.switching, balances = state.balances, locked = state.lockedWallets,
@@ -287,7 +296,7 @@ fun WalletContent(
         when {
             // The wallet's own shape while it opens (a card, the actions, two rows), so nothing jumps when it arrives.
             wallet == null && (if (g != null) g.loading && g.money?.wallet != null || g.empty && g.loading else state.loading) ->
-                WalletSkeleton(if (g != null) "Opening ${g.name}’s wallet" else "Opening your wallet")
+                WalletSkeleton(if (g != null) "Opening ${g.name}’s wallet" else "Opening your wallet", caption = g != null)
             g != null && wallet == null -> GroupWalletProblem(g, bottom, group?.onRetry ?: onRefresh)
             wallet == null -> Column(Modifier.fillMaxSize().padding(horizontal = CircasoSpacing.s6), verticalArrangement = Arrangement.spacedBy(CircasoSpacing.s3, Alignment.CenterVertically), horizontalAlignment = Alignment.CenterHorizontally) {
                 BasicText(state.error ?: "Couldn't open your wallet.", style = t.body.copy(color = c.inkSecondary, textAlign = TextAlign.Center))
@@ -302,22 +311,40 @@ fun WalletContent(
     }
 }
 
-/** The wallet's own shape while it opens: a card, the actions and two rows, so nothing jumps when it arrives. */
+/**
+ * The wallet's own shape while it opens, built from the same measures as the page: a group's caption line, the
+ * card where the pager puts it (s6 from the screen edge, the card ratio), the action buttons as ActionButton draws
+ * them (the circle and its label), and Recent's rows at a row's height. So nothing jumps when the wallet arrives.
+ */
 @Composable
-private fun WalletSkeleton(label: String) {
+private fun WalletSkeleton(label: String, caption: Boolean = false) {
     val c = CircasoTheme.colors
+    val t = CircasoTheme.typography
+    val lineHeight = with(androidx.compose.ui.platform.LocalDensity.current) { t.footnote.lineHeight.toDp() }
     Column(
-        Modifier.fillMaxSize().padding(horizontal = CircasoSpacing.s6, vertical = 10.dp)
+        Modifier.fillMaxSize().padding(horizontal = CircasoSpacing.s4).padding(top = WalletTopGap)
             .semantics(mergeDescendants = true) { contentDescription = label },
-        verticalArrangement = Arrangement.spacedBy(22.dp),
+        verticalArrangement = Arrangement.spacedBy(WalletItemGap),
     ) {
-        Box(Modifier.fillMaxWidth().aspectRatio(1.586f).clip(com.circaso.designsystem.theme.CircasoShapes.lg).background(c.fill))
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-            repeat(4) { Box(Modifier.size(CircasoSizes.controlMd + 12.dp).clip(com.circaso.designsystem.theme.CircasoShapes.circle).background(c.fill)) }
+        if (caption) Box(Modifier.padding(horizontal = 4.dp).fillMaxWidth(0.7f).height(lineHeight).clip(com.circaso.designsystem.theme.CircasoShapes.xs).background(c.fill))
+        Column(verticalArrangement = Arrangement.spacedBy(CircasoSpacing.s3)) {
+            Box(Modifier.padding(horizontal = CircasoSpacing.s6 - CircasoSpacing.s4).fillMaxWidth().aspectRatio(CardRatio).clip(com.circaso.designsystem.theme.CircasoShapes.lg).background(c.fill))
+            Row(Modifier.fillMaxWidth().padding(horizontal = CircasoSpacing.s4 + CircasoSpacing.s2, vertical = CircasoSpacing.s2), horizontalArrangement = Arrangement.SpaceBetween) {
+                repeat(4) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Box(Modifier.size(com.circaso.designsystem.components.ActionButtonSize).clip(com.circaso.designsystem.theme.CircasoShapes.circle).background(c.fill))
+                        Box(Modifier.size(width = CircasoSpacing.s10, height = lineHeight).clip(com.circaso.designsystem.theme.CircasoShapes.xs).background(c.fill))
+                    }
+                }
+            }
         }
-        repeat(2) { Box(Modifier.fillMaxWidth().height(56.dp).clip(com.circaso.designsystem.theme.CircasoShapes.md).background(c.fill)) }
+        repeat(2) { Box(Modifier.fillMaxWidth().height(CircasoSizes.avatarMd + CircasoSpacing.s3 * 2).clip(com.circaso.designsystem.theme.CircasoShapes.md).background(c.fill)) }
     }
 }
+
+/** The list's top inset and the space between its items, shared by the page and its skeleton. */
+private val WalletTopGap = 10.dp
+private val WalletItemGap = 22.dp
 
 /**
  * A group wallet with nothing to draw yet, said plainly in the personal wallet's error shape: offline before it was
@@ -491,9 +518,15 @@ private fun ActiveWallet(
         if (!state.online || wallet.holdUntil != null || g != null) {
             item(key = "status") {
                 Column(verticalArrangement = Arrangement.spacedBy(4.dp), modifier = Modifier.padding(horizontal = 4.dp)) {
-                    // GW16's caption: whose money it is and who can move it (warning when its signer has left).
-                    if (g != null) BasicText(g.caption, style = t.subhead.copy(color = if (g.locked) c.warning else c.inkSecondary))
-                    if (!state.online) BasicText("Offline · balances as of ${formatLocalTime(wallet.fetchedAt, LocalTimeStyle.Clock)}", style = t.caption1.copy(color = c.inkSecondary))
+                    // GW16's caption: whose money it is and who can move it (warning when its signer has left). The tab
+                    // has no title, so there its full name leads; the pushed screen's bar already names it.
+                    val inTab = state.wallets.isNotEmpty()
+                    if (g != null) BasicText(if (inTab) g.namedCaption else g.caption, style = t.subhead.copy(color = if (g.locked) c.warning else c.inkSecondary))
+                    // Offline: why the money buttons are dim. The pushed screen's banner already gives the time.
+                    if (!state.online) {
+                        val asOf = if (g == null || inTab) "Offline · balances as of ${formatLocalTime(wallet.fetchedAt, LocalTimeStyle.Clock)}. " else ""
+                        BasicText(asOf + if (g != null) "Adding money and payouts need a connection." else "Sending needs a connection.", style = t.caption1.copy(color = c.inkSecondary))
+                    }
                     wallet.holdUntil?.let { BasicText("Payments are paused for a short while after a restore.", style = t.footnote.copy(color = c.warning)) }
                 }
             }
@@ -582,8 +615,12 @@ private fun ActiveWallet(
 }
 
 /**
- * A group wallet's actions in the personal wallet's row: Add (contribute), Payout (a request; Send for a space), Receive
- * and, for admins, Target. Money never moves offline; nothing leaves a locked wallet, and nothing is invited into it.
+ * A group wallet's actions in the personal wallet's row: Add (contribute), Payout (a request), Receive and, for
+ * admins, Target. Money never moves offline. On a locked wallet nothing can leave, so Add and Payout are off; Receive
+ * stays to show the addresses, and its sheet warns not to send money in.
+ *
+ * A space's wallet says Payout too for now: its Send would be a payout request today (Pay turns any group
+ * `fromWalletId` into one), so "Send" would promise what doesn't happen. It becomes Send when spaces send directly.
  */
 @Composable
 private fun GroupActionsRow(g: com.circaso.feature.chama.presentation.GroupWalletUiState, actions: com.circaso.feature.chama.presentation.GroupWalletActions, onReceive: () -> Unit) {
@@ -591,7 +628,7 @@ private fun GroupActionsRow(g: com.circaso.feature.chama.presentation.GroupWalle
     val admin = g.money?.isAdmin == true
     Row(Modifier.fillMaxWidth().padding(horizontal = CircasoSpacing.s2), horizontalArrangement = if (admin) Arrangement.SpaceBetween else Arrangement.SpaceAround) {
         ActionButton(CircasoIcon.Plus, "Add", actions.onAdd, enabled = live)
-        ActionButton(CircasoIcon.ArrowUp, if (g.space) "Send" else "Payout", actions.onPayout, enabled = live)
+        ActionButton(CircasoIcon.ArrowUp, "Payout", actions.onPayout, enabled = live)
         ActionButton(CircasoIcon.ArrowDown, "Receive", onReceive, enabled = g.active)
         if (admin) ActionButton(CircasoIcon.Target, "Target", actions.onTarget, enabled = g.online)
     }

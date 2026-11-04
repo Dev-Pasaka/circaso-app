@@ -72,8 +72,23 @@ import com.circaso.feature.wallet.domain.WalletStatus
 // anchored to its corner rather than a sheet. No scale token is this size; named here.
 private val PopoverMaxWidth = 300.dp
 private val PopoverMinWidth = 248.dp
+// Room around the popover inside its window, so the floating shadow isn't cut off at the window's edge (as
+// ReactionPicker does with its bubble).
+private val PopoverInset = CircasoSpacing.s4
 // The label in the corner truncates past this, so a long group name never pushes into the page.
 private val LabelMaxWidth = 132.dp
+
+/**
+ * The name the corner shows: the whole name when it is short, else its first two words, else its first word
+ * ("Mama Mboga Savings Group" → "Mama Mboga"). The full name is on the menu and in the caption.
+ */
+internal fun shortWalletName(name: String): String {
+    val limit = 16
+    if (name.length <= limit) return name
+    val words = name.trim().split(' ').filter { it.isNotEmpty() }
+    val two = words.take(2).joinToString(" ")
+    return if (two.length <= limit) two else words.firstOrNull() ?: name
+}
 
 /**
  * GW16 as Pasaka redrew it (2026-11-04): no title; a compact control in the top-right corner, the wallet glyph with the
@@ -108,26 +123,30 @@ fun WalletSwitcher(
     ) {
         Row(
             Modifier.heightIn(min = CircasoSizes.iconButton).clip(CircasoShapes.pill).background(c.fill)
-                .padding(start = CircasoSpacing.s2 + 2.dp, end = CircasoSpacing.s3, top = CircasoSpacing.s1, bottom = CircasoSpacing.s1),
+                .padding(start = CircasoSpacing.s2, end = CircasoSpacing.s3, top = CircasoSpacing.s1, bottom = CircasoSpacing.s1),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            horizontalArrangement = Arrangement.spacedBy(CircasoSpacing.s1 + CircasoSpacing.s1 / 2),
         ) {
             CircasoIconImage(CircasoIcon.Wallet, c.ink, Modifier.size(18.dp))
-            BasicText(label, Modifier.widthIn(max = LabelMaxWidth), style = t.subhead.copy(color = c.ink, fontWeight = FontWeight.SemiBold), maxLines = 1, overflow = TextOverflow.Ellipsis)
+            BasicText(shortWalletName(label), Modifier.widthIn(max = LabelMaxWidth), style = t.subhead.copy(color = c.ink, fontWeight = FontWeight.SemiBold), maxLines = 1, overflow = TextOverflow.Ellipsis)
             CircasoIconImage(CircasoIcon.ChevronDown, c.inkSecondary, Modifier.size(14.dp).graphicsLayer { rotationZ = turn }, strokeWidth = 2.4f)
         }
+        val window = with(LocalDensity.current) { androidx.compose.ui.platform.LocalWindowInfo.current.containerSize.width.toDp() }
         WalletPopover(open, onDismiss = { onOpen(false) }) {
-            WalletMenu(wallets, selected.walletId, balances, locked, hidden, onPick)
+            WalletMenu(wallets, selected.walletId, balances, locked, hidden, onPick, windowWidth = window)
         }
     }
 }
 
-/** Under the anchor, its right edge on the anchor's right edge, kept inside the window. */
-private class CornerPosition(private val gap: Int, private val margin: Int) : PopupPositionProvider {
+/**
+ * Under the anchor, the card's right edge on the anchor's right edge, kept inside the window. The popup window is
+ * [inset] bigger than the card on every side (room for its shadow), so the window is placed that much further out.
+ */
+private class CornerPosition(private val gap: Int, private val inset: Int) : PopupPositionProvider {
     override fun calculatePosition(anchorBounds: IntRect, windowSize: IntSize, layoutDirection: LayoutDirection, popupContentSize: IntSize): IntOffset {
-        val wanted = if (layoutDirection == LayoutDirection.Ltr) anchorBounds.right - popupContentSize.width else anchorBounds.left
-        val x = wanted.coerceIn(margin, maxOf(margin, windowSize.width - popupContentSize.width - margin))
-        val y = minOf(anchorBounds.bottom + gap, windowSize.height - popupContentSize.height - margin).coerceAtLeast(margin)
+        val wanted = if (layoutDirection == LayoutDirection.Ltr) anchorBounds.right - popupContentSize.width + inset else anchorBounds.left - inset
+        val x = wanted.coerceIn(0, maxOf(0, windowSize.width - popupContentSize.width))
+        val y = minOf(anchorBounds.bottom + gap - inset, windowSize.height - popupContentSize.height).coerceAtLeast(0)
         return IntOffset(x, y)
     }
 }
@@ -142,15 +161,15 @@ private fun WalletPopover(open: Boolean, onDismiss: () -> Unit, content: @Compos
     shown.targetState = open
     if (!shown.currentState && !shown.targetState) return
     val density = LocalDensity.current
-    val provider = remember(density) { with(density) { CornerPosition(CircasoSpacing.s1.roundToPx(), CircasoSpacing.s4.roundToPx()) } }
+    val provider = remember(density) { with(density) { CornerPosition(CircasoSpacing.s1.roundToPx(), PopoverInset.roundToPx()) } }
     val dismiss by rememberUpdatedState(onDismiss)
     val still = CircasoTheme.reduceMotion
     val origin = TransformOrigin(1f, 0f)
     Popup(popupPositionProvider = provider, onDismissRequest = { dismiss() }, properties = PopupProperties(focusable = true)) {
         AnimatedVisibility(
             shown,
-            enter = if (still) fadeIn(tween(CircasoMotion.QuickMs))
-            else fadeIn(tween(CircasoMotion.QuickMs)) + scaleIn(spring(dampingRatio = 0.82f, stiffness = Spring.StiffnessMediumLow), initialScale = 0.88f, transformOrigin = origin),
+            enter = if (still) fadeIn(tween(CircasoMotion.BaseMs))
+            else fadeIn(tween(CircasoMotion.BaseMs)) + scaleIn(spring(dampingRatio = 0.82f, stiffness = Spring.StiffnessMediumLow), initialScale = 0.88f, transformOrigin = origin),
             exit = if (still) fadeOut(tween(CircasoMotion.QuickMs))
             else fadeOut(tween(CircasoMotion.QuickMs)) + scaleOut(tween(CircasoMotion.QuickMs), targetScale = 0.94f, transformOrigin = origin),
         ) { content() }
@@ -169,11 +188,18 @@ internal fun WalletMenu(
     locked: Set<String>,
     hidden: Boolean,
     onPick: (NamedWallet) -> Unit,
+    /** The app window's width, read outside the popup (inside it, the window is the popup's own). */
+    windowWidth: androidx.compose.ui.unit.Dp = PopoverMaxWidth + CircasoSpacing.s4 * 2,
 ) {
     val c = CircasoTheme.colors
     val t = CircasoTheme.typography
+    // Dynamic Type: the menu widens with the text (up to the window, less a margin), and at the largest sizes the
+    // balance moves under the name so the name keeps its room.
+    val density = LocalDensity.current
+    val maxWidth = minOf(PopoverMaxWidth * density.fontScale.coerceAtLeast(1f), windowWidth - CircasoSpacing.s4 * 2)
+    val large = density.fontScale > 1.3f
     Column(
-        Modifier.widthIn(min = PopoverMinWidth, max = PopoverMaxWidth).glass(CircasoShapes.lg, floating = true).clip(CircasoShapes.lg)
+        Modifier.padding(PopoverInset).widthIn(min = minOf(PopoverMinWidth, maxWidth), max = maxWidth).glass(CircasoShapes.lg, floating = true).clip(CircasoShapes.lg)
             .verticalScroll(rememberScrollState())
             .semantics { paneTitle = "Wallets" }
             .padding(vertical = CircasoSpacing.s1),
@@ -211,11 +237,12 @@ internal fun WalletMenu(
                         CircasoIconImage(CircasoIcon.Wallet, c.ink, Modifier.size(16.dp))
                     }
                 } else Avatar(w.name, size = CircasoSizes.avatarSm, imageUrl = w.avatarUrl)
-                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(1.dp)) {
-                    BasicText(w.name, style = t.body.copy(color = c.ink, fontWeight = if (on) FontWeight.SemiBold else FontWeight.Normal), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Column(Modifier.weight(1f)) {
+                    BasicText(w.name, style = t.body.copy(color = c.ink, fontWeight = if (on) FontWeight.SemiBold else FontWeight.Normal), maxLines = if (large) 2 else 1, overflow = TextOverflow.Ellipsis)
                     BasicText(sub, style = t.footnote.copy(color = if (isLocked) c.warning else c.inkSecondary), maxLines = 2)
+                    if (large && balance != null) BasicText(balance, style = t.footnote.copy(color = c.inkSecondary, fontFeatureSettings = "tnum"), maxLines = 1)
                 }
-                if (balance != null) BasicText(balance, style = t.footnote.copy(color = c.inkSecondary, fontFeatureSettings = "tnum"), maxLines = 1)
+                if (!large && balance != null) BasicText(balance, style = t.footnote.copy(color = c.inkSecondary, fontFeatureSettings = "tnum"), maxLines = 1)
                 // The tick keeps its place on every row, so the balances line up whichever wallet is chosen.
                 if (on) CircasoIconImage(CircasoIcon.Check, c.action, Modifier.size(18.dp), strokeWidth = 2.4f)
                 else Spacer(Modifier.width(18.dp))

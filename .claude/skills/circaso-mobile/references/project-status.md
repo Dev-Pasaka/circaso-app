@@ -63,6 +63,15 @@ Media3 1.4.1, multiplatform-markdown-renderer 0.46.0.
   by itself on a server whose W15/W16 answer 404; `walletId`, `payoutRequestId` and `to.groupId` never go to a server
   that hasn't answered a group-wallet route (an old one would pay from the personal wallet). Turn the release default
   on when production runs PR #28.
+- D-M9 **One wallet design for every wallet, switched from the corner** (Pasaka, 2026-11-04, overriding GW16's title
+  switcher and the separate group wallet screen): the Wallet tab has no title; a compact control in its top-right
+  corner (wallet glyph, the wallet's short name, a chevron; 36 dp pill in a 44 dp target, like the bars' icon
+  buttons) opens a popover anchored to the corner (not a sheet) with every wallet the person can see: picture or
+  initials, name, what they can do with it, the last balance read, a tick on the one on screen, "Locked" when its
+  signer left. A group wallet is drawn by the personal wallet's own screen (cards, actions, assets, Recent); only its
+  money and payments change, plus its caption, Add / Payout (Send for a space) / Receive / Target (admins), target
+  progress and payout requests, all inside the same layout. `GroupWalletRoute` (group info, goal strip) pushes the
+  same screen under a bar, without the switcher (the person came for that group). Flag off: no switcher at all.
 - D-M5 Add money, KYC, cash out (E2, E3, E6) and business groups (D7): **honest "coming" sheets** until licensed partners
   are chosen; Cash out offers "Send to an Exchange". No fake flows.
 - D-M6 Money sound on payment received (in-app and as its own notification channel), can be turned off (You → Money sound).
@@ -127,7 +136,7 @@ Media3 1.4.1, multiplatform-markdown-renderer 0.46.0.
 | Calls | Voice, video, group grid, incoming call screen, Android call notification from the data push, minimised call pill. |
 | Wallet | Create (Circle PIN), balance per network with fiat, Send / Receive (QR show and scan), pay from chat, send to an address, payment detail, history, networks, money cards in chat, quick replies, currency setting, coin icons, money sound. |
 | Chamas | Goal strip, contributions, payout requests and approvals, group wallet screen, intro card (treasurer model, flag off). |
-| Groups with wallets (flag) | New Group with the wallet switch (GW1), group wallet set-up with its own PIN and biometrics (GW2–GW5c), group info money rows (GW6–GW8b, locked, leaving blocked), target (GW7b), group wallet screen and the Wallet tab switcher (GW16), contribute (GW9a2/GW9d), Pay Payout (GW9, GW11, GW19), Paying from and Request Payout (GW9b, GW9c, GW10). Not yet on a device. |
+| Groups with wallets (flag) | New Group with the wallet switch (GW1), group wallet set-up with its own PIN and biometrics (GW2–GW5c), group info money rows (GW6–GW8b, locked, leaving blocked), target (GW7b), one wallet design for every wallet with the corner switcher (GW16 as redrawn 2026-11-04, D-M9), contribute (GW9a2/GW9d), Pay Payout (GW9, GW11, GW19), Paying from and Request Payout (GW9b, GW9c, GW10). Not yet on a device. |
 | Asha | Text and live voice, rich answers, PDF statements, conversations, voice picker. |
 | Support | Help screen, support chat UI (needs the support account), recovery case (SP06). |
 | Adaptive | Phones portrait and landscape, iPad 11"/13" checked on simulators. |
@@ -250,7 +259,7 @@ Nothing to show is never an error screen. The first moment was posted through th
 - Built: 2b wallet model (owners, `walletId`, W16, Room per wallet, one SDK with a session per wallet and per-wallet
   biometrics, every approval naming its wallet); 2c/2d New Group with the wallet, set-up, group info, target; 2e/2f
   contributions into the group wallet and payouts from it (request with CH4, approve per CH9, the signer pays with
-  W4 `walletId` + `payoutRequestId`); 2g Paying from and the Wallet tab's title switcher. 33 new tests; previews
+  W4 `walletId` + `payoutRequestId`); 2g Paying from and the Wallet tab's switcher (now the corner popover, D-M9). 33 new tests; previews
   `-preview=gw-new-group|gw-new-group-wallet|gw-new-group-offline|gw-new-group-failed|gw-setup|gw-setup-bio|gw-setup-face-id|gw-setup-failed|gw-setup-offline|gw-setup-cancelled|gw-info-none|gw-info-finish|gw-info-offline|gw-info-loading|gw-info-error|gw-info-wallet|gw-info-bio-lost|gw-info-member|gw-info-locked|gw-target-needs-wallet|gw-leave-blocked|gw-target|gw-wallet|gw-wallet-member|gw-wallet-loading|gw-wallet-error|gw-contribute|gw-pay-payout|gw-pay-signing|gw-not-sent|gw-request-payout|gw-pay-personal|gw-pay-from|gw-pay-offline`.
 - Departures (decided at the premium standard): the review is the existing full-screen Pay screen (C4 was built as a
   screen, not a sheet) with GW9's rows; GW1's group photo isn't offered (no backend for it at create); GW1's daily-cap
@@ -264,8 +273,24 @@ Nothing to show is never an error screen. The first moment was posted through th
   Again and Ref caption, references on every error, GW16's caption above the amount, money rows straight under group
   info's header, bottom-anchored set-up buttons and a finishing tick, thinner hero glyphs. Still open (polish): the
   chat payment card's head reads the note ("Paid from …") rather than W5's `fromGroupId`, and doesn't wait for
-  confirmation; skeleton loading rows; Wallet tab crossfade between wallets; SegmentedControl radio semantics; GW5's
-  "3 of 5" network count; previews for GW9a2/GW18/GW16-in-tab.
+  confirmation; skeleton loading rows; SegmentedControl radio semantics; GW5's "3 of 5" network count; previews for
+  GW9a2/GW18. (The Wallet tab crossfade and the GW16-in-tab previews are done, see below.)
+- Wallet tab redrawn (2026-11-04, D-M9, branch `worktree-agent-aac051142a41327a5`): the corner switcher and its popover
+  (`WalletSwitcher.kt`), one wallet design for personal and group wallets (`WalletContent` with `WalletUiState.group`
+  and `GroupWalletHooks`; `GroupWalletReader` shared by `WalletViewModel` and `GroupWalletViewModel`), a crossfade
+  between wallets, the wallet skeleton for a group too, and See All / asset statements / all assets opening the wallet
+  on screen (`walletId` on `AssetActivityRoute`, `NetworkActivityRoute`, `NetworkAssetsRoute`). Departures: Add and
+  Payout are off on a locked wallet (nothing can leave it, so nothing is invited in), Receive there warns; Manage
+  networks and the missing-networks card stay personal (W12 has no `walletId`); a space wallet says Payout, not Send,
+  until spaces send directly (Pay turns any group `fromWalletId` into a payout request today); in the tab the caption
+  leads with the wallet's full name (the corner shows a short one, "Mama Mboga"); hide balances is one
+  `BalancePrivacy` single shared by the tab and the pushed screen (per run). Design review: the Blocker (popover shadow
+  clipped by its window) and every should-fix item fixed (corner row eases in instead of jumping, skeleton built from
+  the page's own measures, name in the caption, space wallet honest, hidden balances shared, offline reason under
+  the balances, popover width grows with Dynamic Type and moves the balance under the name at large sizes).
+  Tests: `WalletSwitchTest` (11).
+  Previews `-preview=wallet-switcher|wallet-switcher-open|wallet-switcher-three|wallet-switcher-locked|wallet-unified-personal|wallet-unified-signer|wallet-unified-member|wallet-unified-offline|wallet-unified-locked|wallet-unified-loading|wallet-unified-setting-up|wallet-unified-space`
+  and `gw-wallet*` now draw the unified screen. Not checked on a device or simulator yet (no install, by instruction).
 - To finish: device check on the emulator with two accounts (owner and member) against the sandbox once PR #28 is
   live; the Circle SDK paths (`:circlewallet/src/circle`, the Swift `canImport` branch) only build with the GitHub
   Packages token and the pods, so naming the wallet on Circle's screens is untested until then. Then 2F (fees, caps).

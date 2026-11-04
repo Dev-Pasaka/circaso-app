@@ -263,6 +263,62 @@ class WalletSwitchTest {
         assertTrue(g.caption.startsWith("Group wallet · locked"))
     }
 
+    @Test fun theTabNamesTheGroupInFullWhileTheCornerShowsItsShortName() = runTest(dispatcher) {
+        val vm = vm()
+        keep(vm)
+        vm.onSelectWallet(vm.state.value.wallets[1])
+        val g = assertNotNull(vm.state.value.group)
+        assertEquals("Kilimani Chama · only Otieno can send, after approval", g.namedCaption)
+        assertEquals("Kilimani Chama", com.circaso.feature.wallet.presentation.shortWalletName("Kilimani Chama"))
+        assertEquals("Mama Mboga", com.circaso.feature.wallet.presentation.shortWalletName("Mama Mboga Savings Group"))
+        assertEquals("Wanyamaplatform", com.circaso.feature.wallet.presentation.shortWalletName("Wanyamaplatform Investments Limited"))
+    }
+
+    @Test fun aSpaceWalletSaysSoAndNeedsNoApproval() {
+        val space = com.circaso.feature.chama.presentation.GroupWalletUiState(
+            chat = kilimani, money = groupMoney(), loading = false,
+            wallet = aWallet("1000000", "gw-1").copy(owner = WalletOwner(WalletOwnerType.Space, null, "g1", "otieno")),
+        )
+        assertEquals("Space wallet · only Otieno can send", space.caption)
+    }
+
+    @Test fun hidingBalancesCarriesToTheGroupWalletScreen() = runTest(dispatcher) {
+        val privacy = com.circaso.feature.wallet.presentation.BalancePrivacy()
+        val reader = GroupWalletReader(
+            ObserveChatUseCase(chats), ObserveGroupMoneyUseCase(chamas), RefreshGroupMoneyUseCase(chamas), ObserveWalletOfUseCase(walletRepo), RefreshWalletOfUseCase(walletRepo),
+            ObserveWalletActivityUseCase(walletRepo), RefreshWalletActivityUseCase(walletRepo), DecideChamaRequestUseCase(chamas), auth = null,
+        )
+        val pushed = com.circaso.feature.chama.presentation.GroupWalletViewModel("g1", reader, connection, privacy)
+        privacy.toggle()
+        assertTrue(pushed.hidden.value, "hidden on the tab, hidden on the pushed screen")
+        pushed.onToggleHidden()
+        assertFalse(privacy.hidden.value)
+    }
+
+    @Test fun aFailedGroupReadIsSaidWithItsReferenceWhenNothingIsSaved() = runTest(dispatcher) {
+        val failing = stub<ChamaRepository> { name, _ -> if (name == "money") flowOf(null) else null }
+        val reader = GroupWalletReader(
+            ObserveChatUseCase(chats), ObserveGroupMoneyUseCase(failing), RefreshGroupMoneyUseCase(failing), ObserveWalletOfUseCase(walletRepo), RefreshWalletOfUseCase(walletRepo),
+            ObserveWalletActivityUseCase(walletRepo), RefreshWalletActivityUseCase(walletRepo), DecideChamaRequestUseCase(failing), auth = null,
+        )
+        val impl = WalletRepositoryImpl(stub<WalletRemote>(), stub<WalletDao>(), signer = { error("unused") }, currency = { null }, json = Json)
+        val sources = GroupWalletSources(
+            ObserveWalletsUseCase(walletRepo), RefreshWalletsUseCase(walletRepo), ObserveWalletOfUseCase(walletRepo), RefreshWalletOfUseCase(walletRepo),
+            ObserveChatsUseCase(chats), ObserveChatUseCase(chats), ObserveGroupMoneyUseCase(failing), RefreshGroupMoneyUseCase(failing), CreateChamaRequestUseCase(failing),
+        )
+        val vm = WalletViewModel(
+            ObserveWalletUseCase(walletRepo), RefreshWalletUseCase(walletRepo), CreateWalletUseCase(walletRepo), ObserveTransfersUseCase(walletRepo),
+            connection, ObserveProfileUseCase(stub<ProfileRepository>()), impl, groupWallets = GroupWalletsFlag.on(), sources = sources, groupReader = reader,
+        )
+        keep(vm)
+        vm.onSelectWallet(vm.state.value.wallets[1])
+        vm.refresh(fromPull = true)
+        val g = assertNotNull(vm.state.value.group)
+        assertFalse(g.loading)
+        assertNotNull(g.error, "CH7 failed: said, not swallowed")
+        assertEquals("100000000", g.wallet?.usdc?.amountMinor, "the wallet itself is still read by its walletId")
+    }
+
     @Test fun approvingIsOnlineOnly() = runTest(dispatcher) {
         val vm = vm()
         keep(vm)

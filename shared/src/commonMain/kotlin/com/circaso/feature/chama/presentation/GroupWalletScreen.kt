@@ -98,13 +98,21 @@ data class GroupWalletUiState(
     /** A space's wallet sends to anyone (Send); a group's sends only approved payouts (Payout, a request). */
     val space get() = wallet?.owner?.type == WalletOwnerType.Space
 
-    /** GW16's caption: whose money it is and who can move it. */
-    val caption: String get() = when {
-        settingUp -> "Group wallet · being set up"
-        locked -> "Group wallet · locked: $signerName signs for it and has left the group"
-        money?.isSigner == true -> "Group wallet · only you can send, after approval"
-        money != null -> "Group wallet · only $signerName can send, after approval"
-        else -> "Group wallet"
+    /** GW16's caption: whose money it is and who can move it ("Group wallet · …", under a bar that names it). */
+    val caption: String get() = captionAfter(if (space) "Space wallet" else "Group wallet")
+
+    /** The caption in the Wallet tab, which has no title: the wallet's full name leads ("Kilimani Chama · …"). */
+    val namedCaption: String get() = captionAfter(name)
+
+    private fun captionAfter(lead: String): String {
+        val after = if (space) "" else ", after approval"
+        return when {
+            settingUp -> "$lead · being set up"
+            locked -> "$lead · locked: $signerName signs for it and has left the group"
+            money?.isSigner == true -> "$lead · only you can send$after"
+            money != null -> "$lead · only $signerName can send$after"
+            else -> lead
+        }
     }
 
     /** Payments as the group wallet lists them (GW16): who, and whether it was a contribution or a payout. */
@@ -163,8 +171,13 @@ class GroupWalletViewModel(
     private val chatId: String,
     private val reader: GroupWalletReader,
     connection: ConnectionState,
+    private val privacy: com.circaso.feature.wallet.presentation.BalancePrivacy = com.circaso.feature.wallet.presentation.BalancePrivacy(),
 ) : ViewModel() {
     private val local = MutableStateFlow(GroupWalletUiState(myUserId = reader.myUserId))
+
+    /** Hide balances, shared with the Wallet tab. */
+    val hidden: StateFlow<Boolean> = privacy.hidden
+    fun onToggleHidden() = privacy.toggle()
 
     val state: StateFlow<GroupWalletUiState> = combine(local, reader.observe(chatId), connection.status) { ui, d, c ->
         ui.copy(chat = d.chat, money = d.money, wallet = d.wallet, activity = d.activity, online = c == ConnectionStatus.Online)
@@ -221,8 +234,8 @@ class GroupWalletHooks(
 @Composable
 fun GroupWalletScreen(viewModel: GroupWalletViewModel, onBack: () -> Unit, actions: GroupWalletActions, walletActions: WalletActions) {
     val state by viewModel.state.collectAsState()
-    var hidden by rememberSaveable { mutableStateOf(false) }
-    val ui = WalletUiState(group = state, online = state.online, hidden = hidden, receiveSheet = state.receiving)
+    val hidden by viewModel.hidden.collectAsState()
+    val ui =WalletUiState(group = state, online = state.online, hidden = hidden, receiveSheet = state.receiving)
     val hooks = GroupWalletHooks(actions, viewModel::onDecide, viewModel::refresh, viewModel::onMessageShown)
     CircasoScaffold(
         topBar = { CircasoNavBar(title = state.name, onBack = onBack) },
@@ -231,7 +244,7 @@ fun GroupWalletScreen(viewModel: GroupWalletViewModel, onBack: () -> Unit, actio
     ) { padding ->
         WalletContent(
             ui, padding, walletActions, onCreate = {}, onRefresh = viewModel::refresh, onReceive = viewModel::onReceive, onComing = {},
-            sheets = false, onToggleHidden = { hidden = !hidden }, group = hooks,
+            sheets = false, onToggleHidden = viewModel::onToggleHidden, group = hooks,
         )
     }
 }

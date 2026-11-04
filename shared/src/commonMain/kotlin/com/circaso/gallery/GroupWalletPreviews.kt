@@ -246,6 +246,8 @@ internal fun GroupWalletPreview(name: String): Boolean {
         "wallet-unified-member" -> TabPreview(tabState(memberState(gwState), member = true).copy(selectedWalletId = "gw-1"), gwActions)
         "wallet-unified-offline" -> TabPreview(tabState(gwState.copy(online = false)).copy(selectedWalletId = "gw-1", online = false), gwActions)
         "wallet-unified-locked" -> TabPreview(tabState(lockedState(gwState), locked = true).copy(selectedWalletId = "gw-1"), gwActions)
+        "wallet-unified-setting-up" -> TabPreview(tabState(GroupWalletUiState(chat = kilimani, money = gwMoney(active = false, signer = false), loading = false)).copy(selectedWalletId = "gw-1"), gwActions)
+        "wallet-unified-space" -> TabPreview(tabState(gwState.copy(wallet = gwWallet().copy(owner = com.circaso.feature.wallet.domain.WalletOwner(WalletOwnerType.Space, null, "g1", "me")))).copy(selectedWalletId = "gw-1"), gwActions)
         "wallet-unified-loading" -> TabPreview(tabState(GroupWalletUiState(chat = kilimani, money = gwMoney())).copy(selectedWalletId = "gw-1"), gwActions)
         "gw-contribute" -> PayPreview(payState(PayUiState(groupId = "g1", chatId = "g1", payee = Person("", "Kilimani Chama", null, null, null), amountText = "1000", note = "November", groupMoney = gwMoney())))
         "gw-pay-payout" -> PayPreview(payState(PayUiState(payee = Person("", "Coast Bus", null, null, null), chatId = "g1", amountText = "92.879", inFiat = false, requestId = "r1", goalName = "December trip", groupMoney = gwMoney())).copy(payingFrom = kilimaniWallet, wallet = gwWallet()))

@@ -47,7 +47,7 @@ val chamaModule = module {
         )
     }
     factory { com.circaso.feature.chama.presentation.GroupWalletReader(get(), get(), get(), get(), get(), get(), get(), get(), get()) }
-    viewModel { (chatId: String) -> com.circaso.feature.chama.presentation.GroupWalletViewModel(chatId, get(), get()) }
+    viewModel { (chatId: String) -> com.circaso.feature.chama.presentation.GroupWalletViewModel(chatId, get(), get(), get()) }
     viewModel { (chatId: String, walletReady: Boolean) -> com.circaso.feature.chama.presentation.TargetViewModel(chatId, walletReady, get(), get(), get(), get(), get(), get(), get()) }
     viewModel { (chatId: String) -> ChamaViewModel(chatId, get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get()) }
 }

@@ -63,6 +63,9 @@ import kotlin.math.abs
  * peek in smaller and dimmer, and follow the finger. Below, the focused chain's assets slide in from the side the
  * person swiped towards.
  */
+/** A bank card's proportions (ISO/IEC 7810 ID-1), for the cards and the wallet's skeleton. */
+internal const val CardRatio = 1.586f
+
 @Composable
 internal fun ChainCards(
     chains: List<WalletChain>,
@@ -218,7 +221,7 @@ private fun ChainCard(chain: WalletChain, fiat: FiatValue?, hidden: Boolean, onT
     val art = cardArt(network)
     val white = androidx.compose.ui.graphics.Color.White
     Box(
-        modifier.fillMaxWidth().aspectRatio(1.586f) // a bank card's own proportions
+        modifier.fillMaxWidth().aspectRatio(CardRatio) // a bank card's own proportions
             .shadow(18.dp, CardShape, ambientColor = art.first(), spotColor = art.first())
             .clip(CardShape)
             .background(Brush.linearGradient(art))
@@ -279,7 +282,7 @@ private fun CardDeck(
     onClosed: () -> Unit,
 ) {
     androidx.compose.foundation.layout.BoxWithConstraints(Modifier.fillMaxWidth().padding(horizontal = CircasoSpacing.s6)) {
-        val cardHeight = maxWidth / 1.586f
+        val cardHeight = maxWidth / CardRatio
         // Turned about its bottom centre, the rearmost card's bottom-right corner hangs this far below the front card.
         val turn = FanAngle * kotlin.math.PI.toFloat() / 180f
         val drop = maxWidth * FanBehindScale * 0.5f * kotlin.math.sin(turn)
