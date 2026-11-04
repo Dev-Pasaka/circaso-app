@@ -139,6 +139,8 @@ data class AshaMascotContext(
     /** A support conversation (asha-next.md part C): no sass at all. No such conversation exists yet. */
     val support: Boolean = false,
     val sass: SassLevel = SassLevel.Playful,
+    /** After 23:00 and before 05:00 on the phone (asha-mascot-personality.md: late night → sleepy). */
+    val lateNight: Boolean = false,
 )
 
 object AshaMascotRules {
@@ -173,8 +175,15 @@ object AshaMascotRules {
      * The sass rules: `sassy` becomes `calm` when the setting is Calm, in support conversations, and on turns the
      * backend marks sensitive (hardship: low balance, failed payments, debt, fees, bereavement, medical bills).
      */
-    fun moodFor(mood: AshaMood, sensitive: Boolean, context: AshaMascotContext): AshaMood =
-        if (mood == AshaMood.Sassy && (context.sass == SassLevel.Calm || context.support || sensitive)) AshaMood.Calm else mood
+    fun moodFor(mood: AshaMood, sensitive: Boolean, context: AshaMascotContext): AshaMood = when {
+        mood == AshaMood.Sassy && (context.sass == SassLevel.Calm || context.support || sensitive) -> AshaMood.Calm
+        // Late at night a calm Asha is sleepy; never on a hard turn or in support, where she stays attentive.
+        mood == AshaMood.Calm && context.lateNight && !sensitive && !context.support -> AshaMood.Sleepy
+        else -> mood
+    }
+
+    /** Late night on the phone: 23:00 to 04:59 local. */
+    fun isLateNight(localHour: Int): Boolean = localHour >= 23 || localHour < 5
 
     /** Offline she stays still and idle, so one-shots are dropped; a poke (the person's own tap) still answers. */
     fun allowReaction(reaction: AshaReaction, context: AshaMascotContext): Boolean = context.online || reaction == AshaReaction.Poke

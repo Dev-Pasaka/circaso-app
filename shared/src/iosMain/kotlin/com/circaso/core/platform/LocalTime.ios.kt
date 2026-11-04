@@ -2,6 +2,7 @@ package com.circaso.core.platform
 
 import platform.Foundation.NSCalendar
 import platform.Foundation.NSCalendarUnitDay
+import platform.Foundation.NSCalendarUnitHour
 import platform.Foundation.NSDate
 import platform.Foundation.NSDateFormatter
 import platform.Foundation.NSDateFormatterNoStyle
@@ -27,3 +28,5 @@ actual fun localDayIndex(epochMillis: Long): Long {
     val epochStart = calendar.startOfDayForDate(NSDate.dateWithTimeIntervalSince1970(0.0))
     return calendar.components(NSCalendarUnitDay, epochStart, start, 0u).day
 }
+
+actual fun localHour(epochMillis: Long): Int = NSCalendar.currentCalendar.component(NSCalendarUnitHour, fromDate = date(epochMillis)).toInt()

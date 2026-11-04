@@ -228,3 +228,15 @@ class AshaMoneyReactionsTest {
         kotlin.test.assertEquals(1, r.newArrivals(before, now))
     }
 }
+
+class AshaLateNightTest {
+    @kotlin.test.Test fun calmTurnsSleepyLateAtNightButNotOnHardTurnsOrInSupport() {
+        val night = com.circaso.feature.assistant.domain.AshaMascotContext(online = true, lateNight = true)
+        val r = com.circaso.feature.assistant.domain.AshaMascotRules
+        kotlin.test.assertEquals(AshaMood.Sleepy, r.moodFor(AshaMood.Calm, sensitive = false, context = night))
+        kotlin.test.assertEquals(AshaMood.Calm, r.moodFor(AshaMood.Calm, sensitive = true, context = night))
+        kotlin.test.assertEquals(AshaMood.Calm, r.moodFor(AshaMood.Calm, sensitive = false, context = night.copy(support = true)))
+        kotlin.test.assertEquals(AshaMood.Happy, r.moodFor(AshaMood.Happy, sensitive = false, context = night))
+        kotlin.test.assertTrue(r.isLateNight(23)); kotlin.test.assertTrue(r.isLateNight(4)); kotlin.test.assertFalse(r.isLateNight(5)); kotlin.test.assertFalse(r.isLateNight(22))
+    }
+}

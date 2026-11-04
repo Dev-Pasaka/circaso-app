@@ -104,7 +104,7 @@ data class VoiceUiState(
         get() = AshaMascotRules.resolve(
             look = look,
             tags = mascotTags,
-            context = AshaMascotContext(online = ending != VoiceEnding.Offline),
+            context = AshaMascotContext(online = ending != VoiceEnding.Offline, lateNight = AshaMascotRules.isLateNight(com.circaso.core.platform.localHour(kotlin.time.Clock.System.now().toEpochMilliseconds()))),
             appActivity = when (phase) {
                 VoicePhase.Connecting -> AshaActivity.Idle
                 VoicePhase.Listening -> AshaActivity.Listening

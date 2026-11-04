@@ -74,7 +74,7 @@ data class AshaUiState(
         get() = AshaMascotRules.resolve(
             look = look,
             tags = mascotTags,
-            context = AshaMascotContext(online = online),
+            context = AshaMascotContext(online = online, lateNight = AshaMascotRules.isLateNight(com.circaso.core.platform.localHour(kotlin.time.Clock.System.now().toEpochMilliseconds()))),
             appActivity = when {
                 voice == VoiceState.Recording -> AshaActivity.Listening
                 sending && streaming.isEmpty() -> AshaActivity.Thinking
