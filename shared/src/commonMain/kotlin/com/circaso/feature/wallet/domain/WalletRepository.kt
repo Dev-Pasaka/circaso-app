@@ -94,6 +94,20 @@ interface WalletRepository {
 
     /** W13 for one wallet: puts it on every supported network (its own PIN, named on the screen). */
     suspend fun addMissingChains(subject: SignSubject): AppResult<Unit>
+
+    // ---- Space wallets (phase 3, W18–W19). Defaults keep the older fakes building; WalletRepositoryImpl has them.
+
+    /** W19: a space's wallet (its owner and admins). */
+    suspend fun spaceWallet(spaceId: String): AppResult<SpaceWallet> = AppResult.Failure(com.circaso.core.common.AppError.Unexpected(null))
+
+    /**
+     * W18 then the Circle SDK with **the space wallet's own session** (SN4): Circle's PIN screen names the space ([name]).
+     * Calling again while it is setting up gives a fresh challenge (Finish Wallet Setup, SN5b); null challenge: PIN set.
+     */
+    suspend fun startSpaceWallet(spaceId: String, name: String): AppResult<SpaceWallet> = AppResult.Failure(com.circaso.core.common.AppError.Unexpected(null))
+
+    /** Polls W19 (and listens for `wallet.ready`) until the space's wallet is active, or a minute passes (SN5). */
+    suspend fun awaitSpaceWallet(spaceId: String): AppResult<SpaceWallet> = AppResult.Failure(com.circaso.core.common.AppError.Unexpected(null))
 }
 
 data class PaymentRequest(
@@ -114,4 +128,8 @@ data class PaymentRequest(
     val payoutRequestId: String? = null,
     /** Which wallet signs, as the PIN screen names it. */
     val subject: SignSubject = SignSubject.Personal,
+    /** Pay into this space's wallet (`to: { spaceId }`, phase 3): members only, or with [spacePaymentId]. */
+    val toSpaceId: String? = null,
+    /** SP13's membership quote: personal wallet only, exactly its amount (SM1). */
+    val spacePaymentId: String? = null,
 )

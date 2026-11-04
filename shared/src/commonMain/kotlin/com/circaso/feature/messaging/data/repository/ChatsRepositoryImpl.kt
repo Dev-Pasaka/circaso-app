@@ -83,6 +83,8 @@ class ChatsRepositoryImpl(
 
     override suspend fun openDirect(userId: String): AppResult<Chat> = remote.openDirect(userId).map { store(it) }
 
+    override suspend fun openViaSpace(userId: String, spaceId: String): AppResult<Chat> = remote.openDirect(userId, spaceId).map { store(it) }
+
     override suspend fun createGroup(draft: GroupDraft, idempotencyKey: String): AppResult<GroupCreated> {
         val key = groupKeys.newMetaKey()
         val request = CreateGroupRequest(sealedMeta = groupKeys.sealMeta(key, draft.name), memberIds = draft.memberIds)
@@ -214,6 +216,7 @@ class ChatsRepositoryImpl(
             left = false,
             readUpToOrderAt = previous?.readUpToOrderAt ?: 0L,
             updatedAt = previous?.updatedAt ?: now(),
+            viaSpaceId = dto.viaSpaceId ?: previous?.viaSpaceId,
         )
         dao.upsertChat(entity)
         val members = dto.members.map { ChatMemberEntity(dto.chatId, it.user.userId, it.role, it.user.displayName, it.user.handle, it.user.avatarUrl, it.joinedAt) }
@@ -239,6 +242,7 @@ internal fun ChatEntity.toDomain(members: List<ChatMemberEntity>, me: String?): 
         metaVersion = metaVersion,
         myRole = members.firstOrNull { it.userId == me }?.role?.toRole() ?: MemberRole.Member,
         peerId = if (direct) others.firstOrNull()?.userId else null,
+        viaSpaceId = viaSpaceId,
     )
 }
 

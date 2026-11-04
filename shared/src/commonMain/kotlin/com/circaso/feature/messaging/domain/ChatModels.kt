@@ -19,6 +19,8 @@ data class Chat(
     val myRole: MemberRole,
     /** The other person in a direct chat; null for a group. */
     val peerId: String?,
+    /** A private chat with a space's owner (SH2, "Private · via {space}"), separate from any ordinary chat with them. */
+    val viaSpaceId: String? = null,
 )
 
 /** One row of the chat list (design C1): the chat, its newest message and how many are unread. */

@@ -16,6 +16,8 @@ interface ChatsRepository {
 
     /** Opens (or finds) the direct chat with a person (M4). */
     suspend fun openDirect(userId: String): AppResult<Chat>
+    /** SH2: the private, end-to-end encrypted chat with [userId] (a space's owner, or one of its members) for [spaceId]. */
+    suspend fun openViaSpace(userId: String, spaceId: String): AppResult<Chat> = openDirect(userId)
 
     /** Creates a group (M5). [idempotencyKey] stays the same across retries of one attempt, so there is never a second group. */
     suspend fun createGroup(draft: GroupDraft, idempotencyKey: String): AppResult<GroupCreated>

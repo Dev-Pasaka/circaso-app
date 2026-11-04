@@ -25,6 +25,8 @@ data class ChatEntity(
     /** Incoming messages with [MessageEntity.orderAt] above this are unread. */
     val readUpToOrderAt: Long,
     val updatedAt: Long,
+    /** The private chat with a space's owner (SH2): which space it came through. Null for every other chat. */
+    @androidx.room.ColumnInfo(defaultValue = "NULL") val viaSpaceId: String? = null,
 )
 
 @Entity(tableName = "chat_member", primaryKeys = ["chatId", "userId"])

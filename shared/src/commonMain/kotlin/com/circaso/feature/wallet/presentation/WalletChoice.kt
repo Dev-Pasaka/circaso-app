@@ -61,7 +61,11 @@ data class NamedWallet(
     val signerUserId: String?,
 ) {
     val personal get() = walletId == null
-    val subject get() = if (walletId == null) SignSubject(null, PersonalName) else SignSubject.group(walletId, name)
+    val subject get() = when {
+        walletId == null -> SignSubject(null, PersonalName)
+        kind == WalletOwnerType.Space -> SignSubject.space(walletId, name)
+        else -> SignSubject.group(walletId, name)
+    }
 
     companion object {
         const val PersonalName = "Personal"

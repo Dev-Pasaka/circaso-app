@@ -68,6 +68,12 @@ data class PayIntent(
      * the thread carries Sending → Sent and this resets for the next payment, rather than waiting here (GW17).
      */
     val inChat: Boolean = false,
+    /**
+     * Spaces (phase 3): pay into this space's wallet (`to: { spaceId }`). From its private chat (SH2b) the person types
+     * the amount; with [spacePaymentId] it is a membership (SM1): exact USDC [amount], personal wallet only, nothing to type.
+     */
+    val spaceId: String? = null,
+    val spacePaymentId: String? = null,
 ) {
     val contribution get() = groupId != null || (goalName != null && requestId == null)
     val payout get() = requestId != null
@@ -155,7 +161,12 @@ data class PayUiState(
     val asOf: String? = null,
     /** §7b's fee line; [PayFee.None] until phase 2F quotes it. */
     val fee: PayFee = PayFee.None,
+    /** Spaces: paying into this space's wallet (SH2b), or its membership quote (SM1, personal wallet, amount fixed). */
+    val spaceId: String? = null,
+    val spacePaymentId: String? = null,
 ) {
+    /** A space's membership (SM1): the amount and Paying from are fixed. */
+    val membership get() = spacePaymentId != null
     /** Paying from a group wallet (only ever its signer). */
     val fromGroupWallet get() = !payingFrom.personal
     /** GW9: an approved payout, paid from the group wallet with its PIN. */
@@ -167,7 +178,7 @@ data class PayUiState(
     /** Show GW9b's chip: the person has other wallets, or this one is a group's. */
     val showPayingFrom get() = groupWallets && (choices.size > 1 || fromGroupWallet)
     /** The chip opens GW10: there is something to switch to, and nothing fixes the wallet (a payout, a contribution). */
-    val canSwitch get() = showPayingFrom && choices.size > 1 && requestId == null && !toGroup && step == PayStep.Amount
+    val canSwitch get() = showPayingFrom && choices.size > 1 && requestId == null && !toGroup && spacePaymentId == null && step == PayStep.Amount
     /** The approved request being paid. */
     val payoutRequest get() = requestId?.let { id -> groupMoney?.openRequests?.firstOrNull { it.requestId == id } }
     /** The wallet's name as the approval says it ("Approve from Kilimani Chama"). */
@@ -293,11 +304,12 @@ class PayViewModel(
     private val address = intent.address
     private val local = MutableStateFlow(
         PayUiState(
-            step = if (userId == null && address == null && intent.groupId == null) PayStep.Pick else PayStep.Amount, chatId = chatId,
+            step = if (userId == null && address == null && intent.groupId == null && intent.spaceId == null) PayStep.Pick else PayStep.Amount, chatId = chatId,
             amountText = intent.amount?.filter { it.isDigit() || it == '.' }.orEmpty(), goalName = intent.goalName, requestId = intent.requestId,
-            // A request's amount is exact USDC (CH3); a `#500` shortcut is in the person's currency.
-            inFiat = !intent.payout,
+            // A request's amount is exact USDC (CH3), as is a membership's (SP13); a `#500` shortcut is in the person's currency.
+            inFiat = !intent.payout && intent.spacePaymentId == null,
             groupId = intent.groupId, note = intent.note.orEmpty(),
+            spaceId = intent.spaceId, spacePaymentId = intent.spacePaymentId,
         ),
     )
     /** The wallet chosen to pay from: the intent's group wallet, or one picked in GW10; null is Personal. */
@@ -351,7 +363,9 @@ class PayViewModel(
                 ?: userId?.let { id -> people.firstOrNull { it.userId == id } ?: Person(id, intent.displayName ?: "Them", null, null, null) }
                 ?: address?.let { Person("", intent.displayName ?: shortAddress(it), null, null, null) }
                 // Paying into a group: the group itself is who receives (its name and photo come from the chat).
-                ?: intent.groupId?.let { Person("", group.groupTitle ?: intent.displayName ?: "The group", null, group.groupAvatar, null) },
+                ?: intent.groupId?.let { Person("", group.groupTitle ?: intent.displayName ?: "The group", null, group.groupAvatar, null) }
+                // Paying a space: the space receives (its name from the intent; spaces aren't chats).
+                ?: intent.spaceId?.let { Person("", intent.displayName ?: "The space", null, null, null) },
             blockchain = ui.blockchain?.takeIf { b -> wallet?.chains?.any { it.blockchain == b } != false } ?: wallet?.chainsReceiving?.firstOrNull()?.blockchain,
             inFiat = ui.inFiat && wallet?.fiat != null,
             groupWallets = group.on,
@@ -408,7 +422,7 @@ class PayViewModel(
 
     /** Back from the amount: to the person picker when that's where the payment started; false means leave Pay. */
     fun onBackToPick(): Boolean {
-        if (userId != null || address != null || intent.groupId != null || state.value.step != PayStep.Amount) return false
+        if (userId != null || address != null || intent.groupId != null || intent.spaceId != null || state.value.step != PayStep.Amount) return false
         local.update { it.copy(step = PayStep.Pick) }
         return true
     }
@@ -451,7 +465,8 @@ class PayViewModel(
 
     fun onAmount(text: String) {
         // A request's amount is what the admins approved; changing it would fail the link after the money left.
-        if (state.value.payout) return
+        // A membership's is the server's quote (SP13).
+        if (state.value.payout || state.value.membership) return
         // Digits and one point; the decimals the unit allows (2 for fiat, 6 for USDC).
         val clean = text.filter { it.isDigit() || it == '.' }
         if (clean.count { it == '.' } > 1) return
@@ -462,7 +477,7 @@ class PayViewModel(
 
     fun onToggleUnit() {
         val s = state.value
-        if (!s.canUseFiat || s.payout) return
+        if (!s.canUseFiat || s.payout || s.membership) return
         // Carry the value across so the number doesn't jump.
         val minor = s.amountMinor
         val next = !s.inFiat
@@ -506,19 +521,22 @@ class PayViewModel(
                 s.payout -> listOfNotNull("Paid from ${s.goalName ?: "the group"}", typed).joinToString(" · ")
                 else -> typed
             }
-            val toAddress = address?.takeIf { payee.userId.isEmpty() && !s.toGroup }
+            val toSpace = s.spaceId != null
+            val toAddress = address?.takeIf { payee.userId.isEmpty() && !s.toGroup && !toSpace }
             // Every approval names its wallet; a person with only a personal wallet keeps today's wording (GW11b).
             val subject = if (s.fromGroupWallet) s.payingFrom.subject else if (s.choices.size > 1) NamedWallet.Personal.subject else com.circaso.feature.wallet.domain.SignSubject.Personal
             val request = PaymentRequest(
-                blockchain = chain, toUserId = payee.userId.takeIf { it.isNotEmpty() && toAddress == null && !s.toGroup }, toAddress = toAddress, amountMinor = minor,
+                blockchain = chain, toUserId = payee.userId.takeIf { it.isNotEmpty() && toAddress == null && !s.toGroup && !toSpace }, toAddress = toAddress, amountMinor = minor,
                 asset = s.asset, chatId = chatId, note = note, counterpartName = payee.displayName ?: group,
-                toGroupId = s.groupId, fromWalletId = s.payingFrom.walletId, payoutRequestId = s.requestId.takeIf { s.groupPayout }, subject = subject,
+                toGroupId = s.groupId, fromWalletId = s.payingFrom.walletId.takeIf { !s.membership }, payoutRequestId = s.requestId.takeIf { s.groupPayout }, subject = subject,
+                toSpaceId = s.spaceId, spacePaymentId = s.spacePaymentId,
             )
             when (val r = pay(request, idempotencyKey)) {
                 is AppResult.Success -> {
                     idempotencyKey = newIdempotencyKey()
                     val transfer = r.value
-                    val target = chatId ?: if (toAddress == null && !s.toGroup) (openDirectChat(payee.userId) as? AppResult.Success)?.value?.chatId else null
+                    // A membership's receipt goes to the private chat once the payment confirms (SM2), not from here.
+                    val target = chatId ?: if (toAddress == null && !s.toGroup && !toSpace) (openDirectChat(payee.userId) as? AppResult.Success)?.value?.chatId else null
                     if (target != null) sendCard(target, PaymentCard(transfer.transferId, transfer.amount.amountMinor, transfer.amount.asset, transfer.blockchain, note))
                     val follow = observeTransfer
                     if ((s.groupPayout || s.toGroup) && follow != null && !transfer.settled && !intent.inChat) {

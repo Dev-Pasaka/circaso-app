@@ -40,6 +40,12 @@ interface WalletRemote {
 
     /** W14: set up a group's wallet (the owner); run its challenge with its own `sdk`. */
     suspend fun setUpGroupWallet(chatId: String, idempotencyKey: String): AppResult<GroupWalletSetupResponse>
+
+    /** W19: a space's wallet (its owner and admins). */
+    suspend fun spaceWallet(spaceId: String): AppResult<SpaceWalletResponse> = AppResult.Failure(AppError.Api("request.not_found", 404, null, null, emptyMap()))
+
+    /** W18: the space's owner sets up its wallet; run its challenge with its own `sdk`. */
+    suspend fun setUpSpaceWallet(spaceId: String, idempotencyKey: String): AppResult<SpaceWalletSetupResponse> = AppResult.Failure(AppError.Api("request.not_found", 404, null, null, emptyMap()))
 }
 
 /**
@@ -177,6 +183,16 @@ class KtorWalletRemote(private val api: CircasoApi, private val groupWallets: Gr
             idempotencyKey(idempotencyKey)
         }
     }
+
+    override suspend fun spaceWallet(spaceId: String): AppResult<SpaceWalletResponse> =
+        api.call<SpaceWalletResponse> { method = HttpMethod.Get; url("/v1/wallet/spaces/$spaceId") }.also(::learn)
+
+    override suspend fun setUpSpaceWallet(spaceId: String, idempotencyKey: String): AppResult<SpaceWalletSetupResponse> =
+        api.call<SpaceWalletSetupResponse> {
+            method = HttpMethod.Post
+            url("/v1/wallet/spaces/$spaceId")
+            idempotencyKey(idempotencyKey)
+        }.also(::learn)
 
     /** What a group-wallet route's answer says about the server. */
     private fun learn(result: AppResult<*>) {
