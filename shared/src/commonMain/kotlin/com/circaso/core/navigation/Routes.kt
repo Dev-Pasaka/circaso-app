@@ -114,7 +114,7 @@ data class GroupWalletSetupRoute(
     val thenTarget: Boolean = false,
 ) : Route
 
-/** A group's own wallet (GW16's structure): balance, Add / Payout / Receive, the target, requests and payments. */
+/** A group's own wallet, pushed (group info, the goal strip): the Wallet tab's own design with that wallet on screen. */
 @Serializable
 data class GroupWalletRoute(val chatId: String) : Route
 
@@ -162,17 +162,17 @@ data object AshaVoiceRoute : Route
 @Serializable
 data object CurrencyRoute : Route
 
-/** One asset's statement on one network, opened from its row under the wallet card. */
+/** One asset's statement on one network, opened from its row under the wallet card ([walletId] null: the personal wallet). */
 @Serializable
-data class AssetActivityRoute(val blockchain: String, val symbol: String) : Route
+data class AssetActivityRoute(val blockchain: String, val symbol: String, val walletId: String? = null) : Route
 
-/** One network's payments: See All under the recent payments, for the card in front. */
+/** One network's payments: See All under the recent payments, for the card in front ([walletId] null: the personal wallet). */
 @Serializable
-data class NetworkActivityRoute(val blockchain: String) : Route
+data class NetworkActivityRoute(val blockchain: String, val walletId: String? = null) : Route
 
-/** Every asset on one network, searchable: See All under a wallet card. */
+/** Every asset on one network, searchable: See All under a wallet card ([walletId] null: the personal wallet). */
 @Serializable
-data class NetworkAssetsRoute(val blockchain: String) : Route
+data class NetworkAssetsRoute(val blockchain: String, val walletId: String? = null) : Route
 
 /** Debug only: a screen shown with sample data (`-preview=you` launch argument). */
 @Serializable

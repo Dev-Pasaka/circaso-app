@@ -290,9 +290,11 @@ signer, admins approve payouts). The treasurer model above stays only for a serv
 - **Screens**: New Group (GW1–GW1d) → `GroupWalletSetupRoute` (W14 + PIN → W15 → GW4 biometrics → W13 → CH9 → CH2;
   GW5b/GW5c and a cancelled PIN; Try Again resumes without a second PIN) → the chat. Group info (`GroupMoneyRows`,
   GW6–GW8b; locked wallet when the signer left; leaving blocked while the wallet holds money, §11.9; Change PIN is a
-  coming sheet, no W8 route). `TargetRoute` (GW7b, CH2/CH8). `GroupWalletRoute` (balance and who sends, Add / Payout
-  / Receive, target, requests, history), also the Wallet tab's view when a group wallet is picked in its title
-  switcher (GW16). Pay (`PayIntent.groupId` contribute, `fromWalletId` + `requestId` pay payout, `fromWalletId`
+  coming sheet, no W8 route). `TargetRoute` (GW7b, CH2/CH8). **One wallet design** (D-M9, 2026-11-04): the Wallet
+  tab's corner switcher (`WalletSwitcher`, a popover) picks the wallet; `WalletViewModel` reads a picked group through
+  `GroupWalletReader` (CH7 + W1/W6 by `walletId`) into `WalletUiState.group`, and `WalletContent` draws it with the
+  personal screen plus `GroupWalletHooks` (caption, Add / Payout / Receive / Target, target, payout requests).
+  `GroupWalletRoute` pushes the same `WalletContent` (via `GroupWalletViewModel`, the same reader) under a bar. Pay (`PayIntent.groupId` contribute, `fromWalletId` + `requestId` pay payout, `fromWalletId`
   alone request payout; Paying from chip and GW10 sheet; GW19 Not sent). In a group, `#1000` is a contribution
   (GW9a2) and the preview's arrow opens the review; in a direct chat it does too when there is another wallet to pay
   from, otherwise the PIN as before (GW11b).
@@ -302,7 +304,8 @@ signer, admins approve payouts). The treasurer model above stays only for a serv
   `Quoting`), `PrepareTransferResponse.fee`, `PayFailure`.
 - **Tests**: `commonTest/feature/wallet/GroupWalletTest.kt` (flag, repository), `commonTest/feature/chama/ChamaTest.kt`
   `GroupMoneyTest`, `androidHostTest/feature/wallet/GroupWalletViewModelsTest.kt` (Pay, set-up, group info rules).
-- **Previews**: `gw-*` in `gallery/GroupWalletPreviews.kt` (listed in `project-status.md`).
+- **Previews**: `gw-*`, `wallet-switcher*` and `wallet-unified-*` in `gallery/GroupWalletPreviews.kt` (listed in
+  `project-status.md`). Tests for switching: `androidHostTest/feature/wallet/WalletSwitchTest.kt`.
 
 ## Money in the chat (2026-11-04, Pasaka's correction; C3–C6, GW9a/GW9a2/GW9b/GW9d/GW15/GW17–GW19)
 

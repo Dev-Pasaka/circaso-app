@@ -68,6 +68,9 @@ fun AmountDisplay(currency: String, number: String, modifier: Modifier = Modifie
 
 enum class AmountTone { Ink, Money }
 
+/** The `.act` disc's size, shared with the wallet's loading skeleton. */
+val ActionButtonSize = 58.dp
+
 /** `.act`: the wallet's four round actions, a 58 dp surface disc with a 13 pt label under it. */
 @Composable
 fun ActionButton(icon: CircasoIcon, label: String, onClick: () -> Unit, modifier: Modifier = Modifier, enabled: Boolean = true) {
@@ -78,7 +81,7 @@ fun ActionButton(icon: CircasoIcon, label: String, onClick: () -> Unit, modifier
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
-        Box(Modifier.size(58.dp).clip(CircasoShapes.circle).background(c.surface), contentAlignment = Alignment.Center) {
+        Box(Modifier.size(ActionButtonSize).clip(CircasoShapes.circle).background(c.surface), contentAlignment = Alignment.Center) {
             CircasoIconImage(icon, c.ink, Modifier.size(22.dp))
         }
         BasicText(label, style = t.footnote.copy(color = c.ink, fontWeight = FontWeight.Medium))
