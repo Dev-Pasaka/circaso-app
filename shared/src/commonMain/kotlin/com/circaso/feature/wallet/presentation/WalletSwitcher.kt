@@ -1,82 +1,74 @@
 package com.circaso.feature.wallet.presentation
 
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.core.MutableTransitionState
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.snap
 import androidx.compose.animation.core.spring
-import androidx.compose.animation.core.tween
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.scaleIn
-import androidx.compose.animation.scaleOut
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.text.BasicText
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.text.BasicText
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.heading
-import androidx.compose.ui.semantics.paneTitle
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.selectableGroup
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
-import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.unit.IntOffset
-import androidx.compose.ui.unit.IntRect
-import androidx.compose.ui.unit.IntSize
-import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.window.Popup
-import androidx.compose.ui.window.PopupPositionProvider
-import androidx.compose.ui.window.PopupProperties
-import com.circaso.designsystem.chrome.glass
-import com.circaso.designsystem.components.Avatar
+import com.circaso.designsystem.chrome.SheetHead
 import com.circaso.designsystem.components.CircasoIcon
 import com.circaso.designsystem.components.CircasoIconImage
+import com.circaso.designsystem.components.CircasoTextField
 import com.circaso.designsystem.components.RowDivider
 import com.circaso.designsystem.motion.pressable
-import com.circaso.designsystem.theme.CircasoMotion
 import com.circaso.designsystem.theme.CircasoShapes
 import com.circaso.designsystem.theme.CircasoSizes
 import com.circaso.designsystem.theme.CircasoSpacing
 import com.circaso.designsystem.theme.CircasoTheme
+import com.circaso.feature.chama.presentation.GroupWalletUiState
 import com.circaso.feature.chama.presentation.amountText
 import com.circaso.feature.wallet.domain.Wallet
-import com.circaso.feature.wallet.domain.WalletOwnerType
 import com.circaso.feature.wallet.domain.WalletStatus
 
-// The popover's width: wide enough for "Kilimani Chama" and a balance on one line, narrow enough to read as a menu
-// anchored to its corner rather than a sheet. No scale token is this size; named here.
-private val PopoverMaxWidth = 300.dp
-private val PopoverMinWidth = 248.dp
-// Room around the popover inside its window, so the floating shadow isn't cut off at the window's edge (as
-// ReactionPicker does with its bubble).
-private val PopoverInset = CircasoSpacing.s4
-// The label in the corner truncates past this, so a long group name never pushes into the page.
-private val LabelMaxWidth = 132.dp
+// The segmented control is compact, not a full-width bar: two short words, centred, like the system's own
+// view switchers. It widens with Dynamic Type up to the screen. No scale token is this size; named here.
+private val ModeControlWidth = 232.dp
+// A segment's height inside the 3 dp track: 38 + 3 + 3 = the 44 dp touch target.
+private val SegmentHeight = 38.dp
+private val TrackInset = 3.dp
+
+/** The overflow menu's actions that leave the tab: the group's chat and its info (members, approvals, its wallet). */
+class GroupMenuActions(val onOpenChat: (chatId: String) -> Unit, val onGroupInfo: (chatId: String) -> Unit)
 
 /**
  * The name the corner shows: the whole name when it is short, else its first two words, else its first word
@@ -91,163 +83,240 @@ internal fun shortWalletName(name: String): String {
 }
 
 /**
- * GW16 as Pasaka redrew it (2026-11-04): no title; a compact control in the top-right corner, the wallet glyph with the
- * wallet's short name beside it and a chevron, that opens a popover anchored to the corner listing every wallet the
- * person can see. Built like the bars' [com.circaso.designsystem.components.CircasoIconButton] (36 dp, `fill`), inside
- * a 44 dp target. Shown only when there is another wallet (with the group-wallets flag off there never is).
+ * Personal | Groups at the top of the Wallet tab (Pasaka, 2026-11-05). A track on `fill` with the chosen side lifted
+ * on `fillSelected`; the lift slides across on a soft spring (reduced motion: it moves at once). Each side reads out
+ * as "Wallet: Personal" / "Wallet: Groups", selected or not.
  */
 @Composable
-fun WalletSwitcher(
-    wallets: List<NamedWallet>,
-    selected: NamedWallet,
-    open: Boolean,
-    balances: Map<String?, Wallet?>,
-    locked: Set<String>,
-    hidden: Boolean,
-    onOpen: (Boolean) -> Unit,
-    onPick: (NamedWallet) -> Unit,
-) {
+fun WalletModeControl(groups: Boolean, onMode: (WalletMode) -> Unit, modifier: Modifier = Modifier) {
     val c = CircasoTheme.colors
     val t = CircasoTheme.typography
     val still = CircasoTheme.reduceMotion
-    val label = if (selected.personal) NamedWallet.PersonalName else selected.name
-    val turn by animateFloatAsState(if (open) 180f else 0f, if (still) tween(0) else tween(CircasoMotion.BaseMs), label = "chevron")
+    val at by animateFloatAsState(
+        if (groups) 1f else 0f,
+        if (still) snap() else spring(dampingRatio = 0.86f, stiffness = Spring.StiffnessMediumLow),
+        label = "segment",
+    )
+    val width = ModeControlWidth * LocalDensity.current.fontScale.coerceIn(1f, 1.6f)
+    val rtl = if (androidx.compose.ui.platform.LocalLayoutDirection.current == androidx.compose.ui.unit.LayoutDirection.Rtl) -1f else 1f
     Box(
-        Modifier.heightIn(min = CircasoSizes.controlMd)
-            .pressable(role = Role.Button, onClick = { onOpen(!open) })
-            .semantics(mergeDescendants = true) {
-                contentDescription = "Wallet: $label. Switch wallet"
-                stateDescription = if (open) "Expanded" else "Collapsed"
-            },
-        contentAlignment = Alignment.Center,
+        modifier.widthIn(max = width).fillMaxWidth().clip(CircasoShapes.pill).background(c.fill).padding(TrackInset)
+            .semantics { selectableGroup() },
+    ) {
+        // The lift: half the track, moved by a transform so sliding never re-measures the row.
+        Box(Modifier.matchParentSize()) {
+            Box(
+                Modifier.fillMaxWidth(0.5f).fillMaxHeight()
+                    .graphicsLayer { translationX = at * size.width * rtl }
+                    .clip(CircasoShapes.pill).background(c.fillSelected),
+            )
+        }
+        Row(Modifier.fillMaxWidth()) {
+            listOf(WalletMode.Personal to "Personal", WalletMode.Groups to "Groups").forEach { (mode, label) ->
+                val on = (mode == WalletMode.Groups) == groups
+                Box(
+                    Modifier.weight(1f).heightIn(min = SegmentHeight).clip(CircasoShapes.pill)
+                        .pressable(role = Role.Tab, onClick = { if (!on) onMode(mode) })
+                        .semantics(mergeDescendants = true) {
+                            role = Role.Tab
+                            selected = on
+                            contentDescription = "Wallet: $label"
+                        },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    BasicText(
+                        label, Modifier.padding(horizontal = CircasoSpacing.s2, vertical = CircasoSpacing.s1),
+                        style = t.subhead.copy(color = c.ink, fontWeight = if (on) FontWeight.SemiBold else FontWeight.Medium, textAlign = TextAlign.Center),
+                        maxLines = 1, overflow = TextOverflow.Ellipsis,
+                    )
+                }
+            }
+        }
+    }
+}
+
+/** What a group wallet lets this person do, in a few words (the menu's and the full list's second line). */
+internal fun walletLine(w: NamedWallet, locked: Boolean): String = when {
+    w.personal -> "Your own money"
+    locked -> "Locked · its signer left"
+    w.status == WalletStatus.SettingUp -> "Being set up"
+    w.canSign -> "You send, after approval"
+    else -> "View only · payouts need approval"
+}
+
+/** A wallet's last balance as the menu shows it, or null when the phone hasn't read it. */
+internal fun balanceLine(balances: Map<String?, Wallet?>, walletId: String?, hidden: Boolean): String? =
+    balances[walletId]?.let { b -> b.usdc?.let { if (hidden) "••••" else amountText(it.amountMinor, b.fiat) } }
+
+/**
+ * Under Groups: the group on screen as the page's title (its picture, its name, who can move its money) and the
+ * platform's overflow button, whose menu switches group and opens the group's chat or info. Built from what the
+ * phone holds, so it draws at once; the line under the name sharpens once the group's details are read.
+ */
+@Composable
+fun GroupWalletHeader(
+    state: WalletUiState,
+    onSwitching: (Boolean) -> Unit,
+    onSelectWallet: (NamedWallet) -> Unit,
+    onAllGroups: (Boolean) -> Unit,
+    menu: GroupMenuActions?,
+    modifier: Modifier = Modifier,
+    /** Inside the page's list, which already insets its rows; else it insets itself like the page. */
+    inList: Boolean = false,
+) {
+    val c = CircasoTheme.colors
+    val t = CircasoTheme.typography
+    val w = state.selected
+    val g = state.group
+    val locked = w.walletId != null && w.walletId in state.lockedWallets || g?.locked == true
+    // The group's own caption once it is read ("Only Otieno can send, after approval"), else the short line.
+    val line = g?.takeIf { it.money != null }?.caption?.substringAfter(" · ", "")?.replaceFirstChar { it.uppercase() }?.takeIf { it.isNotEmpty() }
+        ?: walletLine(w, locked)
+    Row(
+        modifier.fillMaxWidth().padding(start = if (inList) CircasoSpacing.s1 else CircasoSpacing.s4, end = if (inList) 0.dp else CircasoSpacing.s2),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(CircasoSpacing.s3),
     ) {
         Row(
-            Modifier.heightIn(min = CircasoSizes.iconButton).clip(CircasoShapes.pill).background(c.fill)
-                .padding(start = CircasoSpacing.s2, end = CircasoSpacing.s3, top = CircasoSpacing.s1, bottom = CircasoSpacing.s1),
+            Modifier.weight(1f).semantics(mergeDescendants = true) { heading() },
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(CircasoSpacing.s1 + CircasoSpacing.s1 / 2),
+            horizontalArrangement = Arrangement.spacedBy(CircasoSpacing.s3),
         ) {
-            // SW1: a space's wallet carries its tile in the corner, so the money on screen is plainly the space's.
-            if (selected.space) WalletGlyph(selected, 22.dp) else CircasoIconImage(CircasoIcon.Wallet, c.ink, Modifier.size(18.dp))
-            BasicText(shortWalletName(label), Modifier.widthIn(max = LabelMaxWidth), style = t.subhead.copy(color = c.ink, fontWeight = FontWeight.SemiBold), maxLines = 1, overflow = TextOverflow.Ellipsis)
-            CircasoIconImage(CircasoIcon.ChevronDown, c.inkSecondary, Modifier.size(14.dp).graphicsLayer { rotationZ = turn }, strokeWidth = 2.4f)
+            WalletAvatar(w.name, w.avatarUrl, group = true, size = CircasoSizes.avatarMd)
+            Column(Modifier.weight(1f)) {
+                BasicText(w.name, style = t.headline.copy(color = c.ink), maxLines = 2, overflow = TextOverflow.Ellipsis)
+                BasicText(line, style = t.footnote.copy(color = if (locked) c.warning else c.inkSecondary), maxLines = 2, overflow = TextOverflow.Ellipsis)
+            }
         }
-        val window = with(LocalDensity.current) { androidx.compose.ui.platform.LocalWindowInfo.current.containerSize.width.toDp() }
-        WalletPopover(open, onDismiss = { onOpen(false) }) {
-            WalletMenu(wallets, selected.walletId, balances, locked, hidden, onPick, windowWidth = window)
-        }
+        val groups = state.groupWallets
+        val listed = menuGroups(groups, w.walletId)
+        val wallets = listed.map { gw ->
+            val isLocked = gw.walletId in state.lockedWallets
+            val balance = balanceLine(state.balances, gw.walletId, state.hidden)
+            val sub = listOfNotNull(balance, walletLine(gw, isLocked)).joinToString(" · ")
+            NativeMenuItem(
+                id = "wallet:${gw.walletId}", title = gw.name, subtitle = sub, checked = gw.walletId == w.walletId,
+                avatarName = gw.name, avatarUrl = gw.avatarUrl,
+                accessibilityLabel = listOfNotNull(gw.name, walletLine(gw, isLocked), balance?.takeIf { !state.hidden }).joinToString(", "),
+            )
+        } + (if (groups.size > listed.size) listOf(NativeMenuItem("all", "All Group Wallets…", icon = NativeMenuIcon.List)) else emptyList())
+        val chat = w.chatId
+        val actions = if (menu != null && chat != null) listOf(
+            NativeMenuItem("chat", "Open Group Chat", icon = NativeMenuIcon.Chat),
+            NativeMenuItem("info", "Group Info", icon = NativeMenuIcon.Info),
+        ) else emptyList()
+        NativeMoreMenu(
+            title = "Group Wallets",
+            sections = listOf(wallets, actions).filter { it.isNotEmpty() },
+            expanded = state.switching,
+            onExpandedChange = onSwitching,
+            onSelect = { id ->
+                onSwitching(false)
+                when {
+                    id.startsWith("wallet:") -> groups.firstOrNull { "wallet:${it.walletId}" == id }?.let(onSelectWallet)
+                    id == "all" -> onAllGroups(true)
+                    id == "chat" -> chat?.let { menu?.onOpenChat?.invoke(it) }
+                    id == "info" -> chat?.let { menu?.onGroupInfo?.invoke(it) }
+                }
+            },
+            contentDescription = "More group wallet options",
+        )
     }
 }
 
 /**
- * Under the anchor, the card's right edge on the anchor's right edge, kept inside the window. The popup window is
- * [inset] bigger than the card on every side (room for its shadow), so the window is placed that much further out.
- */
-private class CornerPosition(private val gap: Int, private val inset: Int) : PopupPositionProvider {
-    override fun calculatePosition(anchorBounds: IntRect, windowSize: IntSize, layoutDirection: LayoutDirection, popupContentSize: IntSize): IntOffset {
-        val wanted = if (layoutDirection == LayoutDirection.Ltr) anchorBounds.right - popupContentSize.width + inset else anchorBounds.left - inset
-        val x = wanted.coerceIn(0, maxOf(0, windowSize.width - popupContentSize.width))
-        val y = minOf(anchorBounds.bottom + gap - inset, windowSize.height - popupContentSize.height).coerceAtLeast(0)
-        return IntOffset(x, y)
-    }
-}
-
-/**
- * The popover: grows out of the corner it hangs from with a soft spring and fades away faster than it came (reduced
- * motion: a fade). It stays composed while it closes, so the exit plays; back, a tap outside or a pick closes it.
+ * Groups with no group wallet yet: what one is, and where it comes from (a group chat's info, by an admin), in the
+ * calm shape of the tab's other states. Nothing to tap: group wallets are made inside a group, never here.
  */
 @Composable
-private fun WalletPopover(open: Boolean, onDismiss: () -> Unit, content: @Composable () -> Unit) {
-    val shown = remember { MutableTransitionState(false) }
-    shown.targetState = open
-    if (!shown.currentState && !shown.targetState) return
-    val density = LocalDensity.current
-    val provider = remember(density) { with(density) { CornerPosition(CircasoSpacing.s1.roundToPx(), PopoverInset.roundToPx()) } }
-    val dismiss by rememberUpdatedState(onDismiss)
-    val still = CircasoTheme.reduceMotion
-    val origin = TransformOrigin(1f, 0f)
-    Popup(popupPositionProvider = provider, onDismissRequest = { dismiss() }, properties = PopupProperties(focusable = true)) {
-        AnimatedVisibility(
-            shown,
-            enter = if (still) fadeIn(tween(CircasoMotion.BaseMs))
-            else fadeIn(tween(CircasoMotion.BaseMs)) + scaleIn(spring(dampingRatio = 0.82f, stiffness = Spring.StiffnessMediumLow), initialScale = 0.88f, transformOrigin = origin),
-            exit = if (still) fadeOut(tween(CircasoMotion.QuickMs))
-            else fadeOut(tween(CircasoMotion.QuickMs)) + scaleOut(tween(CircasoMotion.QuickMs), targetScale = 0.94f, transformOrigin = origin),
-        ) { content() }
-    }
-}
-
-/**
- * The popover's list: each wallet's picture (a group's photo or initials; Personal is the wallet glyph), its name,
- * what the person can do with it, and the last balance the phone read, small. The one on screen carries a tick.
- */
-@Composable
-internal fun WalletMenu(
-    wallets: List<NamedWallet>,
-    selectedId: String?,
-    balances: Map<String?, Wallet?>,
-    locked: Set<String>,
-    hidden: Boolean,
-    onPick: (NamedWallet) -> Unit,
-    /** The app window's width, read outside the popup (inside it, the window is the popup's own). */
-    windowWidth: androidx.compose.ui.unit.Dp = PopoverMaxWidth + CircasoSpacing.s4 * 2,
-) {
+fun GroupWalletsEmpty(bottom: androidx.compose.ui.unit.Dp, modifier: Modifier = Modifier) {
     val c = CircasoTheme.colors
     val t = CircasoTheme.typography
-    // Dynamic Type: the menu widens with the text (up to the window, less a margin), and at the largest sizes the
-    // balance moves under the name so the name keeps its room.
-    val density = LocalDensity.current
-    val maxWidth = minOf(PopoverMaxWidth * density.fontScale.coerceAtLeast(1f), windowWidth - CircasoSpacing.s4 * 2)
-    val large = density.fontScale > 1.3f
+    // Scrolls, so the largest text sizes on a small phone never cut the copy off (and the tab's pull still works).
     Column(
-        Modifier.padding(PopoverInset).widthIn(min = minOf(PopoverMinWidth, maxWidth), max = maxWidth).glass(CircasoShapes.lg, floating = true).clip(CircasoShapes.lg)
-            .verticalScroll(rememberScrollState())
-            .semantics { paneTitle = "Wallets" }
-            .padding(vertical = CircasoSpacing.s1),
+        modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = CircasoSpacing.s8).padding(bottom = bottom),
+        verticalArrangement = Arrangement.spacedBy(CircasoSpacing.s3, Alignment.CenterVertically),
+        horizontalAlignment = Alignment.CenterHorizontally,
     ) {
+        Box(Modifier.size(CircasoSizes.avatarLg).clip(CircasoShapes.circle).background(c.fill), contentAlignment = Alignment.Center) {
+            CircasoIconImage(CircasoIcon.People, c.inkSecondary, Modifier.size(28.dp))
+        }
+        Spacer(Modifier.size(CircasoSpacing.s1))
+        BasicText("No group wallets yet", Modifier.semantics { heading() }, style = t.title3.copy(color = c.ink, textAlign = TextAlign.Center))
         BasicText(
-            "Wallets", Modifier.padding(start = CircasoSpacing.s4, end = CircasoSpacing.s4, top = CircasoSpacing.s2, bottom = CircasoSpacing.s1).semantics { heading() },
-            style = t.footnote.copy(color = c.inkSecondary, fontWeight = FontWeight.SemiBold),
+            "A group wallet holds money for a group, like a chama or a trip fund. Members add to it, and payouts need the group's approval.",
+            style = t.body.copy(color = c.inkSecondary, textAlign = TextAlign.Center),
         )
-        wallets.forEachIndexed { i, w ->
-            if (i > 0) RowDivider(Modifier.padding(start = CircasoSizes.avatarSm + CircasoSpacing.s3))
-            val on = w.walletId == selectedId
-            val isLocked = w.walletId != null && w.walletId in locked
-            val balance = balances[w.walletId]?.let { b -> b.usdc?.let { if (hidden) "••••" else amountText(it.amountMinor, b.fiat) } }
-            val sub = when {
-                w.personal -> "Your own money"
-                isLocked -> "Locked · its signer left"
-                w.status == WalletStatus.SettingUp -> if (w.space) "Space wallet · being set up" else "Being set up"
-                w.space -> if (w.canSign) "Space wallet · you send" else "Space wallet · view only"
-                w.canSign -> "You send, after approval"
-                else -> "View only · payouts need approval"
-            }
-            Row(
-                Modifier.fillMaxWidth().heightIn(min = CircasoSizes.controlMd)
-                    .pressable(role = Role.RadioButton, onClick = { onPick(w) })
-                    .semantics(mergeDescendants = true) {
-                        this.selected = on
-                        contentDescription = listOfNotNull(w.name, sub, balance?.takeIf { !hidden }).joinToString(", ")
-                    }
-                    .padding(horizontal = CircasoSpacing.s4, vertical = CircasoSpacing.s2),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(CircasoSpacing.s3),
-            ) {
-                if (w.personal) {
-                    Box(Modifier.size(CircasoSizes.avatarSm).clip(CircasoShapes.circle).background(c.fill), contentAlignment = Alignment.Center) {
-                        CircasoIconImage(CircasoIcon.Wallet, c.ink, Modifier.size(16.dp))
-                    }
-                } else WalletGlyph(w, CircasoSizes.avatarSm)
-                Column(Modifier.weight(1f)) {
-                    BasicText(w.name, style = t.body.copy(color = c.ink, fontWeight = if (on) FontWeight.SemiBold else FontWeight.Normal), maxLines = if (large) 2 else 1, overflow = TextOverflow.Ellipsis)
-                    BasicText(sub, style = t.footnote.copy(color = if (isLocked) c.warning else c.inkSecondary), maxLines = 2)
-                    if (large && balance != null) BasicText(balance, style = t.footnote.copy(color = c.inkSecondary, fontFeatureSettings = "tnum"), maxLines = 1)
-                }
-                if (!large && balance != null) BasicText(balance, style = t.footnote.copy(color = c.inkSecondary, fontFeatureSettings = "tnum"), maxLines = 1)
-                // The tick keeps its place on every row, so the balances line up whichever wallet is chosen.
-                if (on) CircasoIconImage(CircasoIcon.Check, c.action, Modifier.size(18.dp), strokeWidth = 2.4f)
-                else Spacer(Modifier.width(18.dp))
+        BasicText(
+            "To start one, open a group chat, tap its name, and add a wallet. Only a group admin can.",
+            style = t.footnote.copy(color = c.inkSecondary, textAlign = TextAlign.Center),
+        )
+    }
+}
+
+/**
+ * Every group wallet, for someone in more groups than the menu lists: a search field, then each group's picture,
+ * name, what they can do with it and its last balance; the one on screen is ticked. Offline it lists what the phone
+ * holds, as of when it was read.
+ */
+@Composable
+fun ColumnScope.AllGroupWalletsContent(state: WalletUiState, onPick: (NamedWallet) -> Unit, onClose: () -> Unit) {
+    val c = CircasoTheme.colors
+    val t = CircasoTheme.typography
+    var query by remember { mutableStateOf("") }
+    val shown = filterGroups(state.groupWallets, query)
+    SheetHead("Group Wallets", onClose)
+    CircasoTextField(
+        query, { query = it }, label = "Search", placeholder = "Search groups",
+        leading = { CircasoIconImage(CircasoIcon.Search, c.inkSecondary, Modifier.size(18.dp)) },
+    )
+    if (shown.isEmpty()) {
+        BasicText(
+            "No group called “${query.trim()}”.", Modifier.fillMaxWidth().padding(vertical = CircasoSpacing.s6),
+            style = t.body.copy(color = c.inkSecondary, textAlign = TextAlign.Center),
+        )
+    } else {
+        LazyColumn(
+            Modifier.fillMaxWidth().heightIn(max = 420.dp).clip(CircasoShapes.lg).background(c.surfaceRaised).border(1.dp, c.separator, CircasoShapes.lg)
+                .semantics { selectableGroup() },
+        ) {
+            itemsIndexed(shown, key = { _, w -> w.walletId ?: "personal" }) { i, w ->
+                if (i > 0) RowDivider(Modifier.padding(start = CircasoSpacing.s4 + CircasoSizes.avatarSm + CircasoSpacing.s3))
+                WalletChoiceRow(w, on = w.walletId == state.selectedWalletId, locked = w.walletId in state.lockedWallets, balance = balanceLine(state.balances, w.walletId, state.hidden), hidden = state.hidden) { onPick(w) }
             }
         }
+    }
+    if (!state.online) BasicText("Offline · balances as last read on this phone.", Modifier.fillMaxWidth(), style = t.footnote.copy(color = c.inkSecondary, textAlign = TextAlign.Center))
+}
+
+/** One wallet in the full list: its picture, name, what the person can do with it, its last balance, and a tick. */
+@Composable
+private fun WalletChoiceRow(w: NamedWallet, on: Boolean, locked: Boolean, balance: String?, hidden: Boolean, onClick: () -> Unit) {
+    val c = CircasoTheme.colors
+    val t = CircasoTheme.typography
+    val sub = walletLine(w, locked)
+    // Dynamic Type: at the largest sizes the balance moves under the name so the name keeps its room.
+    val large = LocalDensity.current.fontScale > 1.3f
+    Row(
+        Modifier.fillMaxWidth().heightIn(min = CircasoSizes.controlMd)
+            .pressable(role = Role.RadioButton, onClick = onClick)
+            .semantics(mergeDescendants = true) {
+                selected = on
+                contentDescription = listOfNotNull(w.name, sub, balance?.takeIf { !hidden }).joinToString(", ")
+            }
+            .padding(horizontal = CircasoSpacing.s4, vertical = CircasoSpacing.s2),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(CircasoSpacing.s3),
+    ) {
+        WalletGlyph(w, CircasoSizes.avatarSm)
+        Column(Modifier.weight(1f)) {
+            BasicText(w.name, style = t.body.copy(color = c.ink, fontWeight = if (on) FontWeight.SemiBold else FontWeight.Normal), maxLines = 2, overflow = TextOverflow.Ellipsis)
+            BasicText(sub, style = t.footnote.copy(color = if (locked) c.warning else c.inkSecondary), maxLines = 2)
+            if (large && balance != null) BasicText(balance, style = t.footnote.copy(color = c.inkSecondary, fontFeatureSettings = "tnum"), maxLines = 1)
+        }
+        if (!large && balance != null) BasicText(balance, style = t.footnote.copy(color = c.inkSecondary, fontFeatureSettings = "tnum"), maxLines = 1)
+        // The tick keeps its place on every row, so the balances line up whichever wallet is chosen.
+        if (on) CircasoIconImage(CircasoIcon.Check, c.action, Modifier.size(18.dp), strokeWidth = 2.4f)
+        else Spacer(Modifier.width(18.dp))
     }
 }

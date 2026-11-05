@@ -58,6 +58,12 @@ import com.circaso.feature.wallet.domain.WalletStatus
 import com.circaso.feature.wallet.presentation.GroupWalletSources
 import com.circaso.feature.wallet.presentation.NamedWallet
 import com.circaso.feature.wallet.presentation.WalletViewModel
+import com.circaso.feature.wallet.presentation.SavedWalletChoice
+import com.circaso.feature.wallet.presentation.WalletChoiceStore
+import com.circaso.feature.wallet.presentation.WalletMode
+import com.circaso.feature.wallet.presentation.filterGroups
+import com.circaso.feature.wallet.presentation.menuGroups
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -166,7 +172,7 @@ class WalletSwitchTest {
         }
     }
 
-    private fun vm(flag: GroupWalletsFlag = GroupWalletsFlag.on()): WalletViewModel {
+    private fun vm(flag: GroupWalletsFlag = GroupWalletsFlag.on(), choices: WalletChoiceStore = WalletChoiceStore.memory()): WalletViewModel {
         val impl = WalletRepositoryImpl(stub<WalletRemote>(), stub<WalletDao>(), signer = { error("unused") }, currency = { null }, json = Json)
         val sources = GroupWalletSources(
             ObserveWalletsUseCase(walletRepo), RefreshWalletsUseCase(walletRepo), ObserveWalletOfUseCase(walletRepo), RefreshWalletOfUseCase(walletRepo),
@@ -178,7 +184,7 @@ class WalletSwitchTest {
         )
         return WalletViewModel(
             ObserveWalletUseCase(walletRepo), RefreshWalletUseCase(walletRepo), CreateWalletUseCase(walletRepo), ObserveTransfersUseCase(walletRepo),
-            connection, ObserveProfileUseCase(stub<ProfileRepository>()), impl, groupWallets = flag, sources = sources, groupReader = reader,
+            connection, ObserveProfileUseCase(stub<ProfileRepository>()), impl, groupWallets = flag, sources = sources, groupReader = reader, choices = choices,
         )
     }
 
@@ -207,6 +213,9 @@ class WalletSwitchTest {
         assertEquals("100000000", s.balances["gw-1"]?.usdc?.amountMinor)
         assertEquals("500000000", s.balances[null]?.usdc?.amountMinor)
         assertTrue(s.lockedWallets.isEmpty())
+        vm.onSwitching(true)
+        assertFalse(vm.state.value.switching, "Personal has no group menu")
+        vm.onMode(WalletMode.Groups)
         vm.onSwitching(true)
         assertTrue(vm.state.value.switching)
     }
@@ -239,7 +248,7 @@ class WalletSwitchTest {
         assertTrue(vm.state.value.selected.personal)
     }
 
-    @Test fun aWalletThatGoesAwayFallsBackToPersonal() = runTest(dispatcher) {
+    @Test fun aGroupWalletThatGoesAwayLeavesTheCalmEmptyState() = runTest(dispatcher) {
         val vm = vm()
         keep(vm)
         vm.onSelectWallet(vm.state.value.wallets[1])
@@ -247,9 +256,118 @@ class WalletSwitchTest {
         listings.value = listOf(personalListing)
         val s = vm.state.value
         assertNull(s.selectedWalletId)
-        assertFalse(s.showSwitcher)
+        assertTrue(s.showSwitcher, "Personal | Groups stays")
+        assertEquals(WalletMode.Groups, s.mode)
+        assertTrue(s.groupsEmpty)
         assertFalse(s.switching, "nothing left to switch to")
         assertNull(s.group)
+    }
+
+    @Test fun groupsShowsTheFirstGroupAndPersonalGoesBackKeepingTheGroup() = runTest(dispatcher) {
+        val vm = vm()
+        keep(vm)
+        assertEquals(WalletMode.Personal, vm.state.value.mode)
+        assertFalse(vm.state.value.showingGroups)
+        vm.onMode(WalletMode.Groups)
+        var s = vm.state.value
+        assertTrue(s.showingGroups)
+        assertEquals("gw-1", s.selectedWalletId)
+        assertEquals("100000000", assertNotNull(s.group).wallet?.usdc?.amountMinor, "the group's money follows the mode")
+        assertTrue("g1" in moneyReads)
+        vm.onMode(WalletMode.Personal)
+        s = vm.state.value
+        assertTrue(s.selected.personal)
+        assertNull(s.group, "the card, actions and Recent are the person's own again")
+        assertEquals("gw-1", s.lastGroupWalletId, "Groups comes back to the same group")
+        vm.onMode(WalletMode.Groups)
+        assertEquals("gw-1", vm.state.value.selectedWalletId)
+    }
+
+    @Test fun pickingAGroupFromTheMenuSwitchesGroupsAndClosesIt() = runTest(dispatcher) {
+        listings.value = listOf(personalListing, groupListing, groupListing.copy(walletId = "gw-2", owner = WalletOwner(WalletOwnerType.Group, null, "g2", "otieno")))
+        val vm = vm()
+        keep(vm)
+        vm.onMode(WalletMode.Groups)
+        vm.onSwitching(true)
+        vm.onSelectWallet(vm.state.value.groupWallets.single { it.walletId == "gw-2" })
+        val s = vm.state.value
+        assertEquals("gw-2", s.selectedWalletId)
+        assertEquals("gw-2", s.lastGroupWalletId)
+        assertFalse(s.switching)
+        assertEquals(WalletMode.Groups, s.mode)
+    }
+
+    @Test fun theModeAndGroupAreRememberedForTheNextLaunch() = runTest(dispatcher) {
+        listings.value = listOf(personalListing, groupListing, groupListing.copy(walletId = "gw-2", owner = WalletOwner(WalletOwnerType.Group, null, "g2", "otieno")))
+        val store = WalletChoiceStore.memory()
+        val first = vm(choices = store)
+        keep(first)
+        first.onSelectWallet(first.state.value.groupWallets.single { it.walletId == "gw-2" })
+        assertEquals(SavedWalletChoice(WalletMode.Groups, "gw-2"), store.walletChoice.first())
+        val next = vm(choices = store)
+        keep(next)
+        assertEquals(WalletMode.Groups, next.state.value.mode)
+        assertEquals("gw-2", next.state.value.selectedWalletId, "opens on the group last shown")
+        next.onMode(WalletMode.Personal)
+        assertEquals(SavedWalletChoice(WalletMode.Personal, "gw-2"), store.walletChoice.first(), "Personal remembers the group for Groups")
+    }
+
+    @Test fun aRememberedGroupThatIsGoneOpensTheFirstGroup() = runTest(dispatcher) {
+        val vm = vm(choices = WalletChoiceStore.memory(SavedWalletChoice(WalletMode.Groups, "gw-left")))
+        keep(vm)
+        assertEquals("gw-1", vm.state.value.selectedWalletId)
+    }
+
+    @Test fun withNoGroupWalletGroupsIsTheEmptyStateAndTheMenuStaysShut() = runTest(dispatcher) {
+        listings.value = listOf(personalListing)
+        val vm = vm()
+        keep(vm)
+        vm.onMode(WalletMode.Groups)
+        val s = vm.state.value
+        assertTrue(s.groupsEmpty)
+        assertNull(s.group)
+        vm.onSwitching(true)
+        vm.onAllGroups(true)
+        assertFalse(vm.state.value.switching)
+        assertFalse(vm.state.value.allGroups)
+    }
+
+    @Test fun groupsSaysNoneYetOnlyOnceTheListIsKnown() = runTest(dispatcher) {
+        listings.value = emptyList()
+        val vm = vm()
+        keep(vm)
+        vm.onMode(WalletMode.Groups)
+        assertTrue(vm.state.value.groupsEmpty)
+        // The stub's W16 answers with the (empty) list, so after the read the phone knows there are none.
+        assertTrue(vm.state.value.groupsKnown, "W16 read this run")
+        val unread = com.circaso.feature.wallet.presentation.WalletUiState(groupsEnabled = true, mode = WalletMode.Groups)
+        assertTrue(unread.groupsEmpty)
+        assertFalse(unread.groupsKnown, "nothing saved and nothing read: never \"No group wallets yet\"")
+    }
+
+    @Test fun theTabWaitsForTheRememberedSide() = runTest(dispatcher) {
+        val vm = vm(choices = WalletChoiceStore.memory(SavedWalletChoice(WalletMode.Groups, "gw-1")))
+        keep(vm)
+        assertTrue(vm.state.value.choiceRestored)
+        assertEquals("gw-1", vm.state.value.selectedWalletId)
+    }
+
+    @Test fun withTheFlagOffARememberedGroupIsIgnored() = runTest(dispatcher) {
+        val vm = vm(GroupWalletsFlag.off(), WalletChoiceStore.memory(SavedWalletChoice(WalletMode.Groups, "gw-1")))
+        keep(vm)
+        assertTrue(vm.state.value.selected.personal)
+        assertFalse(vm.state.value.groupsEmpty)
+        assertNull(vm.state.value.group)
+    }
+
+    @Test fun theMenuListsAFewGroupsAndAlwaysTheOneOnScreen() {
+        val many = (1..8).map { NamedWallet("gw-$it", "g$it", "Group $it", null, WalletOwnerType.Group, true, WalletStatus.Active, "me") }
+        assertEquals(many.take(3), menuGroups(many.take(3), "gw-1"))
+        assertEquals(listOf("gw-1", "gw-2", "gw-3", "gw-4", "gw-5"), menuGroups(many, "gw-2").map { it.walletId })
+        assertEquals(listOf("gw-1", "gw-2", "gw-3", "gw-4", "gw-7"), menuGroups(many, "gw-7").map { it.walletId }, "the shown group takes the last place")
+        val named = listOf(many[0].copy(name = "Kilimani Chama"), many[1].copy(name = "Mama Mboga Savings Group"))
+        assertEquals(listOf("Mama Mboga Savings Group"), filterGroups(named, "savings mama").map { it.name })
+        assertEquals(named, filterGroups(named, "  "))
     }
 
     @Test fun aWalletWhoseSignerLeftIsMarkedLocked() = runTest(dispatcher) {
@@ -272,14 +390,6 @@ class WalletSwitchTest {
         assertEquals("Kilimani Chama", com.circaso.feature.wallet.presentation.shortWalletName("Kilimani Chama"))
         assertEquals("Mama Mboga", com.circaso.feature.wallet.presentation.shortWalletName("Mama Mboga Savings Group"))
         assertEquals("Wanyamaplatform", com.circaso.feature.wallet.presentation.shortWalletName("Wanyamaplatform Investments Limited"))
-    }
-
-    @Test fun aSpaceWalletSaysSoAndNeedsNoApproval() {
-        val space = com.circaso.feature.chama.presentation.GroupWalletUiState(
-            chat = kilimani, money = groupMoney(), loading = false,
-            wallet = aWallet("1000000", "gw-1").copy(owner = WalletOwner(WalletOwnerType.Space, null, "g1", "otieno")),
-        )
-        assertEquals("Space wallet · only Otieno can send", space.caption)
     }
 
     @Test fun hidingBalancesCarriesToTheGroupWalletScreen() = runTest(dispatcher) {
