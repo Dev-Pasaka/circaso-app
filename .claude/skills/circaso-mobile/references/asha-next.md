@@ -41,8 +41,8 @@ separate from the money features). So everything about Asha lives inside Asha's 
 - **Everyday human moments in every scene** (Pasaka): the mascot does normal things that fit the place, not only the
   topic. Beach: sipping a margarita, reading a book, watching the sunset. Apply the same to every scene (gym: water
   bottle and towel; office: coffee mug; driving: singing along to the radio; trading desk: coffee and a phone call).
-- **Names:** the female-voice look is **Asha**, the male-voice look is **Robbie** (open: whether the app also calls
-  the assistant Robbie when a male voice is chosen).
+- **Names:** the female-voice look is **Asha**, the male-voice look is **Robbie** **Decided 2026-11-05:** Robbie is the look only;
+  the assistant is always called Asha, whatever the voice, so the product has one name.
 
 
 **Superseded 2026-11-04 (Pasaka): the cast is the Big Five of Africa.** Lion, leopard, elephant, rhino and buffalo,
@@ -133,7 +133,10 @@ checking_receipt (Asha), building_sandcastle (Robbie). App wiring in progress on
 - **Icon framing (fixed 2026-11-04):** the Rive exporter drops an artboard that only nests another, so `AshaIcon` never
   reached `asha.riv`. The head crop is now a `framing` enum (stage | icon) on the `Asha` view model and state machine;
   the app sets `framing` = icon and scene `none` for the header.
-- Offline uses scene `none` (the wiring brief), not "idle in the office" from the section above; pick one with Pasaka.
+- **Decided 2026-11-05:** offline uses scene `none` (calm, idle, look kept). An empty stage reads as "not connected";
+  the office would look like she is working when she can't. This replaces "idle in the office" below.
+- **Decided 2026-11-05:** in dark mode the sunset beach becomes the night beach (moon, dark sand), like every scene
+  following the app theme. Dusk colours on a black screen would be the one bright box the theme work removed.
 - Reduced motion holds whatever frame the idle loop is on after 450 ms; a `still` boolean in the view model that
   sends the idle layer to a rest pose would make it a designed pose (Rive file change).
 - Dark themes: the header icon sits on a `fill` disc; the stage has no dark variant of its scenes yet (a `dark`
@@ -194,7 +197,7 @@ They combine freely, e.g. beach + excited + searching on her phone for flights.
 - The real content (transactions, charts, statements) still appears in the chat as now; the mascot shows what she is
   doing, not the data.
 - Placement: a small mascot in Asha's chat header, larger in voice mode. Reduced motion: a still pose per state, scene
-  fades only. Offline: idle in the office. Must be light on battery (Rive renders on the GPU; pause when off screen).
+  fades only. Offline: no scene (decided 2026-11-05, see above). Must be light on battery (Rive renders on the GPU; pause when off screen).
 
 ### Build order within the Rive month
 
