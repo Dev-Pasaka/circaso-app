@@ -155,7 +155,7 @@ fun initKoin(platform: Module) {
     koin.get<com.circaso.feature.messaging.data.repository.MessagingStarter>().start()
     scope.launch {
         koin.get<AppPreferences>().themeOverrides.first()
-        koin.get<Outbox>().requeueInterrupted()
+        // Rows a crash left half-sent go back in line at the start of every drain (OutboxProcessor), under its lock.
         // Send what is waiting now, and again every time the connection comes back.
         val reconnect = koin.get<ReconnectCoordinator>()
         val chamas = koin.get<com.circaso.feature.chama.domain.ChamaRepository>()

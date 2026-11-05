@@ -82,6 +82,8 @@ internal data class PendingDraft(
     val kind: String, val text: String? = null, val background: String? = null, val style: String? = null, val caption: String? = null,
     val mime: String? = null, val thumb: String? = null, val durationMs: Long? = null, val width: Int? = null, val height: Int? = null,
     val levels: List<Int>? = null,
+    /** How far the media's upload got, so a post cut off by the process dying resumes it (ResumableUpload). */
+    val upload: com.circaso.core.platform.UploadState? = null,
 )
 
 @Serializable
@@ -127,6 +129,7 @@ class MomentsRepositoryImpl(
     private val uploads: com.circaso.core.platform.BackgroundUploads = com.circaso.core.platform.NoBackgroundUploads,
 ) : MomentsRepository {
     private val refreshLock = Mutex()
+    private val resumable = com.circaso.core.platform.ResumableUpload(crypto, files, uploads, storage, now)
 
     /** The unreadable moments I already asked each poster about, so I ask again only for a new one (with [askedAt]). */
     private val asked = mutableMapOf<String, Set<String>>()
@@ -366,7 +369,7 @@ class MomentsRepositoryImpl(
         kickOutbox()
     }
 
-    override suspend fun discard(localId: String) { dao.deletePending(localId); files.delete(localId); setProgress(localId, null) }
+    override suspend fun discard(localId: String) { dao.deletePending(localId); files.delete(localId); files.delete("sealed-$localId"); setProgress(localId, null) }
 
     /**
      * The outbox's turn for one pending moment. A photo, video or voice moment runs as background work, so it
@@ -381,8 +384,11 @@ class MomentsRepositoryImpl(
         }
     }
 
-    /** Upload the media once, seal for the audience, post (ST3). */
-    private suspend fun sendNow(job: MomentJob): AppResult<Unit> {
+    /**
+     * Upload the media once, seal for the audience, post (ST3). The file the server holds is deleted if no moment
+     * takes it within an hour of ST1 (a post that waited offline): then it is uploaded again, once, and posted.
+     */
+    private suspend fun sendNow(job: MomentJob, mayUploadAgain: Boolean = true): AppResult<Unit> {
         var row = dao.pending(job.localId) ?: return AppResult.Success(Unit) // discarded meanwhile
         val draft = json.decodeFromString(PendingDraft.serializer(), row.draft)
         dao.setPendingState(row.localId, StatePosting, null)
@@ -406,7 +412,10 @@ class MomentsRepositoryImpl(
         }
         val request = PostMomentRequest(row.localId, sealed.ciphertext, audience, sealed.keyCopies, listOfNotNull(row.mediaId))
         return when (val r = remote.post(request)) {
-            is AppResult.Failure -> outcome(row, r.error)
+            is AppResult.Failure -> if (mayUploadAgain && row.mediaId != null && (r.error as? AppError.Api)?.code == "status.media_not_found") {
+                dao.savePending(row.copy(mediaId = null, mediaKey = null, mediaDigest = null))
+                sendNow(job, mayUploadAgain = false)
+            } else outcome(row, r.error)
             is AppResult.Success -> {
                 keys.delivered(sealed.distributionId, sealed.copiedTo)
                 // My own body is kept as written: I can't decrypt my own sender-key message later.
@@ -420,27 +429,46 @@ class MomentsRepositoryImpl(
         }
     }
 
+    /**
+     * Encrypt, ST1, PUT, ST2, step by step with each step saved in the draft, so a post cut off by the process dying
+     * (MIUI, a swipe away) resumes where it stopped: same ciphertext, same slot while its URL lasts.
+     */
     private suspend fun upload(row: PendingMomentEntity, draft: PendingDraft): AppResult<Unit> {
-        val plain = files.read(row.localId) ?: return AppResult.Failure(AppError.Api("status.media_missing", 400, null, null, emptyMap()))
-        val key = crypto.randomBytes(32)
-        val sealed = withContext(Dispatchers.Default) { crypto.aesGcmSeal(key, plain) }
         val kind = when (kindOf(draft.kind)) { MomentKind.Video -> "video"; MomentKind.Voice -> "voice"; else -> "image" }
-        val slot = when (val r = remote.prepareMedia(sealed.size.toLong(), kind, newIdempotencyKey())) {
-            is AppResult.Success -> r.value
-            is AppResult.Failure -> return r
-        }
         // The ring on "My moment" follows the bytes (M6); the last few percent wait for the post itself.
         setProgress(row.localId, 0f)
-        val put = uploads.putFile(storage, slot.uploadUrl, mapOf("Content-Type" to slot.uploadHeaders.contentType), sealed) { sent, total ->
-            if (total > 0) setProgress(row.localId, UploadShare * sent / total)
+        val done = when (val r = resumable.run(
+            plainFile = row.localId, sealedFile = "sealed-" + row.localId, state = draft.upload,
+            save = { state -> saveDraft(row.localId) { it.copy(upload = state) } },
+            create = { size ->
+                when (val slot = remote.prepareMedia(size, kind, newIdempotencyKey())) {
+                    is AppResult.Failure -> slot
+                    is AppResult.Success -> AppResult.Success(com.circaso.core.platform.UploadSlot(slot.value.mediaId, slot.value.uploadUrl,
+                        mapOf("Content-Type" to slot.value.uploadHeaders.contentType), runCatching { Instant.parse(slot.value.expiresAt).toEpochMilliseconds() }.getOrNull()))
+                }
+            },
+            complete = { id -> when (val c = remote.completeMedia(id, newIdempotencyKey())) { is AppResult.Failure -> c; is AppResult.Success -> AppResult.Success(Unit) } },
+            startOver = { e -> (e as? AppError.Api)?.code in setOf("status.media_invalid", "status.media_not_found") },
+            missing = AppError.Api("status.media_missing", 400, null, null, emptyMap()),
+            onProgress = { sent, total -> if (total > 0) setProgress(row.localId, UploadShare * sent / total) },
+        )) {
+            is AppResult.Failure -> { setProgress(row.localId, null); return r }
+            is AppResult.Success -> r.value
         }
-        if (!put) { setProgress(row.localId, null); return AppResult.Failure(AppError.Network) }
         setProgress(row.localId, UploadShare)
-        (remote.completeMedia(slot.mediaId, newIdempotencyKey()) as? AppResult.Failure)?.let { return it }
         // Filed under the media id, the name a viewer's copy gets, so my own viewer opens it without downloading.
-        files.write(slot.mediaId, plain)
-        dao.savePending(row.copy(mediaId = slot.mediaId, mediaKey = Base64.encode(key), mediaDigest = Base64.encode(withContext(Dispatchers.Default) { crypto.sha256(sealed) })))
+        files.read(row.localId)?.let { files.write(done.id, it) }
+        val fresh = dao.pending(row.localId) ?: return AppResult.Success(Unit)
+        val clean = json.decodeFromString(PendingDraft.serializer(), fresh.draft).copy(upload = null)
+        dao.savePending(fresh.copy(draft = json.encodeToString(PendingDraft.serializer(), clean),
+            mediaId = done.id, mediaKey = Base64.encode(done.key), mediaDigest = Base64.encode(done.digest)))
         return AppResult.Success(Unit)
+    }
+
+    private suspend fun saveDraft(localId: String, change: (PendingDraft) -> PendingDraft) {
+        val row = dao.pending(localId) ?: return
+        val draft = json.decodeFromString(PendingDraft.serializer(), row.draft)
+        dao.savePending(row.copy(draft = json.encodeToString(PendingDraft.serializer(), change(draft))))
     }
 
     /** Who my next moment is for, decided here on the phone: my Circaso contacts, filtered by the privacy setting. */

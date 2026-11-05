@@ -120,3 +120,11 @@ fun openRingingCall(callId: String) {
         }
     }
 }
+
+/** Debug builds only (the handler checks): queues a dummy upload of [megabytes] through the real pipeline. */
+fun queueDebugUpload(megabytes: Int) {
+    val koin = runCatching { KoinPlatform.getKoin() }.getOrNull() ?: return
+    koin.get<kotlinx.coroutines.CoroutineScope>().launch {
+        koin.get<com.circaso.feature.status.data.repository.DebugUploadHandler>().queue(megabytes * 1024 * 1024)
+    }
+}

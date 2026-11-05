@@ -36,8 +36,20 @@ val statusModule = module {
     single { MomentPostHandler { get<MomentsRepositoryImpl>() } } bind OutboxHandler::class
     single { MomentKeyCopiesHandler { get<MomentsRepositoryImpl>() } } bind OutboxHandler::class
     single<MomentsRepository> { get<MomentsRepositoryImpl>() }
+    // Debug builds only: a dummy upload through the real pipeline, never posted (see DebugUploadHandler).
+    single {
+        com.circaso.feature.status.data.repository.DebugUploadHandler(
+            remote = get(), files = get(), crypto = get(),
+            uploads = getOrNull<com.circaso.core.platform.BackgroundUploads>() ?: com.circaso.core.platform.NoBackgroundUploads,
+            storage = get(named("plain")), outbox = get(),
+            // Looked up when used: the outbox processor collects this handler while it is built, and the kick needs the processor.
+            kickOutbox = { get<() -> Unit>(named("kickOutbox")).invoke() }, json = get(),
+            enabled = get<com.circaso.core.platform.ClientInfo>().debugBuild, now = { com.circaso.core.sync.nowMillis() },
+        )
+    } bind OutboxHandler::class
     viewModel { com.circaso.feature.status.presentation.MomentsViewModel(get(), get(), get(), get(), get()) }
-    viewModel { com.circaso.feature.status.presentation.MomentComposerViewModel(get(), get(), get(), get(), get(), get(), get(), get()) }
+    viewModel { com.circaso.feature.status.presentation.MomentComposerViewModel(get(), get(), get(), get(), get(), get(), get(), get(),
+        uploads = getOrNull<com.circaso.core.platform.BackgroundUploads>() ?: com.circaso.core.platform.NoBackgroundUploads) }
     viewModel { com.circaso.feature.status.presentation.MomentsPrivacyViewModel(get(), get()) }
     // V4 Forward: a moment into chats through the chat's own media path (encrypted, queued, sent by the outbox).
     single<com.circaso.feature.status.presentation.MomentForwarder> {

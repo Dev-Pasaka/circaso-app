@@ -36,7 +36,13 @@ class OutboxProcessor(
     private val byType = handlers.associateBy { it.type }
     private val lock = Mutex()
 
+    /** True while a drain is sending (in this process): a second runner has nothing to add. */
+    val busy: Boolean get() = lock.isLocked
+
     suspend fun drain(): DrainResult = lock.withLock {
+        // Under the lock nothing in this process is sending, so a row still marked `sending` was cut off (the
+        // process died mid-upload, or the runner was stopped): back in line with its own key, before anything else.
+        outbox.requeueInterrupted()
         var sent = 0
         while (true) {
             val item = outbox.next() ?: return DrainResult.Drained(sent)

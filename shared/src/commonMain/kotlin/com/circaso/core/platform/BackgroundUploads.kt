@@ -6,15 +6,30 @@ import io.ktor.client.request.header
 import io.ktor.client.request.put
 import io.ktor.client.request.setBody
 import io.ktor.http.isSuccess
+import kotlinx.coroutines.currentCoroutineContext
+import kotlin.coroutines.AbstractCoroutineContextElement
+import kotlin.coroutines.CoroutineContext
 import kotlin.coroutines.cancellation.CancellationException
 
 /** What is uploading, for the notification that shows while it carries on in the background. */
-enum class UploadKind(val sending: String, val failed: String) {
+enum class UploadKind(val sending: String, val failed: String, private val toWhom: Boolean = false) {
     Moment("Posting your moment", "Your moment didn't post"),
-    Photo("Sending a photo", "A photo didn't send"),
-    Video("Sending a video", "A video didn't send"),
-    VoiceNote("Sending a voice note", "A voice note didn't send"),
+    Photo("Sending a photo", "A photo didn't send", toWhom = true),
+    Video("Sending a video", "A video didn't send", toWhom = true),
+    VoiceNote("Sending a voice note", "A voice note didn't send", toWhom = true),
     ProfilePhoto("Updating your profile photo", "Your profile photo didn't update"),
+    ;
+
+    /** "Sending a video to Amina", or [sending] when there's no name (or the kind has no one it goes to). */
+    fun sendingTo(label: String?): String = if (toWhom && !label.isNullOrBlank()) "$sending to $label" else sending
+}
+
+/**
+ * The bytes of the upload [BackgroundUploads.keep] is running, reported by [putFile] from inside it: the platform
+ * turns them into the notification's percent. Carried in the coroutine context so no caller has to pass it along.
+ */
+class UploadProgress(val report: (sent: Long, total: Long) -> Unit) : AbstractCoroutineContextElement(Key) {
+    companion object Key : CoroutineContext.Key<UploadProgress>
 }
 
 /**
@@ -25,8 +40,11 @@ enum class UploadKind(val sending: String, val failed: String) {
  * not looking at Circaso; a lost connection is not a failure (the outbox waits and retries, offline-first.md).
  */
 interface BackgroundUploads {
-    /** Runs [work] (the upload and the calls that finish it) as background work the system lets finish. */
-    suspend fun <T> keep(kind: UploadKind, work: suspend () -> T): T
+    /**
+     * Runs [work] (preparing the file, the upload and the calls that finish it) as background work the system lets
+     * finish. [label] is who it goes to ("Amina"), for "Sending a video to Amina…".
+     */
+    suspend fun <T> keep(kind: UploadKind, label: String? = null, work: suspend () -> T): T
 
     /**
      * PUTs [bytes] to a pre-signed storage URL through the platform's own uploader where that carries on without the
@@ -35,12 +53,18 @@ interface BackgroundUploads {
      */
     suspend fun put(url: String, headers: Map<String, String>, bytes: ByteArray, onProgress: (sent: Long, total: Long) -> Unit = { _, _ -> }): Boolean? = null
 
+    /**
+     * True when the platform's own uploader already finished a PUT to [url] while Circaso wasn't running to hear it
+     * (iOS: the background session carried on after Circaso was closed), so the job goes straight to completing it.
+     */
+    suspend fun finished(url: String): Boolean = false
+
     /** An upload stopped for good (the person must send it again): told when Circaso isn't on screen. */
     fun failed(kind: UploadKind) {}
 }
 
 object NoBackgroundUploads : BackgroundUploads {
-    override suspend fun <T> keep(kind: UploadKind, work: suspend () -> T): T = work()
+    override suspend fun <T> keep(kind: UploadKind, label: String?, work: suspend () -> T): T = work()
 }
 
 /**
@@ -52,12 +76,14 @@ suspend fun BackgroundUploads.putFile(
     client: HttpClient, url: String, headers: Map<String, String>, bytes: ByteArray,
     onProgress: (sent: Long, total: Long) -> Unit = { _, _ -> },
 ): Boolean {
-    put(url, headers, bytes, onProgress)?.let { return it }
+    val sink = currentCoroutineContext()[UploadProgress]
+    val progress: (Long, Long) -> Unit = { sent, total -> onProgress(sent, total); sink?.report(sent, total) }
+    put(url, headers, bytes, progress)?.let { return it }
     return try {
         client.put(url) {
             headers.forEach { (k, v) -> header(k, v) }
             setBody(bytes)
-            onUpload { sent, total -> onProgress(sent, total ?: bytes.size.toLong()) }
+            onUpload { sent, total -> progress(sent, total ?: bytes.size.toLong()) }
         }.status.isSuccess()
     } catch (e: CancellationException) {
         throw e

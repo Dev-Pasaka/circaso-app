@@ -37,7 +37,7 @@ object BackgroundUploadBridge {
  * and the file itself through a background URL session, which iOS carries on with when Circaso is suspended.
  */
 class IosBackgroundUploads : BackgroundUploads {
-    override suspend fun <T> keep(kind: UploadKind, work: suspend () -> T): T {
+    override suspend fun <T> keep(kind: UploadKind, label: String?, work: suspend () -> T): T {
         askForNotificationsOnce()
         val app = UIApplication.sharedApplication
         var task = UIBackgroundTaskInvalid
@@ -65,6 +65,15 @@ class IosBackgroundUploads : BackgroundUploads {
         }
     }
 
+    /**
+     * A PUT the background session finished after Circaso was closed (or suspended past its time) is written down by
+     * `BackgroundUploadImpl.swift` under [FinishedKey]; the resumed job then goes straight to completing it.
+     */
+    override suspend fun finished(url: String): Boolean {
+        val done = platform.Foundation.NSUserDefaults.standardUserDefaults.dictionaryForKey(FinishedKey) ?: return false
+        return done[url] != null
+    }
+
     override fun failed(kind: UploadKind) {
         platform.darwin.dispatch_async(platform.darwin.dispatch_get_main_queue()) {
             if (UIApplication.sharedApplication.applicationState == UIApplicationState.UIApplicationStateActive) return@dispatch_async // the screen shows it
@@ -85,5 +94,10 @@ class IosBackgroundUploads : BackgroundUploads {
                 center.requestAuthorizationWithOptions(UNAuthorizationOptionAlert or UNAuthorizationOptionSound or UNAuthorizationOptionBadge) { _, _ -> }
             }
         }
+    }
+
+    private companion object {
+        /** Shared with BackgroundUploadImpl.swift. */
+        const val FinishedKey = "circaso.uploads.finished"
     }
 }

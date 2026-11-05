@@ -331,9 +331,17 @@ class ChatSendHandler(
             else -> null
         } else null
         if (kind == null) return sendNow(item, job)
-        return uploads.keep(kind) { sendNow(item, job) }.also {
+        return uploads.keep(kind, recipient(first.chatId)) { sendNow(item, job) }.also {
             if (dao.byLocalId(job.localId)?.status == MessageStatus.Failed) uploads.failed(kind)
         }
+    }
+
+    /** Who it goes to, for "Sending a video to Amina…": the group's name, else the other person's. */
+    private suspend fun recipient(chatId: String): String? {
+        val chat = chats.chat(chatId) ?: return null
+        if (chat.kind != MessagingWire.Direct) return chat.name?.takeIf { it.isNotBlank() }
+        val me = ownUserId()
+        return chats.members(chatId).firstOrNull { it.userId != me }?.displayName?.takeIf { it.isNotBlank() }
     }
 
     private suspend fun sendNow(item: OutboxEntity, job: ChatMessageJob): AppResult<Unit> {

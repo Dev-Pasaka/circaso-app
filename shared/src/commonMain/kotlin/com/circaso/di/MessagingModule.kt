@@ -148,6 +148,7 @@ val messagingModule = module {
         com.circaso.feature.messaging.presentation.ThreadMedia(
             get(), get(), get(), get(), get(), get(), get(),
             gallery = getOrNull<com.circaso.core.platform.MediaGallery>() ?: com.circaso.core.platform.NoMediaGallery,
+            uploads = getOrNull<com.circaso.core.platform.BackgroundUploads>() ?: com.circaso.core.platform.NoBackgroundUploads,
         )
     }
     factory { com.circaso.feature.messaging.presentation.ThreadPayments(get()) }
