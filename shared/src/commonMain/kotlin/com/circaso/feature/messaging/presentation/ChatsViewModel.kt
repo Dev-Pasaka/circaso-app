@@ -24,7 +24,7 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
 /** Design C1: the chat list, from the phone, refreshed quietly. */
-enum class ChatFilter(val label: String) { All("All"), Unread("Unread"), Groups("Groups") }
+enum class ChatFilter(val label: String) { All("All"), Unread("Unread"), Groups("Groups"), Spaces("Spaces") }
 
 data class ChatsUiState(
     val chats: List<ChatSummary> = emptyList(),
@@ -42,7 +42,7 @@ data class ChatsUiState(
     val filter: ChatFilter = ChatFilter.All,
 ) {
     val shown: List<ChatSummary> get() = chats
-        .filter { s -> when (filter) { ChatFilter.All -> true; ChatFilter.Unread -> s.unread > 0; ChatFilter.Groups -> s.chat.kind == com.circaso.feature.messaging.domain.ChatKind.Group } }
+        .filter { s -> when (filter) { ChatFilter.All -> true; ChatFilter.Unread -> s.unread > 0; ChatFilter.Groups -> s.chat.kind == com.circaso.feature.messaging.domain.ChatKind.Group; ChatFilter.Spaces -> s.chat.viaSpaceId != null } }
         .let { list -> if (query.isBlank()) list else list.filter { it.chat.title.contains(query.trim(), ignoreCase = true) } }
 }
 

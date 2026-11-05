@@ -54,9 +54,19 @@ import com.circaso.feature.messaging.domain.Message
 
 /** Design C1: the chat list. The title bar and tab bar come from the home scaffold; this is the tab's content. */
 @Composable
-fun ChatsTab(viewModel: ChatsViewModel, bottomPadding: PaddingValues, onAsha: () -> Unit, onVoice: () -> Unit = onAsha, onNewChat: () -> Unit = {}, selectedChatId: String? = null, onOpen: (chatId: String) -> Unit) {
+fun ChatsTab(
+    viewModel: ChatsViewModel, bottomPadding: PaddingValues, onAsha: () -> Unit, onVoice: () -> Unit = onAsha, onNewChat: () -> Unit = {}, selectedChatId: String? = null,
+    /** Spaces core (SI2, SH2d): invite cards, private-chat labels and the Spaces chip; null while spaces are off. */
+    spaces: com.circaso.feature.spaces.presentation.discover.ChatsSpaces? = null,
+    onOpen: (chatId: String) -> Unit,
+) {
     val state by viewModel.state.collectAsState()
-    ChatsContent(state, bottomPadding, viewModel::onQuery, onAsha, onOpen, onNewChat = onNewChat, onFilter = viewModel::onFilter, selectedChatId = selectedChatId)
+    androidx.compose.runtime.LaunchedEffect(spaces != null) { spaces?.onShown?.invoke() }
+    // The Spaces chip went away (spaces turned off, or nothing to gather): back to All, so the list never looks empty.
+    androidx.compose.runtime.LaunchedEffect(spaces?.state?.showFilter) {
+        if (state.filter == ChatFilter.Spaces && spaces?.state?.showFilter != true) viewModel.onFilter(ChatFilter.All)
+    }
+    ChatsContent(state, bottomPadding, viewModel::onQuery, onAsha, onOpen, onNewChat = onNewChat, onFilter = viewModel::onFilter, selectedChatId = selectedChatId, spaces = spaces)
 }
 
 /** The Chats tab's sheet (A10), for the home scaffold's overlay so it sits above the tab bar. */
@@ -88,7 +98,11 @@ fun ChatsBanner(state: ChatsUiState) {
 }
 
 @Composable
-fun ChatsContent(state: ChatsUiState, bottomPadding: PaddingValues, onQuery: (String) -> Unit, onAsha: () -> Unit, onOpen: (String) -> Unit, onNewChat: (() -> Unit)? = null, onFilter: (ChatFilter) -> Unit = {}, selectedChatId: String? = null) {
+fun ChatsContent(
+    state: ChatsUiState, bottomPadding: PaddingValues, onQuery: (String) -> Unit, onAsha: () -> Unit, onOpen: (String) -> Unit, onNewChat: (() -> Unit)? = null,
+    onFilter: (ChatFilter) -> Unit = {}, selectedChatId: String? = null,
+    spaces: com.circaso.feature.spaces.presentation.discover.ChatsSpaces? = null,
+) {
     val c = CircasoTheme.colors
     val t = CircasoTheme.typography
     val now = nowMillis()
@@ -104,7 +118,7 @@ fun ChatsContent(state: ChatsUiState, bottomPadding: PaddingValues, onQuery: (St
             // All · Unread · Groups (as WhatsApp): one is always picked; Unread shows how many chats are waiting.
             val unread = state.chats.count { it.unread > 0 }
             Row(Modifier.padding(horizontal = CircasoSpacing.s4, vertical = CircasoSpacing.s1), horizontalArrangement = Arrangement.spacedBy(CircasoSpacing.s2)) {
-                ChatFilter.entries.forEach { f ->
+                ChatFilter.entries.filter { it != ChatFilter.Spaces || spaces?.state?.showFilter == true }.forEach { f ->
                     com.circaso.designsystem.components.SuggestionChip(
                         f.label, { onFilter(f) },
                         modifier = Modifier.semantics { if (f == ChatFilter.Unread && unread > 0) contentDescription = "Unread, $unread chats" },
@@ -114,17 +128,27 @@ fun ChatsContent(state: ChatsUiState, bottomPadding: PaddingValues, onQuery: (St
                 }
             }
         }
+        // SI2: space invites at the top of the inbox, newest first; SI3b folds a declined one with Undo.
+        if (spaces != null && state.query.isBlank() && state.filter == ChatFilter.All) {
+            items(spaces.state.shownInvites, key = { "invite-" + it.inviteId }) { invite ->
+                com.circaso.feature.spaces.presentation.discover.SpaceInviteCard(
+                    invite, declining = invite.inviteId in spaces.state.declining, accepting = invite.inviteId in spaces.state.accepting,
+                    online = spaces.state.online, now = spaces.now, spaces = spaces,
+                )
+            }
+        }
         if (state.query.isBlank() && state.filter == ChatFilter.All) {
             // The design's first row (C1): Asha, always there, above the chats.
             item {
                 ListRow("Asha", sub = "Ask me anything about your money", leading = { AshaMark() }, onClick = onAsha)
             }
         }
-        if (state.loaded && state.shown.isEmpty()) {
+        val spaceRows = if (spaces != null && state.filter == ChatFilter.Spaces) spaces.state.mine.filter { it.me.isMember && (state.query.isBlank() || it.space.name.contains(state.query.trim(), true)) } else emptyList()
+        if (state.loaded && state.shown.isEmpty() && spaceRows.isEmpty()) {
             item {
                 Column(Modifier.fillMaxWidth().padding(horizontal = 32.dp, vertical = 48.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(CircasoSpacing.s2)) {
                     BasicText(
-                        when { state.query.isNotBlank() -> "No chats match"; state.filter == ChatFilter.Unread -> "You're all caught up"; state.filter == ChatFilter.Groups -> "No groups yet"; else -> "No chats yet" },
+                        when { state.query.isNotBlank() -> "No chats match"; state.filter == ChatFilter.Unread -> "You're all caught up"; state.filter == ChatFilter.Groups -> "No groups yet"; state.filter == ChatFilter.Spaces -> "No private chats from spaces yet"; else -> "No chats yet" },
                         style = t.title3.copy(color = c.ink, textAlign = TextAlign.Center),
                     )
                     BasicText(
@@ -132,6 +156,7 @@ fun ChatsContent(state: ChatsUiState, bottomPadding: PaddingValues, onQuery: (St
                             state.query.isNotBlank() -> "Try another name."
                             state.filter == ChatFilter.Unread -> "No unread messages."
                             state.filter == ChatFilter.Groups -> "Start a group with the + button."
+                            state.filter == ChatFilter.Spaces -> "When someone messages you privately from a space, it shows here."
                             else -> "Start one with the + button. Everything you send is end-to-end encrypted."
                         },
                         style = t.body.copy(color = c.inkSecondary, textAlign = TextAlign.Center),
@@ -140,7 +165,24 @@ fun ChatsContent(state: ChatsUiState, bottomPadding: PaddingValues, onQuery: (St
             }
         }
         items(state.shown, key = { it.chat.chatId }) { summary ->
-            ChatRow(summary, now, state.fiat, selected = summary.chat.chatId == selectedChatId) { onOpen(summary.chat.chatId) }
+            val label = summary.chat.viaSpaceId?.let { id -> spaces?.state?.spaceNames?.get(id) ?: "a space" }?.takeIf { spaces != null }
+            ChatRow(summary, now, state.fiat, selected = summary.chat.chatId == selectedChatId, spaceLabel = label) { onOpen(summary.chat.chatId) }
+        }
+        // SH2d: under Spaces, my spaces' own chats sit in the list like groups.
+        items(spaceRows, key = { "space-" + it.space.spaceId }) { m ->
+            val last = m.lastPost?.let { p -> "${p.authorName}: " + (if (p.removed) "Removed post" else p.text ?: "Post") } ?: m.space.about.orEmpty()
+            ListRow(
+                title = m.space.name, sub = last,
+                modifier = Modifier.padding(horizontal = CircasoSpacing.s2),
+                leading = { com.circaso.feature.spaces.presentation.SpaceTile(m.space, CircasoSizes.avatarMd) },
+                trailing = {
+                    Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        if (m.activityAt > 0) BasicText(chatListTime(m.activityAt, now), style = t.footnote.copy(color = c.inkSecondary))
+                        if (m.unreadCount > 0) CountBadge(m.unreadCount)
+                    }
+                },
+                onClick = { spaces?.onOpenSpace?.invoke(m) },
+            )
         }
     }
     if (onNewChat != null) {
@@ -151,7 +193,7 @@ fun ChatsContent(state: ChatsUiState, bottomPadding: PaddingValues, onQuery: (St
 
 @Composable
 /** [selected]: the chat open in the detail pane beside the list (wide windows), shown as iPad Messages does. */
-private fun ChatRow(summary: ChatSummary, now: Long, fiat: com.circaso.feature.wallet.domain.FiatValue? = null, selected: Boolean = false, onClick: () -> Unit) {
+private fun ChatRow(summary: ChatSummary, now: Long, fiat: com.circaso.feature.wallet.domain.FiatValue? = null, selected: Boolean = false, spaceLabel: String? = null, onClick: () -> Unit) {
     val c = CircasoTheme.colors
     val t = CircasoTheme.typography
     val latest = summary.latest
@@ -201,6 +243,7 @@ private fun ChatRow(summary: ChatSummary, now: Long, fiat: com.circaso.feature.w
             }
         },
         onClick = onClick,
+        titleEnd = spaceLabel?.let { name -> { com.circaso.feature.spaces.presentation.discover.PrivateSpaceLabel(name) } },
     )
 }
 

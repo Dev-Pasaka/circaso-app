@@ -38,6 +38,8 @@ fun ListRow(
     trailing: (@Composable () -> Unit)? = null,
     destructive: Boolean = false,
     onClick: (() -> Unit)? = null,
+    /** A small badge after the title on the same line (a space chat's "Private · Sneaker Drop", SH2d). */
+    titleEnd: (@Composable () -> Unit)? = null,
 ) {
     val c = CircasoTheme.colors
     val t = CircasoTheme.typography
@@ -52,7 +54,11 @@ fun ListRow(
     ) {
         leading?.invoke()
         Column(Modifier.weight(1f)) {
-            BasicText(title, style = t.body.copy(color = if (destructive) c.critical else c.ink), maxLines = 1, overflow = TextOverflow.Ellipsis)
+            if (titleEnd == null) BasicText(title, style = t.body.copy(color = if (destructive) c.critical else c.ink), maxLines = 1, overflow = TextOverflow.Ellipsis)
+            else Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                BasicText(title, Modifier.weight(1f, fill = false), style = t.body.copy(color = if (destructive) c.critical else c.ink), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                titleEnd()
+            }
             if (sub != null) BasicText(sub, style = t.subhead.copy(color = c.inkSecondary), maxLines = 2, overflow = TextOverflow.Ellipsis)
         }
         if (meta != null) BasicText(meta, style = t.footnote.copy(color = c.inkTertiary))
