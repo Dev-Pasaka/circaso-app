@@ -134,8 +134,8 @@ class SpaceSearchViewModel(
                     )
                 }
                 is AppResult.Failure -> _state.update {
-                    if (r.error is AppError.Network) it.copy(searching = false)
-                    else it.copy(searching = false, failed = true, answered = q, requestId = (r.error as? AppError.Api)?.requestId)
+                    // A dropped connection while the phone thinks it's online still says something (never a blank list).
+                    it.copy(searching = false, failed = true, answered = q, requestId = com.circaso.core.common.ErrorMessages.reference(r.error))
                 }
             }
         }

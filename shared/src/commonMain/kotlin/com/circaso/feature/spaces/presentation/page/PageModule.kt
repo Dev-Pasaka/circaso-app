@@ -12,6 +12,7 @@ val spacePageModule = module {
             openJoin = params.values.getOrNull(2) as? Boolean ?: false,
             spaces = get(), chats = get(), connection = get(),
             wallet = get<com.circaso.feature.wallet.domain.WalletRepository>().wallet,
+            observeTransfer = { id -> get<com.circaso.feature.wallet.domain.WalletRepository>().transfer(id) },
         )
     }
 }

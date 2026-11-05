@@ -64,7 +64,9 @@ sealed interface JoinStep {
     /** Offline: the card still opens with the space's price so it is clear, Pay off (SM1f). */
     data object Offline : JoinStep
     /** Signed; membership only once the transfer is confirmed (SM1c), never from the tap. */
-    data class Joining(val payment: MembershipPayment, val transferId: String) : JoinStep
+    data class Joining(val payment: MembershipPayment, val transferId: String, val slow: Boolean = false) : JoinStep
+    /** The signed transfer failed or expired on its way (G2): Not sent, nothing was taken; Try Again asks SP13 again. */
+    data class PaymentFailed(val message: String, val reference: String?) : JoinStep
 }
 
 data class SpacePageUiState(
@@ -128,6 +130,10 @@ class SpacePageViewModel(
     private val now: () -> Long = ::nowMillis,
     /** How often a confirmation is looked for over HTTP while joining, in case the socket is down. */
     private val joinPollMs: Long = 8_000,
+    /** The phone's copy of one transfer (the wallet's), so a membership payment that fails on its way says so. */
+    private val observeTransfer: (String) -> Flow<Transfer?> = { flowOf(null) },
+    /** After this long without a confirmation the card says "Still confirming" and may close (SM1c). */
+    private val slowAfterMs: Long = 60_000,
 ) : ViewModel() {
     private val _state = MutableStateFlow(SpacePageUiState(spaceId = initialSpaceId, now = now()))
     val state: StateFlow<SpacePageUiState> = _state.asStateFlow()
@@ -381,7 +387,17 @@ class SpacePageViewModel(
         }
     }
 
-    fun onCloseJoin() { if (!_state.value.joining) _state.update { it.copy(join = JoinStep.Closed) } }
+    fun onCloseJoin() {
+        val step = _state.value.join
+        // A slow confirmation may close: the payment keeps being watched, and the welcome still lands when it confirms.
+        if (step is JoinStep.Joining && !step.slow) return
+        if (step is JoinStep.Joining) pending = step
+        _state.update { it.copy(join = JoinStep.Closed) }
+    }
+
+    /** A membership payment still on its way after its card was closed (slow): watched until it confirms or fails. */
+    private var pending: JoinStep.Joining? = null
+    private var watchJob: Job? = null
 
     /**
      * The PIN is done and W4 has the transfer: keep it for the receipt (SM2) and wait for the server's confirmed
@@ -399,20 +415,42 @@ class SpacePageViewModel(
         }
         pollJob?.cancel()
         pollJob = viewModelScope.launch {
-            while (_state.value.joining) {
+            val started = now()
+            while (watching() != null) {
                 delay(joinPollMs)
                 _state.value.spaceId?.let { spaces.refreshSpace(it) }
+                val j = _state.value.join
+                if (j is JoinStep.Joining && !j.slow && now() - started >= slowAfterMs) _state.update { it.copy(join = j.copy(slow = true)) }
+            }
+        }
+        // The transfer itself: failed or expired on its way means no membership and nothing taken (G2).
+        watchJob?.cancel()
+        watchJob = viewModelScope.launch {
+            observeTransfer(transfer.transferId).collect { t ->
+                val state = t?.state ?: return@collect
+                if (state == com.circaso.feature.wallet.domain.TransferState.Failed || state == com.circaso.feature.wallet.domain.TransferState.Expired) {
+                    pollJob?.cancel()
+                    val wasOpen = _state.value.join is JoinStep.Joining
+                    pending = null
+                    _state.update { it.copy(join = if (wasOpen) JoinStep.PaymentFailed("The payment didn’t go through.", null) else it.join) }
+                    if (!wasOpen) toast("Your payment to ${name()} didn’t go through. Nothing was taken.")
+                    watchJob?.cancel()
+                }
             }
         }
     }
 
+    private fun watching(): JoinStep.Joining? = (_state.value.join as? JoinStep.Joining) ?: pending
+
     private fun checkJoined(s: Space) {
-        val step = _state.value.join as? JoinStep.Joining ?: return
+        val step = watching() ?: return
         val m = s.me.membership
         val confirmed = s.me.isMember && m != null && m.state != MembershipState.Ended &&
             (!memberBefore || (m.paidUntil != null && (paidUntilBefore == null || m.paidUntil > paidUntilBefore!!)) || m.period == com.circaso.feature.spaces.domain.PricePeriod.OneTime)
         if (!confirmed) return
         pollJob?.cancel()
+        watchJob?.cancel()
+        pending = null
         val until = m?.paidUntil?.let { " · member until ${shortDate(it)}" }.orEmpty()
         val renewal = step.payment.kind == MembershipPaymentKind.Renewal
         _state.update { it.copy(join = JoinStep.Closed, welcome = (if (renewal) "You renewed" else "You joined") + until) }
@@ -436,7 +474,7 @@ class SpacePageViewModel(
         }
     }
 
-    override fun onCleared() { pollJob?.cancel(); super.onCleared() }
+    override fun onCleared() { pollJob?.cancel(); watchJob?.cancel(); super.onCleared() }
 
     companion object {
         const val UndoMs = 4_000L

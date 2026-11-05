@@ -189,6 +189,23 @@ class SpacePageViewModelTest {
         assertTrue(v.state.value.welcome!!.startsWith("You joined · member until"))
     }
 
+    @Test fun aMembershipPaymentThatFailsOnItsWaySaysNotSentAndNeverJoins() = runTest {
+        remote.spaceAnswer = { AppResult.Success(SpaceSamples.space(id = "s2", name = "Nairobi Book Club", visibility = "MEMBERS_ONLY", price = SpaceSamples.books)) }
+        remote.paymentAnswer = AppResult.Success(MembershipPaymentDto("pay-1", "s2", "JOIN", MoneyDto(amountMinor = "5000000", amount = "5"), "MONTHLY", expiresAt = "2099-01-01T00:00:00Z", blockchains = listOf("BASE-SEPOLIA")))
+        val followed = kotlinx.coroutines.flow.MutableStateFlow<Transfer?>(null)
+        val v = SpacePageViewModel("s2", null, false, repo, chats, connection, flowOf(null), joinPollMs = Long.MAX_VALUE / 4, observeTransfer = { followed })
+        v.onJoin()
+        v.onMembershipSigned(transfer("t1", "5000000"))
+        testScheduler.runCurrent()
+        assertIs<JoinStep.Joining>(v.state.value.join)
+        v.onCloseJoin()
+        assertIs<JoinStep.Joining>(v.state.value.join, "a fresh Joining can't be closed")
+        followed.value = transfer("t1", "5000000").copy(state = TransferState.Failed)
+        testScheduler.runCurrent()
+        assertIs<JoinStep.PaymentFailed>(v.state.value.join)
+        assertFalse(v.state.value.isMember)
+    }
+
     @Test fun aFailedQuoteIsNotSentWithItsReference() = runTest {
         remote.spaceAnswer = { AppResult.Success(SpaceSamples.space(visibility = "MEMBERS_ONLY", price = SpaceSamples.books)) }
         remote.paymentAnswer = apiError("spaces.wallet_not_ready", 409, requestId = "req_M1x7Pw")

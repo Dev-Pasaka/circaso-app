@@ -41,6 +41,7 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -87,6 +88,8 @@ import com.circaso.feature.spaces.presentation.PopoverHead
 import com.circaso.feature.spaces.presentation.PopoverItem
 import com.circaso.feature.spaces.presentation.RoleBadge
 import com.circaso.feature.spaces.presentation.SkeletonBlock
+import com.circaso.feature.spaces.presentation.DimBehind
+import kotlinx.coroutines.launch
 import com.circaso.feature.spaces.presentation.SpaceCover
 import com.circaso.feature.spaces.presentation.SpacePopover
 import com.circaso.feature.spaces.presentation.SpacePostItem
@@ -150,6 +153,8 @@ class SpacePageActions(
     val finishWallet: () -> Unit,
     val openChat: () -> Unit,
     val asha: () -> Unit,
+    /** GW13d's Try Again on the join card's fee (W17). */
+    val retryQuote: () -> Unit = {},
 ) {
     companion object {
         val None = SpacePageActions({}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, { _, _ -> }, {}, {}, {}, {}, {}, {}, {})
@@ -162,6 +167,7 @@ fun SpacePageEntry(route: SpaceRoute, nav: SpacesNav) {
     val vm = koinViewModel<SpacePageViewModel>(key = "space-${route.spaceId}-${route.handle}", parameters = { parametersOf(route.spaceId, route.handle, route.join) })
     val s by vm.state.collectAsState()
     val toast = rememberToastState()
+    val toastScope = androidx.compose.runtime.rememberCoroutineScope()
     LaunchedEffect(vm) { vm.toasts.collect { toast.show(it) } }
     LaunchedEffect(vm) { vm.openChat.collect { nav.openChat(it) } }
     // The money is PayViewModel's, keyed per SP13 quote (one engine for chats and the page, D-M3).
@@ -185,7 +191,10 @@ fun SpacePageEntry(route: SpaceRoute, nav: SpacesNav) {
         share = { s.space?.let { sp -> com.circaso.core.platform.shareText("https://${sp.summary.link}", sp.name) } },
         report = { id?.let { nav.report(it, null) } }, settings = { id?.let(nav.settings) }, invitePeople = { id?.let(nav.invite) },
         message = vm::onMessage, join = vm::onJoin, closeJoin = vm::onCloseJoin, pay = { pay?.onPay() },
-        addMoney = nav.receive, receive = nav.receive,
+        // D-M5: adding money has no partner rail yet; say so honestly rather than open something else.
+        addMoney = { toastScope.launch { toast.show("Adding money from M-Pesa or a bank is coming. For now, receive USDC in the Wallet tab.") } },
+        receive = { toastScope.launch { toast.show("Open the Wallet tab and tap Receive to see your addresses.") } },
+        retryQuote = { pay?.onRetryQuote() },
         request = vm::onRequest, cancelRequest = vm::onCancelRequest, accept = vm::onAcceptInvite,
         decline = { vm.onDeclineInvite(nav.back) }, undoDecline = vm::onUndoDecline,
         draft = vm::onDraft, send = vm::onSend, react = vm::onReact, retryPost = vm::onRetryPost, loadOlder = vm::onLoadOlder,
@@ -224,11 +233,24 @@ private fun LoadedPage(space: Space, s: SpacePageUiState, pay: PayUiState?, a: S
                 item(key = "head") { Head(space, s, a) }
                 pageBody(space, s, a)
             }
-            if (s.join != JoinStep.Closed) {
+            // SS1c/SM6: the page stays readable under an open popover, dimmed (canvas `.dim-behind`).
+            DimBehind(s.menuOpen || s.moreOpen || (s.leaveConfirm && !s.menuOpen))
+            // The card eases in as the chat's money card does (fade + half-height rise; fade only with reduced motion).
+            val still = CircasoTheme.reduceMotion
+            androidx.compose.animation.AnimatedVisibility(
+                s.join != JoinStep.Closed, Modifier.align(Alignment.BottomCenter),
+                enter = if (still) androidx.compose.animation.fadeIn(androidx.compose.animation.core.tween(com.circaso.designsystem.theme.CircasoMotion.QuickMs))
+                else androidx.compose.animation.fadeIn(androidx.compose.animation.core.tween(com.circaso.designsystem.theme.CircasoMotion.QuickMs)) +
+                    androidx.compose.animation.slideInVertically(androidx.compose.animation.core.tween(com.circaso.designsystem.theme.CircasoMotion.QuickMs)) { it / 2 },
+                exit = androidx.compose.animation.fadeOut(androidx.compose.animation.core.tween(com.circaso.designsystem.theme.CircasoMotion.QuickMs / 2)),
+            ) {
+                // Keep the last step while it fades out, so the card doesn't blank on its way away.
+                val last = androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(s.join) }
+                if (s.join != JoinStep.Closed) last.value = s.join
                 JoinCard(
-                    space, s.join, pay, s.fiat, s.now,
+                    space, last.value, pay, s.fiat, s.now,
                     onPay = a.pay, onTryAgain = a.join, onClose = a.closeJoin, onAddMoney = a.addMoney, onReceive = a.receive,
-                    modifier = Modifier.align(Alignment.BottomCenter), maxHeight = room - CircasoSpacing.s4,
+                    maxHeight = room - CircasoSpacing.s4, onRetryQuote = a.retryQuote,
                 )
             }
         }
@@ -541,7 +563,14 @@ private fun About(space: Space, s: SpacePageUiState, a: SpacePageActions) {
             if (space.me.isMember && !space.me.isOwner) {
                 val paid = space.me.membership != null || space.visibility != SpaceVisibility.Public
                 Box {
-                    CircasoButton(if (paid) "Leave" else "Unfollow", { a.menu(true); a.unfollow() }, style = ButtonStyle.Plain, size = ButtonSize.Small, enabled = s.online)
+                    CircasoButton(if (paid) "Leave" else "Unfollow", a.unfollow, style = ButtonStyle.Plain, size = ButtonSize.Small, enabled = s.online)
+                    // SM6 from About: the confirm anchors to this button (the head's popover may have scrolled away).
+                    SpacePopover(s.leaveConfirm && !s.menuOpen, onDismiss = a.leaveCancel, label = "Leave ${space.name}?", width = 280.dp) {
+                        PopoverConfirm(
+                            "Leave ${space.name}?", leaveMessage(space), "Leave", onConfirm = a.leave, onCancel = a.leaveCancel, cancel = "Stay",
+                            busy = s.busy == PageBusy.Leave, enabled = s.online,
+                        )
+                    }
                 }
             }
         }
@@ -664,10 +693,11 @@ private fun MembersGet(space: Space, s: SpacePageUiState) {
 private fun LockedChat(label: String, dim: Boolean = false) {
     val c = CircasoTheme.colors
     Box(Modifier.fillMaxWidth().padding(top = CircasoSpacing.s1)) {
-        Column(Modifier.fillMaxWidth().semantics { }, verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        // The shape of a chat only: hidden from screen readers (the lock's label says what it is).
+        Column(Modifier.fillMaxWidth().clearAndSetSemantics { }, verticalArrangement = Arrangement.spacedBy(10.dp)) {
             listOf(0.7f to false, 0.52f to false, 0.64f to true).forEach { (w, end) ->
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = if (end) Arrangement.End else Arrangement.Start) {
-                    Box(Modifier.fillMaxWidth(w).height(36.dp).clip(RoundedCornerShape(22.dp)).background(if (dim) c.fill.copy(alpha = 0.6f) else c.fill))
+                    Box(Modifier.fillMaxWidth(w).height(36.dp).clip(CircasoShapes.lg).background(if (dim) c.fill.copy(alpha = 0.6f) else c.fill))
                 }
             }
         }

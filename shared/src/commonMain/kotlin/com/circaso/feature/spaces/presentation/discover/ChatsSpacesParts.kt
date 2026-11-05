@@ -87,7 +87,7 @@ fun SpaceInviteCard(invite: ReceivedInvite, declining: Boolean, accepting: Boole
             }
             Row(
                 Modifier.fillMaxWidth().pressable { spaces.onOpenInvite(invite) }
-                    .semantics(mergeDescendants = true) { contentDescription = "Invite to ${invite.space.name}, ${invite.space.visibility.label}, ${invite.space.memberCount} members. Open" },
+                    .semantics(mergeDescendants = true) { contentDescription = "Invite to ${invite.space.name}, ${invite.space.visibility.label}, ${com.circaso.feature.spaces.presentation.countText(invite.space.memberCount, exact = true)} members. Open" },
                 verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(CircasoSpacing.s3),
             ) {
                 SpaceTile(invite.space, 44.dp)
@@ -95,7 +95,7 @@ fun SpaceInviteCard(invite: ReceivedInvite, declining: Boolean, accepting: Boole
                     BasicText(invite.space.name, style = t.callout.copy(color = c.ink, fontWeight = FontWeight.SemiBold), maxLines = 1, overflow = TextOverflow.Ellipsis)
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                         CircasoIconImage(visibilityIcon(invite.space.visibility), c.inkSecondary, Modifier.size(11.dp), strokeWidth = 2.4f)
-                        BasicText("${invite.space.visibility.label} · ${invite.space.memberCount} members", style = t.footnote.copy(color = c.inkSecondary))
+                        BasicText("${invite.space.visibility.label} · ${com.circaso.feature.spaces.presentation.countText(invite.space.memberCount, exact = true)} members", style = t.footnote.copy(color = c.inkSecondary))
                     }
                 }
             }

@@ -47,11 +47,13 @@ data class SpacesHomeUiState(
     /** The person's currency, for "1 USDC (KES 129) a month". */
     val fiat: FiatValue? = null,
     val now: Long = 0,
+    /** SP7 is being read and hasn't answered yet on this open. */
+    val mineRefreshing: Boolean = false,
 ) {
-    /** SD1c: skeletons only on the very first open, before anything is stored or answered. */
-    val loading: Boolean get() = mineLoaded && mineAsOf == 0L && mine.isEmpty() && online && !suggestionsLoaded && !suggestionsFailed
-    /** SD1b: not in any space yet (after the server said so, or with nothing stored offline). */
-    val noSpaces: Boolean get() = mineLoaded && mine.isEmpty() && !loading
+    /** SD1c: skeletons only on the very first open, before "Your spaces" was ever read (its own state, not Suggested's). */
+    val loading: Boolean get() = mineLoaded && mineAsOf == 0L && mine.isEmpty() && online && mineRefreshing
+    /** SD1b: not in any space yet (after the server said so, or with nothing stored offline); never while SP7 is on its way first. */
+    val noSpaces: Boolean get() = mineLoaded && mine.isEmpty() && !loading && !(mineAsOf == 0L && mineRefreshing)
     /** SD1's suggestions: public and members-only only (invite-only never appears), those I don't follow yet. */
     val shownSuggestions: List<Suggestion> get() {
         val joined = mine.map { it.space.spaceId }.toSet()
@@ -90,7 +92,8 @@ class SpacesHomeViewModel(
         val at = now()
         if (!force && at - lastRefresh < 2_000) return
         lastRefresh = at
-        viewModelScope.launch { spaces.refreshMine() }
+        _state.update { it.copy(mineRefreshing = true) }
+        viewModelScope.launch { spaces.refreshMine(); _state.update { it.copy(mineRefreshing = false) } }
         viewModelScope.launch { loadSuggestions() }
     }
 

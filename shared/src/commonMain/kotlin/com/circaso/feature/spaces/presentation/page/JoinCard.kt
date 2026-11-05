@@ -12,6 +12,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.BasicText
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -73,10 +74,18 @@ fun JoinCard(
     onReceive: () -> Unit,
     modifier: Modifier = Modifier,
     maxHeight: Dp = Dp.Unspecified,
+    /** GW13d's Try Again on the fee (2F's W17 quote). */
+    onRetryQuote: () -> Unit = {},
 ) {
     val c = CircasoTheme.colors
     val t = CircasoTheme.typography
     val quote = (step as? JoinStep.Quoted)?.payment ?: (step as? JoinStep.Joining)?.payment
+    // The 15-minute hold counts down while the card is open; an expired quote is never signed (it asks for a new one).
+    val clock by androidx.compose.runtime.produceState(now, quote?.expiresAt, step is JoinStep.Joining) {
+        value = com.circaso.core.sync.nowMillis()
+        while (quote != null && step !is JoinStep.Joining) { kotlinx.coroutines.delay(1_000); value = com.circaso.core.sync.nowMillis() }
+    }
+    val expired = step is JoinStep.Quoted && quote != null && quote.expiresAt > 0 && clock >= quote.expiresAt && pay?.step != PayStep.Signing
     val price = space.summary.price
     val amountMinor = quote?.amountMinor ?: price?.amountMinor ?: "0"
     val period = quote?.period ?: price?.period ?: PricePeriod.OneTime
@@ -88,11 +97,15 @@ fun JoinCard(
     val previous = quote?.previousAmountMinor
     val under = usdcText(amountMinor) + per + if (previous != null) " · was ${usdcText(previous)}" else " · priced in USDC"
     val joining = step is JoinStep.Joining
+    /** No confirmation after a minute: the card says so and may close; the welcome still lands when it confirms. */
+    val slow = (step as? JoinStep.Joining)?.slow == true
     val signing = pay?.step == PayStep.Signing
-    val busy = joining || signing || step is JoinStep.Quoting
+    val busy = (joining && !slow) || signing || step is JoinStep.Quoting
     val totalMinor = pay?.totalMinor ?: amountMinor
     val total = fiatText(totalMinor, rateSource) ?: usdcText(totalMinor)
-    val failure = (step as? JoinStep.QuoteFailed)?.let { it.message to it.reference } ?: pay?.failure?.let { it.message to it.reference }
+    val failure = (step as? JoinStep.QuoteFailed)?.let { it.message to it.reference }
+        ?: (step as? JoinStep.PaymentFailed)?.let { it.message to it.reference }
+        ?: pay?.failure?.let { it.message to it.reference }
     val offline = step is JoinStep.Offline || (pay != null && !pay.online)
     val short = pay?.overBalance == true && !offline && failure == null
     Column(
@@ -130,13 +143,19 @@ fun JoinCard(
                     quote?.periodEnd != null -> JoinRow("Member until", shortDate(quote.periodEnd))
                 }
                 if (quote != null) {
-                    JoinRow("Fee", pay?.feeText ?: "No fee")
-                    if (pay?.fee is PayFee.Quoted) JoinRow("Total", total)
+                    // §7b's one fee, quoted by W17 at the space rate for exactly this membership (2F's FeeParts).
+                    if (pay != null) Row(Modifier.fillMaxWidth().semantics(mergeDescendants = true) {}, horizontalArrangement = Arrangement.spacedBy(CircasoSpacing.s3), verticalAlignment = Alignment.Top) {
+                        BasicText("Fee", style = t.footnote.copy(color = c.inkSecondary))
+                        Row(Modifier.weight(1f), horizontalArrangement = Arrangement.End) { com.circaso.feature.wallet.presentation.FeeValue(pay, onRetryQuote, t.subhead.copy(color = c.ink, fontWeight = FontWeight.SemiBold, fontFeatureSettings = "tnum")) }
+                    } else JoinRow("Fee", "No fee")
+                    pay?.let { com.circaso.feature.wallet.presentation.totalValue(it) }?.let { JoinRow("Total", it) }
                     JoinRow("${space.name} receives", lead)
                 }
             }
             val (line, tone) = when {
+                slow -> "Still confirming. You’ll be told when you’re in." to 0
                 joining -> "This takes a few seconds. You can leave; you’ll be told when you’re in." to 0
+                expired -> "The price was held for 15 minutes and has expired." to 1
                 signing -> null to 0
                 offline -> "You’re offline. Money sends only while you’re connected." to 1
                 step is JoinStep.Quoting -> "Getting the price for today…" to 0
@@ -149,20 +168,23 @@ fun JoinCard(
             if (line != null) BasicText(line, Modifier.semantics { liveRegion = LiveRegionMode.Polite }, style = t.footnote.copy(color = when (tone) { 1 -> c.warning; 2 -> c.critical; else -> c.inkSecondary }))
         }
         val label = when {
+            slow -> "Close"
             joining -> "Paying ${space.name}…"
             signing -> "Waiting for your PIN…"
             failure != null -> "Try Again"
+            expired -> "Get a New Price"
             else -> "Pay $total"
         }
         CircasoButton(
-            label, onClick = if (failure != null) onTryAgain else onPay, size = ButtonSize.Large, block = true, busy = busy,
-            enabled = failure != null && !offline || (pay?.canPay == true && quote != null && !joining && !offline),
+            label, onClick = when { slow -> onClose; failure != null || expired -> onTryAgain; else -> onPay }, size = ButtonSize.Large, block = true, busy = busy,
+            style = if (slow) ButtonStyle.Secondary else ButtonStyle.Primary,
+            enabled = slow || (failure != null || expired) && !offline || (pay?.canPay == true && quote != null && !joining && !offline),
         )
         if (short) Row(horizontalArrangement = Arrangement.spacedBy(CircasoSpacing.s2)) {
             CircasoButton("Add Money", onAddMoney, style = ButtonStyle.Secondary, size = ButtonSize.Small)
             CircasoButton("Receive", onReceive, style = ButtonStyle.Secondary, size = ButtonSize.Small)
         }
-        val held = quote?.expiresAt?.let { e -> ((e - now) / 1000).coerceAtLeast(0) }?.takeIf { !joining }
+        val held = quote?.expiresAt?.let { e -> ((e - clock) / 1000).coerceAtLeast(0) }?.takeIf { !joining }
         val rate = rateSource?.let { "1 USDC = ${it.currency} ${it.rate.substringBefore('.')}.${it.rate.substringAfter('.', "00").take(2).padEnd(2, '0')}" }
         val foot = listOfNotNull(
             failure?.second?.let { "Ref $it" },
