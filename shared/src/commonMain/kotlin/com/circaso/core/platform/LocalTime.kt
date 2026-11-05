@@ -8,6 +8,9 @@ expect fun formatLocalTime(epochMillis: Long, style: LocalTimeStyle): String
 /** The local calendar day as a number that rises by one per day, for "today / yesterday / this week" decisions. */
 expect fun localDayIndex(epochMillis: Long): Long
 
+/** The hour of the day (0–23) in the person's own time zone. */
+expect fun localHour(epochMillis: Long): Int
+
 /** The chat list's meta column (design C1): "21:14" today, "Yesterday", "Mon" this week, else "12 Oct". */
 fun chatListTime(epochMillis: Long, now: Long): String {
     val days = localDayIndex(now) - localDayIndex(epochMillis)

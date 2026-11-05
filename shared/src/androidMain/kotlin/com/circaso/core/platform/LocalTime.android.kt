@@ -17,3 +17,5 @@ actual fun formatLocalTime(epochMillis: Long, style: LocalTimeStyle): String {
 }
 
 actual fun localDayIndex(epochMillis: Long): Long = Instant.ofEpochMilli(epochMillis).atZone(ZoneId.systemDefault()).toLocalDate().toEpochDay()
+
+actual fun localHour(epochMillis: Long): Int = Instant.ofEpochMilli(epochMillis).atZone(ZoneId.systemDefault()).hour

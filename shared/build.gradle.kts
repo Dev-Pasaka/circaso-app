@@ -81,6 +81,8 @@ kotlin {
             implementation(libs.camerax.lifecycle)
             implementation(libs.camerax.video)
             implementation(libs.camerax.view)
+            // Asha's animated mascot (asha-next.md part B): the Rive runtime behind AshaAvatar.
+            implementation(libs.rive.android)
             implementation(libs.androidx.activity.compose)
             implementation(libs.androidx.credentials)
             implementation(libs.androidx.credentials.playServicesAuth)

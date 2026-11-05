@@ -49,7 +49,7 @@ sealed interface AshaEvent {
     data class UsingTool(val name: String) : AshaEvent
 
     /** What Asha is doing right now ("Checking your transactions…"), written by the server per tool; null when done. */
-    data class Status(val label: String?) : AshaEvent
+    data class Status(val label: String?, val tags: AshaTags? = null) : AshaEvent
 
     /** The reply is complete and saved. */
     data class Done(val message: AshaMessage) : AshaEvent

@@ -34,6 +34,9 @@ class AppPreferences(private val store: DataStore<Preferences>) : com.circaso.co
     /** Asha's voice, chosen in You → Asha's voice; null is the server's default. */
     val ashaVoice: Flow<String?> = store.data.map { it[stringPreferencesKey("asha.voice")] }
     suspend fun setAshaVoice(id: String?) { store.edit { if (id == null) it.remove(stringPreferencesKey("asha.voice")) else it[stringPreferencesKey("asha.voice")] = id } }
+    /** The `gender` of the voice in use (A12), kept so the mascot's look is right offline; null until the voices were read. */
+    val ashaVoiceGender: Flow<String?> = store.data.map { it[stringPreferencesKey("asha.voiceGender")] }
+    suspend fun setAshaVoiceGender(gender: String?) { store.edit { if (gender == null) it.remove(stringPreferencesKey("asha.voiceGender")) else it[stringPreferencesKey("asha.voiceGender")] = gender } }
 
     suspend fun setCurrency(code: String?) { store.edit { if (code == null) it.remove(currencyKey) else it[currencyKey] = code } }
     private val contrastKey = stringPreferencesKey("theme.highContrast")

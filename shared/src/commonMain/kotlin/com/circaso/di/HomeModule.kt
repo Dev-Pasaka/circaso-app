@@ -26,6 +26,6 @@ val homeModule = module {
     viewModel { SecurityViewModel(get(), get(), get(), get(), get(), get(), get(), get(), get()) }
     viewModel { com.circaso.feature.home.presentation.NotificationsViewModel(get(), get(), get(), get(), get(), get()) }
     viewModel { SecurityLogViewModel(get(), get()) }
-    viewModel { AshaViewModel(get(), get(), get(), get(), get(), get(), get(), get(), get(), chats = get()) }
-    viewModel { VoiceViewModel(get(), get(), get(), get(), getOrNull()) }
+    viewModel { AshaViewModel(get(), get(), get(), get(), get(), get(), get(), get(), get(), chats = get(), look = getOrNull(), money = getOrNull<com.circaso.feature.wallet.domain.WalletRepository>()?.let { com.circaso.feature.assistant.domain.AshaMoneyReactions(it) }) }
+    viewModel { VoiceViewModel(get(), get(), get(), get(), getOrNull(), look = getOrNull()) }
 }

@@ -15,6 +15,7 @@ struct iOSApp: App {
         QrScannerBridge.shared.provider = QrScannerImpl() // VisionKit QR scanning (design E4/E5); see Qr.kt
         MomentCameraBridge.shared.provider = MomentCameraImpl() // AVFoundation camera for Moments (M1); see MomentCamera.kt
         MediaLibraryBridge.shared.provider = MediaLibraryImpl() // Photos, PHPicker and Files for Moments; see MediaLibrary.kt
+        RiveBridge.shared.provider = RiveImpl() // Asha's animated mascot (asha.riv); see IosRiveAnimation.kt
         WalletSignerBridge.shared.signer = CircleWalletImpl() // the Circle SDK behind the wallet; see WalletSigner.kt and the Podfile
         BackgroundSyncImpl.install() // sends the offline queue in the background once there's a network; see BackgroundSync.kt
         BackgroundUploadImpl.install() // uploads carry on when Circaso is left mid-upload; see BackgroundUploads.kt

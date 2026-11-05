@@ -19,6 +19,8 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.text.BasicText
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -61,7 +63,7 @@ fun VoiceScreen(viewModel: VoiceViewModel, onBack: () -> Unit) {
     val state by viewModel.state.collectAsState()
     // The person hung up (or the server said `ended`): nothing to read, straight back to the chat.
     LaunchedEffect(state.ending) { if (state.ending == VoiceEnding.HungUp) onBack() }
-    VoiceContent(state, onEnd = { viewModel.onEnd(); onBack() }, onMute = viewModel::onMute, onAgain = viewModel::start, onLeave = onBack, onNoticeShown = viewModel::onNoticeShown)
+    VoiceContent(state, onEnd = { viewModel.onEnd(); onBack() }, onMute = viewModel::onMute, onAgain = viewModel::start, onLeave = onBack, onNoticeShown = viewModel::onNoticeShown, reactions = viewModel.reactions, onShowcase = viewModel::onToggleShowcase)
 }
 
 @Composable
@@ -72,6 +74,10 @@ fun VoiceContent(
     onAgain: () -> Unit,
     onLeave: () -> Unit,
     onNoticeShown: () -> Unit = {},
+    /** One-shot mascot reactions (the server's `reaction` tags). */
+    reactions: kotlinx.coroutines.flow.Flow<com.circaso.feature.assistant.domain.AshaReaction> = kotlinx.coroutines.flow.emptyFlow(),
+    /** Debug builds: a long-press on the stage starts or stops the mascot showcase. */
+    onShowcase: (() -> Unit)? = null,
 ) {
     val c = CircasoTheme.colors
     val t = CircasoTheme.typography
@@ -110,11 +116,17 @@ fun VoiceContent(
             Modifier.fillMaxSize().fillOrScroll().padding(bottom = padding.calculateBottomPadding()).padding(horizontal = CircasoSpacing.s6),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
-            Spacer(Modifier.weight(1f))
-            AshaOrb(mood, level)
+            Spacer(Modifier.weight(0.35f))
+            // Asha on her stage (asha.riv, `Asha`): her mouth follows her voice; the orb is the fallback if Rive can't draw.
+            AshaAvatar(
+                state.mascot, AshaAvatarVariant.Stage,
+                // Gives way on small phones and at large text sizes, so captions and controls keep their room.
+                Modifier.weight(2f, fill = false).widthIn(max = AshaStageMaxWidth).aspectRatio(AshaStageAspect, matchHeightConstraintsFirst = true),
+                reactions = reactions, pokeable = true, onLongPress = onShowcase,
+            ) { AshaOrb(mood, level) }
             Spacer(Modifier.height(CircasoSpacing.s6))
             Captions(state, Modifier.fillMaxWidth().heightIn(min = 120.dp))
-            Spacer(Modifier.weight(1f))
+            Spacer(Modifier.weight(0.35f))
             Crossfade(state.phase == VoicePhase.Ended, label = "controls") { ended ->
                 if (ended) EndedActions(state.ending, onAgain, onLeave) else LiveControls(state.muted, onMute, onEnd)
             }
