@@ -28,14 +28,13 @@ import com.circaso.designsystem.theme.CircasoTheme
 
 private enum class Tab(val label: String, val icon: CircasoIcon) {
     Chats("Chats", CircasoIcon.Chat),
-    Spaces("Spaces", CircasoIcon.Spaces),
     Wallet("Wallet", CircasoIcon.Wallet),
     You("You", CircasoIcon.Person),
 }
 
 /**
- * The app once signed in: Chats, Spaces, Wallet and You, with the floating tab bar (design C1, Spaces S1). Chats and Wallet have no
- * backend yet, so they say so plainly instead of showing fake data. The selected tab survives rotation and process death.
+ * The app once signed in: Chats, Wallet and You, with the floating tab bar (design C1). Spaces stopped on 2026-11-05:
+ * its tab is gone and Moments live in Chats (the Moments chip). The selected tab survives rotation and process death.
  */
 @Composable
 @OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class)
@@ -43,12 +42,6 @@ fun HomeScreen(
     chats: @Composable (bottomPadding: PaddingValues) -> Unit,
     chatsActions: @Composable androidx.compose.foundation.layout.RowScope.() -> Unit,
     chatsBanner: @Composable () -> Unit,
-    /** Spaces (phase 1: Moments). */
-    spaces: @Composable (bottomPadding: PaddingValues) -> Unit = {},
-    spacesOverlay: @Composable androidx.compose.foundation.layout.BoxScope.() -> Unit = {},
-    spacesBanner: @Composable () -> Unit = {},
-    /** New moments from my contacts: a dot on the Spaces tab (S1). */
-    spacesUnread: Boolean = false,
     wallet: @Composable (bottomPadding: PaddingValues) -> Unit,
     walletActions: @Composable androidx.compose.foundation.layout.RowScope.() -> Unit,
     /** Each tab's sheets: drawn in the scaffold's overlay so they cover the floating tab bar, as `cx-sheet` does. */
@@ -59,7 +52,8 @@ fun HomeScreen(
     you: @Composable (bottomPadding: PaddingValues) -> Unit,
 ) {
     var selected by rememberSaveable { mutableStateOf(initialTab) }
-    val tab = Tab.entries[selected]
+    // A tab index saved by an older build (four tabs, Spaces second) can't point past the end.
+    val tab = Tab.entries.getOrElse(selected) { Tab.Chats }
     // Back from Wallet or You goes to Chats first; Back from Chats asks before leaving (the user, 2026-10-31), so a
     // stray swipe never closes the app. Only Android has a Back that leaves; iOS apps don't close themselves.
     var confirmExit by rememberSaveable { mutableStateOf(false) }
@@ -74,17 +68,17 @@ fun HomeScreen(
     CircasoScaffold(
         grouped = tab == Tab.You,
         // On its side, Wallet and You are laid out in two columns: a wider frame for them; Chats stays one column.
-        maxContentWidth = if (layout.short && tab != Tab.Chats && tab != Tab.Spaces) com.circaso.designsystem.adaptive.WindowLayout.WideContentWidth else com.circaso.designsystem.adaptive.WindowLayout.ReadableWidth,
+        maxContentWidth = if (layout.short && tab != Tab.Chats) com.circaso.designsystem.adaptive.WindowLayout.WideContentWidth else com.circaso.designsystem.adaptive.WindowLayout.ReadableWidth,
         // No title bar on the tabs (Pasaka, 2026-10-30): the tab bar already says where you are, and each screen's
         // actions live in it (the Chats button, the eye on the wallet card).
-        banner = { when (tab) { Tab.Chats -> chatsBanner(); Tab.Spaces -> spacesBanner(); Tab.Wallet -> ConnectionBanner(); Tab.You -> Unit } },
+        banner = { when (tab) { Tab.Chats -> chatsBanner(); Tab.Wallet -> ConnectionBanner(); Tab.You -> Unit } },
         // On its side, or with room to spare, the tabs move to the left edge (Material's rail, iPad's sidebar);
         // in a split's narrow list pane they stay at the bottom of the pane.
         bottomBar = if (rail) null else {
             {
                 CircasoTabBar(
-                    items = Tab.entries.map { TabItem(it.label, it.icon, unread = it == Tab.Spaces && spacesUnread && tab != Tab.Spaces) },
-                    selectedIndex = selected,
+                    items = Tab.entries.map { TabItem(it.label, it.icon) },
+                    selectedIndex = tab.ordinal,
                     onSelect = { selected = it },
                 )
             }
@@ -92,15 +86,15 @@ fun HomeScreen(
         sideBar = if (!rail) null else {
             {
                 CircasoTabBar(
-                    items = Tab.entries.map { TabItem(it.label, it.icon, unread = it == Tab.Spaces && spacesUnread && tab != Tab.Spaces) },
-                    selectedIndex = selected,
+                    items = Tab.entries.map { TabItem(it.label, it.icon) },
+                    selectedIndex = tab.ordinal,
                     onSelect = { selected = it },
                     vertical = true,
                 )
             }
         },
         overlay = {
-            when (tab) { Tab.Chats -> chatsOverlay(); Tab.Spaces -> spacesOverlay(); Tab.Wallet -> walletOverlay(); Tab.You -> Unit }
+            when (tab) { Tab.Chats -> chatsOverlay(); Tab.Wallet -> walletOverlay(); Tab.You -> Unit }
             ConfirmSheet(
                 visible = confirmExit,
                 title = "Leave Circaso?",
@@ -115,7 +109,6 @@ fun HomeScreen(
         when (tab) {
             Tab.You -> you(padding)
             Tab.Chats -> chats(padding)
-            Tab.Spaces -> spaces(padding)
             Tab.Wallet -> wallet(padding)
         }
     }

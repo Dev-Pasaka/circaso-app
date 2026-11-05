@@ -23,8 +23,11 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
-/** Design C1: the chat list, from the phone, refreshed quietly. */
-enum class ChatFilter(val label: String) { All("All"), Unread("Unread"), Groups("Groups"), Spaces("Spaces") }
+/**
+ * Design C1: the chat list, from the phone, refreshed quietly. Moments (2026-11-05, in place of Spaces) is a filter
+ * like the others, but it swaps the chats for the Moments list on the same screen.
+ */
+enum class ChatFilter(val label: String) { All("All"), Unread("Unread"), Groups("Groups"), Moments("Moments") }
 
 data class ChatsUiState(
     val chats: List<ChatSummary> = emptyList(),
@@ -38,11 +41,11 @@ data class ChatsUiState(
     val firstName: String? = null,
     /** The wallet's rate to the person's currency, for "Bob sent KES 650" in the list. */
     val fiat: com.circaso.feature.wallet.domain.FiatValue? = null,
-    /** The chip under the search bar: every chat, the unread ones, or groups (as WhatsApp). */
+    /** The chip under the search bar: every chat, the unread ones, groups, or the Moments list (as WhatsApp). */
     val filter: ChatFilter = ChatFilter.All,
 ) {
     val shown: List<ChatSummary> get() = chats
-        .filter { s -> when (filter) { ChatFilter.All -> true; ChatFilter.Unread -> s.unread > 0; ChatFilter.Groups -> s.chat.kind == com.circaso.feature.messaging.domain.ChatKind.Group; ChatFilter.Spaces -> s.chat.viaSpaceId != null } }
+        .filter { s -> when (filter) { ChatFilter.All -> true; ChatFilter.Unread -> s.unread > 0; ChatFilter.Groups -> s.chat.kind == com.circaso.feature.messaging.domain.ChatKind.Group; ChatFilter.Moments -> true } }
         .let { list -> if (query.isBlank()) list else list.filter { it.chat.title.contains(query.trim(), ignoreCase = true) } }
 }
 

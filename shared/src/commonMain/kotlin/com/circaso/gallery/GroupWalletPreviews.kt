@@ -173,7 +173,7 @@ private fun tabState(group: GroupWalletUiState, three: Boolean = false, member: 
 @Composable
 private fun TabPreview(state: WalletUiState, gwActions: GroupWalletActions = GroupWalletActions({}, {}, {}, {}, {})) {
     com.circaso.feature.home.presentation.HomeScreen(
-        initialTab = 2,
+        initialTab = 1, // Wallet (tabs: Chats, Wallet, You since Spaces was removed)
         chats = {}, chatsActions = {}, chatsBanner = {},
         wallet = { pad ->
             // The tab draws the group only while one is picked, as the view model does.

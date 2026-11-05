@@ -9,7 +9,7 @@ import kotlin.test.assertTrue
 
 /**
  * Builds the graph the app starts with ([appModules], as `initKoin` does), so a launch crash is a failing test. The
- * Spaces merge crashed in `Application.onCreate` because `spacesModule` included `spacesViewModels` before that
+ * Spaces merge (since removed) crashed in `Application.onCreate` because `spacesModule` included `spacesViewModels` before that
  * top-level val was initialised: the list held a null and Koin threw while loading it. Unit tests never started Koin
  * whole, so nothing caught it. Definitions stay lazy here (none is created at start), so no platform service is needed.
  */
@@ -23,7 +23,7 @@ class KoinGraphTest {
             m.includedModules.forEachIndexed { i, inner -> walk("$path > included[$i]", inner as Module?) }
         }
         appModules(module { }).forEachIndexed { i, m -> walk("appModules[$i]", m as Module?) }
-        assertTrue(seen.size >= 15, "every feature module is in the list")
+        assertTrue(seen.size >= 14, "every feature module is in the list (14 since Spaces was removed)")
     }
 
     /**

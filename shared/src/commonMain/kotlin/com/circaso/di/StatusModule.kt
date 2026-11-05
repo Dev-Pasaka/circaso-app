@@ -16,7 +16,7 @@ import kotlinx.coroutines.flow.first
 import org.koin.dsl.module
 
 /**
- * Moments (Spaces phase 1, backend `status` module ST1–ST8): read from Room, posted through the outbox, end to end
+ * Moments (backend `status` module ST1–ST8; shown in Chats since Spaces stopped on 2026-11-05): read from Room, posted through the outbox, end to end
  * encrypted with a sender key of their own in the same Signal store as chats.
  */
 val statusModule = module {
@@ -36,7 +36,7 @@ val statusModule = module {
     single { MomentPostHandler { get<MomentsRepositoryImpl>() } } bind OutboxHandler::class
     single { MomentKeyCopiesHandler { get<MomentsRepositoryImpl>() } } bind OutboxHandler::class
     single<MomentsRepository> { get<MomentsRepositoryImpl>() }
-    viewModel { com.circaso.feature.status.presentation.SpacesViewModel(get(), get(), get(), get(), get()) }
+    viewModel { com.circaso.feature.status.presentation.MomentsViewModel(get(), get(), get(), get(), get()) }
     viewModel { com.circaso.feature.status.presentation.MomentComposerViewModel(get(), get(), get(), get(), get(), get(), get(), get()) }
     viewModel { com.circaso.feature.status.presentation.MomentsPrivacyViewModel(get(), get()) }
     // V4 Forward: a moment into chats through the chat's own media path (encrypted, queued, sent by the outbox).

@@ -124,7 +124,7 @@ private val previewMedia = com.circaso.feature.messaging.presentation.ThreadMedi
     canShareLocation = true, onPhoto = {}, onLocation = {}, onVoiceStart = {}, onVoiceEnd = {}, load = { com.circaso.feature.messaging.data.repository.MediaLoad.Failed }, onPlay = {}, onRetry = {},
     onConfirmLocation = {}, onCancelLocation = {}, onPhotoCaption = {}, onConfirmPhoto = {}, onCancelPhoto = {},
 )
-private val chatList = listOf(
+internal val chatList = listOf(
     ChatSummary(direct("2", "Mum"), text(1, "2", "Thank you, karibu tena!", false, 12), 2),
     ChatSummary(fund, text(2, "g1", "Term 3 is fully paid", false, 90, sender = "3", senderName = "Wanjiru"), 1),
     ChatSummary(direct("5", "Otieno"), text(3, "5", "See you on Saturday then", true, 60 * 26), 0),
@@ -142,11 +142,10 @@ private val thread = listOf(
 fun PreviewScreens(name: String) {
     when (name) {
         // Home's real frame with sample tabs: the floating tab bar, or the left rail on a short or wide window.
-        "home", "home-spaces", "home-wallet", "home-you" -> com.circaso.feature.home.presentation.HomeScreen(
-            initialTab = when (name) { "home-spaces" -> 1; "home-wallet" -> 2; "home-you" -> 3; else -> 0 },
-            chats = { pad -> ChatsContent(ChatsUiState(chats = chatList, loaded = true), pad, {}, {}, {}) },
+        "home", "home-wallet", "home-you" -> com.circaso.feature.home.presentation.HomeScreen(
+            initialTab = when (name) { "home-wallet" -> 1; "home-you" -> 2; else -> 0 },
+            chats = { pad -> ChatsContent(ChatsUiState(chats = chatList, loaded = true), pad, {}, {}, {}, moments = momentsSlot(sampleMoments())) },
             chatsActions = {}, chatsBanner = {},
-            spaces = { pad -> com.circaso.feature.status.presentation.SpacesContent(sampleSpaces(), pad, noSpacesActions, {}, {}) },
             wallet = { pad -> WalletContent(WalletUiState(wallet = sampleWallet(), recent = sampleTransfers()), pad, noWalletActions, {}, {}, {}, {}) },
             walletActions = {},
             you = { pad -> PreviewScreens("you") },
@@ -163,11 +162,6 @@ fun PreviewScreens(name: String) {
                 }
             }
         }
-        // Spaces (S1 and its states): sample rings, no session needed.
-        "spaces" -> com.circaso.feature.status.presentation.SpacesContent(sampleSpaces(), PaddingValues(bottom = 90.dp), noSpacesActions, {}, {})
-        "spaces-empty" -> com.circaso.feature.status.presentation.SpacesContent(com.circaso.feature.status.presentation.SpacesUiState(myName = "Pasaka Mutuku", loaded = true, refreshed = true), PaddingValues(bottom = 90.dp), noSpacesActions, {}, {})
-        "spaces-loading" -> com.circaso.feature.status.presentation.SpacesContent(com.circaso.feature.status.presentation.SpacesUiState(myName = "Pasaka Mutuku", loaded = true), PaddingValues(bottom = 90.dp), noSpacesActions, {}, {})
-        "spaces-error" -> com.circaso.feature.status.presentation.SpacesContent(com.circaso.feature.status.presentation.SpacesUiState(myName = "Pasaka Mutuku", loaded = true, refreshed = true, failed = true, requestId = "req_7Hq2kD"), PaddingValues(bottom = 90.dp), noSpacesActions, {}, {})
         // The Moments viewer (V1, V4, V5) and its reaction picker: sample moments, nothing loads.
         "moment-text" -> MomentPreview(sampleMoment(com.circaso.feature.status.domain.MomentKind.Text))
         "moment-photo" -> MomentPreview(sampleMoment(com.circaso.feature.status.domain.MomentKind.Image), photo = true)
@@ -190,7 +184,6 @@ fun PreviewScreens(name: String) {
             // Mine is from the long list, so it also shows in the row (to take it back without opening the list).
             com.circaso.designsystem.components.ReactionBubble(current = "🔥", onPick = {}, onOptions = {}, initiallyExpanded = name.endsWith("expanded"))
         }
-        "spaces-posting" -> com.circaso.feature.status.presentation.SpacesContent(sampleSpaces().copy(pending = listOf(com.circaso.feature.status.domain.PendingMoment("p1", com.circaso.feature.status.domain.MomentKind.Image, com.circaso.feature.status.domain.PendingState.Failed, null, 0))), PaddingValues(bottom = 90.dp), noSpacesActions, {}, {})
         "you" -> YouContent(
             YouUiState(
                 profile = profile, maskedPhone = "+254 7•• ••• 678",
@@ -402,7 +395,7 @@ fun PreviewScreens(name: String) {
             null, sampleChama(),
         )
         "transfer" -> TransferContent(TransferUiState(transfer = sampleTransfers().first(), fiat = sampleWallet().fiat), {})
-        else -> if (!GroupWalletPreview(name) && !ChatMoneyPreview(name) && !SpacesPreview(name)) BasicText("Unknown preview: $name")
+        else -> if (!GroupWalletPreview(name) && !ChatMoneyPreview(name) && !MomentsChatsPreview(name)) BasicText("Unknown preview: $name")
     }
 }
 
@@ -459,8 +452,6 @@ private fun CallPreview(call: com.circaso.feature.calls.CallUi, money: String?, 
 }
 
 
-private val noSpacesActions = com.circaso.feature.status.presentation.SpacesActions({}, {}, {}, {})
-
 /** One of Wanjiru's moments, posted 34 minutes ago; the photo and video carry the sample photo as their placeholder. */
 private fun sampleMoment(kind: com.circaso.feature.status.domain.MomentKind): com.circaso.feature.status.domain.Moment {
     val now = com.circaso.core.sync.nowMillis()
@@ -508,18 +499,3 @@ private fun MomentPreview(
 /** A sunset (72×128 JPEG) standing in for a moment's photo in previews. */
 private const val SamplePhoto = "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"
 
-/** Moments from people in the sample contacts: two new, one seen. */
-private fun sampleSpaces(): com.circaso.feature.status.presentation.SpacesUiState {
-    val now = com.circaso.core.sync.nowMillis()
-    fun moment(id: String, who: String, viewed: Boolean, minutesAgo: Long) = com.circaso.feature.status.domain.Moment(
-        momentId = id, posterId = who, kind = com.circaso.feature.status.domain.MomentKind.Text, text = "Sunday market haul",
-        postedAt = now - minutesAgo * 60_000, expiresAt = now + 3_600_000, mine = false, viewed = viewed, reacted = false,
-    )
-    fun ring(who: String, name: String, viewed: Boolean, minutesAgo: Long) =
-        com.circaso.feature.status.domain.MomentRing(who, name, null, listOf(moment("m-$who", who, viewed, minutesAgo)), muted = false)
-    return com.circaso.feature.status.presentation.SpacesUiState(
-        myName = "Pasaka Mutuku", loaded = true, refreshed = true,
-        myMoments = listOf(moment("mine", "me", true, 50).copy(mine = true)),
-        rings = listOf(ring("w", "Wanjiru Kamau", false, 34), ring("b", "Baraka Mwita", false, 120), ring("f", "Faith Chebet", false, 200), ring("m", "Mum", true, 300)),
-    )
-}

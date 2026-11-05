@@ -44,9 +44,6 @@ object CircasoSizes {
     val avatarXl = 96.dp
     /** The You tab's centred photo. */
     val avatarHero = 112.dp
-    /** A Moments ring on the Spaces tab (design S1): the ring around an avatarLg photo, and the item with its name. */
-    val momentRing = 68.dp
-    val momentItem = 72.dp
 }
 
 @Immutable

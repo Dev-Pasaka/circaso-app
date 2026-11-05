@@ -174,49 +174,6 @@ data class NetworkActivityRoute(val blockchain: String, val walletId: String? = 
 @Serializable
 data class NetworkAssetsRoute(val blockchain: String, val walletId: String? = null) : Route
 
-// ---- Spaces core (phase 3, frames SD–SW). Behind SpacesFlag.
-
-/** SD2: search spaces, @handles and people. */
-@Serializable data object SpaceSearchRoute : Route
-
-/** SD3: Suggested, See All. */
-@Serializable data object SpacesSuggestedRoute : Route
-
-/**
- * The space page (SS1–SS6e, SM1–SM6, SI2b): by id, or by [handle] from a link (`circaso://space/@handle`).
- * [join] opens the join card at once (SD1's Join, SH2e's Join to Pay, a Renew push).
- */
-@Serializable data class SpaceRoute(val spaceId: String? = null, val handle: String? = null, val join: Boolean = false) : Route
-
-/** The space chat (SH1–SH1f), full height with the space's bar; the bar opens [SpaceRoute]. */
-@Serializable data class SpaceChatRoute(val spaceId: String) : Route
-
-/** Create a space (SN1–SN3, SN7), [name] from SD2c's "Create “…”". */
-@Serializable data class NewSpaceRoute(val name: String? = null) : Route
-
-/** The space wallet's PIN, setting up and live (SN4–SN6, SN5b). [created] after SN3 (then SN6 follows). */
-@Serializable data class SpaceWalletSetupRoute(val spaceId: String, val created: Boolean = false) : Route
-
-/** Space Settings (SN8) and what it opens: details, who can join and the price (SN8b). */
-@Serializable data class SpaceSettingsRoute(val spaceId: String) : Route
-@Serializable data class SpaceDetailsRoute(val spaceId: String) : Route
-@Serializable data class SpaceJoinSettingsRoute(val spaceId: String) : Route
-
-/** Members and roles (SR1), what each role can do (SR2). */
-@Serializable data class SpaceMembersRoute(val spaceId: String) : Route
-@Serializable data object SpaceRolesRoute : Route
-
-/** Report a post or the whole space (SR3), and the reports queue (SR4). */
-@Serializable data class SpaceReportRoute(val spaceId: String, val postId: String? = null) : Route
-@Serializable data class SpaceReportsRoute(val spaceId: String) : Route
-
-/** Invite people (SI1) and Invites and Requests (SI4). */
-@Serializable data class SpaceInviteRoute(val spaceId: String) : Route
-@Serializable data class SpaceInvitesRoute(val spaceId: String) : Route
-
-/** A space's wallet, pushed (SN8's Space wallet row): the Wallet tab's own design with that wallet on screen (SW1). */
-@Serializable data class SpaceWalletRoute(val spaceId: String) : Route
-
 /** Debug only: a screen shown with sample data (`-preview=you` launch argument). */
 @Serializable
 data class PreviewRoute(val name: String) : Route
@@ -271,22 +228,6 @@ val routeSerializers = SerializersModule {
         subclass(GroupWalletSetupRoute::class)
         subclass(TargetRoute::class)
         subclass(GroupWalletRoute::class)
-        subclass(SpaceSearchRoute::class)
-        subclass(SpacesSuggestedRoute::class)
-        subclass(SpaceRoute::class)
-        subclass(SpaceChatRoute::class)
-        subclass(NewSpaceRoute::class)
-        subclass(SpaceWalletSetupRoute::class)
-        subclass(SpaceSettingsRoute::class)
-        subclass(SpaceDetailsRoute::class)
-        subclass(SpaceJoinSettingsRoute::class)
-        subclass(SpaceMembersRoute::class)
-        subclass(SpaceRolesRoute::class)
-        subclass(SpaceReportRoute::class)
-        subclass(SpaceReportsRoute::class)
-        subclass(SpaceInviteRoute::class)
-        subclass(SpaceInvitesRoute::class)
-        subclass(SpaceWalletRoute::class)
         subclass(PreviewRoute::class)
         subclass(GalleryRoute::class)
         subclass(ForceUpdateRoute::class)

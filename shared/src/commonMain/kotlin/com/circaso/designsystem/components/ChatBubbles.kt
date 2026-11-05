@@ -325,6 +325,8 @@ fun SuggestionChip(
     selected: Boolean? = null,
     /** A count in a small circle after the text (Unread 3); hidden at zero, and it pops as it changes. */
     badge: Int = 0,
+    /** A small dot after the text for something new without a count (Moments); it fades in and out. */
+    dot: Boolean = false,
 ) {
     val c = CircasoTheme.colors
     val t = CircasoTheme.typography
@@ -355,6 +357,15 @@ fun SuggestionChip(
                         BasicText(n.toString(), style = t.caption1.copy(color = if (on) c.ink else c.bg, fontWeight = FontWeight.SemiBold))
                     }
                 }
+            }
+            // The tab bar's unread dot (8 dp, the action colour), inverted on a picked chip like the count.
+            val dotMs = if (CircasoTheme.reduceMotion) 0 else com.circaso.designsystem.theme.CircasoMotion.QuickMs
+            androidx.compose.animation.AnimatedVisibility(
+                dot && badge == 0,
+                enter = androidx.compose.animation.fadeIn(androidx.compose.animation.core.tween(dotMs)),
+                exit = androidx.compose.animation.fadeOut(androidx.compose.animation.core.tween(dotMs)),
+            ) {
+                Box(Modifier.size(8.dp).clip(CircasoShapes.circle).background(if (on) c.bg else c.action))
             }
         }
     }

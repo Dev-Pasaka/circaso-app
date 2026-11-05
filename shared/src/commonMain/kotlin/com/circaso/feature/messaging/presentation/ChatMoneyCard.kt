@@ -77,13 +77,7 @@ internal fun ChatMoneyCard(
     onRetryQuote: () -> Unit = {},
     /** GW14 / GW20's "… Instead": the most that fits, with its fee. */
     onUseMax: () -> Unit = {},
-    /** Spaces SH2e: why this payment can't be made yet ("Only people who follow … can pay it"); no quote, no fee row. */
-    blocked: String? = null,
-    /** SH2e: what the button does instead of Pay ("Follow to Pay", "Join to Pay"). */
-    blockedAction: String? = null,
-    onBlocked: () -> Unit = {},
 ) {
-    if (blocked != null) { SpacePayBlockedCard(s, blocked, blockedAction, onBlocked, modifier); return }
     val c = CircasoTheme.colors
     val t = CircasoTheme.typography
     val payee = s.payee

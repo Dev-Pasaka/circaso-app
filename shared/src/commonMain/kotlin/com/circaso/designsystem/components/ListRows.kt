@@ -38,7 +38,7 @@ fun ListRow(
     trailing: (@Composable () -> Unit)? = null,
     destructive: Boolean = false,
     onClick: (() -> Unit)? = null,
-    /** A small badge after the title on the same line (a space chat's "Private · Sneaker Drop", SH2d). */
+    /** A small badge after the title on the same line. */
     titleEnd: (@Composable () -> Unit)? = null,
 ) {
     val c = CircasoTheme.colors

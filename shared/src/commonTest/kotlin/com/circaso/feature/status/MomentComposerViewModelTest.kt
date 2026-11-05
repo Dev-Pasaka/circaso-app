@@ -56,7 +56,7 @@ import com.circaso.feature.status.presentation.GalleryTab
 import com.circaso.feature.status.presentation.MomentComposerViewModel
 import com.circaso.feature.status.presentation.MomentForwardViewModel
 import com.circaso.feature.status.presentation.MomentForwarder
-import com.circaso.feature.status.presentation.SpacesUiState
+import com.circaso.feature.status.presentation.MomentsUiState
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
@@ -438,11 +438,11 @@ class MomentComposerViewModelTest {
 
     @Test fun theRingFillsOverTheWholeBatchAndNeverRunsBackwards() {
         fun p(progress: Float?, state: PendingState = PendingState.Posting) = PendingMoment("l$progress", MomentKind.Image, state, null, 0, progress)
-        assertNull(SpacesUiState(pending = listOf(p(null))).postingProgress)
-        assertEquals(0.5f, SpacesUiState(pending = listOf(p(1f), p(null))).postingProgress)
-        assertEquals(0.25f, SpacesUiState(pending = listOf(p(0.25f), p(0.9f, PendingState.Failed))).postingProgress)
+        assertNull(MomentsUiState(pending = listOf(p(null))).postingProgress)
+        assertEquals(0.5f, MomentsUiState(pending = listOf(p(1f), p(null))).postingProgress)
+        assertEquals(0.25f, MomentsUiState(pending = listOf(p(0.25f), p(0.9f, PendingState.Failed))).postingProgress)
         // Three picked: the first has posted and left the queue, the next hasn't started. Still a third, not zero.
-        assertEquals(1f / 3, SpacesUiState(pending = listOf(p(null), p(null)), postingBatch = 3).postingProgress)
+        assertEquals(1f / 3, MomentsUiState(pending = listOf(p(null), p(null)), postingBatch = 3).postingProgress)
     }
 }
 

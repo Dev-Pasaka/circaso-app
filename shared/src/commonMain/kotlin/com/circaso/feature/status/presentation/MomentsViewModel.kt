@@ -25,8 +25,11 @@ import kotlinx.coroutines.launch
 /** My own ring (M6): what it shows depends on my moments and any still on their way. */
 enum class MyRing { Add, Seen, Posting, Waiting, Failed }
 
-/** Design S1 and its states (S1c empty, S1d loading, S1e offline, S1f error). */
-data class SpacesUiState(
+/**
+ * The Moments list in Chats (the Moments chip; design S1's states: S1c empty, S1d loading, S1e offline, S1f error).
+ * Spaces stopped on 2026-11-05 and Moments moved from its tab into Chats, shown as WhatsApp shows statuses.
+ */
+data class MomentsUiState(
     val myName: String = "",
     val myAvatarUrl: String? = null,
     val myMoments: List<Moment> = emptyList(),
@@ -43,8 +46,10 @@ data class SpacesUiState(
     val failed: Boolean = false,
     /** The check failed but stored moments are on screen: they stay, with the quiet line under them. */
     val checkFailedWithData: Boolean = false,
+    /** The failed check's reference for support (`ErrorMessages.reference`: the request id, or the code). */
     val requestId: String? = null,
-    val newSheet: Boolean = false,
+    /** A check is on its way (Try Again shows busy). */
+    val refreshing: Boolean = false,
     /** How many moments the current run of posting started with (several picked at once fill one ring); 0 when none. */
     val postingBatch: Int = 0,
 ) {
@@ -75,17 +80,32 @@ data class SpacesUiState(
     /** S1d: skeleton rings only on the very first open, before anything is stored or answered. */
     val loading: Boolean get() = !refreshed && rings.isEmpty() && myMoments.isEmpty() && online
     val empty: Boolean get() = refreshed && rings.isEmpty() && (!failed || checkFailedWithData)
+
+    /** Recent: people with a moment I haven't seen, newest first (a coloured ring). Muted people never show here. */
+    val recent: List<MomentRing> get() = rings.filter { it.unseen && !it.muted }.sortedByDescending { it.latestAt }
+    /** Viewed: everything of theirs seen, newest first (a quiet ring). */
+    val viewed: List<MomentRing> get() = rings.filter { !it.unseen && !it.muted }.sortedByDescending { it.latestAt }
+    /** Muted: at the end, folded away until opened. */
+    val mutedRings: List<MomentRing> get() = rings.filter { it.muted }.sortedByDescending { it.latestAt }
+    /** The Moments chip's dot: someone I follow has posted something I haven't seen. */
+    val hasUnseen: Boolean get() = rings.any { it.unseen && !it.muted }
+    /** Whose avatar gets a ring in the chat list (unseen, not muted), by user id. */
+    val unseenPosters: Set<String> get() = rings.filter { it.unseen && !it.muted }.mapTo(mutableSetOf()) { it.posterId }
+    /** How many people have seen my moments: the most any one of them was seen (the same people see each in turn). */
+    val myViews: Int get() = myMoments.maxOfOrNull { it.viewCount } ?: 0
+    /** When my newest moment went up, for "My moment · 10:42"; null with none. */
+    val myLatestAt: Long? get() = myMoments.maxOfOrNull { it.postedAt }
 }
 
-class SpacesViewModel(
+class MomentsViewModel(
     private val moments: MomentsRepository,
     observeContacts: ObserveContactsUseCase,
     observeProfile: ObserveProfileUseCase,
     connection: ConnectionState,
     private val refreshContacts: com.circaso.feature.contacts.domain.RefreshContactsUseCase? = null,
 ) : ViewModel() {
-    private val _state = MutableStateFlow(SpacesUiState())
-    val state: StateFlow<SpacesUiState> = _state.asStateFlow()
+    private val _state = MutableStateFlow(MomentsUiState())
+    val state: StateFlow<MomentsUiState> = _state.asStateFlow()
 
     init {
         viewModelScope.launch {
@@ -116,16 +136,18 @@ class SpacesViewModel(
                 if (back) refresh() // the connection came back: catch up at once
             }
         }
-        refresh() // at launch, so the Spaces tab's dot is right before the tab is opened
+        refresh() // at launch, so the Moments chip's dot and the chat list's rings are right at once
     }
 
     private var lastRefresh = 0L
 
-    fun refresh() {
+    /** [force]: Try Again, which always asks (the two-second guard is for tab switches and resumes only). */
+    fun refresh(force: Boolean = false) {
         // Tab switches and resumes come close together: one fetch per two seconds is plenty.
         val now = com.circaso.core.sync.nowMillis()
-        if (now - lastRefresh < 2_000) return
+        if (_state.value.refreshing || (!force && now - lastRefresh < 2_000)) return
         lastRefresh = now
+        _state.update { it.copy(refreshing = true) }
         // Rings are named from my contacts, and only people in them are shown: keep them current too.
         refreshContacts?.let { r -> viewModelScope.launch { r() } }
         viewModelScope.launch {
@@ -133,16 +155,18 @@ class SpacesViewModel(
             _state.update {
                 val nothingShown = it.rings.isEmpty() && it.myMoments.isEmpty()
                 when {
-                    r is AppResult.Success -> it.copy(refreshed = true, failed = false, checkFailedWithData = false, requestId = null)
+                    r is AppResult.Success -> it.copy(refreshed = true, refreshing = false, failed = false, checkFailedWithData = false, requestId = null)
                     // Offline is not an error: the banner says so and what is stored stays (S1e).
-                    (r as AppResult.Failure).error is AppError.Network -> it.copy(refreshed = true)
-                    else -> it.copy(refreshed = true, failed = true, checkFailedWithData = !nothingShown, requestId = (r.error as? AppError.Api)?.requestId)
+                    (r as AppResult.Failure).error is AppError.Network -> it.copy(refreshed = true, refreshing = false)
+                    else -> it.copy(
+                        refreshed = true, refreshing = false, failed = true, checkFailedWithData = !nothingShown,
+                        requestId = com.circaso.core.common.ErrorMessages.reference(r.error),
+                    )
                 }
             }
         }
     }
 
-    fun onNew(open: Boolean) = _state.update { it.copy(newSheet = open) }
     fun onRetryPost(localId: String) { viewModelScope.launch { moments.retry(localId) } }
     fun onDeletePost(localId: String) { viewModelScope.launch { moments.discard(localId) } }
 

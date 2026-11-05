@@ -3,8 +3,10 @@ package com.circaso.feature.status.presentation
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.snap
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
@@ -13,190 +15,285 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.LazyItemScope
+import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicText
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.ProgressBarRangeInfo
+import androidx.compose.ui.semantics.hideFromAccessibility
+import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.progressBarRangeInfo
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
-import com.circaso.designsystem.chrome.Banner
-import com.circaso.designsystem.chrome.BannerTone
-import com.circaso.designsystem.chrome.CircasoSheet
-import com.circaso.designsystem.chrome.SheetHead
+import com.circaso.core.platform.LocalTimeStyle
+import com.circaso.core.platform.formatLocalTime
+import com.circaso.core.platform.localDayIndex
 import com.circaso.designsystem.components.Avatar
 import com.circaso.designsystem.components.ButtonSize
 import com.circaso.designsystem.components.ButtonStyle
 import com.circaso.designsystem.components.CircasoButton
 import com.circaso.designsystem.components.CircasoIcon
-import com.circaso.designsystem.components.CircasoIconButton
 import com.circaso.designsystem.components.CircasoIconImage
-import com.circaso.designsystem.components.ListGroup
-import com.circaso.designsystem.components.ListRow
-import com.circaso.designsystem.components.RowChevron
-import com.circaso.designsystem.components.TextBadge
 import com.circaso.designsystem.motion.pressable
+import com.circaso.designsystem.theme.CircasoMotion
 import com.circaso.designsystem.theme.CircasoShapes
 import com.circaso.designsystem.theme.CircasoSizes
 import com.circaso.designsystem.theme.CircasoSpacing
 import com.circaso.designsystem.theme.CircasoTheme
 import com.circaso.feature.status.domain.MomentRing
-import com.circaso.feature.spaces.presentation.discover.spacesSections
 
-/** What the Spaces tab can open. */
-class SpacesActions(
+/** What the Moments list in Chats can open. */
+class MomentsActions(
     val onOpenRing: (posterId: String) -> Unit,
     val onOpenMine: () -> Unit,
     val onCompose: () -> Unit,
     val onFindPeople: () -> Unit,
+    val onRetry: () -> Unit = {},
+    val onRetryPost: (String) -> Unit = {},
+    val onDeletePost: (String) -> Unit = {},
 )
 
-@Composable
-fun SpacesTab(
-    viewModel: SpacesViewModel,
-    bottomPadding: PaddingValues,
-    actions: SpacesActions,
-    /** Spaces core (phase 3): where the spaces sections go; null keeps phase 1's "Spaces are coming" card. */
-    spacesNav: com.circaso.feature.spaces.presentation.SpacesNav? = null,
-    /** Spaces core's sections (SD1); its state says whether the flag is on. */
-    spacesHome: com.circaso.feature.spaces.presentation.discover.SpacesHomeViewModel? = null,
+/** The Chats banner while the Moments chip is picked (S1e): what is on screen is what the phone has. */
+const val MomentsOfflineLine = "Showing moments saved on this phone"
+
+/** How a moment's ring is drawn: unseen (the action colour), seen (quiet), or none. */
+enum class RingStyle { Unseen, Seen, None }
+
+/**
+ * The Moments chip's list (decided 2026-11-05, WhatsApp's Updates): "My moment" first, then Recent (not seen yet),
+ * Viewed, and Muted folded away. It lives in the Chats list itself, so picking the chip swaps rows without leaving the
+ * screen. [query] is the Chats search: it narrows the people by name.
+ */
+fun LazyListScope.momentsList(
+    state: MomentsUiState,
+    query: String,
+    mutedOpen: Boolean,
+    onToggleMuted: () -> Unit,
+    actions: MomentsActions,
+    now: Long,
+    /** Each row's modifier, from its item scope: Chats passes `animateItem` so rows fade in and out as chips change. */
+    rowModifier: @Composable LazyItemScope.() -> Modifier = { Modifier },
 ) {
-    val state by viewModel.state.collectAsState()
-    val home = spacesHome?.state?.collectAsState()?.value
-    // Always current (Pasaka, 2026-11-03): fetched each time the tab shows and each time the app comes back to the
-    // front. New moments posted meanwhile also arrive as status.posted frames; offline, the stored ones show.
-    androidx.lifecycle.compose.LifecycleResumeEffect(Unit) {
-        viewModel.refresh()
-        spacesHome?.refresh()
-        onPauseOrDispose { }
+    val q = query.trim()
+    val match = { r: MomentRing -> q.isEmpty() || r.name.contains(q, ignoreCase = true) }
+    val recent = state.recent.filter(match)
+    val viewed = state.viewed.filter(match)
+    val muted = state.mutedRings.filter(match)
+    if (q.isEmpty()) item(key = "moments-me", contentType = "me") { MyMomentRow(state, actions, now, rowModifier()) }
+    // M6: a moment that won't post says so right under mine, with Retry or Delete; nothing is lost silently.
+    state.failedPost?.let { failed -> if (q.isEmpty()) item(key = "moments-failed", contentType = "failed") { FailedPostRow(failed.error, { actions.onRetryPost(failed.localId) }, { actions.onDeletePost(failed.localId) }, rowModifier()) } }
+    // S1f's quiet line sits under My moment, so with a long list on screen it still says the list may be old.
+    if (state.failed) item(key = "moments-check-failed", contentType = "failed-check") { CheckFailed(state.requestId, state.refreshing, actions.onRetry, rowModifier()) }
+    if (state.loading) {
+        item(key = "moments-skeleton-label", contentType = "label") { SectionLabel("Recent", rowModifier()) }
+        items(3, key = { "moments-skeleton-$it" }, contentType = { "skeleton" }) { i -> SkeletonRow(rowModifier(), announce = i == 0) }
+        return
     }
-    val toast = com.circaso.designsystem.chrome.rememberToastState()
-    androidx.compose.runtime.LaunchedEffect(home?.toast) { home?.toast?.let { spacesHome?.onToastShown(); toast.show(it) } }
-    val sections = if (spacesHome != null && home?.enabled == true && spacesNav != null) com.circaso.feature.spaces.presentation.discover.SpacesHomeActions(
-        onOpen = { m -> if (m.me.isMember && m.space.state == com.circaso.feature.spaces.domain.SpaceState.Live) spacesNav.openSpaceChat(m.space.spaceId) else spacesNav.openSpace(m.space.spaceId) },
-        onOpenSuggestion = { s -> spacesNav.openSpace(s.space.spaceId) },
-        onFollow = spacesHome::onFollow,
-        onJoin = spacesNav.joinSpace,
-        onSeeAllSuggested = spacesNav.suggested,
-        onCreate = { spacesNav.create(null) },
-        onRetry = spacesHome::onRetrySuggestions,
-    ) else null
-    Box(Modifier.fillMaxSize()) {
-        SpacesContent(state, bottomPadding, actions, onNew = { viewModel.onNew(true) }, onRetry = viewModel::refresh,
-            onRetryPost = viewModel::onRetryPost, onDeletePost = viewModel::onDeletePost,
-            spaces = home?.takeIf { sections != null }, spacesActions = sections,
-            onSearch = spacesNav?.search?.takeIf { sections != null }, onAsha = spacesNav?.asha?.takeIf { sections != null })
-        com.circaso.designsystem.chrome.ToastHost(toast, Modifier.align(Alignment.TopCenter))
+    if (recent.isNotEmpty()) {
+        item(key = "moments-recent", contentType = "label") { SectionLabel("Recent", rowModifier()) }
+        items(recent, key = { "moment-" + it.posterId }, contentType = { "ring" }) { r -> RingRow(r, RingStyle.Unseen, now, rowModifier()) { actions.onOpenRing(r.posterId) } }
+    }
+    if (viewed.isNotEmpty()) {
+        item(key = "moments-viewed", contentType = "label") { SectionLabel("Viewed", rowModifier()) }
+        items(viewed, key = { "moment-" + it.posterId }, contentType = { "ring" }) { r -> RingRow(r, RingStyle.Seen, now, rowModifier()) { actions.onOpenRing(r.posterId) } }
+    }
+    if (muted.isNotEmpty()) {
+        item(key = "moments-muted", contentType = "muted-head") { MutedHeader(muted.size, mutedOpen, onToggleMuted, rowModifier()) }
+        if (mutedOpen) items(muted, key = { "moment-" + it.posterId }, contentType = { "ring" }) { r -> RingRow(r, RingStyle.Seen, now, rowModifier(), dimmed = true) { actions.onOpenRing(r.posterId) } }
+    }
+    when {
+        q.isNotEmpty() && recent.isEmpty() && viewed.isEmpty() && muted.isEmpty() -> item(key = "moments-none-match", contentType = "empty") {
+            EmptyLines("No moments match", "Try another name.", rowModifier())
+        }
+        // Nothing to show is never an error screen (Pasaka, 2026-11-03): the empty state stays, and a failed check is
+        // one quiet line under it with Try Again and the reference for support.
+        q.isEmpty() && ((state.failed && !state.checkFailedWithData) || state.empty) && state.rings.isEmpty() -> item(key = "moments-empty", contentType = "empty") {
+            NoMoments(state.hasContacts, actions, offline = !state.online, modifier = rowModifier())
+        }
     }
 }
 
-/** The tab's sheet (S2), in the home scaffold's overlay so it covers the tab bar. [onSpace] when spaces are on (SN1). */
-@Composable
-fun BoxScope.SpacesOverlay(viewModel: SpacesViewModel, actions: SpacesActions, onSpace: (() -> Unit)? = null) {
-    val state by viewModel.state.collectAsState()
-    NewSheet(state.newSheet, onDismiss = { viewModel.onNew(false) }, onMoment = { viewModel.onNew(false); actions.onCompose() },
-        onSpace = onSpace?.let { open -> { viewModel.onNew(false); open() } })
+/** "Just now", "12 minutes ago", "Today, 10:42", "Yesterday, 21:05" (a moment is at most a day old). */
+internal fun momentTime(at: Long, now: Long): String {
+    val minutes = ((now - at) / 60_000).coerceAtLeast(0)
+    return when {
+        minutes < 1 -> "Just now"
+        minutes == 1L -> "1 minute ago"
+        minutes < 60 -> "$minutes minutes ago"
+        localDayIndex(at) == localDayIndex(now) -> "Today, " + formatLocalTime(at, LocalTimeStyle.Clock)
+        else -> "Yesterday, " + formatLocalTime(at, LocalTimeStyle.Clock)
+    }
 }
 
-/** The tab's offline banner: with spaces on it says how old the spaces on screen are (SD1d), "as of 10:42". */
-@Composable
-fun SpacesBanner(spacesAsOf: Long? = null) = com.circaso.core.sync.ConnectionBanner(
-    showing = if (spacesAsOf != null && spacesAsOf > 0) "Showing spaces as of ${com.circaso.core.platform.formatLocalTime(spacesAsOf, com.circaso.core.platform.LocalTimeStyle.Clock)}"
-    else "Showing moments saved on this phone",
-)
+/**
+ * A ring around an avatar, drawn just outside it so a ringed photo is the same size as every other one in the list
+ * (the chat list and the Moments list line up). Unseen is the action colour, seen a quiet one.
+ */
+fun Modifier.momentRing(style: RingStyle, colors: com.circaso.designsystem.theme.CircasoColors): Modifier =
+    if (style == RingStyle.None) this else drawBehind {
+        val w = 2.dp.toPx()
+        val gap = 2.5.dp.toPx()
+        drawCircle(if (style == RingStyle.Unseen) colors.action else colors.fillStrong, radius = size.minDimension / 2 + gap + w / 2, style = Stroke(w))
+    }
 
-/** Design S1 (phase 1): the Moments row on top, then the honest "Spaces are coming" card until phase 3. */
 @Composable
-fun SpacesContent(
-    state: SpacesUiState,
-    bottomPadding: PaddingValues,
-    actions: SpacesActions,
-    onNew: () -> Unit,
-    onRetry: () -> Unit,
-    onRetryPost: (String) -> Unit = {},
-    onDeletePost: (String) -> Unit = {},
-    /** Spaces core (SD1): with these, the spaces sections replace the "Spaces are coming" card. */
-    spaces: com.circaso.feature.spaces.presentation.discover.SpacesHomeUiState? = null,
-    spacesActions: com.circaso.feature.spaces.presentation.discover.SpacesHomeActions? = null,
-    onSearch: (() -> Unit)? = null,
-    onAsha: (() -> Unit)? = null,
+private fun SectionLabel(text: String, modifier: Modifier) {
+    BasicText(
+        text,
+        modifier.fillMaxWidth().padding(start = CircasoSpacing.s5, end = CircasoSpacing.s4, top = CircasoSpacing.s4, bottom = CircasoSpacing.s1).semantics { heading() },
+        style = CircasoTheme.typography.footnote.copy(color = CircasoTheme.colors.inkSecondary, fontWeight = FontWeight.SemiBold),
+    )
+}
+
+/** The row frame every moments row shares: the chat row's inset and height, so switching chips doesn't jump. */
+@Composable
+private fun MomentRowFrame(
+    modifier: Modifier,
+    label: String,
+    onClick: (() -> Unit)?,
+    leading: @Composable () -> Unit,
+    content: @Composable () -> Unit,
 ) {
+    Row(
+        modifier.fillMaxWidth().padding(horizontal = CircasoSpacing.s2).clip(CircasoShapes.md)
+            .then(if (onClick != null) Modifier.pressable(role = Role.Button, onClick = onClick) else Modifier)
+            .semantics(mergeDescendants = true) { contentDescription = label }
+            .padding(horizontal = CircasoSpacing.s4, vertical = CircasoSpacing.s3),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(CircasoSpacing.s3),
+    ) {
+        leading()
+        Column(Modifier.weight(1f)) { content() }
+    }
+}
+
+@Composable
+private fun MyMomentRow(state: MomentsUiState, actions: MomentsActions, now: Long, modifier: Modifier) {
     val c = CircasoTheme.colors
     val t = CircasoTheme.typography
-    val spacesOn = spaces != null && spacesActions != null
-    Box(Modifier.fillMaxSize()) {
-        LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = bottomPadding.calculateBottomPadding() + CircasoSpacing.s4)) {
-            item {
-                Row(
-                    Modifier.fillMaxWidth().padding(start = CircasoSpacing.s4, end = CircasoSpacing.s3, top = CircasoSpacing.s3, bottom = CircasoSpacing.s1),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    BasicText("Spaces", Modifier.weight(1f).semantics { heading() }, style = t.title1.copy(color = c.ink, fontWeight = FontWeight.Bold))
-                    // SD1's header: Ask Asha, Search, New (the canvas's `spaces_buttons`).
-                    if (onAsha != null) Box(
-                        Modifier.size(CircasoSizes.controlMd).pressable(role = Role.Button, onClick = onAsha).semantics { contentDescription = "Ask Asha" },
-                        contentAlignment = Alignment.Center,
-                    ) { com.circaso.designsystem.components.AshaMark(size = CircasoSizes.avatarSm) }
-                    if (onSearch != null) CircasoIconButton(CircasoIcon.Search, "Search moments and spaces", onSearch)
-                    CircasoIconButton(CircasoIcon.Plus, "New moment or space", onNew)
-                }
-            }
-            item { SectionLabel("Moments") }
-            item { MomentsRow(state, actions) }
-            // Nothing to show is never an error screen (Pasaka, 2026-11-03): the empty state stays, and a failed check
-            // is one quiet line under it with Try Again and the reference for support. With spaces on (SD1) the tab
-            // belongs to them as well: the Moments row stays (my ring's + still shares one) without the big empty block.
-            if (!spacesOn && ((state.failed && !state.checkFailedWithData) || (state.empty && !state.loading))) item { NoMoments(state.hasContacts, actions, offline = !state.online) }
-            if (state.failed) item { CheckFailed(state.requestId, onRetry) }
-            if (spacesOn) {
-                spacesSections(spaces!!, spacesActions!!)
-            } else item {
-                Column(Modifier.padding(top = CircasoSpacing.s5)) {
-                    SectionLabel("Spaces")
-                    ComingCard()
-                }
-            }
+    val ring = state.myRing
+    val sub = when (ring) {
+        MyRing.Add -> "Tap to add a moment"
+        MyRing.Seen -> {
+            val views = state.myViews
+            val seen = if (views == 0) "No views yet" else if (views == 1) "Seen by 1" else "Seen by $views"
+            "$seen · ${state.myLatestAt?.let { momentTime(it, now) } ?: ""}".trimEnd(' ', '·')
         }
-        // M6: a moment that won't post says so, with Retry or Delete; nothing is lost silently.
-        state.failedPost?.let { failed ->
-            Row(
-                Modifier.align(Alignment.BottomCenter).padding(bottom = bottomPadding.calculateBottomPadding() + CircasoSpacing.s3).padding(horizontal = CircasoSpacing.s4)
-                    .fillMaxWidth().clip(CircasoShapes.md).background(c.surfaceRaised).border(1.dp, c.separator, CircasoShapes.md)
-                    .padding(horizontal = CircasoSpacing.s4, vertical = CircasoSpacing.s3)
-                    .semantics(mergeDescendants = false) { },
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(CircasoSpacing.s3),
-            ) {
-                CircasoIconImage(CircasoIcon.Warning, c.critical, Modifier.size(18.dp))
-                BasicText(postError(failed.error), Modifier.weight(1f), style = t.subhead.copy(color = c.ink))
-                CircasoButton("Retry", { onRetryPost(failed.localId) }, style = ButtonStyle.Plain, size = ButtonSize.Small)
-                CircasoButton("Delete", { onDeletePost(failed.localId) }, style = ButtonStyle.Destructive, size = ButtonSize.Small)
+        MyRing.Posting -> state.postingProgress?.let { "Posting… ${(it * 100).toInt()}%" } ?: "Posting…"
+        MyRing.Waiting -> "Waiting for a connection"
+        MyRing.Failed -> "Not posted"
+    }
+    MomentRowFrame(
+        modifier,
+        label = "My moment, $sub",
+        onClick = if (ring == MyRing.Seen) actions.onOpenMine else actions.onCompose,
+        leading = {
+            Box(Modifier.size(CircasoSizes.avatarMd)) {
+                Avatar(state.myName.ifBlank { "Me" }, Modifier.momentRing(if (ring == MyRing.Seen) RingStyle.Seen else RingStyle.None, c), imageUrl = state.myAvatarUrl)
+                when (ring) {
+                    MyRing.Posting -> PostingArc(state.postingProgress)
+                    MyRing.Waiting -> Badge(c.fillStrong) { CircasoIconImage(CircasoIcon.Clock, c.ink, Modifier.size(BadgeGlyph)) }
+                    MyRing.Failed -> Badge(c.critical) { CircasoIconImage(CircasoIcon.Warning, c.bg, Modifier.size(BadgeGlyph)) }
+                    // Its own target (Pasaka, 2026-11-03): the plus always opens the camera, even when the row opens my moments.
+                    else -> Badge(c.action, onClick = actions.onCompose, label = "New moment") { CircasoIconImage(CircasoIcon.Plus, c.onAction, Modifier.size(BadgeGlyph)) }
+                }
             }
+        },
+    ) {
+        BasicText("My moment", style = t.body.copy(color = c.ink, fontWeight = FontWeight.SemiBold), maxLines = 1, overflow = TextOverflow.Ellipsis)
+        BasicText(sub, style = t.subhead.copy(color = if (ring == MyRing.Failed) c.critical else c.inkSecondary), maxLines = 1, overflow = TextOverflow.Ellipsis)
+    }
+}
+
+/**
+ * One person's row. Departure from S1e (recorded 2026-11-05): the frame greys a ring whose media isn't on the phone
+ * yet; the phone doesn't track that per ring today (media loads in the viewer, which says V6 "needs a connection"),
+ * so offline rows look as online ones do and the banner says what is shown.
+ */
+@Composable
+private fun RingRow(ring: MomentRing, style: RingStyle, now: Long, modifier: Modifier, dimmed: Boolean = false, onClick: () -> Unit) {
+    val c = CircasoTheme.colors
+    val t = CircasoTheme.typography
+    val time = momentTime(ring.latestAt, now)
+    val count = ring.moments.size
+    val what = when { style == RingStyle.Unseen -> "new moment"; else -> "seen" } + if (dimmed) ", muted" else ""
+    MomentRowFrame(
+        modifier,
+        label = "${ring.name}, $what, $time" + if (count > 1) ", $count moments" else "",
+        onClick = onClick,
+        leading = { Avatar(ring.name, Modifier.momentRing(style, c).alpha(if (dimmed) 0.5f else 1f), imageUrl = ring.avatarUrl) },
+    ) {
+        BasicText(ring.name, style = t.body.copy(color = if (dimmed) c.inkSecondary else c.ink), maxLines = 1, overflow = TextOverflow.Ellipsis)
+        BasicText(time, style = t.subhead.copy(color = c.inkSecondary), maxLines = 1, overflow = TextOverflow.Ellipsis)
+    }
+}
+
+@Composable
+private fun MutedHeader(count: Int, open: Boolean, onToggle: () -> Unit, modifier: Modifier) {
+    val c = CircasoTheme.colors
+    val t = CircasoTheme.typography
+    val turn by animateFloatAsState(if (open) 180f else 0f, if (CircasoTheme.reduceMotion) snap() else tween(CircasoMotion.QuickMs), label = "muted")
+    Row(
+        modifier.fillMaxWidth().padding(top = CircasoSpacing.s3).padding(horizontal = CircasoSpacing.s2).clip(CircasoShapes.md)
+            .pressable(role = Role.Button, onClick = onToggle)
+            .semantics(mergeDescendants = true) {
+                heading()
+                contentDescription = "Muted, $count ${if (count == 1) "person" else "people"}"
+                stateDescription = if (open) "Expanded" else "Collapsed"
+            }
+            .padding(start = CircasoSpacing.s3, end = CircasoSpacing.s4).padding(vertical = CircasoSpacing.s3),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        BasicText("Muted", Modifier.weight(1f), style = t.footnote.copy(color = c.inkSecondary, fontWeight = FontWeight.SemiBold))
+        BasicText("$count", style = t.footnote.copy(color = c.inkSecondary))
+        CircasoIconImage(CircasoIcon.ChevronDown, c.inkSecondary, Modifier.padding(start = CircasoSpacing.s1).size(16.dp).rotate(turn))
+    }
+}
+
+@Composable
+private fun FailedPostRow(error: String?, onRetry: () -> Unit, onDelete: () -> Unit, modifier: Modifier) {
+    val c = CircasoTheme.colors
+    val t = CircasoTheme.typography
+    // The message on top and the two buttons under it, so with large text the words keep the card's width.
+    Column(
+        modifier.padding(horizontal = CircasoSpacing.s4, vertical = CircasoSpacing.s1).fillMaxWidth().clip(CircasoShapes.md).background(c.surfaceRaised)
+            .border(1.dp, c.separator, CircasoShapes.md).padding(start = CircasoSpacing.s4, end = CircasoSpacing.s2, top = CircasoSpacing.s3, bottom = CircasoSpacing.s1)
+            .semantics { liveRegion = LiveRegionMode.Polite },
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(CircasoSpacing.s3), modifier = Modifier.padding(end = CircasoSpacing.s2)) {
+            CircasoIconImage(CircasoIcon.Warning, c.critical, Modifier.size(18.dp))
+            BasicText(postError(error), Modifier.weight(1f), style = t.subhead.copy(color = c.ink))
+        }
+        Row(Modifier.align(Alignment.End), horizontalArrangement = Arrangement.spacedBy(CircasoSpacing.s1)) {
+            CircasoButton("Retry", onRetry, style = ButtonStyle.Plain, size = ButtonSize.Small)
+            CircasoButton("Delete", onDelete, style = ButtonStyle.Destructive, size = ButtonSize.Small)
         }
     }
 }
@@ -209,112 +306,23 @@ private fun postError(code: String?) = when (code) {
     else -> "Your moment didn’t post."
 }
 
-@Composable
-private fun SectionLabel(text: String) {
-    BasicText(
-        text,
-        Modifier.padding(horizontal = CircasoSpacing.s5, vertical = CircasoSpacing.s2).semantics { heading() },
-        style = CircasoTheme.typography.footnote.copy(color = CircasoTheme.colors.inkSecondary),
-    )
-}
+/** My moment's badge: an 18 dp disc with a 2 dp edge in the page colour, its centre on the avatar's lower right. */
+private val BadgeDisc = 18.dp
+private val BadgeEdge = 2.dp
+private val BadgeOffset = 13.dp
+private val BadgeGlyph = 11.dp
 
 @Composable
-private fun MomentsRow(state: SpacesUiState, actions: SpacesActions) {
-    LazyRow(
-        Modifier.fillMaxWidth(),
-        contentPadding = PaddingValues(horizontal = CircasoSpacing.s3),
-        horizontalArrangement = Arrangement.spacedBy(6.dp),
-    ) {
-        item(key = "me") { MyMomentItem(state, actions) }
-        if (state.loading) {
-            items(4) { SkeletonRing() }
-        } else {
-            items(state.rings, key = { it.posterId }) { ring -> RingItem(ring, state.online) { actions.onOpenRing(ring.posterId) } }
-        }
-    }
-}
-
-@Composable
-private fun MyMomentItem(state: SpacesUiState, actions: SpacesActions) {
+private fun BoxScope.Badge(color: Color, onClick: (() -> Unit)? = null, label: String? = null, content: @Composable BoxScope.() -> Unit) {
     val c = CircasoTheme.colors
-    val ring = state.myRing
-    val (label, name) = when (ring) {
-        MyRing.Add -> "Add to my moment" to "My moment"
-        MyRing.Seen -> "My moment, add to it" to "My moment"
-        MyRing.Posting -> (state.postingProgress?.let { "My moment, posting, ${(it * 100).toInt()} percent" } ?: "My moment, posting") to "Posting…"
-        MyRing.Waiting -> "My moment, waiting for a connection" to "Waiting"
-        MyRing.Failed -> "My moment, not posted" to "Not posted"
-    }
-    MomentItem(
-        name = name, label = label, ring = if (ring == MyRing.Seen) RingStyle.Seen else RingStyle.None,
-        onClick = if (ring == MyRing.Seen) actions.onOpenMine else actions.onCompose,
-        badge = { when (ring) {
-            MyRing.Posting -> PostingArc(state.postingProgress)
-            MyRing.Waiting -> Badge(c.fillStrong) { CircasoIconImage(CircasoIcon.Clock, c.ink, Modifier.size(13.dp)) }
-            MyRing.Failed -> Badge(c.critical) { BasicText("!", style = CircasoTheme.typography.footnote.copy(color = c.bg, fontWeight = FontWeight.Bold)) }
-            // Its own target (Pasaka, 2026-11-03): the plus always opens the camera, even when the ring opens my moments.
-            else -> Badge(c.action, onClick = actions.onCompose, label = "New moment") { CircasoIconImage(CircasoIcon.Plus, c.onAction, Modifier.size(13.dp)) }
-        } },
-    ) {
-        Avatar(state.myName.ifBlank { "Me" }, size = CircasoSizes.avatarLg, imageUrl = state.myAvatarUrl)
-    }
-}
-
-@Composable
-private fun RingItem(ring: MomentRing, online: Boolean, onClick: () -> Unit) {
-    val state = if (ring.unseen && !ring.muted) "new moment" else "seen"
-    MomentItem(
-        name = ring.name.substringBefore(' '), label = "${ring.name}, $state" + if (ring.muted) ", muted" else "",
-        ring = if (ring.unseen && !ring.muted) RingStyle.Unseen else RingStyle.Seen, dimmed = ring.muted, onClick = onClick,
-    ) {
-        Avatar(ring.name, size = CircasoSizes.avatarLg, imageUrl = ring.avatarUrl)
-    }
-}
-
-private enum class RingStyle { Unseen, Seen, None }
-
-/** One ring and its name (design `.mo`): ink ring when there is something new, a quiet one when seen. */
-@Composable
-private fun MomentItem(
-    name: String, label: String, ring: RingStyle, onClick: () -> Unit, dimmed: Boolean = false,
-    /** Drawn above the ring and the photo (the plus, clock, ! or posting arc), so the ring's line never crosses it. */
-    badge: @Composable BoxScope.() -> Unit = {},
-    content: @Composable BoxScope.() -> Unit,
-) {
-    val c = CircasoTheme.colors
-    val t = CircasoTheme.typography
-    Column(
-        Modifier.width(CircasoSizes.momentItem).pressable(role = Role.Button, onClick = onClick).semantics(mergeDescendants = true) { contentDescription = label },
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(6.dp),
-    ) {
-        val ringColor = when (ring) { RingStyle.Unseen -> c.ink; RingStyle.Seen -> c.fillStrong; RingStyle.None -> androidx.compose.ui.graphics.Color.Transparent }
-        Box(Modifier.size(CircasoSizes.momentRing), contentAlignment = Alignment.Center) {
-            Box(
-                Modifier.matchParentSize().border(2.5.dp, ringColor, CircasoShapes.circle).padding(3.dp).alpha(if (dimmed) 0.5f else 1f),
-                contentAlignment = Alignment.Center,
-                content = content,
-            )
-            badge()
-        }
-        BasicText(
-            name, maxLines = 1, overflow = TextOverflow.Ellipsis,
-            style = t.caption1.copy(color = if (ring == RingStyle.Seen) c.inkSecondary else c.ink, textAlign = TextAlign.Center),
-        )
-    }
-}
-
-@Composable
-private fun BoxScope.Badge(color: androidx.compose.ui.graphics.Color, onClick: (() -> Unit)? = null, label: String? = null, content: @Composable BoxScope.() -> Unit) {
-    val c = CircasoTheme.colors
-    // A tappable badge gets a 44 dp target around its 22 dp disc.
+    // Always the same 44 dp box at the same place, so the disc never shifts between states; tappable only for the +.
     Box(
-        Modifier.align(Alignment.BottomEnd).offset(if (onClick != null) 15.dp else 4.dp, if (onClick != null) 15.dp else 4.dp)
-            .then(if (onClick != null) Modifier.size(CircasoSizes.controlMd).pressable(role = Role.Button, onClick = onClick).semantics { label?.let { contentDescription = it } } else Modifier),
+        Modifier.align(Alignment.BottomEnd).offset(BadgeOffset, BadgeOffset).size(CircasoSizes.controlMd).clip(CircasoShapes.circle)
+            .then(if (onClick != null) Modifier.pressable(role = Role.Button, onClick = onClick).semantics { label?.let { contentDescription = it } } else Modifier),
         contentAlignment = Alignment.Center,
     ) {
         Box(
-            Modifier.size(22.dp).border(2.5.dp, c.bg, CircasoShapes.circle).padding(2.dp).clip(CircasoShapes.circle).background(color),
+            Modifier.size(BadgeDisc).border(BadgeEdge, c.bg, CircasoShapes.circle).padding(BadgeEdge).clip(CircasoShapes.circle).background(color),
             contentAlignment = Alignment.Center,
             content = content,
         )
@@ -322,52 +330,80 @@ private fun BoxScope.Badge(color: androidx.compose.ui.graphics.Color, onClick: (
 }
 
 /**
- * Upload progress around my ring while a moment posts (M6): the real share of bytes sent, filling clockwise from the
- * top. Before any byte has gone (or for a text moment) the arc turns slowly, so it never looks stuck.
+ * Upload progress around my avatar while a moment posts (M6): the real share of bytes sent, filling clockwise from
+ * the top. Before any byte has gone (or for a text moment) the arc turns slowly, so it never looks stuck.
  */
 @Composable
-private fun PostingArc(progress: Float?) {
+private fun PostingArc(progress: Float?, size: Dp = CircasoSizes.avatarMd) {
     val c = CircasoTheme.colors
     val reduce = CircasoTheme.reduceMotion
-    val angle = if (reduce || progress != null) 0f else rememberInfiniteTransition().animateFloat(0f, 360f, infiniteRepeatable(tween(1600, easing = LinearEasing), RepeatMode.Restart)).value
+    val angle = if (reduce || progress != null) 0f else rememberInfiniteTransition().animateFloat(0f, 360f, infiniteRepeatable(tween(CircasoMotion.MomentMs * 2, easing = LinearEasing), RepeatMode.Restart)).value
     // Eased between the steps the upload reports, never jumping; straight to the value with reduced motion.
-    val shown = androidx.compose.animation.core.animateFloatAsState(progress ?: 0f, if (reduce) androidx.compose.animation.core.snap() else tween(com.circaso.designsystem.theme.CircasoMotion.BaseMs)).value
+    val shown = animateFloatAsState(progress ?: 0f, if (reduce) snap() else tween(CircasoMotion.BaseMs)).value
     Canvas(
-        Modifier.size(CircasoSizes.momentRing).semantics {
-            contentDescription = "Posting"
-            if (progress != null) progressBarRangeInfo = androidx.compose.ui.semantics.ProgressBarRangeInfo(progress, 0f..1f)
+        Modifier.size(size).semantics {
+            // The row's label already says "Posting… 40%"; the arc only adds the progress itself.
+            if (progress != null) progressBarRangeInfo = ProgressBarRangeInfo(progress, 0f..1f)
         },
     ) {
-        val w = 2.5.dp.toPx()
-        drawArc(c.fillStrong, 0f, 360f, false, Offset(w / 2, w / 2), Size(size.width - w, size.height - w), style = Stroke(w))
-        if (progress != null) drawArc(c.ink, -90f, 360f * shown, false, Offset(w / 2, w / 2), Size(size.width - w, size.height - w), style = Stroke(w, cap = androidx.compose.ui.graphics.StrokeCap.Round))
-        else drawArc(c.ink, angle - 90f, 220f, false, Offset(w / 2, w / 2), Size(size.width - w, size.height - w), style = Stroke(w))
+        val w = 2.dp.toPx()
+        val out = 2.5.dp.toPx() + w / 2
+        val topLeft = Offset(-out, -out)
+        val arc = Size(this.size.width + 2 * out, this.size.height + 2 * out)
+        drawArc(c.fillStrong, 0f, 360f, false, topLeft, arc, style = Stroke(w))
+        if (progress != null) drawArc(c.ink, -90f, 360f * shown, false, topLeft, arc, style = Stroke(w, cap = StrokeCap.Round))
+        else drawArc(c.ink, angle - 90f, 220f, false, topLeft, arc, style = Stroke(w))
     }
 }
 
+/** S1d: skeleton rows, only on the very first open before anything is stored or answered. */
 @Composable
-private fun SkeletonRing() {
+private fun SkeletonRow(modifier: Modifier, announce: Boolean) {
     val c = CircasoTheme.colors
-    Column(Modifier.width(CircasoSizes.momentItem), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Box(Modifier.size(CircasoSizes.momentRing).clip(CircasoShapes.circle).background(c.fill))
-        Box(Modifier.size(48.dp, 10.dp).clip(RoundedCornerShape(5.dp)).background(c.fill))
+    Row(
+        modifier.fillMaxWidth().padding(horizontal = CircasoSpacing.s2).padding(horizontal = CircasoSpacing.s4, vertical = CircasoSpacing.s3)
+            // Said once for the three rows, not three times.
+            .semantics { if (announce) contentDescription = "Loading moments" else hideFromAccessibility() },
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(CircasoSpacing.s3),
+    ) {
+        Box(Modifier.size(CircasoSizes.avatarMd).clip(CircasoShapes.circle).background(c.fill))
+        Column(verticalArrangement = Arrangement.spacedBy(CircasoSpacing.s2)) {
+            Box(Modifier.size(120.dp, 12.dp).clip(CircasoShapes.xs).background(c.fill))
+            Box(Modifier.size(72.dp, 10.dp).clip(CircasoShapes.xs).background(c.fill))
+        }
     }
 }
 
-/** S1c: nobody has posted; the line says who mine will reach. */
 @Composable
-private fun NoMoments(hasContacts: Boolean, actions: SpacesActions, offline: Boolean = false) {
+private fun EmptyLines(title: String, line: String, modifier: Modifier) {
+    val c = CircasoTheme.colors
+    val t = CircasoTheme.typography
+    Column(modifier.fillMaxWidth().padding(horizontal = CircasoSpacing.s8, vertical = CircasoSpacing.s10), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(CircasoSpacing.s2)) {
+        BasicText(title, style = t.title3.copy(color = c.ink, textAlign = TextAlign.Center))
+        BasicText(line, style = t.body.copy(color = c.inkSecondary, textAlign = TextAlign.Center))
+    }
+}
+
+/** S1c: nobody has posted; the line says who mine will reach. Offline (S1e) it says when they load. */
+@Composable
+private fun NoMoments(hasContacts: Boolean, actions: MomentsActions, offline: Boolean, modifier: Modifier) {
     val c = CircasoTheme.colors
     val t = CircasoTheme.typography
     Column(
-        Modifier.fillMaxWidth().padding(horizontal = 32.dp).padding(top = 32.dp),
+        modifier.fillMaxWidth().padding(horizontal = CircasoSpacing.s8).padding(top = CircasoSpacing.s8, bottom = CircasoSpacing.s4),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(CircasoSpacing.s3),
     ) {
-        CircasoIconImage(CircasoIcon.Spaces, c.inkTertiary, Modifier.size(44.dp))
-        BasicText(when { offline -> "Moments load when you’re back online"; hasContacts -> "No moments yet"; else -> "Find your people to see their moments" }, style = t.headline.copy(color = c.ink, textAlign = TextAlign.Center))
+        CircasoIconImage(CircasoIcon.Camera, c.inkTertiary, Modifier.size(CircasoSpacing.s10))
         BasicText(
-            if (offline) "You can still share one now: it posts as soon as you’re connected." else "When your contacts share a moment, it shows here for 24 hours. Yours go to people who have your number saved, and whose number you have saved.",
+            when { offline -> "Moments load when you’re back online"; hasContacts -> "No moments yet"; else -> "Find your people to see their moments" },
+            Modifier.semantics { heading() },
+            style = t.headline.copy(color = c.ink, textAlign = TextAlign.Center),
+        )
+        BasicText(
+            if (offline) "You can still share one now: it posts as soon as you’re connected."
+            else "When your contacts share a moment, it shows here for 24 hours. Yours go to people who have your number saved, and whose number you have saved.",
             style = t.subhead.copy(color = c.inkSecondary, textAlign = TextAlign.Center),
         )
         if (hasContacts) CircasoButton("Share a Moment", actions.onCompose, icon = CircasoIcon.Camera)
@@ -375,58 +411,16 @@ private fun NoMoments(hasContacts: Boolean, actions: SpacesActions, offline: Boo
     }
 }
 
-/** S1f, quiet form: the check for new moments failed; the empty state above stays as it is. */
+/** S1f, quiet form: the check for new moments failed; whatever is on screen stays as it is. */
 @Composable
-private fun CheckFailed(requestId: String?, onRetry: () -> Unit) {
+private fun CheckFailed(requestId: String?, busy: Boolean, onRetry: () -> Unit, modifier: Modifier) {
     val c = CircasoTheme.colors
     val t = CircasoTheme.typography
-    Column(Modifier.fillMaxWidth().padding(top = CircasoSpacing.s4), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(2.dp)) {
+    Column(modifier.fillMaxWidth().padding(top = CircasoSpacing.s4), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(2.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(CircasoSpacing.s1)) {
             BasicText("Couldn’t check for new moments.", style = t.footnote.copy(color = c.inkSecondary))
-            CircasoButton("Try Again", onRetry, style = ButtonStyle.Plain, size = ButtonSize.Small)
+            CircasoButton("Try Again", onRetry, style = ButtonStyle.Plain, size = ButtonSize.Small, busy = busy)
         }
         requestId?.let { BasicText("Ref $it", style = t.caption2.copy(color = c.inkTertiary)) }
-    }
-}
-
-/** Phase 1: spaces aren't built yet, said plainly (design S1). */
-@Composable
-private fun ComingCard() {
-    val c = CircasoTheme.colors
-    val t = CircasoTheme.typography
-    Column(
-        Modifier.padding(horizontal = CircasoSpacing.s4).fillMaxWidth().clip(CircasoShapes.lg).background(c.surface)
-            .border(1.dp, c.separator, CircasoShapes.lg).padding(horizontal = CircasoSpacing.s4, vertical = 18.dp),
-        verticalArrangement = Arrangement.spacedBy(CircasoSpacing.s2),
-    ) {
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            CircasoIconImage(CircasoIcon.Spaces, c.ink, Modifier.size(22.dp))
-            BasicText("Spaces are coming", style = t.headline.copy(color = c.ink))
-        }
-        BasicText("Communities and small shops, each with its own chat, shop and wallet. Moments are here now.", style = t.subhead.copy(color = c.inkSecondary))
-    }
-}
-
-/** S2: the + button. Moment goes to the camera; Space is coming in phase 3. */
-@Composable
-private fun BoxScope.NewSheet(visible: Boolean, onDismiss: () -> Unit, onMoment: () -> Unit, onSpace: (() -> Unit)? = null) {
-    val c = CircasoTheme.colors
-    CircasoSheet(visible, onDismiss, label = "New") {
-        SheetHead("New", onDismiss)
-        ListGroup {
-            ListRow("Moment", sub = "Text, photo, video or voice for 24 hours", leading = { IconDisc(CircasoIcon.Camera) }, trailing = { RowChevron() }, onClick = onMoment)
-            // Spaces core on: Space opens SN1; off, it still says Soon.
-            if (onSpace != null) ListRow("Space", sub = "A community or shop with a chat and a wallet", leading = { IconDisc(CircasoIcon.Spaces) }, trailing = { RowChevron() }, onClick = onSpace)
-            else ListRow("Space", sub = "A community or shop with a chat and a wallet", leading = { IconDisc(CircasoIcon.Spaces) }, trailing = { TextBadge("Soon") })
-        }
-        Box(Modifier.size(1.dp).background(c.bg))
-    }
-}
-
-@Composable
-private fun IconDisc(icon: CircasoIcon) {
-    val c = CircasoTheme.colors
-    Box(Modifier.size(CircasoSizes.iconButton).clip(CircasoShapes.circle).background(c.fill), contentAlignment = Alignment.Center) {
-        CircasoIconImage(icon, c.ink, Modifier.size(18.dp))
     }
 }

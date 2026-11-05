@@ -1,7 +1,5 @@
 package com.circaso.core.navigation
 
-import com.circaso.feature.status.presentation.SpacesOverlay
-
 import androidx.compose.foundation.layout.Box
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
@@ -135,48 +133,7 @@ fun AppNavigation(forceUpdate: Boolean, home: @Composable () -> Unit) {
         if (twoPaneNow) while (backStack.size > 1 && backStack.last() != HomeRoute) backStack.removeAt(backStack.lastIndex)
         backStack.add(ChatRoute(id))
     }
-    // Debug builds: `-spaces=on|off|default` (Android: `--es spaces off`) overrides the build's default for Spaces core.
-    val spacesArg = remember { launchValue("-spaces") }
-    LaunchedEffect(spacesArg) { if (spacesArg != null && client.debugBuild) prefs.setSpacesOverride(spacesArg) }
     fun backToHome() { droppedTo[0] = -1; while (backStack.size > 1 && backStack.last() != HomeRoute) backStack.removeAt(backStack.lastIndex) }
-    val chatsForSpaces = koinInject<com.circaso.feature.messaging.domain.ChatsRepository>()
-    val spacesScope = androidx.compose.runtime.rememberCoroutineScope()
-    val spacesNav = remember(backStack) {
-        com.circaso.feature.spaces.presentation.SpacesNav(
-            back = ::pop,
-            home = ::backToHome,
-            openSpace = { id -> backStack.add(SpaceRoute(spaceId = id)) },
-            joinSpace = { id -> backStack.add(SpaceRoute(spaceId = id, join = true)) },
-            openSpaceByHandle = { h -> backStack.add(SpaceRoute(handle = h.trimStart('@'))) },
-            openSpaceChat = { id -> backStack.add(SpaceChatRoute(id)) },
-            openChat = { id -> openChatFromList(id) },
-            search = { backStack.add(SpaceSearchRoute) },
-            suggested = { backStack.add(SpacesSuggestedRoute) },
-            create = { name -> backStack.add(NewSpaceRoute(name)) },
-            walletSetup = { id, created -> backStack.add(SpaceWalletSetupRoute(id, created)) },
-            settings = { id -> backStack.add(SpaceSettingsRoute(id)) },
-            editDetails = { id -> backStack.add(SpaceDetailsRoute(id)) },
-            joinSettings = { id -> backStack.add(SpaceJoinSettingsRoute(id)) },
-            members = { id -> backStack.add(SpaceMembersRoute(id)) },
-            roles = { backStack.add(SpaceRolesRoute) },
-            report = { id, post -> backStack.add(SpaceReportRoute(id, post)) },
-            reports = { id -> backStack.add(SpaceReportsRoute(id)) },
-            invite = { id -> backStack.add(SpaceInviteRoute(id)) },
-            invites = { id -> backStack.add(SpaceInvitesRoute(id)) },
-            spaceWallet = { id -> backStack.add(SpaceWalletRoute(id)) },
-            asha = { if (backStack.lastOrNull() != AshaRoute) backStack.add(AshaRoute) },
-            // A person found in search or a member row: their ordinary chat on this phone, else opened on the server.
-            openPerson = { userId ->
-                spacesScope.launch {
-                    val local = chatsForSpaces.chats.first().firstOrNull { it.chat.peerId == userId && it.chat.viaSpaceId == null }?.chat?.chatId
-                    val chatId = local ?: (chatsForSpaces.openDirect(userId) as? com.circaso.core.common.AppResult.Success)?.value?.chatId
-                    if (chatId != null) openChatFromList(chatId)
-                }
-            },
-            walletActions = { id -> walletActions(id, backStack::add) },
-            payFrom = { id -> backStack.add(PayRoute(fromWalletId = id)) },
-        )
-    }
     val calls = koinInject<com.circaso.feature.calls.CallController>()
     // A Pay tapped on a chat's profile starts the payment in that chat's composer (money starts in the chat).
     val moneyPrompts = androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateMapOf<String, Long>() }
@@ -231,18 +188,8 @@ fun AppNavigation(forceUpdate: Boolean, home: @Composable () -> Unit) {
                 val info: ClientInfo = koinInject()
                 val chatsViewModel = koinViewModel<ChatsViewModel>()
                 val walletViewModel = koinViewModel<WalletViewModel>()
-                val spacesViewModel: com.circaso.feature.status.presentation.SpacesViewModel = koinViewModel()
-                // Spaces core (phase 3): the tab's spaces sections (SD1) and what Chats shows of spaces (SI2, SH2d).
-                val spacesHome: com.circaso.feature.spaces.presentation.discover.SpacesHomeViewModel = koinViewModel()
-                val chatsSpacesVm: com.circaso.feature.spaces.presentation.discover.ChatsSpacesViewModel = koinViewModel()
-                val chatsSpacesState by chatsSpacesVm.state.collectAsState()
-                val spacesHomeState by spacesHome.state.collectAsState()
-                LaunchedEffect(chatsSpacesVm) { chatsSpacesVm.accepted.collect { a -> spacesNav.openSpaceChat(a.spaceId) } }
-                val chatsSpaces = if (chatsSpacesState.enabled) com.circaso.feature.spaces.presentation.discover.ChatsSpaces(
-                    chatsSpacesState, onAccept = chatsSpacesVm::onAccept, onDecline = chatsSpacesVm::onDecline, onUndo = chatsSpacesVm::onUndo,
-                    onOpenInvite = { spacesNav.openSpace(it.space.spaceId) }, onOpenSpace = { spacesNav.openSpaceChat(it.space.spaceId) },
-                    now = com.circaso.core.sync.nowMillis(), onShown = chatsSpacesVm::refresh,
-                ) else null
+                // Moments (Spaces stopped 2026-11-05): the Moments chip in Chats and the rings on chat avatars.
+                val momentsViewModel: com.circaso.feature.status.presentation.MomentsViewModel = koinViewModel()
                 // A tapped "loved your moment" push (kind moment.loved) opens my moments, once per launch.
                 val openedFromPush = androidx.compose.runtime.saveable.rememberSaveable { androidx.compose.runtime.mutableStateOf(false) }
                 androidx.compose.runtime.LaunchedEffect(Unit) {
@@ -251,14 +198,18 @@ fun AppNavigation(forceUpdate: Boolean, home: @Composable () -> Unit) {
                         backStack.add(MomentViewerRoute(null))
                     }
                 }
-                val spacesActions = com.circaso.feature.status.presentation.SpacesActions(
+                val momentsActions = com.circaso.feature.status.presentation.MomentsActions(
                     onOpenRing = { id -> backStack.add(MomentViewerRoute(id)) },
                     onOpenMine = { backStack.add(MomentViewerRoute(null)) },
                     onCompose = { backStack.add(MomentComposerRoute) },
                     onFindPeople = { backStack.add(ContactsRoute) },
+                    onRetry = { momentsViewModel.refresh(force = true) },
+                    onRetryPost = momentsViewModel::onRetryPost,
+                    onDeletePost = momentsViewModel::onDeletePost,
                 )
+                val chatsMoments = remember(momentsViewModel) { com.circaso.feature.messaging.presentation.ChatsMoments(momentsViewModel, momentsActions) }
                 HomeScreen(
-                    chats = { bottomPadding -> ChatsTab(chatsViewModel, bottomPadding, onAsha = { backStack.add(AshaRoute) }, onVoice = { backStack.add(AshaRoute); backStack.add(VoiceRoute) }, onNewChat = { backStack.add(NewChatRoute) }, selectedChatId = if (twoPane) backStack.filterIsInstance<ChatRoute>().lastOrNull()?.chatId else null, spaces = chatsSpaces) { id -> openChatFromList(id) } },
+                    chats = { bottomPadding -> ChatsTab(chatsViewModel, bottomPadding, onAsha = { backStack.add(AshaRoute) }, onVoice = { backStack.add(AshaRoute); backStack.add(VoiceRoute) }, onNewChat = { backStack.add(NewChatRoute) }, selectedChatId = if (twoPane) backStack.filterIsInstance<ChatRoute>().lastOrNull()?.chatId else null, moments = chatsMoments) { id -> openChatFromList(id) } },
                     chatsActions = {},
                     chatsBanner = {
                         val s by chatsViewModel.state.collectAsState()
@@ -268,16 +219,12 @@ fun AppNavigation(forceUpdate: Boolean, home: @Composable () -> Unit) {
                             ChatsBanner(s)
                         }
                     },
-                    spaces = { bottomPadding -> com.circaso.feature.status.presentation.SpacesTab(spacesViewModel, bottomPadding, spacesActions, spacesNav = spacesNav, spacesHome = spacesHome) },
-                    spacesOverlay = { SpacesOverlay(spacesViewModel, spacesActions, onSpace = if (spacesHomeState.enabled) ({ spacesNav.create(null) }) else null) },
-                    spacesBanner = { com.circaso.feature.status.presentation.SpacesBanner(spacesHomeState.mineAsOf.takeIf { spacesHomeState.enabled }) },
-                    spacesUnread = spacesViewModel.state.collectAsState().value.rings.any { it.unseen && !it.muted },
                     wallet = { bottomPadding ->
                         // GW16 (Pasaka, 2026-11-04): one wallet design for every wallet; the corner switcher picks which.
                         WalletTab(
                             walletViewModel, bottomPadding,
                             actions = { walletId -> walletActions(walletId, backStack::add) },
-                            groupActions = { key, gw -> gw.spaceId?.let { spaceWalletActions(it, gw, backStack::add) } ?: groupWalletActions(key, gw, backStack::add) },
+                            groupActions = { key, gw -> groupWalletActions(key, gw, backStack::add) },
                         )
                     },
                     walletActions = { WalletTitleActions(walletViewModel) },
@@ -360,8 +307,6 @@ fun AppNavigation(forceUpdate: Boolean, home: @Composable () -> Unit) {
                 val threadViewModel = koinViewModel<ThreadViewModel>(key = route.chatId, parameters = { parametersOf(route.chatId) })
                 val thread by threadViewModel.state.collectAsState()
                 val peer = thread.chat?.peerId
-                // Spaces SH2: a private chat that came through a space (its owner and one person), labelled on both sides.
-                val viaSpace = com.circaso.feature.spaces.presentation.chat.rememberViaSpace(thread.chat?.viaSpaceId, thread.myUserId)
                 val goal = thread.chama?.goal
                 // Group wallets (GW9a2, GW9): a group whose wallet is active takes contributions into it; its signer pays payouts from it.
                 val groupMoney = thread.groupMoney
@@ -401,14 +346,7 @@ fun AppNavigation(forceUpdate: Boolean, home: @Composable () -> Unit) {
                     focusLocalId = route.focusLocalId,
                     onOpenLocation = { m -> backStack.add(LocationMapRoute(route.chatId, m.localId)) },
                     // C3: `#500` pays without leaving the chat; the chat's money card is the review. One per chat, reset after each payment.
-                    viaSpace = viaSpace,
-                    onPayBlocked = { viaSpace?.let { spacesNav.joinSpace(it.spaceId) } },
                     quickPay = when {
-                        // SH2b: in the private chat with a space's owner, `#2000` pays the space's wallet (not the owner's own).
-                        viaSpace != null && !viaSpace.iAmOwner -> koinViewModel<com.circaso.feature.wallet.presentation.PayViewModel>(
-                            key = "quickpay-space-${route.chatId}-${viaSpace.spaceName}",
-                            parameters = { parametersOf(PayIntent(chatId = route.chatId, displayName = viaSpace.spaceName, spaceId = viaSpace.spaceId, inChat = true)) },
-                        )
                         peer != null -> koinViewModel<com.circaso.feature.wallet.presentation.PayViewModel>(
                             key = "quickpay-${route.chatId}",
                             parameters = { parametersOf(PayIntent(userId = peer, chatId = route.chatId, displayName = thread.chat?.title, inChat = true)) },
@@ -451,23 +389,7 @@ fun AppNavigation(forceUpdate: Boolean, home: @Composable () -> Unit) {
                     onDone = { pop(); if (route.thenTarget) backStack.add(TargetRoute(route.chatId, walletReady = true)) },
                 )
             }
-            // ---- Spaces core (phase 3): each area's entry takes its route and [spacesNav].
-            entry<SpaceSearchRoute> { com.circaso.feature.spaces.presentation.discover.SpaceSearchEntry(spacesNav) }
-            entry<SpacesSuggestedRoute> { com.circaso.feature.spaces.presentation.discover.SpacesSuggestedEntry(spacesNav) }
-            entry<SpaceRoute> { route -> com.circaso.feature.spaces.presentation.page.SpacePageEntry(route, spacesNav) }
-            entry<SpaceChatRoute> { route -> com.circaso.feature.spaces.presentation.chat.SpaceChatEntry(route, spacesNav) }
-            entry<NewSpaceRoute>(metadata = Panes.FullScreen) { route -> com.circaso.feature.spaces.presentation.create.NewSpaceEntry(route, spacesNav) }
-            entry<SpaceWalletSetupRoute>(metadata = Panes.FullScreen) { route -> com.circaso.feature.spaces.presentation.create.SpaceWalletSetupEntry(route, spacesNav) }
-            entry<SpaceSettingsRoute> { route -> com.circaso.feature.spaces.presentation.create.SpaceSettingsEntry(route, spacesNav) }
-            entry<SpaceDetailsRoute> { route -> com.circaso.feature.spaces.presentation.create.SpaceDetailsEntry(route, spacesNav) }
-            entry<SpaceJoinSettingsRoute> { route -> com.circaso.feature.spaces.presentation.create.SpaceJoinSettingsEntry(route, spacesNav) }
-            entry<SpaceWalletRoute> { route -> com.circaso.feature.spaces.presentation.create.SpaceWalletEntry(route, spacesNav) }
-            entry<SpaceMembersRoute> { route -> com.circaso.feature.spaces.presentation.chat.SpaceMembersEntry(route, spacesNav) }
-            entry<SpaceRolesRoute> { com.circaso.feature.spaces.presentation.chat.SpaceRolesEntry(spacesNav) }
-            entry<SpaceReportRoute> { route -> com.circaso.feature.spaces.presentation.chat.SpaceReportEntry(route, spacesNav) }
-            entry<SpaceReportsRoute> { route -> com.circaso.feature.spaces.presentation.chat.SpaceReportsEntry(route, spacesNav) }
-            entry<SpaceInviteRoute> { route -> com.circaso.feature.spaces.presentation.chat.SpaceInviteEntry(route, spacesNav) }
-            entry<SpaceInvitesRoute> { route -> com.circaso.feature.spaces.presentation.chat.SpaceInvitesEntry(route, spacesNav) }
+
             entry<GroupWalletRoute> { route ->
                 val vm = koinViewModel<com.circaso.feature.chama.presentation.GroupWalletViewModel>(key = "group-wallet-" + route.chatId, parameters = { parametersOf(route.chatId) })
                 val gw by vm.state.collectAsState()
@@ -642,17 +564,6 @@ internal fun walletActions(walletId: String?, open: (Route) -> Unit) = WalletAct
     onAssets = { chain -> open(NetworkAssetsRoute(chain, walletId)) },
     onNetworkActivity = { chain -> open(NetworkActivityRoute(chain, walletId)) },
 )
-
-/** A space's wallet (SW1): Send pays anyone from it directly (the owner's PIN); Finish Setup carries on SN5b. */
-internal fun spaceWalletActions(spaceId: String, state: com.circaso.feature.chama.presentation.GroupWalletUiState, open: (Route) -> Unit) =
-    com.circaso.feature.chama.presentation.GroupWalletActions(
-        onAdd = {},
-        onPayout = { state.walletId?.let { open(PayRoute(fromWalletId = it)) } },
-        onPayRequest = {},
-        onOpenTransfer = { id -> open(TransferRoute(id)) },
-        onTarget = {},
-        onFinishSetup = { open(SpaceWalletSetupRoute(spaceId)) },
-    )
 
 internal fun groupWalletActions(chatId: String, state: com.circaso.feature.chama.presentation.GroupWalletUiState, open: (Route) -> Unit) =
     com.circaso.feature.chama.presentation.GroupWalletActions(

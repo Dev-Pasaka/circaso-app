@@ -74,7 +74,7 @@ data class PendingMoment(val localId: String, val kind: MomentKind, val state: P
 
 enum class PendingState { Posting, Waiting, Failed }
 
-/** One person's ring on the Spaces tab: their live moments, oldest first. */
+/** One person's ring in the Moments list (the Moments chip in Chats): their live moments, oldest first. */
 data class MomentRing(val posterId: String, val name: String, val avatarUrl: String?, val moments: List<Moment>, val muted: Boolean) {
     val unseen: Boolean get() = moments.any { !it.viewed }
     val latestAt: Long get() = moments.maxOf { it.postedAt }

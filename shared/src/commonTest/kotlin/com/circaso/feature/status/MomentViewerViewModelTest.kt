@@ -148,13 +148,13 @@ class MomentViewerViewModelTest {
     }
 }
 
-private fun moment(id: String) = Moment(
+internal fun moment(id: String) = Moment(
     momentId = id, posterId = "w", kind = MomentKind.Text, text = "Sunday market", postedAt = 1, expiresAt = Long.MAX_VALUE,
     mine = false, viewed = true, reacted = false,
 )
 
 /** The phone's moments; a reaction shows at once and goes back if the server says no, like the real repository. */
-private class ViewerFakeMoments : MomentsRepository {
+internal class ViewerFakeMoments : MomentsRepository {
     val list = MutableStateFlow(listOf(moment("m1")))
     val reactions = mutableListOf<Pair<String, String?>>()
     var result: AppResult<Unit> = AppResult.Success(Unit)
@@ -164,7 +164,9 @@ private class ViewerFakeMoments : MomentsRepository {
     override val pending: Flow<List<PendingMoment>> = MutableStateFlow(emptyList())
     override val privacy: Flow<MomentPrivacy> = MutableStateFlow(MomentPrivacy())
     override val muted: Flow<Set<String>> = MutableStateFlow(emptySet())
-    override suspend fun refresh(): AppResult<Unit> = AppResult.Success(Unit)
+    var refreshResult: AppResult<Unit> = AppResult.Success(Unit)
+    var refreshes = 0
+    override suspend fun refresh(): AppResult<Unit> { refreshes++; return refreshResult }
     override suspend fun post(draft: MomentDraft): AppResult<Unit> = AppResult.Success(Unit)
     override suspend fun retry(localId: String) = Unit
     override suspend fun discard(localId: String) = Unit
@@ -183,7 +185,7 @@ private class ViewerFakeMoments : MomentsRepository {
     override suspend fun onFrame(type: String, momentId: String?, posterId: String?, requesterId: String?) = Unit
 }
 
-private class FakeContacts : ContactsRepository {
+internal class FakeContacts : ContactsRepository {
     override val contacts: Flow<List<Contact>> = MutableStateFlow(listOf(Contact(Person("w", "Wanjiru Kamau", "wanjiru", null, null), "phone", "2026-10-01")))
     override val blocks: Flow<List<Person>> = MutableStateFlow(emptyList())
     override suspend fun refreshContacts() = AppResult.Success(Unit)
@@ -198,7 +200,7 @@ private class FakeContacts : ContactsRepository {
     override suspend fun canReach(userId: String) = AppResult.Success(true)
 }
 
-private class FakeProfile : ProfileRepository {
+internal class FakeProfile : ProfileRepository {
     override val profile: Flow<Profile?> = MutableStateFlow(null)
     override suspend fun refresh() = AppResult.Success(Unit)
     override suspend fun update(change: ProfileChange): Boolean = true
