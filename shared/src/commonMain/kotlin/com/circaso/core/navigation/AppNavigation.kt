@@ -220,6 +220,17 @@ fun AppNavigation(forceUpdate: Boolean, home: @Composable () -> Unit) {
                 val chatsViewModel = koinViewModel<ChatsViewModel>()
                 val walletViewModel = koinViewModel<WalletViewModel>()
                 val spacesViewModel: com.circaso.feature.status.presentation.SpacesViewModel = koinViewModel()
+                // Spaces core (phase 3): the tab's spaces sections (SD1) and what Chats shows of spaces (SI2, SH2d).
+                val spacesHome: com.circaso.feature.spaces.presentation.discover.SpacesHomeViewModel = koinViewModel()
+                val chatsSpacesVm: com.circaso.feature.spaces.presentation.discover.ChatsSpacesViewModel = koinViewModel()
+                val chatsSpacesState by chatsSpacesVm.state.collectAsState()
+                val spacesHomeState by spacesHome.state.collectAsState()
+                LaunchedEffect(chatsSpacesVm) { chatsSpacesVm.accepted.collect { a -> spacesNav.openSpaceChat(a.spaceId) } }
+                val chatsSpaces = if (chatsSpacesState.enabled) com.circaso.feature.spaces.presentation.discover.ChatsSpaces(
+                    chatsSpacesState, onAccept = chatsSpacesVm::onAccept, onDecline = chatsSpacesVm::onDecline, onUndo = chatsSpacesVm::onUndo,
+                    onOpenInvite = { spacesNav.openSpace(it.space.spaceId) }, onOpenSpace = { spacesNav.openSpaceChat(it.space.spaceId) },
+                    now = com.circaso.core.sync.nowMillis(), onShown = chatsSpacesVm::refresh,
+                ) else null
                 // A tapped "loved your moment" push (kind moment.loved) opens my moments, once per launch.
                 val openedFromPush = androidx.compose.runtime.saveable.rememberSaveable { androidx.compose.runtime.mutableStateOf(false) }
                 androidx.compose.runtime.LaunchedEffect(Unit) {
@@ -235,7 +246,7 @@ fun AppNavigation(forceUpdate: Boolean, home: @Composable () -> Unit) {
                     onFindPeople = { backStack.add(ContactsRoute) },
                 )
                 HomeScreen(
-                    chats = { bottomPadding -> ChatsTab(chatsViewModel, bottomPadding, onAsha = { backStack.add(AshaRoute) }, onVoice = { backStack.add(AshaRoute); backStack.add(VoiceRoute) }, onNewChat = { backStack.add(NewChatRoute) }, selectedChatId = if (twoPane) backStack.filterIsInstance<ChatRoute>().lastOrNull()?.chatId else null) { id -> openChatFromList(id) } },
+                    chats = { bottomPadding -> ChatsTab(chatsViewModel, bottomPadding, onAsha = { backStack.add(AshaRoute) }, onVoice = { backStack.add(AshaRoute); backStack.add(VoiceRoute) }, onNewChat = { backStack.add(NewChatRoute) }, selectedChatId = if (twoPane) backStack.filterIsInstance<ChatRoute>().lastOrNull()?.chatId else null, spaces = chatsSpaces) { id -> openChatFromList(id) } },
                     chatsActions = {},
                     chatsBanner = {
                         val s by chatsViewModel.state.collectAsState()
@@ -245,9 +256,9 @@ fun AppNavigation(forceUpdate: Boolean, home: @Composable () -> Unit) {
                             ChatsBanner(s)
                         }
                     },
-                    spaces = { bottomPadding -> com.circaso.feature.status.presentation.SpacesTab(spacesViewModel, bottomPadding, spacesActions, spacesNav = spacesNav) },
-                    spacesOverlay = { SpacesOverlay(spacesViewModel, spacesActions) },
-                    spacesBanner = { com.circaso.feature.status.presentation.SpacesBanner() },
+                    spaces = { bottomPadding -> com.circaso.feature.status.presentation.SpacesTab(spacesViewModel, bottomPadding, spacesActions, spacesNav = spacesNav, spacesHome = spacesHome) },
+                    spacesOverlay = { SpacesOverlay(spacesViewModel, spacesActions, onSpace = if (spacesHomeState.enabled) ({ spacesNav.create(null) }) else null) },
+                    spacesBanner = { com.circaso.feature.status.presentation.SpacesBanner(spacesHomeState.mineAsOf.takeIf { spacesHomeState.enabled }) },
                     spacesUnread = spacesViewModel.state.collectAsState().value.rings.any { it.unseen && !it.muted },
                     wallet = { bottomPadding ->
                         // GW16 (Pasaka, 2026-11-04): one wallet design for every wallet; the corner switcher picks which.
