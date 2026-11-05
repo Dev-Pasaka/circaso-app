@@ -372,6 +372,15 @@ override `-spaces=on|off|default`, Android `--es spaces off`). Architecture: `ap
   personal transfer table has no `toSpaceId` column (named from what Pay set); SM1g's Receive has no route to the
   Wallet tab's Receive sheet from a pushed screen (`SpacesNav.receive` is a no-op); cover photo editing (not designed);
   pushes `kind = space.*` don't deep-link yet; no device run yet.
+- Design review (2026-11-05): both Blockers fixed (join hold countdown and expiry; Joining always ends) plus Leave
+  from About, card motion, dim behind popovers, honest Add Money, no empty flash on the Spaces tab. Still open
+  (should-fix): the space page head uses per-item negative offsets (replace with one overlap via `Modifier.layout`);
+  `MembershipBanner` should be the design-system `Banner` with an action slot; the money cards' raw shadow colour
+  (shared with `ChatMoneyCard`) wants a `--shadow-float` token; SN1 doesn't show the picked photo; SN3's team picker
+  isn't lazy; opening a space from a row should seed the head from the row instead of a full skeleton (and the
+  skeleton's fixed widths overflow 360 dp); SW1 Recent says "Payment" for every incoming kind; nice-to-haves (Undo
+  pill motion, Learn more → About tab, SN3 owner row name, SN6 deep link from the summary, Message offline when the
+  private chat exists, token radii and paddings).
 - To test on the sandbox: sign in two accounts on the emulator (debug build, flag on); A creates a public space and a
   members-only one (0.10 USDC monthly) and sets the space wallet PIN; B finds it by `@handle`, follows, posts and
   reacts (and offline: posts wait, then send), messages the owner privately and pays `#1`; B joins the members-only
