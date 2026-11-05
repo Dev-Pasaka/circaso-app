@@ -12,9 +12,8 @@ import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
@@ -62,8 +61,9 @@ class ChatsSpacesViewModel(
     private val _state = MutableStateFlow(ChatsSpacesUiState())
     val state: StateFlow<ChatsSpacesUiState> = _state.asStateFlow()
 
-    private val _accepted = MutableSharedFlow<InviteAccepted>(extraBufferCapacity = 1)
-    val accepted: SharedFlow<InviteAccepted> = _accepted
+    // A channel, so an accept answered while Chats is between screens still opens the space once it is collected.
+    private val _accepted = kotlinx.coroutines.channels.Channel<InviteAccepted>(kotlinx.coroutines.channels.Channel.BUFFERED)
+    val accepted: Flow<InviteAccepted> = _accepted.receiveAsFlow()
 
     private val declineJobs = mutableMapOf<String, Job>()
 
@@ -101,7 +101,7 @@ class ChatsSpacesViewModel(
             when (val r = spaces.acceptInvite(invite.inviteId)) {
                 is AppResult.Success -> {
                     _state.update { it.copy(accepting = it.accepting - invite.inviteId, toast = "You joined ${r.value.name}") }
-                    _accepted.tryEmit(InviteAccepted(r.value.spaceId, r.value.name))
+                    _accepted.trySend(InviteAccepted(r.value.spaceId, r.value.name))
                 }
                 is AppResult.Failure -> _state.update { it.copy(accepting = it.accepting - invite.inviteId, toast = acceptError(r.error)) }
             }
