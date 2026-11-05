@@ -25,7 +25,7 @@ import com.circaso.designsystem.theme.CircasoTheme
  * is cached under the link without its query: the same picture is never downloaded twice.
  */
 @Composable
-fun Avatar(name: String, modifier: Modifier = Modifier, size: Dp = CircasoSizes.avatarMd, imageUrl: String? = null) {
+fun Avatar(name: String, modifier: Modifier = Modifier, size: Dp = CircasoSizes.avatarMd, imageUrl: String? = null, bytes: ByteArray? = null) {
     val c = CircasoTheme.colors
     val initials = name.trim().split(" ").filter { it.isNotEmpty() }.take(2).joinToString("") { it.first().uppercase() }
     Box(
@@ -33,7 +33,10 @@ fun Avatar(name: String, modifier: Modifier = Modifier, size: Dp = CircasoSizes.
         contentAlignment = Alignment.Center,
     ) {
         BasicText(initials, style = CircasoTheme.typography.headline.copy(color = c.ink, fontSize = (size.value * 0.36f).sp))
-        if (imageUrl != null) {
+        if (bytes != null) {
+            // A picture only this phone has yet (a group photo before it is sent): drawn from memory.
+            AsyncImage(model = bytes, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.size(size))
+        } else if (imageUrl != null) {
             val key = imageUrl.substringBefore('?')
             // One file on disk; in memory one copy per size drawn, so a small chat-list avatar is never stretched
             // into the large profile photo or the full-screen view (it looked soft).

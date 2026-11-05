@@ -71,6 +71,7 @@ import com.circaso.feature.contacts.domain.Contact
 import com.circaso.feature.contacts.domain.Person
 import com.circaso.feature.contacts.presentation.BlockedContent
 import com.circaso.feature.contacts.presentation.BlockedUiState
+import com.circaso.feature.contacts.presentation.ContactsActions
 import com.circaso.feature.contacts.presentation.ContactsContent
 import com.circaso.feature.contacts.presentation.ContactsUiState
 import com.circaso.feature.home.presentation.YouActions
@@ -88,6 +89,17 @@ private val contacts = listOf(
     Contact(person("2", "Achieng Akinyi", "achieng"), "sync", "2026-10-20"),
     Contact(person("3", "Juma Kariuki", "juma.k"), "qr", "2026-10-21"),
     Contact(person("4", "Kevin Mwangi", "kevo"), "sync", "2026-10-22"),
+)
+/** A fuller address book for the people screens: handles, an about line, a name without a letter. */
+private val peopleContacts = listOf(
+    Contact(person("2", "Achieng Akinyi", "achieng"), "sync", "2026-10-20"),
+    Contact(Person("3", "Baraka Otieno", null, null, "Mombasa · football on Sundays"), "sync", "2026-10-20"),
+    Contact(person("4", "Juma Kariuki", "juma.k"), "qr", "2026-10-21"),
+    Contact(person("5", "Kevin Mwangi", "kevo"), "sync", "2026-10-22"),
+    Contact(person("6", "Mum", "mama.wanjiku"), "sync", "2026-10-22"),
+    Contact(person("7", "Otieno Odhiambo", "otieno"), "sync", "2026-10-23"),
+    Contact(person("8", "Wanjiru Kamau", "wanjiru"), "sync", "2026-10-23"),
+    Contact(person("9", "Wairimu N.", "wairimu"), "invite", "2026-10-24"),
 )
 private fun msg(id: String, role: String, text: String) = AshaMessage(id, role, text, null, null, null, "2026-10-25T10:0${id}:00Z")
 
@@ -211,10 +223,45 @@ fun PreviewScreens(name: String) {
             EditProfileUiState(profile = profile, name = "Amina Wanjiru", about = "Hi there", handle = "amina_k", handleCheck = HandleCheck.Taken("amina_k2")),
             {}, {}, {}, {}, {}, {},
         )
-        "contacts" -> ContactsContent(ContactsUiState(contacts = contacts, loaded = true), {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {})
-        "contacts-empty" -> ContactsContent(ContactsUiState(loaded = true), {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {})
-        "contacts-sheet" -> ContactsContent(ContactsUiState(contacts = contacts, selected = contacts[0], loaded = true), {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {})
-        "find-friends" -> ContactsContent(ContactsUiState(contacts = contacts, showFindFriends = true, loaded = true), {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {})
+        "contacts" -> ContactsContent(ContactsUiState(contacts = peopleContacts, loaded = true), ContactsActions())
+        "contacts-empty", "contacts-invite" -> ContactsContent(ContactsUiState(loaded = true), ContactsActions())
+        "contacts-loading" -> ContactsContent(ContactsUiState(), ContactsActions())
+        "contacts-add" -> ContactsContent(ContactsUiState(contacts = peopleContacts, loaded = true, adding = true, connectInput = "kevo"), ContactsActions())
+        "contacts-sheet" -> ContactsContent(ContactsUiState(contacts = peopleContacts, selected = peopleContacts[0], loaded = true), ContactsActions())
+        "find-friends" -> ContactsContent(ContactsUiState(contacts = peopleContacts, showFindFriends = true, loaded = true), ContactsActions())
+        "new-chat" -> com.circaso.feature.messaging.presentation.NewChatContent(
+            com.circaso.feature.messaging.presentation.NewChatUiState(contacts = peopleContacts, recentChats = chatList, loaded = true),
+            com.circaso.feature.messaging.presentation.NewChatActions(),
+        )
+        "new-chat-empty" -> com.circaso.feature.messaging.presentation.NewChatContent(
+            com.circaso.feature.messaging.presentation.NewChatUiState(loaded = true), com.circaso.feature.messaging.presentation.NewChatActions(),
+        )
+        "new-chat-loading" -> com.circaso.feature.messaging.presentation.NewChatContent(
+            com.circaso.feature.messaging.presentation.NewChatUiState(), com.circaso.feature.messaging.presentation.NewChatActions(),
+        )
+        "new-chat-search" -> com.circaso.feature.messaging.presentation.NewChatContent(
+            com.circaso.feature.messaging.presentation.NewChatUiState(contacts = peopleContacts, loaded = true, query = "@baraka"), com.circaso.feature.messaging.presentation.NewChatActions(),
+        )
+        "new-group-members" -> com.circaso.feature.messaging.presentation.NewGroupContent(
+            com.circaso.feature.messaging.presentation.NewGroupUiState(contacts = peopleContacts, selected = linkedSetOf("3", "5", "2"), loaded = true),
+            com.circaso.feature.messaging.presentation.NewGroupActions(),
+        )
+        "new-group-details", "new-group-photo-sheet" -> com.circaso.feature.messaging.presentation.NewGroupContent(
+            com.circaso.feature.messaging.presentation.NewGroupUiState(
+                step = com.circaso.feature.messaging.presentation.NewGroupStep.Details, name = "Holiday Fund", contacts = peopleContacts,
+                selected = linkedSetOf("3", "5", "2"), loaded = true, photosAvailable = true,
+                photoChoice = com.circaso.feature.profile.presentation.PhotoChoiceState(open = name == "new-group-photo-sheet", access = com.circaso.core.platform.LibraryAccess.Limited),
+            ),
+            com.circaso.feature.messaging.presentation.NewGroupActions(),
+        )
+        "new-group-photo-failed" -> com.circaso.feature.messaging.presentation.NewGroupContent(
+            com.circaso.feature.messaging.presentation.NewGroupUiState(
+                step = com.circaso.feature.messaging.presentation.NewGroupStep.Details, name = "Holiday Fund", contacts = peopleContacts,
+                selected = linkedSetOf("3", "5"), loaded = true, photosAvailable = true, createdChatId = "g9", reference = "req_7Hq2",
+                error = "The group is made, but its photo didn't upload. You're offline; try again when you're back.",
+            ),
+            com.circaso.feature.messaging.presentation.NewGroupActions(),
+        )
         "blocked" -> BlockedContent(BlockedUiState(listOf(person("9", "Baraka Otieno", "baraka"))), {}, {})
         "security" -> SecurityContent(
             SecurityUiState(

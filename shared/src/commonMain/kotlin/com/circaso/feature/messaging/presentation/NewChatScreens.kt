@@ -1,11 +1,12 @@
 package com.circaso.feature.messaging.presentation
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.snap
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.semantics.contentDescription
-import androidx.compose.ui.semantics.semantics
-import com.circaso.designsystem.components.CircasoSwitch
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -13,6 +14,8 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -20,245 +23,285 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.text.BasicText
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.circaso.core.platform.openAppSettings
+import com.circaso.core.platform.shareText
 import com.circaso.core.sync.ConnectionBanner
 import com.circaso.designsystem.chrome.CircasoNavBar
 import com.circaso.designsystem.chrome.CircasoScaffold
+import com.circaso.designsystem.chrome.ToastHost
+import com.circaso.designsystem.chrome.rememberToastState
+import com.circaso.designsystem.components.ActionDisc
 import com.circaso.designsystem.components.Avatar
+import com.circaso.designsystem.components.AvatarStack
 import com.circaso.designsystem.components.ButtonSize
+import com.circaso.designsystem.components.ButtonStyle
 import com.circaso.designsystem.components.CircasoButton
 import com.circaso.designsystem.components.CircasoIcon
 import com.circaso.designsystem.components.CircasoIconImage
-import com.circaso.designsystem.components.CircasoTextField
+import com.circaso.designsystem.components.InviteCard
+import com.circaso.designsystem.components.LetterHeader
+import com.circaso.designsystem.components.ListCaption
 import com.circaso.designsystem.components.ListRow
+import com.circaso.designsystem.components.PeopleDividerInset
 import com.circaso.designsystem.components.RowChevron
 import com.circaso.designsystem.components.RowDivider
-import com.circaso.designsystem.components.SectionHeader
+import com.circaso.designsystem.components.SkeletonPeopleRows
 import com.circaso.designsystem.components.Spinner
 import com.circaso.designsystem.motion.pressable
+import com.circaso.designsystem.theme.CircasoMotion
 import com.circaso.designsystem.theme.CircasoShapes
 import com.circaso.designsystem.theme.CircasoSizes
 import com.circaso.designsystem.theme.CircasoSpacing
 import com.circaso.designsystem.theme.CircasoTheme
 
-/** Design C8: a person from your contacts, a new group, or an invite. Opening a chat needs the server. */
-@Composable
-fun NewChatScreen(viewModel: NewChatViewModel, onBack: () -> Unit, onOpened: (chatId: String) -> Unit, onNewGroup: () -> Unit, onInvite: () -> Unit) {
-    val state by viewModel.state.collectAsState()
-    val c = CircasoTheme.colors
-    val t = CircasoTheme.typography
-    CircasoScaffold(
-        topBar = { CircasoNavBar(title = "New Chat", onBack = onBack) },
-        banner = { ConnectionBanner(showing = "You can start a chat when you're back online") },
-    ) { padding ->
-        LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = padding.calculateBottomPadding() + CircasoSpacing.s4)) {
-            item {
-                CircasoTextField(
-                    value = state.query, onValueChange = viewModel::onQuery, label = "Search", placeholder = "Name or @handle",
-                    modifier = Modifier.padding(horizontal = CircasoSpacing.s4, vertical = CircasoSpacing.s2),
-                    leading = { CircasoIconImage(CircasoIcon.Search, c.inkTertiary, Modifier.size(18.dp)) },
-                )
-                state.error?.let { BasicText(it, style = t.footnote.copy(color = c.critical), modifier = Modifier.padding(horizontal = CircasoSpacing.s4)) }
-            }
-            if (state.query.isBlank()) {
-                item {
-                    ListRow("New Group", sub = "Chat and save together", leading = { IconDisc(CircasoIcon.Person) }, trailing = { RowChevron() }, onClick = onNewGroup)
-                    RowDivider(Modifier.padding(start = 76.dp))
-                    ListRow("Invite a Friend", sub = "Share your invite link", leading = { IconDisc(CircasoIcon.Plus) }, trailing = { RowChevron() }, onClick = onInvite)
-                    SectionHeader("On Circaso", Modifier.padding(top = CircasoSpacing.s4))
-                }
-            }
-            if (state.shown.isEmpty()) {
-                item {
-                    BasicText(
-                        if (state.contacts.isEmpty()) "Nobody from your contacts is on Circaso yet. Invite a friend to start." else "Nobody matches.",
-                        style = t.body.copy(color = c.inkSecondary, textAlign = TextAlign.Center),
-                        modifier = Modifier.fillMaxWidth().padding(horizontal = 32.dp, vertical = 32.dp),
-                    )
-                }
-            }
-            items(state.shown, key = { it.person.userId }) { contact ->
-                ListRow(
-                    title = contact.person.displayName,
-                    sub = contact.person.handle?.let { "@$it" },
-                    leading = { Avatar(contact.person.displayName, imageUrl = contact.person.avatarUrl) },
-                    trailing = { if (state.opening == contact.person.userId) Spinner(c.inkSecondary) },
-                    onClick = if (state.online && state.opening == null) ({ viewModel.onPick(contact, onOpened) }) else null,
-                )
-                RowDivider(Modifier.padding(start = 76.dp))
-            }
-        }
-    }
-}
+/** What New Chat can do; the defaults do nothing (previews). */
+class NewChatActions(
+    val onQuery: (String) -> Unit = {},
+    val onPick: (userId: String) -> Unit = {},
+    val onFindHandle: () -> Unit = {},
+    val onNewGroup: () -> Unit = {},
+    val onInvite: () -> Unit = {},
+    val onFindFromContacts: () -> Unit = {},
+    val onBack: () -> Unit = {},
+)
 
+/** Design C8: a person from your contacts, someone by @username, a new group, or an invite. */
 @Composable
-private fun IconDisc(icon: CircasoIcon) {
-    val c = CircasoTheme.colors
-    Box(Modifier.size(CircasoSizes.avatarMd).background(c.action, CircasoShapes.circle), contentAlignment = Alignment.Center) {
-        CircasoIconImage(icon, c.onAction, Modifier.size(20.dp))
-    }
-}
-
-/**
- * Designs D1 and GW1–GW1d: a name, the people and, with group wallets, the "Group wallet" switch (off by default) with
- * an optional target and who approves payouts. Creating is online-only: offline the switch and the button are
- * disabled before the tap, with the reason (GW1c); a failure keeps the form and its key (GW1d).
- */
-@Composable
-fun NewGroupScreen(viewModel: NewGroupViewModel, onBack: () -> Unit, onCreated: (chatId: String, plan: com.circaso.feature.chama.presentation.GroupWalletPlan?) -> Unit) {
+fun NewChatScreen(viewModel: NewChatViewModel, onBack: () -> Unit, onOpened: (chatId: String) -> Unit, onNewGroup: () -> Unit) {
     val state by viewModel.state.collectAsState()
-    NewGroupContent(
-        state, onBack, viewModel::onName, viewModel::onQuery, viewModel::onToggle, viewModel::onWalletSwitch, viewModel::onTarget, viewModel::onBy, viewModel::onApprovalPolicy,
-        onCreate = { viewModel.onCreate { id -> onCreated(id, viewModel.walletPlan()) } },
+    // The invite goes out through the system share sheet (Messages, WhatsApp, mail…), once per link.
+    LaunchedEffect(state.share) { state.share?.let { shareText(it, NewChatViewModel.InviteSubject); viewModel.onShared() } }
+    NewChatContent(
+        state,
+        NewChatActions(
+            onQuery = viewModel::onQuery, onPick = { id -> viewModel.onPick(id, onOpened) }, onFindHandle = { viewModel.onFindHandle(onOpened) },
+            onNewGroup = onNewGroup, onInvite = viewModel::onInvite, onFindFromContacts = viewModel::onFindFromContacts, onBack = onBack,
+        ),
+        onMessageShown = viewModel::onMessageShown,
     )
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
-fun NewGroupContent(
-    state: NewGroupUiState,
-    onBack: () -> Unit,
-    onName: (String) -> Unit,
-    onQuery: (String) -> Unit,
-    onToggle: (String) -> Unit,
-    onWalletSwitch: (Boolean) -> Unit,
-    onTarget: (String) -> Unit,
-    onBy: (com.circaso.feature.chama.presentation.GoalDeadline) -> Unit,
-    onApprovalPolicy: (com.circaso.feature.chama.domain.ApprovalPolicy) -> Unit,
-    onCreate: () -> Unit,
-) {
+fun NewChatContent(state: NewChatUiState, actions: NewChatActions, onMessageShown: () -> Unit = {}) {
     val c = CircasoTheme.colors
     val t = CircasoTheme.typography
+    val toast = rememberToastState()
+    LaunchedEffect(state.message) { state.message?.let { toast.show(it); onMessageShown() } }
+    val search = remember { FocusRequester() }
+    val browsing = state.query.isBlank()
     CircasoScaffold(
-        grouped = true,
-        topBar = { CircasoNavBar(title = "New Group", onBack = onBack) },
-        banner = { ConnectionBanner(showing = if (state.walletOn) "Creating a group and its wallet needs a connection" else "Creating a group needs a connection") },
-        bottomBar = {
-            Column(Modifier.fillMaxWidth().background(c.bgGrouped).padding(horizontal = CircasoSpacing.s4, vertical = CircasoSpacing.s3), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(CircasoSpacing.s2)) {
-                CircasoButton(
-                    when { state.failed -> "Try Again"; state.walletOn -> "Create Group and Set Up Wallet"; else -> "Create Group" },
-                    onCreate, size = ButtonSize.Large, block = true, enabled = state.canCreate, busy = state.creating,
-                )
-                if (!state.online) BasicText("Needs a connection", style = t.footnote.copy(color = c.inkSecondary))
-            }
-        },
+        topBar = { CircasoNavBar(title = "New Chat", onBack = actions.onBack) },
+        banner = { ConnectionBanner(showing = "You can start a chat when you're back online") },
+        toast = { ToastHost(toast, Modifier.align(Alignment.TopCenter).padding(top = 8.dp)) },
     ) { padding ->
-        LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = padding.calculateBottomPadding() + CircasoSpacing.s4)) {
-            item {
-                Column(Modifier.padding(horizontal = CircasoSpacing.s4, vertical = CircasoSpacing.s3), verticalArrangement = Arrangement.spacedBy(CircasoSpacing.s4)) {
-                    if (state.failed) {
-                        com.circaso.designsystem.chrome.Banner(
-                            "The group wasn’t created. Nothing was saved." + (state.reference?.let { " Ref $it" } ?: ""),
-                            CircasoIcon.Warning, tone = com.circaso.designsystem.chrome.BannerTone.Critical,
+        LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = padding.calculateBottomPadding() + CircasoSpacing.s6)) {
+            item(key = "search") {
+                SearchField(
+                    state.query, actions.onQuery, "Name or @username", search,
+                    Modifier.padding(horizontal = CircasoSpacing.s4, vertical = CircasoSpacing.s2),
+                )
+            }
+            if (browsing) {
+                item(key = "actions") {
+                    Column(Modifier.padding(top = CircasoSpacing.s1)) {
+                        ListRow("New Group", sub = "Chat and save together", leading = { ActionDisc(CircasoIcon.People) }, trailing = { RowChevron() }, onClick = actions.onNewGroup)
+                        RowDivider(Modifier.padding(start = PeopleDividerInset - CircasoSpacing.s4))
+                        ListRow(
+                            "Find by Username", sub = "Anyone on Circaso, by their @username",
+                            leading = { ActionDisc(CircasoIcon.UserPlus) }, trailing = { RowChevron() },
+                            onClick = { actions.onQuery("@"); runCatching { search.requestFocus() } },
+                        )
+                        RowDivider(Modifier.padding(start = PeopleDividerInset - CircasoSpacing.s4))
+                        ListRow(
+                            "Invite a Friend", sub = if (state.online) "Share your invite link" else "Inviting needs a connection",
+                            leading = { ActionDisc(CircasoIcon.Share, enabled = state.online) },
+                            trailing = { if (state.creatingInvite) Spinner(c.inkSecondary, Modifier.size(18.dp)) else RowChevron() },
+                            onClick = if (state.online && !state.creatingInvite) actions.onInvite else null,
                         )
                     }
-                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-                        Avatar(state.name.ifBlank { "Group" }, size = CircasoSizes.avatarLg)
-                        CircasoTextField(value = state.name, onValueChange = onName, label = "Group name", placeholder = "Kilimani Chama", modifier = Modifier.weight(1f))
+                }
+            }
+
+            // Someone typed an @username nobody in the contacts has: find them on Circaso.
+            state.handleToFind?.let { handle ->
+                item(key = "find-handle") {
+                    ListRow(
+                        "Find @$handle", sub = if (state.online) "Look them up on Circaso and start a chat" else "Finding people needs a connection",
+                        leading = { ActionDisc(CircasoIcon.Search, enabled = state.online) },
+                        trailing = { if (state.opening == "@$handle") Spinner(c.inkSecondary, Modifier.size(18.dp)) else RowChevron() },
+                        onClick = if (state.online && state.opening == null) actions.onFindHandle else null,
+                    )
+                }
+            }
+
+            when {
+                !state.loaded -> item(key = "loading") { SkeletonPeopleRows(6, Modifier.padding(top = CircasoSpacing.s4)) }
+                state.contacts.isEmpty() && browsing -> item(key = "empty") { NoPeopleYet(state, actions) }
+                else -> {
+                    if (state.recent.isNotEmpty()) {
+                        item(key = "recent") {
+                            ListCaption("Recent")
+                            RecentStrip(state.recent, state.opening, state.online, actions.onPick)
+                        }
                     }
-                    val n = state.selected.size
-                    BasicText(if (n == 0) "Add members" else "$n ${if (n == 1) "member" else "members"} + you", style = t.footnote.copy(color = c.inkSecondary))
-                    if (state.selectedContacts.isNotEmpty()) {
-                        LazyRow(horizontalArrangement = Arrangement.spacedBy(CircasoSpacing.s3)) {
-                            items(state.selectedContacts, key = { it.person.userId }) { contact ->
-                                Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.width(64.dp).pressable(role = Role.Button, onClick = { onToggle(contact.person.userId) })) {
-                                    Avatar(contact.person.displayName, imageUrl = contact.person.avatarUrl)
-                                    BasicText(contact.person.displayName.substringBefore(' '), style = t.caption1.copy(color = c.ink), maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                }
+                    if (browsing) item(key = "on-circaso") { ListCaption("On Circaso") }
+                    state.sections.forEach { section ->
+                        stickyHeader(key = "letter-${section.letter}") { LetterHeader(section.letter) }
+                        items(section.people, key = { "p-" + it.userId }) { person ->
+                            Column(Modifier.animateItem(fadeInSpec = tween(CircasoMotion.BaseMs), fadeOutSpec = tween(CircasoMotion.QuickMs), placementSpec = if (CircasoTheme.reduceMotion) null else tween(CircasoMotion.BaseMs))) {
+                                ListRow(
+                                    title = person.name, sub = person.sub,
+                                    leading = { Avatar(person.name, imageUrl = person.avatarUrl) },
+                                    trailing = { if (state.opening == person.userId) Spinner(c.inkSecondary, Modifier.size(18.dp)) },
+                                    onClick = if (state.opening == null) ({ actions.onPick(person.userId) }) else null,
+                                )
+                                RowDivider(Modifier.padding(start = PeopleDividerInset - CircasoSpacing.s4))
                             }
                         }
                     }
-                    if (state.walletsAvailable) GroupWalletCard(state, onWalletSwitch, onTarget, onBy, onApprovalPolicy)
-                    CircasoTextField(
-                        value = state.query, onValueChange = onQuery, label = "Search", placeholder = "Search contacts",
-                        leading = { CircasoIconImage(CircasoIcon.Search, c.inkTertiary, Modifier.size(18.dp)) },
-                    )
-                    state.error?.takeIf { !state.failed }?.let { BasicText(it, style = t.footnote.copy(color = c.critical)) }
+                    if (state.matches.isEmpty() && !browsing) {
+                        item(key = "no-match") {
+                            BasicText(
+                                if (state.handleToFind != null) "No one in your contacts matches. Look them up above." else "No one in your contacts matches “${state.query.trim()}”.",
+                                Modifier.fillMaxWidth().padding(horizontal = CircasoSpacing.s8, vertical = CircasoSpacing.s6),
+                                style = t.subhead.copy(color = c.inkSecondary, textAlign = TextAlign.Center),
+                            )
+                        }
+                    }
+                    if (browsing) {
+                        item(key = "invite") {
+                            ListCaption("Invite to Circaso")
+                            InviteCard(
+                                "Bring your people", "Send a link. When they join, you're connected and can chat and pay.",
+                                "Invite", actions.onInvite, Modifier.padding(horizontal = CircasoSpacing.s4),
+                                enabled = state.online, busy = state.creatingInvite,
+                            )
+                        }
+                    }
                 }
             }
-            items(state.shownContacts, key = { it.person.userId }) { contact ->
-                val picked = contact.person.userId in state.selected
-                ListRow(
-                    title = contact.person.displayName,
-                    sub = contact.person.handle?.let { "@$it" },
-                    leading = { Avatar(contact.person.displayName, imageUrl = contact.person.avatarUrl) },
-                    trailing = { if (picked) CircasoIconImage(CircasoIcon.Check, c.action, Modifier.size(20.dp)) },
-                    onClick = { onToggle(contact.person.userId) },
-                )
-                RowDivider(Modifier.padding(start = 76.dp))
+        }
+    }
+}
+
+/** Nobody from the contacts on Circaso yet: say so warmly, and offer the two ways forward (match the phone book, invite). */
+@Composable
+private fun NoPeopleYet(state: NewChatUiState, actions: NewChatActions) {
+    val c = CircasoTheme.colors
+    val t = CircasoTheme.typography
+    Column(
+        Modifier.fillMaxWidth().padding(horizontal = CircasoSpacing.s8, vertical = CircasoSpacing.s8),
+        horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(CircasoSpacing.s4),
+    ) {
+        AvatarStack(listOf("A" to null, "J" to null, "W" to null), size = CircasoSizes.avatarMd)
+        Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            BasicText("Your people show up here", style = t.title3.copy(color = c.ink, textAlign = TextAlign.Center))
+            BasicText(
+                if (state.phoneBook == PhoneBookState.Denied) "Circaso can't see your contacts. You can allow it in Settings, or find people by @username."
+                else "See who from your contacts is already on Circaso, or invite them.",
+                style = t.subhead.copy(color = c.inkSecondary, textAlign = TextAlign.Center),
+            )
+        }
+        if (state.phoneBook == PhoneBookState.Denied) {
+            CircasoButton("Open Settings", { openAppSettings() }, style = ButtonStyle.Secondary, size = ButtonSize.Medium)
+        } else {
+            CircasoButton(
+                "Find Friends", actions.onFindFromContacts, size = ButtonSize.Medium, icon = CircasoIcon.People,
+                enabled = state.online, busy = state.phoneBook == PhoneBookState.Syncing,
+            )
+        }
+        CircasoButton("Invite a Friend", actions.onInvite, style = ButtonStyle.Plain, size = ButtonSize.Medium, enabled = state.online, busy = state.creatingInvite)
+        BasicText(
+            "Only phone numbers are matched. Names never leave your phone.",
+            style = t.footnote.copy(color = c.inkTertiary, textAlign = TextAlign.Center),
+        )
+    }
+}
+
+/** The people you chatted with lately, as faces in a row: one tap opens the chat (Telegram's frequent contacts). */
+@Composable
+private fun RecentStrip(recent: List<PersonRow>, opening: String?, online: Boolean, onPick: (String) -> Unit) {
+    val c = CircasoTheme.colors
+    val t = CircasoTheme.typography
+    LazyRow(contentPadding = PaddingValues(horizontal = CircasoSpacing.s4), horizontalArrangement = Arrangement.spacedBy(CircasoSpacing.s3)) {
+        items(recent, key = { it.userId }) { p ->
+            Column(
+                Modifier.width(68.dp).clip(CircasoShapes.md)
+                    .pressable(enabled = opening == null, role = Role.Button, onClick = { onPick(p.userId) })
+                    .padding(vertical = CircasoSpacing.s1)
+                    .semantics(mergeDescendants = true) { contentDescription = "Chat with ${p.name}" },
+                horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    Avatar(p.name, size = CircasoSizes.avatarLg - 8.dp, imageUrl = p.avatarUrl)
+                    if (opening == p.userId) {
+                        Box(Modifier.size(CircasoSizes.avatarLg - 8.dp).clip(CircasoShapes.circle).background(c.scrim), contentAlignment = Alignment.Center) {
+                            Spinner(c.onAction, Modifier.size(18.dp))
+                        }
+                    }
+                }
+                BasicText(p.name.trim().substringBefore(' '), style = t.caption1.copy(color = c.ink, textAlign = TextAlign.Center), maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
         }
     }
 }
 
 /**
- * GW1's card: the switch, and when it is on the optional target, who approves payouts, and the trust line that says
- * plainly who can move the money and after whose approval. (The daily cap line joins it with phase 2F.)
+ * The 36 dp search pill (design C8), with a clear button once something is typed and a focus handle so "Find by
+ * Username" can put the cursor in it.
  */
 @Composable
-private fun GroupWalletCard(
-    state: NewGroupUiState,
-    onWalletSwitch: (Boolean) -> Unit,
-    onTarget: (String) -> Unit,
-    onBy: (com.circaso.feature.chama.presentation.GoalDeadline) -> Unit,
-    onApprovalPolicy: (com.circaso.feature.chama.domain.ApprovalPolicy) -> Unit,
-) {
+internal fun SearchField(value: String, onValueChange: (String) -> Unit, placeholder: String, focus: FocusRequester? = null, modifier: Modifier = Modifier) {
     val c = CircasoTheme.colors
     val t = CircasoTheme.typography
-    Column(
-        Modifier.fillMaxWidth().clip(CircasoShapes.md).background(c.surface).border(1.dp, c.separator, CircasoShapes.md)
-            .padding(horizontal = CircasoSpacing.s4, vertical = 14.dp),
-        verticalArrangement = Arrangement.spacedBy(14.dp),
+    Row(
+        modifier.fillMaxWidth().heightIn(min = 36.dp).clip(CircasoShapes.pill).background(c.fill).padding(start = 12.dp, end = 0.dp),
+        horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically,
     ) {
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(CircasoSpacing.s3)) {
-            Column(Modifier.weight(1f)) {
-                BasicText("Group wallet", style = t.headline.copy(color = c.ink))
-                BasicText(
-                    if (state.walletOn) "Members pay into it. It’s separate from everyone’s personal money, with its own PIN."
-                    else "For chamas, savings and small businesses. You can add it later from group info.",
-                    style = t.footnote.copy(color = c.inkSecondary),
-                )
-            }
-            CircasoSwitch(state.walletOn, onWalletSwitch, enabled = state.online && !state.creating, modifier = Modifier.semantics { contentDescription = "Group wallet" })
+        CircasoIconImage(CircasoIcon.Search, c.inkSecondary, Modifier.size(18.dp))
+        Box(Modifier.weight(1f), contentAlignment = Alignment.CenterStart) {
+            BasicTextField(
+                value = value, onValueChange = onValueChange, singleLine = true,
+                textStyle = t.body.copy(color = c.ink), cursorBrush = SolidColor(c.ink),
+                keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Words, autoCorrectEnabled = false, imeAction = ImeAction.Search),
+                modifier = Modifier.fillMaxWidth().then(if (focus != null) Modifier.focusRequester(focus) else Modifier).semantics { contentDescription = placeholder },
+            )
+            if (value.isEmpty()) BasicText(placeholder, style = t.body.copy(color = c.inkSecondary), maxLines = 1)
         }
-        androidx.compose.animation.AnimatedVisibility(state.walletOn) {
-            Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
-                CircasoTextField(
-                    value = state.targetText, onValueChange = onTarget, label = "Target (optional)",
-                    placeholder = if (state.fiat != null) "50,000" else "400",
-                    leading = { BasicText(state.fiat?.currency ?: "USDC", style = t.body.copy(color = c.inkSecondary)) },
-                    keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.Decimal),
-                )
-                if (state.targetText.isNotBlank()) {
-                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                        BasicText("By (optional)", style = t.footnote.copy(color = c.inkSecondary))
-                        LazyRow(horizontalArrangement = Arrangement.spacedBy(CircasoSpacing.s2)) {
-                            items(com.circaso.feature.chama.presentation.GoalDeadline.entries) { d ->
-                                com.circaso.designsystem.components.SuggestionChip(d.label, { onBy(d) }, selected = d == state.by)
-                            }
-                        }
-                    }
-                }
-                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    BasicText("Who approves payouts", style = t.footnote.copy(color = c.inkSecondary))
-                    val policies = com.circaso.feature.chama.domain.ApprovalPolicy.entries
-                    com.circaso.designsystem.components.SegmentedControl(listOf("2 admins", "Any admin"), policies.indexOf(state.approvalPolicy), { onApprovalPolicy(policies[it]) })
-                }
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    CircasoIconImage(CircasoIcon.Lock, c.inkSecondary, Modifier.padding(top = 2.dp).size(14.dp))
-                    BasicText(
-                        if (state.approvalPolicy == com.circaso.feature.chama.domain.ApprovalPolicy.AnyAdmin)
-                            "Only you can send from this wallet, and only after an admin approves each payout (an admin’s own request counts). Everyone sees every payment."
-                        else "Only you can send from this wallet, and only after 2 admins approve each payout (the admin who asks counts as one). Everyone sees every payment.",
-                        style = t.footnote.copy(color = c.inkSecondary),
-                    )
+        val reduce = CircasoTheme.reduceMotion
+        AnimatedVisibility(
+            value.isNotEmpty(),
+            enter = if (reduce) fadeIn(snap()) else fadeIn(tween(CircasoMotion.QuickMs)),
+            exit = if (reduce) fadeOut(snap()) else fadeOut(tween(CircasoMotion.QuickMs)),
+        ) {
+            Box(
+                Modifier.size(CircasoSizes.iconButton).clip(CircasoShapes.circle).pressable(role = Role.Button, onClick = { onValueChange("") }).semantics { contentDescription = "Clear search" },
+                contentAlignment = Alignment.Center,
+            ) {
+                Box(Modifier.size(18.dp).background(c.inkTertiary, CircasoShapes.circle), contentAlignment = Alignment.Center) {
+                    CircasoIconImage(CircasoIcon.Close, c.fill, Modifier.size(10.dp), strokeWidth = 3f)
                 }
             }
         }

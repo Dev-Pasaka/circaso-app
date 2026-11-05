@@ -136,8 +136,8 @@ fun EditProfileContent(
                 onConfirm = { confirmDiscard = false; onBack() }, onDismiss = { confirmDiscard = false },
             )
             CircasoSheet(visible = photoChoices, onDismiss = { photoChoices = false }, label = "Profile photo") {
-                PhotoSheetContent(
-                    state,
+                PhotoChoiceSheetContent(
+                    state.recents, state.recentsAccess, hasPhoto = state.profile?.avatarUrl != null, useAs = "profile photo",
                     onUseRecent = { item -> photoChoices = false; photo.onUseRecent(item) },
                     onManage = photo.onManageRecents,
                     onTakePhoto = { photoChoices = false; photo.onTakePhoto() },
@@ -223,94 +223,6 @@ fun EditProfileContent(
         }
     }
 }
-
-/**
- * The photo sheet: the newest photos on the phone in a strip (tap one to use it), then Take Photo, Choose Photo for
- * everything else, Remove Photo when there is one, and Cancel. Without library access the strip simply isn't there and
- * the buttons carry on; with limited access a Manage tile leads the strip.
- */
-@Composable
-private fun PhotoSheetContent(
-    state: EditProfileUiState,
-    onUseRecent: (com.circaso.core.platform.LibraryItem) -> Unit,
-    onManage: () -> Unit,
-    onTakePhoto: () -> Unit,
-    onChoose: () -> Unit,
-    onRemove: () -> Unit,
-    onCancel: () -> Unit,
-) {
-    val limited = state.recentsAccess == com.circaso.core.platform.LibraryAccess.Limited
-    val reduce = CircasoTheme.reduceMotion
-    // The strip arrives a moment after the sheet: it opens downwards rather than jumping in (at once under reduced motion).
-    androidx.compose.animation.AnimatedVisibility(
-        state.recents.isNotEmpty() || limited,
-        enter = if (reduce) androidx.compose.animation.fadeIn(androidx.compose.animation.core.snap())
-        else androidx.compose.animation.expandVertically(androidx.compose.animation.core.tween(com.circaso.designsystem.theme.CircasoMotion.BaseMs)) +
-            androidx.compose.animation.fadeIn(androidx.compose.animation.core.tween(com.circaso.designsystem.theme.CircasoMotion.BaseMs)),
-        exit = if (reduce) androidx.compose.animation.fadeOut(androidx.compose.animation.core.snap())
-        else androidx.compose.animation.shrinkVertically(androidx.compose.animation.core.tween(com.circaso.designsystem.theme.CircasoMotion.QuickMs)) +
-            androidx.compose.animation.fadeOut(androidx.compose.animation.core.tween(com.circaso.designsystem.theme.CircasoMotion.QuickMs)),
-    ) {
-        RecentsStrip(state.recents, limited, onUseRecent, onManage)
-    }
-    Column(verticalArrangement = Arrangement.spacedBy(CircasoSpacing.s2)) {
-        CircasoButton("Take Photo", onTakePhoto, style = ButtonStyle.Secondary, size = ButtonSize.Large, block = true, icon = CircasoIcon.Camera)
-        CircasoButton("Choose Photo", onChoose, style = ButtonStyle.Secondary, size = ButtonSize.Large, block = true, icon = CircasoIcon.Photo)
-        if (state.profile?.avatarUrl != null) {
-            CircasoButton("Remove Photo", onRemove, style = ButtonStyle.Destructive, size = ButtonSize.Large, block = true)
-        }
-        CircasoButton("Cancel", onCancel, style = ButtonStyle.Plain, size = ButtonSize.Large, block = true)
-    }
-}
-
-/** Square photo tiles, edge to edge across the sheet so the row reads as scrollable; Manage first when access is limited. */
-@Composable
-private fun RecentsStrip(
-    recents: List<com.circaso.core.platform.LibraryItem>,
-    limited: Boolean,
-    onUse: (com.circaso.core.platform.LibraryItem) -> Unit,
-    onManage: () -> Unit,
-) {
-    val c = CircasoTheme.colors
-    val bleed = SheetSidePadding
-    androidx.compose.foundation.lazy.LazyRow(
-        Modifier.fillMaxWidth().layout { measurable, constraints ->
-            // Past the sheet's side padding, to its edges; the content padding brings the first tile back in line.
-            val extra = bleed.roundToPx() * 2
-            val wide = if (constraints.hasBoundedWidth) constraints.copy(minWidth = constraints.minWidth + extra, maxWidth = constraints.maxWidth + extra) else constraints
-            val placeable = measurable.measure(wide)
-            layout(placeable.width - extra, placeable.height) { placeable.place(-extra / 2, 0) }
-        }.semantics { contentDescription = "Recent photos" },
-        contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = bleed),
-        horizontalArrangement = Arrangement.spacedBy(CircasoSpacing.s2),
-    ) {
-        if (limited) item(key = "manage") {
-            Column(
-                Modifier.size(RecentTile).clip(com.circaso.designsystem.theme.CircasoShapes.md).background(c.fill)
-                    .pressable(onClick = onManage)
-                    .semantics(mergeDescendants = true) { contentDescription = "Circaso can see only the photos you chose. Choose more" },
-                horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(CircasoSpacing.s1, Alignment.CenterVertically),
-            ) {
-                CircasoIconImage(CircasoIcon.Plus, c.ink, Modifier.size(20.dp))
-                BasicText("Manage", style = CircasoTheme.typography.caption1.copy(color = c.ink), maxLines = 1)
-            }
-        }
-        items(recents.size, key = { recents[it].id }) { i ->
-            val item = recents[i]
-            Box(
-                Modifier.size(RecentTile).clip(com.circaso.designsystem.theme.CircasoShapes.md).background(c.fill)
-                    .pressable(onClick = { onUse(item) })
-                    .semantics { contentDescription = "Recent photo ${i + 1} of ${recents.size}. Use as profile photo" },
-            ) { com.circaso.core.platform.LibraryThumbnail(item, Modifier.fillMaxSize()) }
-        }
-    }
-}
-
-/** A recent photo's tile in the sheet: big enough to recognise a face, four and a bit across a phone. */
-private val RecentTile = 80.dp
-
-/** CircasoSheet's own side padding, which the strip runs past. */
-private val SheetSidePadding = 20.dp
 
 @OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class)
 @Composable

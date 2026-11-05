@@ -21,6 +21,9 @@ interface ChatsRepository {
     suspend fun createGroup(draft: GroupDraft, idempotencyKey: String): AppResult<GroupCreated>
 
     suspend fun rename(chatId: String, name: String): AppResult<Chat>
+    /** M8: a new group photo (encrypted, uploaded, referenced in the sealed metadata), or null to remove it. */
+    suspend fun setGroupPhoto(chatId: String, image: com.circaso.core.platform.GroupPhotoImage?): AppResult<Chat> =
+        AppResult.Failure(com.circaso.core.common.AppError.Unexpected(null))
     suspend fun setMembersCanAdd(chatId: String, allowed: Boolean): AppResult<Chat>
     suspend fun addMembers(chatId: String, userIds: List<String>): AppResult<GroupCreated>
     suspend fun removeMember(chatId: String, userId: String): AppResult<Unit>

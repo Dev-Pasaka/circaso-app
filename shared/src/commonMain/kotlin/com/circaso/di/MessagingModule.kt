@@ -83,7 +83,13 @@ val messagingModule = module {
         })
     }
     single { GroupKeys(get(), get(), get(), get(), get(), get(), get(named("ownUserId"))) }
-    single { ChatsRepositoryImpl(get(), get(), get(), get(), get(), get(named("ownUserId"))) } bind ChatsRepository::class
+    single {
+        com.circaso.feature.messaging.data.repository.GroupPhotos(
+            get(), get(named("plain")), get(), get(), get(),
+            uploads = getOrNull<com.circaso.core.platform.BackgroundUploads>() ?: com.circaso.core.platform.NoBackgroundUploads,
+        )
+    }
+    single { ChatsRepositoryImpl(get(), get(), get(), get(), get(), get(named("ownUserId")), photos = get()) } bind ChatsRepository::class
     single { get<CircasoDatabase>().recoveryDao() }
     single { com.circaso.feature.messaging.data.repository.ChatPaymentCards(get(), get(), get(), get(named("ownUserId")), { id -> get<ChatsRepositoryImpl>().refreshChat(id) }) }
     single { com.circaso.feature.messaging.data.repository.RetryReceipts(get(), get(), get(), get(), get(), get(), get(), get(named("ownUserId"))) }
@@ -115,6 +121,7 @@ val messagingModule = module {
     factory { OpenDirectChatUseCase(get()) }
     factory { CreateGroupUseCase(get()) }
     factory { RenameGroupUseCase(get()) }
+    factory { com.circaso.feature.messaging.domain.SetGroupPhotoUseCase(get()) }
     factory { SetMembersCanAddUseCase(get()) }
     factory { AddMembersUseCase(get()) }
     factory { RemoveMemberUseCase(get()) }
@@ -133,8 +140,24 @@ val messagingModule = module {
     factory { MessagingSettingsUseCase(get()) }
 
     viewModel { ChatsViewModel(get(), get(), get(), get(), get(), get(), get(), getOrNull()) }
-    viewModel { NewChatViewModel(get(), get(), get()) }
-    viewModel { NewGroupViewModel(get(), get(), get(), groupWallets = get(), observeWallet = get()) }
+    viewModel {
+        NewChatViewModel(
+            get(), get(), get(), observeChats = get(), connect = get(), createInvite = get(),
+            reader = get(), syncPhoneBook = get(),
+        )
+    }
+    factory {
+        com.circaso.feature.profile.presentation.PhotoSources(
+            get(), get(), get(),
+        )
+    }
+    viewModel {
+        NewGroupViewModel(
+            get(), get(), get(), groupWallets = get(), observeWallet = get(), setGroupPhoto = get(),
+            encoder = getOrNull<com.circaso.core.platform.GroupPhotoEncoder>() ?: com.circaso.core.platform.NoGroupPhotoEncoder,
+            sources = getOrNull(),
+        )
+    }
     single { com.circaso.feature.messaging.data.repository.MapPictures(get()) }
     single { com.circaso.feature.messaging.data.repository.ChatSealer(get(), get(), get(), get(), get(named("ownUserId"))) }
     single {
@@ -160,6 +183,9 @@ val messagingModule = module {
         ChatInfoViewModel(
             params.get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), observeThread = get(), media = getOrNull(),
             groupMoney = get(), myUserId = get<com.circaso.core.session.AuthManager>().userId,
+            setGroupPhoto = get(),
+            encoder = getOrNull<com.circaso.core.platform.GroupPhotoEncoder>() ?: com.circaso.core.platform.NoGroupPhotoEncoder,
+            sources = getOrNull(),
         )
     }
 }

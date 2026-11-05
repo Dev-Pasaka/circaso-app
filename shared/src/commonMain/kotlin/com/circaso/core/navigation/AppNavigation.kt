@@ -372,7 +372,7 @@ fun AppNavigation(forceUpdate: Boolean, home: @Composable () -> Unit) {
                 )
             }
             entry<NewChatRoute> {
-                NewChatScreen(koinViewModel(), onBack = ::pop, onOpened = { id -> pop(); openChatFromList(id) }, onNewGroup = { backStack.add(NewGroupRoute) }, onInvite = { backStack.add(ContactsRoute) })
+                NewChatScreen(koinViewModel(), onBack = ::pop, onOpened = { id -> pop(); openChatFromList(id) }, onNewGroup = { backStack.add(NewGroupRoute) })
             }
             entry<NewGroupRoute> {
                 NewGroupScreen(koinViewModel(), onBack = ::pop, onCreated = { id, plan ->

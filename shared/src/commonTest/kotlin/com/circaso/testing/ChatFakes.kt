@@ -144,8 +144,11 @@ class FakeChatsRemote : ChatsRemote {
     override suspend fun chats() = AppResult.Success(ChatsResponse(chats))
     override suspend fun chat(chatId: String): AppResult<ChatDto> = chats.firstOrNull { it.chatId == chatId }?.let { AppResult.Success(it) } ?: AppResult.Failure(AppError.Api("messaging.chat_not_found", 404, null, null, emptyMap()))
     override suspend fun openDirect(userId: String) = openDirectResult(userId)
-    override suspend fun createGroup(request: CreateGroupRequest, idempotencyKey: String): AppResult<ChatDto> = AppResult.Failure(AppError.Network)
-    override suspend fun updateGroup(chatId: String, request: UpdateGroupRequest): AppResult<ChatDto> = AppResult.Failure(AppError.Network)
+    var createGroupResult: (CreateGroupRequest, String) -> AppResult<ChatDto> = { _, _ -> AppResult.Failure(AppError.Network) }
+    var updateGroupResult: (String, UpdateGroupRequest) -> AppResult<ChatDto> = { _, _ -> AppResult.Failure(AppError.Network) }
+    val updates = mutableListOf<Pair<String, UpdateGroupRequest>>()
+    override suspend fun createGroup(request: CreateGroupRequest, idempotencyKey: String): AppResult<ChatDto> = createGroupResult(request, idempotencyKey)
+    override suspend fun updateGroup(chatId: String, request: UpdateGroupRequest): AppResult<ChatDto> { updates += chatId to request; return updateGroupResult(chatId, request) }
     override suspend fun addMembers(chatId: String, request: AddMembersRequest): AppResult<ChatDto> = AppResult.Failure(AppError.Network)
     override suspend fun removeMember(chatId: String, userId: String): AppResult<MemberRemovedResponse> = AppResult.Success(MemberRemovedResponse(true))
     override suspend fun setRole(chatId: String, userId: String, request: SetRoleRequest): AppResult<ChatDto> = AppResult.Failure(AppError.Network)
