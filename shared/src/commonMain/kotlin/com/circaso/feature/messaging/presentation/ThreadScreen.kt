@@ -297,9 +297,11 @@ fun ThreadContent(
     }
     val paying = (payChip != null || typingAmount != null) && payout == null
     // The room above the composer: the money card never grows past it (large text, small phone, keyboard up).
-    var threadHeightPx by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(0) }
+    // It changes on every frame the keyboard slides, so only the card reads it (inside its own lambda): read here, it
+    // would recompose the whole conversation each frame and the keyboard would come up in jerks.
+    val threadHeightPx = androidx.compose.runtime.remember { androidx.compose.runtime.mutableIntStateOf(0) }
     val density = androidx.compose.ui.platform.LocalDensity.current
-    val cardMax = if (threadHeightPx > 0) with(density) { threadHeightPx.toDp() } - CircasoSpacing.s2 else androidx.compose.ui.unit.Dp.Unspecified
+    fun cardMax() = threadHeightPx.intValue.let { h -> if (h > 0) with(density) { h.toDp() } - CircasoSpacing.s2 else androidx.compose.ui.unit.Dp.Unspecified }
     val cardMotion = if (CircasoTheme.reduceMotion) Modifier else Modifier.animateContentSize(tween(CircasoMotion.BaseMs))
     // "@" after the amount: the coins this wallet holds, the most valuable first, narrowing as the person types.
     val coinQuery = if (payChip != null || typingAmount != null) coinQuery(state.draft) else null
@@ -637,7 +639,7 @@ fun ThreadContent(
         },
     ) { padding ->
         Column(Modifier.fillMaxSize().padding(bottom = padding.calculateBottomPadding())) {
-            Box(Modifier.weight(1f).fillMaxWidth().onSizeChanged { threadHeightPx = it.height }) {
+            Box(Modifier.weight(1f).fillMaxWidth().onSizeChanged { threadHeightPx.intValue = it.height }) {
             LazyColumn(
                 state = listState,
                 reverseLayout = true,
@@ -760,13 +762,13 @@ fun ThreadContent(
                         paying && quickPay != null,
                         enter = if (CircasoTheme.reduceMotion) fadeIn(tween(CircasoMotion.QuickMs)) else fadeIn(tween(CircasoMotion.QuickMs)) + androidx.compose.animation.slideInVertically(tween(CircasoMotion.QuickMs)) { it / 2 },
                         exit = fadeOut(tween(CircasoMotion.QuickMs / 2)),
-                    ) { quickPay?.let { q -> ChatMoneyCard(q.state, q.onPay, { q.onChoosing(true) }, cardMotion, maxHeight = cardMax, onRetryQuote = q.onRetryQuote, onUseMax = q.onUseMax, blocked = viaSpace?.payBlocked, blockedAction = viaSpace?.payBlockedAction, onBlocked = onPayBlocked) } }
+                    ) { quickPay?.let { q -> ChatMoneyCard(q.state, q.onPay, { q.onChoosing(true) }, cardMotion, maxHeight = cardMax(), onRetryQuote = q.onRetryQuote, onUseMax = q.onUseMax, blocked = viaSpace?.payBlocked, blockedAction = viaSpace?.payBlockedAction, onBlocked = onPayBlocked) } }
                     // An approved request's Pay (D5/GW9): the same card, the amount and payee locked by the approval.
                     AnimatedVisibility(
                         payout != null,
                         enter = if (CircasoTheme.reduceMotion) fadeIn(tween(CircasoMotion.QuickMs)) else fadeIn(tween(CircasoMotion.QuickMs)) + androidx.compose.animation.slideInVertically(tween(CircasoMotion.QuickMs)) { it / 2 },
                         exit = fadeOut(tween(CircasoMotion.QuickMs / 2)),
-                    ) { payout?.let { q -> ChatMoneyCard(q.state, q.onPay, { q.onChoosing(true) }, cardMotion, onClose = onPayoutClose, maxHeight = cardMax, onRetryQuote = q.onRetryQuote, onUseMax = q.onUseMax) } }
+                    ) { payout?.let { q -> ChatMoneyCard(q.state, q.onPay, { q.onChoosing(true) }, cardMotion, onClose = onPayoutClose, maxHeight = cardMax(), onRetryQuote = q.onRetryQuote, onUseMax = q.onUseMax) } }
                 },
                 above = {
                     // Support never takes money (so nobody pretending to be Circaso can ask for it): say so the moment
