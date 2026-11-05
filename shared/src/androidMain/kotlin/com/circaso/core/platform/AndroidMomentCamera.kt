@@ -59,17 +59,31 @@ class AndroidMomentCamera(private val context: Context) : MomentCamera {
     private var startedAt = 0L
     private var front = false
     private var flash = false
+    /** The profile camera ([openForPhoto]): preview and stills only, at the sensor's best quality. */
+    private var photoOnly = false
     private var bound: Pair<LifecycleOwner, PreviewView>? = null
     private val scope = MainScope()
 
     override suspend fun open(): CameraStart {
-        val granted = ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED ||
-            PermissionBridge.request(Manifest.permission.CAMERA)
-        if (!granted) return CameraStart.PermissionDenied
+        photoOnly = false
+        if (!cameraAllowed()) return CameraStart.PermissionDenied
         // The microphone now too, so a hold to record never stops for a prompt; refused, videos are silent.
         if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) PermissionBridge.request(Manifest.permission.RECORD_AUDIO)
-        return if (context.packageManager.hasSystemFeature(PackageManager.FEATURE_CAMERA_ANY)) CameraStart.Started else CameraStart.Unavailable
+        return if (hasCamera()) CameraStart.Started else CameraStart.Unavailable
     }
+
+    /** No microphone prompt: a profile photo has no sound. A selfie is the usual profile photo, so the front camera leads. */
+    override suspend fun openForPhoto(): CameraStart {
+        photoOnly = true
+        front = true
+        if (!cameraAllowed()) return CameraStart.PermissionDenied
+        return if (hasCamera()) CameraStart.Started else CameraStart.Unavailable
+    }
+
+    private suspend fun cameraAllowed() = ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED ||
+        PermissionBridge.request(Manifest.permission.CAMERA)
+
+    private fun hasCamera() = context.packageManager.hasSystemFeature(PackageManager.FEATURE_CAMERA_ANY)
 
     /** Called by [CameraViewfinder] when it appears, and again after a flip. */
     internal suspend fun bind(owner: LifecycleOwner, view: PreviewView) {
@@ -79,28 +93,55 @@ class AndroidMomentCamera(private val context: Context) : MomentCamera {
             future.addListener({ cont.resume(future.get()) }, ContextCompat.getMainExecutor(context))
         }.also { provider = it }
         val preview = Preview.Builder().build().also { it.surfaceProvider = view.surfaceProvider }
-        val photo = ImageCapture.Builder().setCaptureMode(ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY)
+        // A profile photo is one careful still, so quality over shutter speed; Moments want the quick shot.
+        val photo = ImageCapture.Builder().setCaptureMode(if (photoOnly) ImageCapture.CAPTURE_MODE_MAXIMIZE_QUALITY else ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY)
             .setFlashMode(if (flash) ImageCapture.FLASH_MODE_ON else ImageCapture.FLASH_MODE_OFF).build()
-        val video = VideoCapture.withOutput(Recorder.Builder().setQualitySelector(QualitySelector.from(Quality.HD))
+        // No video for a profile photo: binding it beside the still can cap the still's size on some phones.
+        val video = if (photoOnly) null else VideoCapture.withOutput(Recorder.Builder().setQualitySelector(QualitySelector.from(Quality.HD))
             // About 3.5 Mbit/s: a full minute stays near 26 MB, under the server's 32 MiB for a moment's media.
             .setTargetVideoEncodingBitRate(MomentVideoBitRate).build())
+        // A phone with one camera (a tablet's front one only, say) uses whichever it has.
+        if (!runCatching { p.hasCamera(if (front) CameraSelector.DEFAULT_FRONT_CAMERA else CameraSelector.DEFAULT_BACK_CAMERA) }.getOrDefault(true)) front = !front
         val selector = if (front) CameraSelector.DEFAULT_FRONT_CAMERA else CameraSelector.DEFAULT_BACK_CAMERA
         runCatching {
             p.unbindAll()
-            camera = p.bindToLifecycle(owner, selector, preview, photo, video)
+            camera = if (video != null) p.bindToLifecycle(owner, selector, preview, photo, video) else p.bindToLifecycle(owner, selector, preview, photo)
             imageCapture = photo
             videoCapture = video
         }
     }
 
-    override suspend fun takePhoto(): CapturedMedia? {
+    private suspend fun capture(): ImageProxy? {
         val capture = imageCapture ?: return null
-        val proxy = kotlinx.coroutines.suspendCancellableCoroutine<ImageProxy?> { cont ->
+        return kotlinx.coroutines.suspendCancellableCoroutine { cont ->
             capture.takePicture(ContextCompat.getMainExecutor(context), object : ImageCapture.OnImageCapturedCallback() {
-                override fun onCaptureSuccess(image: ImageProxy) { cont.resume(image) }
-                override fun onError(exception: ImageCaptureException) { cont.resume(null) }
+                override fun onCaptureSuccess(image: ImageProxy) { if (cont.isActive) cont.resume(image) else image.close() }
+                override fun onError(exception: ImageCaptureException) { if (cont.isActive) cont.resume(null) }
             })
-        } ?: return null
+        }
+    }
+
+    /**
+     * The still at the sensor's size, turned upright (and mirrored on the front camera, as framed), cropped to its centre
+     * square in the same step so a 12 MP shot is only copied once, then encoded with the avatar rules.
+     */
+    override suspend fun takeProfilePhoto(): PickedImage? {
+        val proxy = capture() ?: return null
+        return withContext(Dispatchers.Default) {
+            runCatching {
+                val square = proxy.use { image ->
+                    val raw = image.toBitmap()
+                    val side = minOf(raw.width, raw.height)
+                    val turn = Matrix().apply { postRotate(image.imageInfo.rotationDegrees.toFloat()); if (front) postScale(-1f, 1f) }
+                    Bitmap.createBitmap(raw, (raw.width - side) / 2, (raw.height - side) / 2, side, side, turn, true).also { if (it !== raw) raw.recycle() }
+                }
+                try { encodeForUpload(square) } finally { square.recycle() }
+            }.getOrNull()
+        }
+    }
+
+    override suspend fun takePhoto(): CapturedMedia? {
+        val proxy = capture() ?: return null
         return withContext(Dispatchers.Default) {
             val bitmap = proxy.use { image ->
                 val raw = image.toBitmap()

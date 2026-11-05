@@ -201,6 +201,42 @@ private class FakeAsha(var script: List<AshaEvent> = emptyList()) : AshaReposito
     override suspend fun usage(): AppResult<AshaUsage> = AppResult.Failure(AppError.Network)
 }
 
+private class AvatarLibrary : com.circaso.core.platform.MediaLibrary {
+    var access = com.circaso.core.platform.LibraryAccess.Granted
+    var afterManage: com.circaso.core.platform.LibraryAccess? = null
+    val items = listOf(com.circaso.core.platform.LibraryItem("p1", com.circaso.core.platform.LibraryKind.Photo), com.circaso.core.platform.LibraryItem("p2", com.circaso.core.platform.LibraryKind.Photo))
+    val asked = mutableListOf<Boolean>()
+    var managed = 0
+    var avatar: PickedImage? = PickedImage(ByteArray(9), "image/jpeg")
+    var momentLoads = 0
+    override suspend fun access() = access
+    override suspend fun recents(kind: com.circaso.core.platform.LibraryKind, limit: Int, ask: Boolean): com.circaso.core.platform.LibraryRecents {
+        asked += ask
+        return com.circaso.core.platform.LibraryRecents(if (access == com.circaso.core.platform.LibraryAccess.Denied) emptyList() else items.take(limit), access)
+    }
+    override suspend fun manage(kind: com.circaso.core.platform.LibraryKind): com.circaso.core.platform.LibraryAccess { managed++; afterManage?.let { access = it }; return access }
+    override suspend fun load(item: com.circaso.core.platform.LibraryItem): com.circaso.core.platform.CapturedMedia? { momentLoads++; return null }
+    override suspend fun loadAvatar(item: com.circaso.core.platform.LibraryItem): PickedImage? = avatar
+    override suspend fun pick(kind: com.circaso.core.platform.LibraryKind): com.circaso.core.platform.CapturedMedia? = null
+}
+
+private class AvatarCamera : com.circaso.core.platform.MomentCamera {
+    var start = com.circaso.core.platform.CameraStart.Started
+    var shot: PickedImage? = PickedImage(ByteArray(7), "image/jpeg")
+    var opened = 0
+    var closed = 0
+    var momentShots = 0
+    override suspend fun open(): com.circaso.core.platform.CameraStart = error("the profile camera never opens the Moments camera (it would ask for the microphone)")
+    override suspend fun openForPhoto(): com.circaso.core.platform.CameraStart { opened++; return start }
+    override suspend fun takePhoto(): com.circaso.core.platform.CapturedMedia? { momentShots++; return null }
+    override suspend fun takeProfilePhoto(): PickedImage? = shot
+    override suspend fun startVideo() = false
+    override suspend fun stopVideo(): com.circaso.core.platform.CapturedMedia? = null
+    override fun flip() = Unit
+    override fun setFlash(on: Boolean) = Unit
+    override fun close() { closed++ }
+}
+
 private class FakePicker(var image: PickedImage? = PickedImage(ByteArray(5), "image/jpeg")) : ImagePicker { var opened = 0; override suspend fun pick(): PickedImage? { opened++; return image } }
 
 private class FakeRecorder(var start: RecordingStart = RecordingStart.Started, var clip: Recording? = Recording(ByteArray(3), "audio/mp4", 4)) : AudioRecorder {
@@ -242,10 +278,118 @@ class FeatureViewModelsTest {
 
     private val profileRepo = FakeProfileRepo()
     private val picker = FakePicker()
+    private val library = AvatarLibrary()
+    private val camera = AvatarCamera()
     private fun editProfile() = EditProfileViewModel(
         ObserveProfileUseCase(profileRepo), UpdateProfileUseCase(profileRepo), CheckHandleUseCase(profileRepo), ClaimHandleUseCase(profileRepo), connection,
-        picker, UploadAvatarUseCase(profileRepo), RemoveAvatarUseCase(profileRepo), debounceMillis = 400,
+        picker, UploadAvatarUseCase(profileRepo), RemoveAvatarUseCase(profileRepo), library, camera, debounceMillis = 400,
     )
+
+    @Test fun thePhotoSheetAsksForTheLibraryOnlyWhenItOpens() = runTest(dispatcher) {
+        val vm = editProfile()
+        assertEquals(emptyList(), library.asked)
+        vm.onPhotoSheetShown()
+        assertEquals(listOf(true), library.asked)
+        assertEquals(listOf("p1", "p2"), vm.state.value.recents.map { it.id })
+        assertEquals(com.circaso.core.platform.LibraryAccess.Granted, vm.state.value.recentsAccess)
+    }
+
+    @Test fun withoutLibraryAccessTheStripIsEmptyAndLimitedAccessCanChooseMore() = runTest(dispatcher) {
+        library.access = com.circaso.core.platform.LibraryAccess.Denied
+        val vm = editProfile()
+        vm.onPhotoSheetShown()
+        assertEquals(emptyList(), vm.state.value.recents)
+        assertEquals(com.circaso.core.platform.LibraryAccess.Denied, vm.state.value.recentsAccess)
+
+        library.access = com.circaso.core.platform.LibraryAccess.Limited
+        library.afterManage = com.circaso.core.platform.LibraryAccess.Granted
+        vm.onManageRecents()
+        assertEquals(1, library.managed)
+        assertEquals(false, library.asked.last()) // after Manage the strip reloads without asking again
+        assertEquals(com.circaso.core.platform.LibraryAccess.Granted, vm.state.value.recentsAccess)
+        assertEquals(2, vm.state.value.recents.size)
+    }
+
+    @Test fun aRecentPhotoIsUploadedAtAvatarQualityNotAMomentsSize() = runTest(dispatcher) {
+        val vm = editProfile()
+        vm.onPhotoSheetShown()
+        vm.onUseRecent(vm.state.value.recents.first())
+        assertEquals(listOf(9), profileRepo.uploads)
+        assertEquals(0, library.momentLoads)
+        assertEquals("Your photo is updated.", vm.state.value.message)
+        assertFalse(vm.state.value.avatarBusy)
+    }
+
+    @Test fun aRecentThatCantBeReadSaysSoAndUploadsNothing() = runTest(dispatcher) {
+        library.avatar = null
+        val vm = editProfile()
+        vm.onUseRecent(library.items.first())
+        assertEquals(emptyList(), profileRepo.uploads)
+        assertEquals("Couldn't open that photo. Try another one.", vm.state.value.message)
+        assertFalse(vm.state.value.avatarBusy)
+    }
+
+    @Test fun aCameraShotWaitsForUsePhotoThenUploads() = runTest(dispatcher) {
+        val vm = editProfile()
+        vm.onOpenCamera()
+        assertEquals(com.circaso.core.platform.CameraStart.Started, vm.state.value.camera?.start)
+        vm.onShutter()
+        assertTrue(vm.state.value.camera?.shot != null)
+        assertEquals(emptyList(), profileRepo.uploads) // nothing goes up before Use Photo
+        assertEquals(0, camera.momentShots)
+
+        vm.onRetake()
+        assertNull(vm.state.value.camera?.shot)
+        vm.onShutter()
+        vm.onUsePhoto()
+        assertNull(vm.state.value.camera)
+        assertEquals(1, camera.closed)
+        assertEquals(listOf(7), profileRepo.uploads)
+        assertEquals("Your photo is updated.", vm.state.value.message)
+        assertFalse(vm.state.value.avatarBusy)
+    }
+
+    @Test fun aRefusedCameraSaysSoAndCloses() = runTest(dispatcher) {
+        camera.start = com.circaso.core.platform.CameraStart.PermissionDenied
+        val vm = editProfile()
+        vm.onOpenCamera()
+        assertEquals(com.circaso.core.platform.CameraStart.PermissionDenied, vm.state.value.camera?.start)
+        vm.onShutter() // nothing to shoot with
+        assertNull(vm.state.value.camera?.shot)
+        vm.onCloseCamera()
+        assertNull(vm.state.value.camera)
+        assertEquals(emptyList(), profileRepo.uploads)
+    }
+
+    @Test fun aFailedShotSaysSoAndKeepsTheCameraOpen() = runTest(dispatcher) {
+        camera.shot = null
+        val vm = editProfile()
+        vm.onOpenCamera()
+        vm.onShutter()
+        assertEquals("Couldn't take the photo. Try again.", vm.state.value.message)
+        assertFalse(vm.state.value.camera?.shooting ?: true)
+        assertNull(vm.state.value.camera?.shot)
+    }
+
+    @Test fun offlineTheCameraShotStaysAndNothingIsUploaded() = runTest(dispatcher) {
+        val vm = editProfile()
+        vm.onOpenCamera()
+        vm.onShutter()
+        monitor.osStatus.value = ConnectionStatus.Offline
+        vm.onUsePhoto()
+        assertTrue(vm.state.value.camera?.shot != null)
+        assertEquals(emptyList(), profileRepo.uploads)
+        vm.onUseRecent(library.items.first())
+        assertEquals(emptyList(), profileRepo.uploads)
+    }
+
+    @Test fun anUploadRefusedAfterTheCameraShowsTheServersReason() = runTest(dispatcher) {
+        profileRepo.uploadResult = api("users.avatar_too_large", 413)
+        val vm = editProfile()
+        vm.onOpenCamera(); vm.onShutter(); vm.onUsePhoto()
+        assertEquals(ErrorMessages.forError((profileRepo.uploadResult as AppResult.Failure).error), vm.state.value.message)
+        assertFalse(vm.state.value.avatarBusy)
+    }
 
     @Test fun aChosenPhotoIsUploadedAndTheScreenSaysSo() = runTest(dispatcher) {
         val vm = editProfile()

@@ -61,6 +61,28 @@ internal fun encodeForUpload(context: Context, uri: Uri): PickedImage? {
     return null
 }
 
+/**
+ * A picture already in memory (a camera shot) with the same rules as [encodeForUpload] for a file: full size up to
+ * [AvatarMaxSide], quality first, then size, until it fits [AvatarMaxBytes]. The caller still owns [bitmap].
+ */
+internal fun encodeForUpload(bitmap: Bitmap): PickedImage? {
+    for (side in AvatarSideSteps) {
+        val longest = max(bitmap.width, bitmap.height)
+        val f = if (longest > side) side.toFloat() / longest else 1f
+        val scaled = if (f < 1f) Bitmap.createScaledBitmap(bitmap, (bitmap.width * f).roundToInt().coerceAtLeast(1), (bitmap.height * f).roundToInt().coerceAtLeast(1), true) else bitmap
+        try {
+            for (quality in AvatarQualitySteps) {
+                val out = ByteArrayOutputStream()
+                scaled.compress(Bitmap.CompressFormat.JPEG, quality, out)
+                if (out.size() <= AvatarMaxBytes) return PickedImage(out.toByteArray(), "image/jpeg", scaled.width, scaled.height)
+            }
+        } finally {
+            if (scaled !== bitmap) scaled.recycle()
+        }
+    }
+    return null
+}
+
 /** Decodes already scaled down so a 50 MP photo never sits in memory at full size. */
 internal fun decodeScaled(context: Context, uri: Uri, maxSide: Int): Bitmap? = try {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {

@@ -49,6 +49,12 @@ interface MediaLibrary {
     /** Ready to post: a photo as JPEG at most [MomentPhotoMaxSide] long, a video or audio file as it is, with a thumb. */
     suspend fun load(item: LibraryItem): CapturedMedia?
 
+    /**
+     * A library photo for a profile picture, at avatar quality ([ImagePicker]'s rules: up to [AvatarMaxSide], under
+     * [AvatarMaxBytes]), never a moment's [MomentPhotoMaxSide]. Null for a video or audio item, or one that can't be read.
+     */
+    suspend fun loadAvatar(item: LibraryItem): PickedImage? = null
+
     /** The system picker for [kind]; null when the person closes it. */
     suspend fun pick(kind: LibraryKind): CapturedMedia?
 

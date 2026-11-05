@@ -169,6 +169,29 @@ class IosMediaLibrary : MediaLibrary {
         }?.toCaptured()
     }
 
+    /**
+     * The original image data (iCloud too) through Photos, then the profile photo's own encoder: full size up to
+     * AvatarMaxSide, not a moment's 2048 px. Leaving the sheet cancels the request.
+     */
+    override suspend fun loadAvatar(item: LibraryItem): PickedImage? {
+        if (item.kind != LibraryKind.Photo) return null
+        val asset = withContext(Dispatchers.Default) {
+            PHAsset.fetchAssetsWithLocalIdentifiers(listOf(item.id), null).firstObject as? PHAsset
+        } ?: return null
+        val data = suspendCancellableCoroutine<NSData?> { cont ->
+            val options = PHImageRequestOptions().apply {
+                networkAccessAllowed = true
+                deliveryMode = platform.Photos.PHImageRequestOptionsDeliveryModeHighQualityFormat
+                version = platform.Photos.PHImageRequestOptionsVersionCurrent
+            }
+            val request = PHImageManager.defaultManager().requestImageDataAndOrientationForAsset(asset, options) { data, _, _, _ ->
+                if (cont.isActive) cont.resume(data)
+            }
+            cont.invokeOnCancellation { PHImageManager.defaultManager().cancelImageRequest(request) }
+        } ?: return null
+        return withContext(Dispatchers.Default) { scaledJpeg(data) }
+    }
+
     override suspend fun pick(kind: LibraryKind): CapturedMedia? {
         val p = MediaLibraryBridge.provider ?: return null
         val code = when (kind) { LibraryKind.Photo -> 0; LibraryKind.Video -> 1; LibraryKind.Audio -> 2 }

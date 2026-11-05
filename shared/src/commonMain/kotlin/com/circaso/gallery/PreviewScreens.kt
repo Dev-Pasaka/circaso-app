@@ -202,6 +202,18 @@ fun PreviewScreens(name: String) {
             EditProfileUiState(profile = profile, name = "Amina Wanjiru", about = "Hi there", handle = "amina_k_new", handleCheck = HandleCheck.Available),
             {}, {}, {}, {}, {}, {},
         )
+        "profile-photo-sheet" -> EditProfileContent(
+            EditProfileUiState(profile = profile, name = "Amina Wanjiru", about = "Hi there", handle = "amina_k", recentsAccess = com.circaso.core.platform.LibraryAccess.Limited),
+            {}, {}, {}, {}, {}, {}, photoSheetOpen = true,
+        )
+        "profile-camera-denied" -> EditProfileContent(
+            EditProfileUiState(profile = profile, name = "Amina Wanjiru", about = "Hi there", handle = "amina_k", camera = com.circaso.feature.profile.presentation.ProfileCamera(com.circaso.core.platform.CameraStart.PermissionDenied)),
+            {}, {}, {}, {}, {}, {},
+        )
+        "profile-camera-unavailable" -> EditProfileContent(
+            EditProfileUiState(profile = profile, name = "Amina Wanjiru", about = "Hi there", handle = "amina_k", camera = com.circaso.feature.profile.presentation.ProfileCamera(com.circaso.core.platform.CameraStart.Unavailable)),
+            {}, {}, {}, {}, {}, {},
+        )
         "profile" -> EditProfileContent(
             EditProfileUiState(profile = profile, name = "Amina Wanjiru", about = "Hi there", handle = "amina_k", handleCheck = HandleCheck.Taken("amina_k2")),
             {}, {}, {}, {}, {}, {},

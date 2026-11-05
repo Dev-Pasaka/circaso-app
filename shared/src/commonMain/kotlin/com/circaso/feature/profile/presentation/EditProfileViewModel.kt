@@ -5,8 +5,15 @@ import androidx.lifecycle.viewModelScope
 import com.circaso.core.common.AppError
 import com.circaso.core.common.AppResult
 import com.circaso.core.common.ErrorMessages
+import com.circaso.core.platform.CameraStart
 import com.circaso.core.platform.ConnectionStatus
 import com.circaso.core.platform.ImagePicker
+import com.circaso.core.platform.LibraryAccess
+import com.circaso.core.platform.LibraryItem
+import com.circaso.core.platform.LibraryKind
+import com.circaso.core.platform.MediaLibrary
+import com.circaso.core.platform.MomentCamera
+import com.circaso.core.platform.PickedImage
 import com.circaso.core.sync.ConnectionState
 import com.circaso.feature.profile.domain.AvatarImage
 import com.circaso.feature.profile.domain.CheckHandleUseCase
@@ -42,6 +49,12 @@ sealed interface HandleCheck {
     data class TooManyChecks(val retryAfterSeconds: Int?) : HandleCheck
 }
 
+/**
+ * The full-screen camera for a new profile photo. [start] is null while the camera opens; [shooting] while the shutter
+ * is working; [shot] is the photo waiting for Use Photo or Retake (already encoded for upload).
+ */
+data class ProfileCamera(val start: CameraStart? = null, val shooting: Boolean = false, val shot: PickedImage? = null)
+
 data class EditProfileUiState(
     val profile: Profile? = null,
     /** Everything the person changed was saved: the screen closes (Apple's Save commits and leaves). */
@@ -56,6 +69,12 @@ data class EditProfileUiState(
     val online: Boolean = true,
     /** One line under the form: a confirmation or an error. */
     val message: String? = null,
+    /** The photo sheet's recents strip, newest first; empty without library access. */
+    val recents: List<LibraryItem> = emptyList(),
+    /** Null until the sheet has asked. Denied hides the strip (the buttons stay); Limited adds Manage. */
+    val recentsAccess: LibraryAccess? = null,
+    /** The profile camera while it is open. */
+    val camera: ProfileCamera? = null,
 ) {
     val nameChanged get() = profile != null && name.trim() != profile.displayName
     val aboutChanged get() = profile != null && about.trim() != profile.about.orEmpty()
@@ -81,11 +100,15 @@ class EditProfileViewModel(
     private val picker: ImagePicker,
     private val uploadAvatar: UploadAvatarUseCase,
     private val removeAvatar: RemoveAvatarUseCase,
+    private val library: MediaLibrary,
+    /** The in-app camera (shared with Moments); the screen hands it to the viewfinder. */
+    val cameraDevice: MomentCamera,
     private val debounceMillis: Long = 400,
 ) : ViewModel() {
     private val _state = MutableStateFlow(EditProfileUiState())
     val state: StateFlow<EditProfileUiState> = _state.asStateFlow()
     private var checkJob: Job? = null
+    private var recentsJob: Job? = null
 
     init {
         viewModelScope.launch {
@@ -172,12 +195,84 @@ class EditProfileViewModel(
         }
     }
 
-    fun onChangePhoto() {
+    /** The system picker: everything the strip doesn't show. Closing it changes nothing. */
+    fun onChangePhoto() = uploadFrom(unreadable = null) { picker.pick() }
+
+    /**
+     * The photo sheet opened: its recents strip is filled now, and only now is the library permission asked (never at
+     * launch). Each kind is asked once by the platform, so a refusal isn't asked again; the strip then just stays hidden.
+     */
+    fun onPhotoSheetShown() = loadRecents(ask = true)
+
+    /** Limited access: the system's own way to choose more photos (or the app's settings), then the strip again. */
+    fun onManageRecents() {
+        viewModelScope.launch {
+            library.manage(LibraryKind.Photo)
+            loadRecents(ask = false)
+        }
+    }
+
+    /** A tap on the strip uploads that photo at once, at full avatar quality. */
+    fun onUseRecent(item: LibraryItem) = uploadFrom(unreadable = "Couldn't open that photo. Try another one.") { library.loadAvatar(item) }
+
+    private fun loadRecents(ask: Boolean) {
+        recentsJob?.cancel()
+        recentsJob = viewModelScope.launch {
+            val r = try { library.recents(LibraryKind.Photo, RecentsLimit, ask) } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) { null }
+            if (r != null) _state.update { it.copy(recents = r.items, recentsAccess = r.access) }
+        }
+    }
+
+    /** Take Photo: the camera alone is asked for (no microphone); a refusal shows its own screen with Open Settings. */
+    fun onOpenCamera() {
+        if (!_state.value.canChangeAvatar || _state.value.camera != null) return
+        _state.update { it.copy(camera = ProfileCamera(), message = null) }
+        viewModelScope.launch {
+            val start = try { cameraDevice.openForPhoto() } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) { CameraStart.Unavailable }
+            _state.update { s -> s.copy(camera = s.camera?.copy(start = start)) }
+        }
+    }
+
+    fun onShutter() {
+        val cam = _state.value.camera ?: return
+        if (cam.start != CameraStart.Started || cam.shooting || cam.shot != null) return
+        _state.update { s -> s.copy(camera = s.camera?.copy(shooting = true)) }
+        viewModelScope.launch {
+            val shot = try { cameraDevice.takeProfilePhoto() } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) { null }
+            _state.update { s ->
+                s.copy(camera = s.camera?.copy(shooting = false, shot = shot), message = if (shot == null && s.camera != null) "Couldn't take the photo. Try again." else s.message)
+            }
+        }
+    }
+
+    fun onRetake() = _state.update { s -> s.copy(camera = s.camera?.copy(shot = null)) }
+
+    fun onFlipCamera() { if (_state.value.camera?.start == CameraStart.Started) cameraDevice.flip() }
+
+    /** Use Photo: the camera closes and the photo goes up, with the same busy and error states as the other sources. */
+    fun onUsePhoto() {
+        val shot = _state.value.camera?.shot ?: return
+        if (!_state.value.canChangeAvatar) return // offline: the shot stays, and the screen says it needs a connection
+        onCloseCamera()
+        uploadFrom(unreadable = null) { shot }
+    }
+
+    fun onCloseCamera() {
+        if (_state.value.camera == null) return
+        cameraDevice.close()
+        _state.update { it.copy(camera = null) }
+    }
+
+    /**
+     * One way up for every source (the picker, the strip, the camera): busy over the avatar, then the server's answer
+     * in plain words. Nothing to upload: [unreadable] is said when there is something to say (a closed picker is not).
+     */
+    private fun uploadFrom(unreadable: String?, load: suspend () -> PickedImage?) {
         if (!_state.value.canChangeAvatar) return
         _state.update { it.copy(avatarBusy = true, message = null) }
         viewModelScope.launch {
-            val picked = try { picker.pick() } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) { null }
-            if (picked == null) { _state.update { it.copy(avatarBusy = false) }; return@launch } // closed the picker: nothing changes
+            val picked = try { load() } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) { null }
+            if (picked == null) { _state.update { it.copy(avatarBusy = false, message = unreadable) }; return@launch }
             val message = when (val r = uploadAvatar(AvatarImage(picked.bytes, picked.contentType))) {
                 is AppResult.Success -> "Your photo is updated."
                 is AppResult.Failure -> ErrorMessages.forError(r.error)
@@ -185,6 +280,8 @@ class EditProfileViewModel(
             _state.update { it.copy(avatarBusy = false, message = message) }
         }
     }
+
+    override fun onCleared() { if (_state.value.camera != null) cameraDevice.close() }
 
     fun onRemovePhoto() {
         if (!_state.value.canChangeAvatar || _state.value.profile?.avatarUrl == null) return
@@ -198,5 +295,9 @@ class EditProfileViewModel(
         }
     }
 
-    private companion object { const val MinHandle = 3 }
+    private companion object {
+        const val MinHandle = 3
+        /** Enough to scroll a little; the picker has the rest. */
+        const val RecentsLimit = 24
+    }
 }

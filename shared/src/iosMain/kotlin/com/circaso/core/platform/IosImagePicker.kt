@@ -77,3 +77,16 @@ internal fun encodeForUpload(image: UIImage): PickedImage? {
     }
     return null
 }
+
+/**
+ * The centre square of [image] at its own pixel size (UIKit applies the rotation while drawing): what the profile
+ * camera's round guide framed. Null for an empty image.
+ */
+internal fun centreSquare(image: UIImage): UIImage? {
+    val (w, h) = image.size.useContents { width to height }
+    if (w <= 0.0 || h <= 0.0) return null
+    val side = kotlin.math.min(w, h)
+    val format = platform.UIKit.UIGraphicsImageRendererFormat.defaultFormat().apply { setScale(1.0) }
+    return UIGraphicsImageRenderer(size = CGSizeMake(side, side), format = format)
+        .imageWithActions { image.drawInRect(CGRectMake(-(w - side) / 2, -(h - side) / 2, w, h)) }
+}

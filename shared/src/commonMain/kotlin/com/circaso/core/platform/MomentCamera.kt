@@ -35,6 +35,19 @@ interface MomentCamera {
     fun flip()
     fun setFlash(on: Boolean)
     fun close()
+
+    /**
+     * The camera for a profile photo: the camera permission alone (never the microphone, there is no video), set up for
+     * the sharpest still, starting on the front camera. Answers like [open].
+     */
+    suspend fun openForPhoto(): CameraStart = open()
+
+    /**
+     * A profile photo from the sensor at full size, not a moment's [MomentPhotoMaxSide]: cropped to the centre square
+     * (what the round guide over a square viewfinder frames) and encoded with the avatar rules ([AvatarMaxSide],
+     * [AvatarQualitySteps], [AvatarSideSteps], under [AvatarMaxBytes]). Null when the shot failed.
+     */
+    suspend fun takeProfilePhoto(): PickedImage? = null
 }
 
 /** The live camera picture, filling [modifier]. Draws nothing where there is no camera. */

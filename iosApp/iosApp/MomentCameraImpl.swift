@@ -23,6 +23,8 @@ final class MomentCameraImpl: NSObject, MomentCameraProvider, AVCapturePhotoCapt
     private var rotation: AVCaptureDevice.RotationCoordinator?
 
     private var photoCompletion: ((MomentShot?) -> Void)?
+    /// The shot in flight is a profile photo: handed over as the sensor gave it, not scaled to a moment's size.
+    private var photoFull = false
     private var stopCompletion: ((MomentShot?) -> Void)?
     /// A clip that finished by itself (the 60 s limit) before anyone asked for it.
     private var finishedShot: MomentShot?
@@ -30,19 +32,39 @@ final class MomentCameraImpl: NSObject, MomentCameraProvider, AVCapturePhotoCapt
 
     // MARK: Opening
 
-    func open(completion: @escaping (KotlinInt) -> Void) {
+    /// [photoOnly]: the profile camera. No microphone prompt (a still has no sound), the photo preset for the sharpest
+    /// 4:3 still, and the front camera first (a selfie is the usual profile photo). Moments get the video preset back.
+    func open(photoOnly: Bool, completion: @escaping (KotlinInt) -> Void) {
         let answer: (Int32) -> Void = { code in DispatchQueue.main.async { completion(KotlinInt(int: code)) } }
         guard (Self.camera(front: false) ?? Self.camera(front: true)) != nil else { answer(2); return }
         AVCaptureDevice.requestAccess(for: .video) { granted in
             guard granted else { answer(1); return }
-            // The microphone is only for the sound of a video; a refusal still leaves photos and silent clips.
-            AVCaptureDevice.requestAccess(for: .audio) { _ in
+            let start = {
                 self.queue.async {
                     let ok = self.configure()
+                    if ok {
+                        self.usePreset(photoOnly ? .photo : .high)
+                        if photoOnly && !self.front { self.useCamera(front: true) }
+                    }
                     if ok && !self.session.isRunning { self.session.startRunning() }
                     answer(ok ? 0 : 2)
                 }
             }
+            // The microphone is only for the sound of a video; a refusal still leaves photos and silent clips.
+            if photoOnly { start() } else { AVCaptureDevice.requestAccess(for: .audio) { _ in start() } }
+        }
+    }
+
+    /// Runs on [queue]. The new format is only active after the commit, so the camera's settings follow in a second pass.
+    private func usePreset(_ preset: AVCaptureSession.Preset) {
+        guard session.sessionPreset != preset, session.canSetSessionPreset(preset) else { return }
+        session.beginConfiguration()
+        session.sessionPreset = preset
+        session.commitConfiguration()
+        if let device = videoInput?.device {
+            session.beginConfiguration()
+            deviceChanged(device)
+            session.commitConfiguration()
         }
     }
 
@@ -99,10 +121,16 @@ final class MomentCameraImpl: NSObject, MomentCameraProvider, AVCapturePhotoCapt
 
     // MARK: Photo
 
-    func takePhoto(completion: @escaping (MomentShot?) -> Void) {
+    func takePhoto(completion: @escaping (MomentShot?) -> Void) { capture(full: false, completion: completion) }
+
+    /// A profile photo: the full still; Kotlin crops it to the guide's square and encodes it with the avatar rules.
+    func takeFullPhoto(completion: @escaping (MomentShot?) -> Void) { capture(full: true, completion: completion) }
+
+    private func capture(full: Bool, completion: @escaping (MomentShot?) -> Void) {
         queue.async {
             guard self.videoInput != nil, self.photoCompletion == nil, self.session.isRunning else { DispatchQueue.main.async { completion(nil) }; return }
             self.photoCompletion = completion
+            self.photoFull = full
             self.applyCaptureRotation(self.photoOutput.connection(with: .video))
             let settings = AVCapturePhotoSettings(format: [AVVideoCodecKey: AVVideoCodecType.jpeg])
             settings.maxPhotoDimensions = self.photoOutput.maxPhotoDimensions
@@ -113,12 +141,17 @@ final class MomentCameraImpl: NSObject, MomentCameraProvider, AVCapturePhotoCapt
 
     func photoOutput(_ output: AVCapturePhotoOutput, didFinishProcessingPhoto photo: AVCapturePhoto, error: Error?) {
         let data = error == nil ? photo.fileDataRepresentation() : nil
-        DispatchQueue.global(qos: .userInitiated).async {
-            let shot = data.flatMap(Self.photoShot)
-            self.queue.async {
-                let done = self.photoCompletion
-                self.photoCompletion = nil
-                DispatchQueue.main.async { done?(shot) }
+        queue.async {
+            let full = self.photoFull
+            DispatchQueue.global(qos: .userInitiated).async {
+                let shot = full
+                    ? data.map { MomentShot(data: $0, thumb: nil, width: 0, height: 0, durationMs: 0, path: nil) }
+                    : data.flatMap(Self.photoShot)
+                self.queue.async {
+                    let done = self.photoCompletion
+                    self.photoCompletion = nil
+                    DispatchQueue.main.async { done?(shot) }
+                }
             }
         }
     }
@@ -214,21 +247,26 @@ final class MomentCameraImpl: NSObject, MomentCameraProvider, AVCapturePhotoCapt
 
     func flip() {
         queue.async {
-            guard self.configured, !self.movieOutput.isRecording,
-                  let device = Self.camera(front: !self.front), let input = try? AVCaptureDeviceInput(device: device) else { return }
-            self.session.beginConfiguration()
-            if let old = self.videoInput { self.session.removeInput(old) }
-            if self.session.canAddInput(input) {
-                self.session.addInput(input)
-                self.videoInput = input
-                self.front = !self.front
-            } else if let old = self.videoInput {
-                self.session.addInput(old)
-            }
-            if let current = self.videoInput?.device { self.deviceChanged(current) }
-            self.session.commitConfiguration()
-            DispatchQueue.main.async { NotificationCenter.default.post(name: MomentPreviewView.deviceChanged, object: self) }
+            guard self.configured, !self.movieOutput.isRecording else { return }
+            self.useCamera(front: !self.front)
         }
+    }
+
+    /// Runs on [queue]: swaps to the front or back camera, keeping the current one if the other can't be added.
+    private func useCamera(front wanted: Bool) {
+        guard let device = Self.camera(front: wanted), let input = try? AVCaptureDeviceInput(device: device) else { return }
+        session.beginConfiguration()
+        if let old = videoInput { session.removeInput(old) }
+        if session.canAddInput(input) {
+            session.addInput(input)
+            videoInput = input
+            front = wanted
+        } else if let old = videoInput {
+            session.addInput(old)
+        }
+        if let current = videoInput?.device { deviceChanged(current) }
+        session.commitConfiguration()
+        DispatchQueue.main.async { NotificationCenter.default.post(name: MomentPreviewView.deviceChanged, object: self) }
     }
 
     func setFlash(on: Bool) {

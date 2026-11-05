@@ -27,9 +27,14 @@ import kotlin.math.roundToInt
  * Everything a shot carries crosses in one [MomentShot] so the bridge stays a handful of callbacks.
  */
 interface MomentCameraProvider {
-    /** [completion]: 0 started, 1 permission refused, 2 no camera (the simulator). */
-    fun open(completion: (Int) -> Unit)
+    /**
+     * [completion]: 0 started, 1 permission refused, 2 no camera (the simulator). [photoOnly]: the profile camera, so
+     * no microphone prompt, the photo preset (4:3, the sharpest still) and the front camera first.
+     */
+    fun open(photoOnly: Boolean, completion: (Int) -> Unit)
     fun takePhoto(completion: (MomentShot?) -> Unit)
+    /** The still exactly as the sensor gave it (no downscale, no thumb; sizes 0), for a profile photo. */
+    fun takeFullPhoto(completion: (MomentShot?) -> Unit)
     fun startVideo(completion: (Boolean) -> Unit)
     /** Also answers with the clip after a recording stopped by itself at [MomentVideoMaxMs]. */
     fun stopVideo(completion: (MomentShot?) -> Unit)
@@ -55,10 +60,13 @@ object MomentCameraBridge {
 }
 
 class IosMomentCamera : MomentCamera {
-    override suspend fun open(): CameraStart {
+    override suspend fun open(): CameraStart = open(photoOnly = false)
+    override suspend fun openForPhoto(): CameraStart = open(photoOnly = true)
+
+    private suspend fun open(photoOnly: Boolean): CameraStart {
         val p = MomentCameraBridge.provider ?: return CameraStart.Unavailable
         return suspendCancellableCoroutine { cont ->
-            p.open { code ->
+            p.open(photoOnly) { code ->
                 if (cont.isActive) cont.resume(when (code) { 0 -> CameraStart.Started; 1 -> CameraStart.PermissionDenied; else -> CameraStart.Unavailable })
             }
         }
@@ -67,6 +75,15 @@ class IosMomentCamera : MomentCamera {
     override suspend fun takePhoto(): CapturedMedia? {
         val p = MomentCameraBridge.provider ?: return null
         return suspendCancellableCoroutine<MomentShot?> { cont -> p.takePhoto { if (cont.isActive) cont.resume(it) } }?.toMedia("image/jpeg")
+    }
+
+    /** Full size from the Swift side, then cropped to the centre square and encoded with the avatar rules, off the main thread. */
+    override suspend fun takeProfilePhoto(): PickedImage? {
+        val p = MomentCameraBridge.provider ?: return null
+        val shot = suspendCancellableCoroutine<MomentShot?> { cont -> p.takeFullPhoto { if (cont.isActive) cont.resume(it) } } ?: return null
+        return kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
+            UIImage(data = shot.data)?.let(::centreSquare)?.let(::encodeForUpload)
+        }
     }
 
     override suspend fun startVideo(): Boolean {

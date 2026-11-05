@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Box
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.layout.layout
 import androidx.compose.foundation.background
 import com.circaso.designsystem.motion.pressable
 import com.circaso.designsystem.chrome.CircasoSheet
@@ -53,8 +54,27 @@ fun EditProfileScreen(viewModel: EditProfileViewModel, onBack: () -> Unit) {
     EditProfileContent(
         state, onBack, viewModel::onName, viewModel::onAbout, viewModel::onSave, viewModel::onHandle, viewModel::onClaimHandle, viewModel::onChangePhoto, viewModel::onRemovePhoto,
         onSaveAll = viewModel::onSaveAll, onMessageShown = viewModel::onMessageShown,
+        photo = PhotoActions(
+            onSheetShown = viewModel::onPhotoSheetShown, onTakePhoto = viewModel::onOpenCamera, onUseRecent = viewModel::onUseRecent,
+            onManageRecents = viewModel::onManageRecents, onShutter = viewModel::onShutter, onFlip = viewModel::onFlipCamera,
+            onRetake = viewModel::onRetake, onUsePhoto = viewModel::onUsePhoto, onCloseCamera = viewModel::onCloseCamera,
+        ),
+        viewfinder = { m -> com.circaso.core.platform.CameraViewfinder(viewModel.cameraDevice, m) },
     )
 }
+
+/** What the photo sheet and the profile camera do; the defaults do nothing (previews). */
+class PhotoActions(
+    val onSheetShown: () -> Unit = {},
+    val onTakePhoto: () -> Unit = {},
+    val onUseRecent: (com.circaso.core.platform.LibraryItem) -> Unit = {},
+    val onManageRecents: () -> Unit = {},
+    val onShutter: () -> Unit = {},
+    val onFlip: () -> Unit = {},
+    val onRetake: () -> Unit = {},
+    val onUsePhoto: () -> Unit = {},
+    val onCloseCamera: () -> Unit = {},
+)
 
 /** Profile editing. Stateless so it can be previewed. */
 @Composable
@@ -70,10 +90,16 @@ fun EditProfileContent(
     onRemovePhoto: () -> Unit = {},
     onSaveAll: (() -> Unit)? = null,
     onMessageShown: () -> Unit = {},
+    photo: PhotoActions = PhotoActions(),
+    viewfinder: @Composable (Modifier) -> Unit = {},
+    /** Previews only: draw the photo sheet open. */
+    photoSheetOpen: Boolean = false,
 ) {
     val c = CircasoTheme.colors
     val t = CircasoTheme.typography
-    var photoChoices by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(false) }
+    var photoChoices by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(photoSheetOpen) }
+    // The strip is filled (and the library permission asked, the first time) when the sheet opens, never before.
+    LaunchedEffect(photoChoices) { if (photoChoices) photo.onSheetShown() }
     var confirmDiscard by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(false) }
     val handleChanged = state.handle.isNotBlank() && state.handle != state.profile?.handle
     // Leaving with edits that weren't saved asks first, rather than dropping them silently.
@@ -110,10 +136,21 @@ fun EditProfileContent(
                 onConfirm = { confirmDiscard = false; onBack() }, onDismiss = { confirmDiscard = false },
             )
             CircasoSheet(visible = photoChoices, onDismiss = { photoChoices = false }, label = "Profile photo") {
-                CircasoButton("Choose Photo", { photoChoices = false; onChangePhoto() }, size = ButtonSize.Large, block = true)
-                CircasoButton("Remove Photo", { photoChoices = false; onRemovePhoto() }, style = ButtonStyle.Destructive, size = ButtonSize.Large, block = true)
-                CircasoButton("Cancel", { photoChoices = false }, style = ButtonStyle.Plain, size = ButtonSize.Large, block = true)
+                PhotoSheetContent(
+                    state,
+                    onUseRecent = { item -> photoChoices = false; photo.onUseRecent(item) },
+                    onManage = photo.onManageRecents,
+                    onTakePhoto = { photoChoices = false; photo.onTakePhoto() },
+                    onChoose = { photoChoices = false; onChangePhoto() },
+                    onRemove = { photoChoices = false; onRemovePhoto() },
+                    onCancel = { photoChoices = false },
+                )
             }
+            ProfileCameraLayer(
+                state.camera, state.online, viewfinder,
+                onClose = photo.onCloseCamera, onShutter = photo.onShutter, onFlip = photo.onFlip, onRetake = photo.onRetake, onUse = photo.onUsePhoto,
+                onChooseInstead = { photo.onCloseCamera(); onChangePhoto() },
+            )
         },
     ) {
         Column(
@@ -124,7 +161,7 @@ fun EditProfileContent(
             Box(Modifier.align(Alignment.CenterHorizontally)) {
                 val hasPhoto = state.profile?.avatarUrl != null
                 Box(
-                    Modifier.pressable(enabled = state.canChangeAvatar, role = androidx.compose.ui.semantics.Role.Button, onClick = { if (hasPhoto) photoChoices = true else onChangePhoto() })
+                    Modifier.pressable(enabled = state.canChangeAvatar, role = androidx.compose.ui.semantics.Role.Button, onClick = { photoChoices = true })
                         .semantics { contentDescription = if (hasPhoto) "Change profile photo" else "Add profile photo" },
                 ) {
                     Avatar(state.name.ifBlank { "?" }, size = 120.dp, imageUrl = state.profile?.avatarUrl)
@@ -186,6 +223,94 @@ fun EditProfileContent(
         }
     }
 }
+
+/**
+ * The photo sheet: the newest photos on the phone in a strip (tap one to use it), then Take Photo, Choose Photo for
+ * everything else, Remove Photo when there is one, and Cancel. Without library access the strip simply isn't there and
+ * the buttons carry on; with limited access a Manage tile leads the strip.
+ */
+@Composable
+private fun PhotoSheetContent(
+    state: EditProfileUiState,
+    onUseRecent: (com.circaso.core.platform.LibraryItem) -> Unit,
+    onManage: () -> Unit,
+    onTakePhoto: () -> Unit,
+    onChoose: () -> Unit,
+    onRemove: () -> Unit,
+    onCancel: () -> Unit,
+) {
+    val limited = state.recentsAccess == com.circaso.core.platform.LibraryAccess.Limited
+    val reduce = CircasoTheme.reduceMotion
+    // The strip arrives a moment after the sheet: it opens downwards rather than jumping in (at once under reduced motion).
+    androidx.compose.animation.AnimatedVisibility(
+        state.recents.isNotEmpty() || limited,
+        enter = if (reduce) androidx.compose.animation.fadeIn(androidx.compose.animation.core.snap())
+        else androidx.compose.animation.expandVertically(androidx.compose.animation.core.tween(com.circaso.designsystem.theme.CircasoMotion.BaseMs)) +
+            androidx.compose.animation.fadeIn(androidx.compose.animation.core.tween(com.circaso.designsystem.theme.CircasoMotion.BaseMs)),
+        exit = if (reduce) androidx.compose.animation.fadeOut(androidx.compose.animation.core.snap())
+        else androidx.compose.animation.shrinkVertically(androidx.compose.animation.core.tween(com.circaso.designsystem.theme.CircasoMotion.QuickMs)) +
+            androidx.compose.animation.fadeOut(androidx.compose.animation.core.tween(com.circaso.designsystem.theme.CircasoMotion.QuickMs)),
+    ) {
+        RecentsStrip(state.recents, limited, onUseRecent, onManage)
+    }
+    Column(verticalArrangement = Arrangement.spacedBy(CircasoSpacing.s2)) {
+        CircasoButton("Take Photo", onTakePhoto, style = ButtonStyle.Secondary, size = ButtonSize.Large, block = true, icon = CircasoIcon.Camera)
+        CircasoButton("Choose Photo", onChoose, style = ButtonStyle.Secondary, size = ButtonSize.Large, block = true, icon = CircasoIcon.Photo)
+        if (state.profile?.avatarUrl != null) {
+            CircasoButton("Remove Photo", onRemove, style = ButtonStyle.Destructive, size = ButtonSize.Large, block = true)
+        }
+        CircasoButton("Cancel", onCancel, style = ButtonStyle.Plain, size = ButtonSize.Large, block = true)
+    }
+}
+
+/** Square photo tiles, edge to edge across the sheet so the row reads as scrollable; Manage first when access is limited. */
+@Composable
+private fun RecentsStrip(
+    recents: List<com.circaso.core.platform.LibraryItem>,
+    limited: Boolean,
+    onUse: (com.circaso.core.platform.LibraryItem) -> Unit,
+    onManage: () -> Unit,
+) {
+    val c = CircasoTheme.colors
+    val bleed = SheetSidePadding
+    androidx.compose.foundation.lazy.LazyRow(
+        Modifier.fillMaxWidth().layout { measurable, constraints ->
+            // Past the sheet's side padding, to its edges; the content padding brings the first tile back in line.
+            val extra = bleed.roundToPx() * 2
+            val wide = if (constraints.hasBoundedWidth) constraints.copy(minWidth = constraints.minWidth + extra, maxWidth = constraints.maxWidth + extra) else constraints
+            val placeable = measurable.measure(wide)
+            layout(placeable.width - extra, placeable.height) { placeable.place(-extra / 2, 0) }
+        }.semantics { contentDescription = "Recent photos" },
+        contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = bleed),
+        horizontalArrangement = Arrangement.spacedBy(CircasoSpacing.s2),
+    ) {
+        if (limited) item(key = "manage") {
+            Column(
+                Modifier.size(RecentTile).clip(com.circaso.designsystem.theme.CircasoShapes.md).background(c.fill)
+                    .pressable(onClick = onManage)
+                    .semantics(mergeDescendants = true) { contentDescription = "Circaso can see only the photos you chose. Choose more" },
+                horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(CircasoSpacing.s1, Alignment.CenterVertically),
+            ) {
+                CircasoIconImage(CircasoIcon.Plus, c.ink, Modifier.size(20.dp))
+                BasicText("Manage", style = CircasoTheme.typography.caption1.copy(color = c.ink), maxLines = 1)
+            }
+        }
+        items(recents.size, key = { recents[it].id }) { i ->
+            val item = recents[i]
+            Box(
+                Modifier.size(RecentTile).clip(com.circaso.designsystem.theme.CircasoShapes.md).background(c.fill)
+                    .pressable(onClick = { onUse(item) })
+                    .semantics { contentDescription = "Recent photo ${i + 1} of ${recents.size}. Use as profile photo" },
+            ) { com.circaso.core.platform.LibraryThumbnail(item, Modifier.fillMaxSize()) }
+        }
+    }
+}
+
+/** A recent photo's tile in the sheet: big enough to recognise a face, four and a bit across a phone. */
+private val RecentTile = 80.dp
+
+/** CircasoSheet's own side padding, which the strip runs past. */
+private val SheetSidePadding = 20.dp
 
 @OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class)
 @Composable

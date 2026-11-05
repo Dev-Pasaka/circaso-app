@@ -20,7 +20,7 @@ val homeModule = module {
     }
     viewModel { (phone: String?) -> com.circaso.feature.support.presentation.LostAccessViewModel(phone, get()) }
     viewModel { YouViewModel(get(), get(), get(), get(), get(), get(), kickOutbox = get(named("kickOutbox")), prefs = get()) }
-    viewModel { EditProfileViewModel(get(), get(), get(), get(), get(), get(), get(), get()) }
+    viewModel { EditProfileViewModel(get(), get(), get(), get(), get(), get(), get(), get(), get(), get()) }
     viewModel { ContactsViewModel(get(), get(), get(), get(), get(), get(), get(), get(), get()) }
     viewModel { BlockedViewModel(get(), get(), get()) }
     viewModel { SecurityViewModel(get(), get(), get(), get(), get(), get(), get(), get(), get()) }

@@ -212,6 +212,12 @@ class AndroidMediaLibrary(private val context: Context) : MediaLibrary {
 
     override suspend fun load(item: LibraryItem): CapturedMedia? = load(Uri.parse(item.id), item.kind)
 
+    /** The profile photo's own encoder (full size up to AvatarMaxSide), not a moment's 2048 px. */
+    override suspend fun loadAvatar(item: LibraryItem): PickedImage? {
+        if (item.kind != LibraryKind.Photo) return null
+        return withContext(Dispatchers.IO) { runCatching { encodeForUpload(context, Uri.parse(item.id)) }.getOrNull() }
+    }
+
     override suspend fun pick(kind: LibraryKind): CapturedMedia? {
         val uri = MomentPickerBridge.pick(kind) ?: return null
         return load(uri, kind)
