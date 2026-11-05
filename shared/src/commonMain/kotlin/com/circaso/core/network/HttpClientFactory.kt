@@ -34,6 +34,7 @@ fun createHttpClient(config: ApiConfig, tokens: AccessTokenProvider, json: Json)
     defaultRequest {
         url.takeFrom(config.baseUrl)
         header("X-Client-Version", config.clientVersion)
+        config.userAgent?.let { header(io.ktor.http.HttpHeaders.UserAgent, it) }
     }
     install(requestHeaders(tokens))
 }

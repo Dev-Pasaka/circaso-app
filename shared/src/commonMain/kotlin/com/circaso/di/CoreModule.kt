@@ -67,7 +67,7 @@ val coreModule = module {
     single<SessionRefresher> { get<AuthManager>() }
     single {
         val info = get<ClientInfo>()
-        ApiConfig(baseUrl = ApiConfig.DEV_BASE_URL, clientVersion = "${info.platform}/${info.appVersion}")
+        ApiConfig(baseUrl = ApiConfig.DEV_BASE_URL, clientVersion = "${info.platform}/${info.appVersion}", userAgent = com.circaso.core.network.circasoUserAgent(info))
     }
     single { NetworkHealth() }
     single { NetworkEvents() }

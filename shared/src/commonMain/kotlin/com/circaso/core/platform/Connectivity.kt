@@ -17,6 +17,9 @@ interface ClientInfo {
     val model: String
     val osVersion: String
 
+    /** Who made the phone (`Xiaomi`, `Apple`): with [model] it names the device in the server's request log. */
+    val manufacturer: String get() = ""
+
     /** A debug build (Android debuggable, iOS debug binary): developer-only readouts such as Asha's voice timing show. */
     val debugBuild: Boolean get() = false
 }

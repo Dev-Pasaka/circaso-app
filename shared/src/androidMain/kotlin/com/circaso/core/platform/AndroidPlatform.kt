@@ -17,6 +17,7 @@ class AndroidClientInfo(context: Context) : ClientInfo {
     }.getOrNull() ?: "0.0.0"
     override val model: String = Build.MODEL
     override val osVersion: String = Build.VERSION.RELEASE
+    override val manufacturer: String = Build.MANUFACTURER.replaceFirstChar { it.uppercase() }
     override val debugBuild: Boolean = (context.applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE) != 0
 }
 
