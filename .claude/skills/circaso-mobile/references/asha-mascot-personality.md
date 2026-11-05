@@ -1,3 +1,6 @@
+> **Superseded 2026-11-05 (Pasaka): the mascot is removed from the app** (see `asha-next.md`, top note). This file is
+> kept as history; its tone and sass rules may still inform Asha's personality, which is backend-side.
+
 # Asha and Robbie: personality, moods and reactions (2026-11-04)
 
 Two mascots, one assistant. Asha is the female look, Robbie the male look; the voice the person picks decides which

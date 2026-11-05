@@ -101,6 +101,10 @@ Media3 1.4.1, multiplatform-markdown-renderer 0.46.0.
 - D-AS3 Live voice over its own WebSocket (Opus up, mulaw down, barge-in); clips only for Android < 10 and Swahili.
   Voice by Kimi; selectable voices with samples; separate conversations (new, past, delete).
 - D-AS4 Allowance numbers are whatever the server says; nothing hard-coded.
+- D-AS5 (2026-11-05) No mascot: the Rive octopus (Asha/Robbie) is removed with its runtime and assets; Asha is her
+  mark. Her chat header has a menu (⋮ Android, ellipsis iOS) opening one sheet: New chat, Recent chats, Usage &
+  credits, Settings (voice). Voice mode shows the call as a chat transcript under an animated logo whose waves follow
+  the real mic / playback level. See `asha-next.md` (top note).
 
 ### Support and admin
 - D-S1 Support is a dedicated, verified **support account kind**: no wallet, can't sign in on the phones; money is off in
@@ -140,7 +144,7 @@ Media3 1.4.1, multiplatform-markdown-renderer 0.46.0.
 | Wallet | Create (Circle PIN), balance per network with fiat, Send / Receive (QR show and scan), pay from chat, send to an address, payment detail, history, networks, money cards in chat, quick replies, currency setting, coin icons, money sound. |
 | Chamas | Goal strip, contributions, payout requests and approvals, group wallet screen, intro card (treasurer model, flag off). |
 | Groups with wallets (flag) | New Group with the wallet switch (GW1), group wallet set-up with its own PIN and biometrics (GW2–GW5c), group info money rows (GW6–GW8b, locked, leaving blocked), target (GW7b), one wallet design for every wallet with the corner switcher (GW16 as redrawn 2026-11-04, D-M9), contribute (GW9a2/GW9d), Pay Payout (GW9, GW11, GW19), Paying from and Request Payout (GW9b, GW9c, GW10). Not yet on a device. |
-| Asha | Text and live voice, rich answers, PDF statements, conversations, voice picker. |
+| Asha | Text and live voice, rich answers, PDF statements, conversations, voice picker; menu sheet (new chat, recents with delete, usage & credits, settings); voice mode transcript with the animated logo (2026-11-05, mascot removed). |
 | Support | Help screen, support chat UI (needs the support account), recovery case (SP06). |
 | Adaptive | Phones portrait and landscape, iPad 11"/13" checked on simulators. |
 
