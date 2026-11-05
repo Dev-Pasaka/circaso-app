@@ -478,7 +478,21 @@ class PayViewModel(
         // wallet is checked by W4 itself (members only).
         if (userId != null) check(userId, null)
         wallets?.let { w -> viewModelScope.launch { if (groupWallets.isOn) w.refresh(intent.fromWalletId, intent.groupId ?: intent.chatId) } }
-        quotePayment?.let { quote -> viewModelScope.launch { quoteAsTyped(quote) } }
+        quotePayment?.let { quote ->
+            viewModelScope.launch { quoteAsTyped(quote) }
+            viewModelScope.launch { keepQuoteForTheSamePayment() }
+        }
+    }
+
+    /**
+     * Marked stale but nothing that decides the fee changed (in the chat, typing the note after "#500" passes the same
+     * amount again): the quote on the card is still this payment's, so it counts again at once. Never asks W17 itself,
+     * so a failed quote can't turn into a loop. Without it Pay waited forever (2026-11-05).
+     */
+    private suspend fun keepQuoteForTheSamePayment() {
+        state.map { s -> if (s.feeStale && s.fee is PayFee.Quoted) keyOf(s)?.request else null }
+            .distinctUntilChanged()
+            .collect { request -> if (request != null && quotedFor?.request == request) local.update { it.copy(feeStale = false) } }
     }
 
     /**

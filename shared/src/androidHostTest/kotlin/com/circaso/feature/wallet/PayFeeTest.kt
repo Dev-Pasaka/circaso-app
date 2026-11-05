@@ -163,6 +163,19 @@ class PayFeeTest {
         assertTrue(feeFootnote(s).startsWith("One Circaso fee, network cost included."))
     }
 
+    @Test fun theSameAmountAgainKeepsTheQuoteAndPayComesBack() = runTest(dispatcher) {
+        // In the chat, typing the note after "#500" passes the same amount again: nothing that decides the fee changed.
+        val vm = vm(); keep(vm); advanceUntilIdle()
+        vm.onAmount("500"); advanceUntilIdle()
+        vm.onAmount("500"); advanceUntilIdle()
+
+        assertEquals(1, asked.size, "no second question for the same payment")
+        assertFalse(vm.state.value.feeStale, "the quote on the card counts again")
+        assertTrue(vm.state.value.canPay, "Pay is back")
+        vm.onPay(); advanceUntilIdle()
+        assertEquals("q1", paid.single().quoteId)
+    }
+
     @Test fun payingSendsTheQuoteThePersonSaw() = runTest(dispatcher) {
         val vm = vm(); keep(vm); advanceUntilIdle()
         vm.onAmount("500"); advanceUntilIdle()
