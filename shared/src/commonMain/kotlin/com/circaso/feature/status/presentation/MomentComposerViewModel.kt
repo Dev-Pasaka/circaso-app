@@ -153,6 +153,8 @@ class MomentComposerViewModel(
     private val now: () -> Long = { com.circaso.core.sync.nowMillis() },
     /** Where the composer starts; previews start it on a given screen (the gallery, the trimmer, several picked). */
     initial: MomentComposerUiState = MomentComposerUiState(),
+    /** Re-encoding a video after Share runs as background work, so leaving Circaso mid-way doesn't stop it. */
+    private val uploads: com.circaso.core.platform.BackgroundUploads = com.circaso.core.platform.NoBackgroundUploads,
 ) : ViewModel() {
     private val _state = MutableStateFlow(initial)
     val state: StateFlow<MomentComposerUiState> = _state.asStateFlow()
@@ -566,17 +568,21 @@ class MomentComposerViewModel(
         }
         _state.update { it.copy(sharing = true) }
         viewModelScope.launch {
-            val drafts = mutableListOf<MomentDraft>()
-            for ((index, item) in s.items.withIndex()) {
-                when (val draft = draftOf(item)) {
-                    is Draft.Ready -> drafts += draft.draft
-                    Draft.Missing -> { _state.update { it.copy(sharing = false, preparing = false, current = index, error = "This video isn’t on the phone any more. Pick it again.") }; return@launch }
-                    Draft.TooLarge -> { _state.update { it.copy(sharing = false, preparing = false, current = index, error = "This is too large to share. Keep videos under a minute.") }; return@launch }
+            // Preparing and queueing run as one piece of background work: leaving Circaso while a video re-encodes
+            // doesn't stop it, and the queued moments are the outbox's from there (they survive the process).
+            uploads.keep(com.circaso.core.platform.UploadKind.Moment) {
+                val drafts = mutableListOf<MomentDraft>()
+                for ((index, item) in s.items.withIndex()) {
+                    when (val draft = draftOf(item)) {
+                        is Draft.Ready -> drafts += draft.draft
+                        Draft.Missing -> { _state.update { it.copy(sharing = false, preparing = false, current = index, error = "This video isn’t on the phone any more. Pick it again.") }; return@keep }
+                        Draft.TooLarge -> { _state.update { it.copy(sharing = false, preparing = false, current = index, error = "This is too large to share. Keep videos under a minute.") }; return@keep }
+                    }
                 }
+                // Only once every one is ready: never half a batch posted and the rest left behind.
+                drafts.forEach { repository.post(it) }
+                _state.update { it.copy(sharing = false, preparing = false, shared = true) }
             }
-            // Only once every one is ready: never half a batch posted and the rest left behind.
-            drafts.forEach { repository.post(it) }
-            _state.update { it.copy(sharing = false, preparing = false, shared = true) }
         }
     }
 

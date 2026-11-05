@@ -7,6 +7,8 @@ import UIKit
 final class BackgroundUploadImpl: NSObject, BackgroundUploadProvider, URLSessionTaskDelegate {
     static let shared = BackgroundUploadImpl()
     static let identifier = "com.circaso.app.uploads"
+    /// PUTs that finished with nobody waiting (Circaso was closed): URL -> when. Read by IosBackgroundUploads.kt.
+    static let finishedKey = "circaso.uploads.finished"
 
     private let lock = NSLock()
     private var waiting: [Int: (path: String, progress: (KotlinLong, KotlinLong) -> Void, done: (KotlinBoolean) -> Void)] = [:]
@@ -32,6 +34,7 @@ final class BackgroundUploadImpl: NSObject, BackgroundUploadProvider, URLSession
         request.httpMethod = "PUT"
         headers.forEach { request.setValue($0.value, forHTTPHeaderField: $0.key) }
         let task = session.uploadTask(with: request, fromFile: URL(fileURLWithPath: path))
+        task.taskDescription = path // so the file can be cleaned up even if Circaso is relaunched before it finishes
         lock.lock(); waiting[task.taskIdentifier] = (path, progress, done); lock.unlock()
         task.resume()
     }
@@ -47,9 +50,24 @@ final class BackgroundUploadImpl: NSObject, BackgroundUploadProvider, URLSession
         let status = (task.response as? HTTPURLResponse)?.statusCode ?? 0
         let ok = error == nil && (200..<300).contains(status)
         lock.lock(); let entry = waiting.removeValue(forKey: task.taskIdentifier); lock.unlock()
-        guard let entry else { return } // finished after Circaso was closed: the outbox sends it again on launch
+        guard let entry else {
+            // Finished after Circaso was closed: write it down, so the resumed send completes it instead of
+            // uploading again (ResumableUpload asks BackgroundUploads.finished).
+            if let path = task.taskDescription { try? FileManager.default.removeItem(atPath: path) }
+            if ok, let url = task.originalRequest?.url?.absoluteString { Self.recordFinished(url) }
+            return
+        }
         try? FileManager.default.removeItem(atPath: entry.path)
         entry.done(KotlinBoolean(value: ok))
+    }
+
+    private static func recordFinished(_ url: String) {
+        let defaults = UserDefaults.standard
+        let now = Date().timeIntervalSince1970
+        var done = (defaults.dictionary(forKey: finishedKey) as? [String: Double]) ?? [:]
+        done = done.filter { now - $0.value < 24 * 60 * 60 } // a pre-signed URL lives 15 minutes; a day is plenty
+        done[url] = now
+        defaults.set(done, forKey: finishedKey)
     }
 
     func urlSessionDidFinishEvents(forBackgroundURLSession session: URLSession) {

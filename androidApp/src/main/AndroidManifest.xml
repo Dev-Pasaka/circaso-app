@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
 
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
@@ -84,6 +85,11 @@
             android:name="com.circaso.core.platform.UploadService"
             android:exported="false"
             android:foregroundServiceType="dataSync" />
+        <!-- The outbox's WorkManager job goes to the foreground (dataSync) when it runs an upload with Circaso closed. -->
+        <service
+            android:name="androidx.work.impl.foreground.SystemForegroundService"
+            android:foregroundServiceType="dataSync"
+            tools:node="merge" />
         <!-- Receives a new push token from Firebase and hands it to the app. -->
         <service
             android:name="com.circaso.core.platform.CircasoMessagingService"

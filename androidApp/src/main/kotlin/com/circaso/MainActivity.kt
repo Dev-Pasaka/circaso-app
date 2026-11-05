@@ -38,11 +38,24 @@ class MainActivity : ComponentActivity() {
             App()
         }
         openCall(intent)
+        debugUpload(intent)
     }
 
     override fun onNewIntent(intent: android.content.Intent) {
         super.onNewIntent(intent)
         openCall(intent)
+        debugUpload(intent)
+    }
+
+    /**
+     * Debug builds only: `--es debugUpload <megabytes>` queues a dummy upload through the real pipeline (never posted,
+     * see DebugUploadHandler), to prove on a phone that uploads survive leaving Circaso and the process dying.
+     */
+    private fun debugUpload(intent: android.content.Intent?) {
+        if ((applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE) == 0) return
+        val megabytes = intent?.getStringExtra("debugUpload")?.toIntOrNull() ?: return
+        intent.removeExtra("debugUpload") // once, not again on a configuration change
+        com.circaso.di.queueDebugUpload(megabytes)
     }
 
     /** From the incoming-call notification (design H1): show that call's answer screen. */

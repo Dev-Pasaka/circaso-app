@@ -67,6 +67,8 @@ data class MediaDetails(
     val liveStopSent: Boolean? = null,
     /** A video's first frame, a small base64 JPEG carried in the message so the bubble shows before the file loads. */
     val thumb: String? = null,
+    /** How far this phone's upload of the file got, so a send cut off by the process dying resumes it. Never sent. */
+    val upload: com.circaso.core.platform.UploadState? = null,
 ) {
     val isLive get() = liveId != null
 
@@ -171,6 +173,8 @@ class MediaMessages(
     /** The PUT goes through the platform's background uploader where there is one (iOS), so it outlives the app. */
     private val uploads: com.circaso.core.platform.BackgroundUploads = com.circaso.core.platform.NoBackgroundUploads,
 ) {
+    private val resumable = com.circaso.core.platform.ResumableUpload(crypto, files, uploads, storage, now)
+
     suspend fun sendLocation(chatId: String, point: GeoPoint, label: String?) {
         val details = MediaDetails(MediaDetails.Location, latitude = point.latitude, longitude = point.longitude, accuracy = point.accuracyMeters, label = label)
         val localId = insert(chatId, details) ?: return
@@ -221,28 +225,36 @@ class MediaMessages(
      */
     suspend fun uploadPending(localId: Long): AppResult<Unit> {
         val row = dao.byLocalId(localId) ?: return AppResult.Failure(AppError.Unexpected(null))
-        val details = MediaDetails.read(row.text) ?: return AppResult.Failure(AppError.Unexpected(null))
+        var details = MediaDetails.read(row.text) ?: return AppResult.Failure(AppError.Unexpected(null))
         if (details.kind == MediaDetails.Location || details.attachmentId != null) return AppResult.Success(Unit)
-        val plain = details.file?.let { files.read(it) } ?: return AppResult.Failure(AppError.Api("media.file_missing", 400, null, null, emptyMap()))
-        val key = crypto.randomBytes(32)
-        val sealed = crypto.aesGcmSeal(key, plain)
-        val digest = crypto.sha256(sealed)
-        val slot = when (val r = attachments.create(row.chatId, sealed.size.toLong(), details.kind)) {
+        val plainFile = details.file ?: return AppResult.Failure(AppError.Api("media.file_missing", 400, null, null, emptyMap()))
+        // Each step is saved in the row (MediaDetails.upload), so a send cut off by the process dying resumes it.
+        val done = when (val r = resumable.run(
+            plainFile = plainFile, sealedFile = "sealed-$localId", state = details.upload,
+            save = { state -> details = details.copy(upload = state); dao.setText(localId, MediaDetails.write(details)) },
+            create = { size ->
+                when (val slot = attachments.create(row.chatId, size, details.kind)) {
+                    is AppResult.Failure -> slot
+                    is AppResult.Success -> {
+                        val headers = slot.value.uploadHeaders.toMutableMap()
+                        if (headers.keys.none { it.equals("Content-Type", true) }) headers["Content-Type"] = "application/octet-stream"
+                        AppResult.Success(com.circaso.core.platform.UploadSlot(slot.value.attachmentId, slot.value.uploadUrl, headers,
+                            slot.value.expiresAt?.let { runCatching { kotlin.time.Instant.parse(it).toEpochMilliseconds() }.getOrNull() }))
+                    }
+                }
+            },
+            complete = { id -> when (val c = attachments.complete(id)) { is AppResult.Failure -> c; is AppResult.Success -> AppResult.Success(Unit) } },
+            startOver = { e -> (e as? AppError.Api)?.code in setOf("messaging.attachment_incomplete", "messaging.attachment_not_found") },
+            missing = AppError.Api("media.file_missing", 400, null, null, emptyMap()),
+        )) {
+            is AppResult.Failure -> return r
             is AppResult.Success -> r.value
-            is AppResult.Failure -> return r
-        }
-        val headers = slot.uploadHeaders.toMutableMap()
-        if (headers.keys.none { it.equals("Content-Type", true) }) headers["Content-Type"] = "application/octet-stream"
-        val put = uploads.putFile(storage, slot.uploadUrl, headers, sealed)
-        if (!put) return AppResult.Failure(AppError.Network)
-        when (val r = attachments.complete(slot.attachmentId)) {
-            is AppResult.Success -> Unit
-            is AppResult.Failure -> return r
         }
         // The decrypted copy is filed under the attachment id, the same name the receiver's copy gets.
-        files.write(slot.attachmentId, plain)
-        val ready = details.copy(attachmentId = slot.attachmentId, key = Base64.encode(key), digest = Base64.encode(digest), size = sealed.size.toLong(), file = slot.attachmentId)
+        files.read(plainFile)?.let { files.write(done.id, it) }
+        val ready = details.copy(attachmentId = done.id, key = Base64.encode(done.key), digest = Base64.encode(done.digest), size = done.size, file = done.id, upload = null)
         dao.setText(localId, MediaDetails.write(ready))
+        if (plainFile != done.id) files.delete(plainFile)
         return AppResult.Success(Unit)
     }
 
