@@ -41,16 +41,22 @@ class ChatsRepositoryImpl(
     private val sessions: SessionCipher,
     private val ownUserId: suspend () -> String?,
     private val now: () -> Long = ::nowMillis,
+    /** Group photos (null in tests that don't need them: groups then show initials). */
+    private val photos: GroupPhotos? = null,
 ) : ChatsRepository {
+    /** The chat rows, again whenever a group photo lands on this phone (the list swaps the thumbnail for it). */
+    private fun chatRows(): Flow<List<ChatEntity>> =
+        if (photos == null) dao.observeChats() else combine(dao.observeChats(), photos.changes) { rows, _ -> rows }
+
     override val chats: Flow<List<ChatSummary>> =
-        combine(dao.observeChats(), dao.observeAllMembers(), messages.observeLatestPerChat(), messages.observeUnread(), ownUserIdFlow()) { chats, members, latest, unread, me ->
+        combine(chatRows(), dao.observeAllMembers(), messages.observeLatestPerChat(), messages.observeUnread(), ownUserIdFlow()) { chats, members, latest, unread, me ->
             val byChat = members.groupBy { it.chatId }
             val latestByChat = latest.associateBy { it.chatId }
             val unreadByChat = unread.associate { it.chatId to it.count }
             chats.map { chat ->
                 val chatMembers = byChat[chat.chatId].orEmpty()
                 ChatSummary(
-                    chat = chat.toDomain(chatMembers, me),
+                    chat = chat.toDomain(chatMembers, me, groupPhoto(chat)),
                     latest = latestByChat[chat.chatId]?.toDomain(chatMembers, me),
                     unread = unreadByChat[chat.chatId] ?: 0,
                 )
@@ -60,7 +66,16 @@ class ChatsRepositoryImpl(
     private fun ownUserIdFlow(): Flow<String?> = kotlinx.coroutines.flow.flow { emit(ownUserId()) }
 
     override fun chat(chatId: String): Flow<Chat?> =
-        combine(dao.observeChat(chatId), dao.observeMembers(chatId), ownUserIdFlow()) { chat, members, me -> chat?.toDomain(members, me) }
+        combine(dao.observeChat(chatId), dao.observeMembers(chatId), ownUserIdFlow(), photos?.changes ?: kotlinx.coroutines.flow.flowOf(0)) { chat, members, me, _ ->
+            chat?.toDomain(members, me, groupPhoto(chat))
+        }
+
+    /** The group's photo on this phone (full, else its thumbnail), from the sealed metadata; null for none or a direct chat. */
+    private suspend fun groupPhoto(chat: ChatEntity): String? {
+        if (photos == null || chat.kind != MessagingWire.Group) return null
+        val ref = groupKeys.openGroupMeta(chat.chatId, chat.sealedMeta, chat.metaVersion)?.photo ?: return null
+        return photos.localPath(ref)
+    }
 
     override suspend fun refresh(): AppResult<Unit> = when (val result = remote.chats()) {
         is AppResult.Failure -> result
@@ -84,13 +99,21 @@ class ChatsRepositoryImpl(
     override suspend fun openDirect(userId: String): AppResult<Chat> = remote.openDirect(userId).map { store(it) }
 
 
+    /**
+     * The metadata key per create attempt: a retry with the same idempotency key gets the group the first attempt made
+     * (sealed under the first key), so it must remember that key, not a fresh one.
+     */
+    private val createKeys = mutableMapOf<String, ByteArray>()
+
     override suspend fun createGroup(draft: GroupDraft, idempotencyKey: String): AppResult<GroupCreated> {
-        val key = groupKeys.newMetaKey()
-        val request = CreateGroupRequest(sealedMeta = groupKeys.sealMeta(key, draft.name), memberIds = draft.memberIds)
+        val key = createKeys.getOrPut(idempotencyKey) { groupKeys.newMetaKey() }
+        val sealed = groupKeys.sealMetaWithin(key, draft.name, null) ?: return AppResult.Failure(groupInvalid())
+        val request = CreateGroupRequest(sealedMeta = sealed, memberIds = draft.memberIds)
         return when (val result = remote.createGroup(request, idempotencyKey)) {
             is AppResult.Failure -> result
             is AppResult.Success -> {
                 val dto = result.value
+                createKeys.remove(idempotencyKey)
                 groupKeys.rememberMetaKey(dto.chatId, dto.metaVersion, key)
                 val chat = store(dto)
                 groupKeys.ensureDistributed(dto.chatId, chat.members.map { it.userId }) // best effort now; the first send makes sure
@@ -101,9 +124,37 @@ class ChatsRepositoryImpl(
 
     override suspend fun rename(chatId: String, name: String): AppResult<Chat> {
         val key = groupKeys.latestMetaKey(chatId) ?: return AppResult.Failure(AppError.Unexpected(null))
-        return patchWithRetry(chatId) { version -> UpdateGroupRequest(sealedMeta = groupKeys.sealMeta(key, name), version = version) }
-            .also { r -> if (r is AppResult.Success) groupKeys.rememberMetaKey(chatId, r.value.metaVersion, key) }
+        // A new name keeps the group's photo: both live in the one sealed value.
+        val sealed = groupKeys.sealMetaWithin(key, name, currentPhoto(chatId)) ?: return AppResult.Failure(groupInvalid())
+        return patchWithRetry(chatId) { version -> UpdateGroupRequest(sealedMeta = sealed, version = version) }
+            .also { r -> if (r is AppResult.Success) { groupKeys.rememberMetaKey(chatId, r.value.metaVersion, key); photos?.notifyChanged() } }
     }
+
+    /**
+     * M8 for the photo: [image] is encrypted and uploaded into the group's own attachments, then the name and a small
+     * reference to it (with its thumbnail) are sealed again. Null removes the photo. Online-only, admins only.
+     */
+    override suspend fun setGroupPhoto(chatId: String, image: com.circaso.core.platform.GroupPhotoImage?): AppResult<Chat> {
+        val key = groupKeys.latestMetaKey(chatId) ?: return AppResult.Failure(AppError.Unexpected(null))
+        val current = dao.chat(chatId) ?: return AppResult.Failure(AppError.Unexpected(null))
+        val name = groupKeys.openGroupMeta(chatId, current.sealedMeta, current.metaVersion)?.name ?: current.name
+            ?: return AppResult.Failure(AppError.Unexpected(null))
+        val photo = if (image == null) null else {
+            val uploader = photos ?: return AppResult.Failure(AppError.Unexpected(null))
+            when (val up = uploader.upload(chatId, image)) {
+                is AppResult.Success -> up.value
+                is AppResult.Failure -> return up
+            }
+        }
+        val sealed = groupKeys.sealMetaWithin(key, name, photo) ?: return AppResult.Failure(groupInvalid())
+        return patchWithRetry(chatId) { version -> UpdateGroupRequest(sealedMeta = sealed, version = version) }
+            .also { r -> if (r is AppResult.Success) { groupKeys.rememberMetaKey(chatId, r.value.metaVersion, key); photos?.notifyChanged() } }
+    }
+
+    private suspend fun currentPhoto(chatId: String): GroupPhotoRef? =
+        dao.chat(chatId)?.let { groupKeys.openGroupMeta(chatId, it.sealedMeta, it.metaVersion)?.photo }
+
+    private fun groupInvalid() = AppError.Api("messaging.group_invalid", 400, null, null, emptyMap())
 
     override suspend fun setMembersCanAdd(chatId: String, allowed: Boolean): AppResult<Chat> =
         patchWithRetry(chatId) { version -> UpdateGroupRequest(settings = ChatSettingsDto(allowed), version = version) }
@@ -191,8 +242,10 @@ class ChatsRepositoryImpl(
         if (iRemovedThem || amOwner) {
             val key = groupKeys.newMetaKey()
             val name = chat.title
-            val patched = patchWithRetry(chatId) { version -> UpdateGroupRequest(sealedMeta = groupKeys.sealMeta(key, name), version = version) }
-            if (patched is AppResult.Success) groupKeys.rememberMetaKey(chatId, patched.value.metaVersion, key)
+            // The photo's reference goes into the new seal too; whoever left can no longer fetch the file (AT3 is members only).
+            val sealed = groupKeys.sealMetaWithin(key, name, currentPhoto(chatId)) ?: groupKeys.sealMeta(key, name)
+            val patched = patchWithRetry(chatId) { version -> UpdateGroupRequest(sealedMeta = sealed, version = version) }
+            if (patched is AppResult.Success) { groupKeys.rememberMetaKey(chatId, patched.value.metaVersion, key); photos?.notifyChanged() }
         }
         groupKeys.ensureDistributed(chatId, chat.members.map { it.userId }.filter { it != me })
     }
@@ -221,20 +274,20 @@ class ChatsRepositoryImpl(
         val members = dto.members.map { ChatMemberEntity(dto.chatId, it.user.userId, it.role, it.user.displayName, it.user.handle, it.user.avatarUrl, it.joinedAt) }
         dao.deleteMembers(dto.chatId)
         dao.insertMembers(members)
-        return entity.toDomain(members, ownUserId())
+        return entity.toDomain(members, ownUserId(), groupPhoto(entity))
     }
 
     private fun MemberRole.wire() = when (this) { MemberRole.Owner -> MessagingWire.Owner; MemberRole.Admin -> MessagingWire.Admin; MemberRole.Member -> MessagingWire.Member }
 }
 
-internal fun ChatEntity.toDomain(members: List<ChatMemberEntity>, me: String?): Chat {
+internal fun ChatEntity.toDomain(members: List<ChatMemberEntity>, me: String?, groupPhoto: String? = null): Chat {
     val others = members.filter { it.userId != me }
     val direct = kind == MessagingWire.Direct
     return Chat(
         chatId = chatId,
         kind = if (direct) ChatKind.Direct else ChatKind.Group,
         title = if (direct) others.firstOrNull()?.displayName ?: "Chat" else name ?: "Group",
-        avatarUrl = if (direct) others.firstOrNull()?.avatarUrl else null,
+        avatarUrl = if (direct) others.firstOrNull()?.avatarUrl else groupPhoto,
         members = members.map { ChatMember(it.userId, it.displayName, it.handle, it.avatarUrl, it.role.toRole(), it.joinedAt) },
         membersCanAdd = membersCanAdd,
         version = version,

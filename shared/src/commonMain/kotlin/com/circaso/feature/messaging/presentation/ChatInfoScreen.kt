@@ -56,6 +56,7 @@ import com.circaso.feature.chama.presentation.ChangePinComingContent
 import com.circaso.feature.chama.presentation.GroupMoneyRows
 import com.circaso.feature.chama.presentation.LeaveBlockedContent
 import com.circaso.feature.chama.presentation.TargetNeedsWalletContent
+import com.circaso.feature.profile.presentation.ProfileCameraLayer
 
 /** Members and roles (groups), or the safety number (direct chats). Not in the canvas yet; built from the D2 header's "Group info". */
 @Composable
@@ -90,6 +91,19 @@ fun ChatInfoScreen(
         toast = { ToastHost(toast, Modifier.align(Alignment.TopCenter).padding(top = 8.dp)) },
         overlay = {
             ImageViewer(viewing) { viewing = null }
+            val photos = viewModel.photos
+            CircasoSheet(visible = state.photoChoice.open, onDismiss = { photos?.dismiss() }, label = "Group photo") {
+                com.circaso.feature.profile.presentation.PhotoChoiceSheetContent(
+                    state.photoChoice.recents, state.photoChoice.access, hasPhoto = state.hasGroupPhoto, useAs = "group photo",
+                    onUseRecent = { photos?.useRecent(it) }, onManage = { photos?.manage() }, onTakePhoto = { photos?.openCamera() },
+                    onChoose = { photos?.choose() }, onRemove = viewModel::onRemovePhoto, onCancel = { photos?.dismiss() },
+                )
+            }
+            ProfileCameraLayer(
+                state.photoChoice.camera, state.online, { m -> photos?.let { com.circaso.core.platform.CameraViewfinder(it.cameraDevice, m) } },
+                onClose = { photos?.closeCamera() }, onShutter = { photos?.shutter() }, onFlip = { photos?.flip() }, onRetake = { photos?.retake() },
+                onUse = { photos?.useShot() }, onChooseInstead = { photos?.chooseInstead() }, words = com.circaso.feature.profile.presentation.CameraWords.Group,
+            )
             // Search in the chat (WhatsApp's profile Search): matching messages, newest first.
             CircasoSheet(visible = state.searching, onDismiss = { viewModel.onSearch(false) }, label = "Search") {
                 BasicText("Search", style = t.title2.copy(color = c.ink))
@@ -183,7 +197,16 @@ fun ChatInfoScreen(
         LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = padding.calculateBottomPadding() + CircasoSpacing.s6)) {
             item {
                 Column(Modifier.fillMaxWidth().padding(vertical = CircasoSpacing.s6), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(CircasoSpacing.s2)) {
-                    Avatar(chat?.title ?: "", size = CircasoSizes.avatarXl, imageUrl = chat?.avatarUrl)
+                    if (state.isGroup && state.amAdmin && state.photosAvailable) {
+                        // M8: admins change the group's photo from here (the profile photo's sheet and camera).
+                        GroupPhotoButton(
+                            name = chat?.title ?: "", bytes = null, imageUrl = chat?.avatarUrl, busy = state.photoBusy,
+                            enabled = state.canChangePhoto, onClick = { viewModel.photos?.open() }, size = CircasoSizes.avatarXl,
+                            available = state.canChangePhoto || state.hasGroupPhoto,
+                        )
+                    } else {
+                        Avatar(chat?.title ?: "", size = CircasoSizes.avatarXl, imageUrl = chat?.avatarUrl)
+                    }
                     BasicText(chat?.title ?: "", style = t.title1.copy(color = c.ink, textAlign = TextAlign.Center))
                     if (state.isGroup) BasicText("${chat?.members?.size ?: 0} members" + if (state.money.enabled && state.money.money?.hasWallet == true) " · Group wallet" else "", style = t.subhead.copy(color = c.inkSecondary))
                     else chat?.members?.firstOrNull { it.userId == chat.peerId }?.handle?.let { BasicText("@$it", style = t.body.copy(color = c.inkSecondary)) }

@@ -75,6 +75,7 @@ fun initKoinIos() {
         single<LiveMicrophone> { IosLiveMicrophone() } // AVAudioEngine and Apple's Opus encoder live on the Swift side; see LiveAudioBridge
         single<LiveSpeaker> { IosLiveSpeaker() }
         single<ImagePicker> { IosImagePicker() }
+        single<com.circaso.core.platform.GroupPhotoEncoder> { com.circaso.core.platform.IosGroupPhotoEncoder() }
         single<com.circaso.core.platform.MediaGallery> { com.circaso.core.platform.IosMediaGallery() }
         single<com.circaso.core.platform.MomentCamera> { com.circaso.core.platform.IosMomentCamera() } // AVFoundation lives on the Swift side; see MomentCameraBridge
         single<com.circaso.core.platform.MediaLibrary> { com.circaso.core.platform.IosMediaLibrary() } // Photos recents here; loading and pickers on the Swift side, see MediaLibraryBridge

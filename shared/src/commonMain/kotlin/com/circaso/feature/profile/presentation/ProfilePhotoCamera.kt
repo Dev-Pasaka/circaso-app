@@ -89,6 +89,7 @@ fun BoxScope.ProfileCameraLayer(
     onRetake: () -> Unit,
     onUse: () -> Unit,
     onChooseInstead: () -> Unit,
+    words: CameraWords = CameraWords.Profile,
 ) {
     val reduce = CircasoTheme.reduceMotion
     // The last camera draws the exit, so the stage fades out with what it showed rather than going blank first.
@@ -101,7 +102,7 @@ fun BoxScope.ProfileCameraLayer(
     ) {
         val shown = last ?: return@AnimatedVisibility
         CircasoTheme(darkTheme = true, highContrast = CircasoTheme.colors.isHighContrast) {
-            ProfileCameraContent(shown, online, viewfinder, onClose, onShutter, onFlip, onRetake, onUse, onChooseInstead)
+            ProfileCameraContent(shown, online, viewfinder, onClose, onShutter, onFlip, onRetake, onUse, onChooseInstead, words)
         }
     }
 }
@@ -119,6 +120,7 @@ fun ProfileCameraContent(
     onRetake: () -> Unit,
     onUse: () -> Unit,
     onChooseInstead: () -> Unit,
+    words: CameraWords = CameraWords.Profile,
 ) {
     val c = CircasoTheme.colors
     val t = CircasoTheme.typography
@@ -128,7 +130,7 @@ fun ProfileCameraContent(
         Modifier.fillMaxSize().background(c.bg)
             // Swallows taps so nothing reaches the form underneath.
             .clickable(remember { MutableInteractionSource() }, indication = null, onClick = {})
-            .semantics { contentDescription = "Camera for your profile photo" }
+            .semantics { contentDescription = words.stage }
             .statusBarsPadding().navigationBarsPadding()
             .windowInsetsPadding(WindowInsets.displayCutout.only(WindowInsetsSides.Horizontal)),
     ) {
@@ -138,7 +140,7 @@ fun ProfileCameraContent(
         ) {
             StageButton(CircasoIcon.Close, "Close camera", onClick = onClose)
             BasicText(
-                if (camera.shot != null) "Use this photo?" else "Profile Photo",
+                if (camera.shot != null) "Use this photo?" else words.title,
                 Modifier.weight(1f).semantics { heading(); liveRegion = LiveRegionMode.Polite },
                 style = t.headline.copy(color = c.ink, textAlign = TextAlign.Center),
             )
@@ -156,14 +158,14 @@ fun ProfileCameraContent(
                         viewfinder(Modifier.fillMaxSize())
                         camera.shot?.let { shot ->
                             coil3.compose.AsyncImage(
-                                shot.bytes, contentDescription = "Your new profile photo",
+                                shot.bytes, contentDescription = words.shot,
                                 modifier = Modifier.fillMaxSize().background(c.bg), contentScale = ContentScale.Crop,
                             )
                         }
                         RoundGuide()
                     }
                     CameraStart.PermissionDenied -> Blocked(
-                        "Allow the camera to take a profile photo", "Circaso uses the camera only while this screen is open.",
+                        words.denied,"Circaso uses the camera only while this screen is open.",
                         action = "Open Settings", onAction = { openAppSettings() },
                     )
                     CameraStart.Unavailable -> Blocked(
@@ -182,7 +184,7 @@ fun ProfileCameraContent(
                 shot != null -> Column(Modifier.widthIn(max = 480.dp).fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(CircasoSpacing.s2)) {
                     if (!online) {
                         BasicText(
-                            "Changing your photo needs a connection.", Modifier.fillMaxWidth().semantics { liveRegion = LiveRegionMode.Polite },
+                            words.offline,Modifier.fillMaxWidth().semantics { liveRegion = LiveRegionMode.Polite },
                             style = t.footnote.copy(color = c.inkSecondary, textAlign = TextAlign.Center),
                         )
                     }

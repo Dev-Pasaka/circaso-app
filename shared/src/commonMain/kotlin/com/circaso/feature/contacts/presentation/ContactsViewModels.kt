@@ -44,7 +44,10 @@ data class ContactsUiState(
     val connectInput: String = "",
     val connecting: Boolean = false,
     val creatingInvite: Boolean = false,
-    val invite: Invite? = null,
+    /** The invite's text for the system share sheet; the screen opens it once and clears it. */
+    val share: String? = null,
+    /** The "Add by Username" sheet is open. */
+    val adding: Boolean = false,
     /** The contact whose actions sheet is open. */
     val selected: Contact? = null,
     /** The explainer shown before the system permission prompt (design A9). */
@@ -56,9 +59,17 @@ data class ContactsUiState(
     val message: String? = null,
 ) {
     val visible: List<Contact>
-        get() = if (query.isBlank()) contacts else contacts.filter {
+        get() = (if (query.isBlank()) contacts else contacts.filter {
             it.person.displayName.contains(query.trim(), ignoreCase = true) || it.person.handle?.contains(query.trim().removePrefix("@"), ignoreCase = true) == true
-        }
+        }).sortedBy { it.person.displayName.lowercase() }
+
+    /** [visible] in letter sections (A, B, …, then # for names that don't start with a letter). */
+    val sections: List<Pair<String, List<Contact>>>
+        get() = visible.groupBy { c -> c.person.displayName.trim().firstOrNull()?.uppercaseChar()?.takeIf { it.isLetter() }?.toString() ?: "#" }
+            .toList().sortedWith(compareBy({ it.first == "#" }, { it.first }))
+
+    /** What is typed looks like a handle: 3 or more letters, digits, dots or underscores (after an optional @). */
+    val connectReady: Boolean get() = connectInput.trim().removePrefix("@").let { it.length >= 3 && it.all { ch -> ch.isLetterOrDigit() || ch == '.' || ch == '_' } }
 }
 
 /** Your people. Removing and blocking are saved at once and sent when online; connecting and invites need the server. */
@@ -89,22 +100,33 @@ class ContactsViewModel(
         local.update { it.copy(connecting = true, message = null) }
         viewModelScope.launch {
             when (val r = connect(ConnectVia.Handle, handle)) {
-                is AppResult.Success -> local.update { it.copy(connecting = false, connectInput = "", message = "Connected with ${r.value.person.displayName}.") }
-                is AppResult.Failure -> local.update { it.copy(connecting = false, message = ErrorMessages.forError(r.error)) }
+                is AppResult.Success -> local.update {
+                    it.copy(connecting = false, connectInput = "", adding = false, message = "Connected with ${r.value.person.displayName}." + if (r.value.created) "" else " They were already in your contacts.")
+                }
+                is AppResult.Failure -> local.update { it.copy(connecting = false, message = withRef(r.error)) }
             }
         }
     }
 
+    fun onAddOpen() = local.update { it.copy(adding = true, message = null) }
+    fun onAddDismissed() = local.update { it.copy(adding = false, connectInput = "") }
+
+    /** Invite a Friend: a fresh link (7 days) straight into the system share sheet, with a line that says what it is. */
     fun onInvite() {
         if (local.value.creatingInvite) return
         local.update { it.copy(creatingInvite = true, message = null) }
         viewModelScope.launch {
             when (val r = createInvite()) {
-                is AppResult.Success -> local.update { it.copy(creatingInvite = false, invite = r.value) }
-                is AppResult.Failure -> local.update { it.copy(creatingInvite = false, message = ErrorMessages.forError(r.error)) }
+                is AppResult.Success -> local.update { it.copy(creatingInvite = false, share = com.circaso.feature.messaging.presentation.NewChatViewModel.inviteText(r.value.url)) }
+                is AppResult.Failure -> local.update { it.copy(creatingInvite = false, message = withRef(r.error)) }
             }
         }
     }
+
+    fun onShared() = local.update { it.copy(share = null) }
+    fun onMessageShown() = local.update { it.copy(message = null) }
+
+    private fun withRef(error: AppError) = ErrorMessages.forError(error) + (ErrorMessages.reference(error)?.let { " Ref $it" } ?: "")
 
     fun onFindFriends() = local.update { it.copy(showFindFriends = true, message = null) }
     fun onFindFriendsDismissed() = local.update { it.copy(showFindFriends = false) }
@@ -129,7 +151,6 @@ class ContactsViewModel(
         }
     }
 
-    fun onInviteDismissed() = local.update { it.copy(invite = null) }
     fun onSelect(contact: Contact) = local.update { it.copy(selected = contact) }
     fun onSelectedDismissed() = local.update { it.copy(selected = null) }
     fun onRemoveRequested(contact: Contact) = local.update { it.copy(selected = null, pendingAction = ContactAction.Remove(contact)) }

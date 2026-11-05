@@ -565,7 +565,8 @@ class FeatureViewModelsTest {
         val vm = contactsVm(); keep(vm.state)
         vm.onConnectInput("nobody"); vm.onConnect()
         assertEquals("nobody", vm.state.value.connectInput)
-        assertEquals("We couldn't find anyone with that handle.", vm.state.value.message)
+        // The words for the code, and the request id so support can find it.
+        assertEquals("We couldn't find anyone with that handle. Ref req", vm.state.value.message)
     }
 
     @Test fun removingAndBlockingNeedAConfirmationFirst() = runTest(dispatcher) {
@@ -580,12 +581,21 @@ class FeatureViewModelsTest {
         assertEquals(listOf("1"), contactsRepo.removed) // cancelled: not removed
     }
 
-    @Test fun anInviteLinkIsShownAndCanBeDismissed() = runTest(dispatcher) {
+    @Test fun anInviteGoesStraightToTheShareSheetOnce() = runTest(dispatcher) {
         val vm = contactsVm(); keep(vm.state)
         vm.onInvite()
-        assertEquals("https://circaso.com/i/t", vm.state.value.invite?.url)
-        vm.onInviteDismissed()
-        assertNull(vm.state.value.invite)
+        assertTrue(vm.state.value.share!!.endsWith("https://circaso.com/i/t"))
+        vm.onShared()
+        assertNull(vm.state.value.share)
+    }
+
+    @Test fun addByUsernameClosesItsSheetWhenConnected() = runTest(dispatcher) {
+        val vm = contactsVm(); keep(vm.state)
+        vm.onAddOpen(); vm.onConnectInput("ke")
+        assertFalse(vm.state.value.connectReady, "too short to be a username")
+        vm.onConnectInput("kevo"); vm.onConnect()
+        assertFalse(vm.state.value.adding)
+        assertEquals("Connected with Kevin.", vm.state.value.message)
     }
 
     // ---- Security

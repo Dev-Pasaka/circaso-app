@@ -121,7 +121,7 @@ private fun InfoPreview(info: GroupInfoMoney, online: Boolean = true, chat: Chat
 
 private fun gwContacts() = listOf("2" to "Otieno Ouma", "3" to "Wanjiru Kamau", "4" to "Achieng Odhiambo", "5" to "Juma Kariuki").map { (id, n) -> Contact(Person(id, n, null, null, null), "phone", "") }
 
-private fun newGroup(walletOn: Boolean, online: Boolean = true, failed: Boolean = false) = NewGroupUiState(
+private fun newGroup(walletOn: Boolean, online: Boolean = true, failed: Boolean = false) = NewGroupUiState(step = com.circaso.feature.messaging.presentation.NewGroupStep.Details, loaded = true,
     name = "Kilimani Chama", contacts = gwContacts(), selected = setOf("2", "3", "4"), online = online, walletsAvailable = true, walletOn = walletOn,
     targetText = if (walletOn) "50000" else "", fiat = gwFiat, failed = failed, reference = if (failed) "req_G4mx2Q" else null,
 )
@@ -209,10 +209,10 @@ internal fun GroupWalletPreview(name: String): Boolean {
     ))
     val gwActions = GroupWalletActions({}, {}, {}, {}, {})
     when (name) {
-        "gw-new-group" -> NewGroupContent(newGroup(false), {}, {}, {}, {}, {}, {}, {}, {}, {})
-        "gw-new-group-wallet" -> NewGroupContent(newGroup(true), {}, {}, {}, {}, {}, {}, {}, {}, {})
-        "gw-new-group-offline" -> NewGroupContent(newGroup(true, online = false), {}, {}, {}, {}, {}, {}, {}, {}, {})
-        "gw-new-group-failed" -> NewGroupContent(newGroup(true, failed = true), {}, {}, {}, {}, {}, {}, {}, {}, {})
+        "gw-new-group" -> NewGroupContent(newGroup(false), com.circaso.feature.messaging.presentation.NewGroupActions())
+        "gw-new-group-wallet" -> NewGroupContent(newGroup(true), com.circaso.feature.messaging.presentation.NewGroupActions())
+        "gw-new-group-offline" -> NewGroupContent(newGroup(true, online = false), com.circaso.feature.messaging.presentation.NewGroupActions())
+        "gw-new-group-failed" -> NewGroupContent(newGroup(true, failed = true), com.circaso.feature.messaging.presentation.NewGroupActions())
         "gw-setup" -> GroupWalletSetupContent(setup.copy(step = SetupStep.Networks), {}, {}, {}, {})
         "gw-setup-bio" -> GroupWalletSetupContent(setup.copy(step = SetupStep.Biometrics), {}, {}, {}, {})
         "gw-setup-face-id" -> GroupWalletSetupContent(setup.copy(step = SetupStep.Biometrics, biometricLabel = "Face ID"), {}, {}, {}, {})

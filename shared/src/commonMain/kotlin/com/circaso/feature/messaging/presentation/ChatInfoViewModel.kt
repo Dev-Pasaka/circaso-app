@@ -68,7 +68,15 @@ data class ChatInfoUiState(
     val moneySheet: MoneySheet? = null,
     val policyChoice: com.circaso.feature.chama.domain.ApprovalPolicy = com.circaso.feature.chama.domain.ApprovalPolicy.TwoAdmins,
     val myUserId: String? = null,
+    /** This phone can make group photos (the encoder is there and photos are wired). */
+    val photosAvailable: Boolean = false,
+    /** A new group photo is being prepared, sent or removed (M8). */
+    val photoBusy: Boolean = false,
+    val photoChoice: com.circaso.feature.profile.presentation.PhotoChoiceState = com.circaso.feature.profile.presentation.PhotoChoiceState(),
 ) {
+    /** Admins change the group's photo (M8); it needs a connection, like every change to the group. */
+    val canChangePhoto get() = isGroup && amAdmin && photosAvailable && online && !photoBusy && !busy
+    val hasGroupPhoto get() = isGroup && chat?.avatarUrl != null
     /** §11.9: the signer may not leave while the group wallet holds money. */
     val leavingBlocked: Boolean get() {
         val m = money.money ?: return false
@@ -108,14 +116,52 @@ class ChatInfoViewModel(
     /** The group's money (group wallets on); null in previews and direct chats' tests. */
     private val groupMoney: com.circaso.feature.chama.presentation.GroupInfoMoneySource? = null,
     myUserId: String? = null,
+    private val setGroupPhoto: com.circaso.feature.messaging.domain.SetGroupPhotoUseCase? = null,
+    private val encoder: com.circaso.core.platform.GroupPhotoEncoder = com.circaso.core.platform.NoGroupPhotoEncoder,
+    sources: com.circaso.feature.profile.presentation.PhotoSources? = null,
 ) : ViewModel() {
-    private val _state = MutableStateFlow(ChatInfoUiState(myUserId = myUserId))
+    private val _state = MutableStateFlow(
+        ChatInfoUiState(myUserId = myUserId, photosAvailable = setGroupPhoto != null && sources != null && encoder !== com.circaso.core.platform.NoGroupPhotoEncoder),
+    )
     val state: StateFlow<ChatInfoUiState> = _state.asStateFlow()
+
+    /** The group photo's sheet and camera (the profile photo's pattern); null in previews. */
+    val photos: com.circaso.feature.profile.presentation.PhotoChooser? =
+        sources?.let { com.circaso.feature.profile.presentation.PhotoChooser(viewModelScope, it, ::onPhotoPicked) }
+
+    /** A photo from the sheet or the camera: squared and encoded here, then sealed into the group (M8). */
+    fun onPhotoPicked(picked: com.circaso.core.platform.PickedImage?, unreadable: String?) {
+        if (picked == null) { if (unreadable != null) _state.update { it.copy(message = unreadable) }; return }
+        val set = setGroupPhoto ?: return
+        if (!_state.value.canChangePhoto) return
+        _state.update { it.copy(photoBusy = true, message = null) }
+        viewModelScope.launch {
+            val image = try { encoder.encode(picked.bytes) } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) { null }
+            if (image == null) { _state.update { it.copy(photoBusy = false, message = "Couldn't use that photo. Try another one.") }; return@launch }
+            val r = set(chatId, image)
+            _state.update { it.copy(photoBusy = false, message = if (r is AppResult.Failure) withRef(r.error) else "The group photo is updated.") }
+        }
+    }
+
+    /** Remove Photo: the group goes back to its initials for everyone. */
+    fun onRemovePhoto() {
+        photos?.dismiss()
+        val set = setGroupPhoto ?: return
+        if (!_state.value.canChangePhoto || !_state.value.hasGroupPhoto) return
+        _state.update { it.copy(photoBusy = true, message = null) }
+        viewModelScope.launch {
+            val r = set(chatId, null)
+            _state.update { it.copy(photoBusy = false, message = if (r is AppResult.Failure) withRef(r.error) else "The group photo is removed.") }
+        }
+    }
+
+    override fun onCleared() { photos?.closeCamera() }
 
     /** CH9 keeps one key per choice, so a slow first answer can't be applied twice. */
     private var policyKey = com.circaso.core.network.newIdempotencyKey()
 
     init {
+        photos?.let { p -> viewModelScope.launch { p.state.collect { choice -> _state.update { it.copy(photoChoice = choice) } } } }
         groupMoney?.let { source ->
             viewModelScope.launch { source.observe(chatId).collect { m -> _state.update { it.copy(money = m) } } }
             viewModelScope.launch {

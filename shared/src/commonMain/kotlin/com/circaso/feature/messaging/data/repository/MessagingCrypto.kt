@@ -169,9 +169,15 @@ sealed interface OpenedGroup {
     class Unreadable(val reason: String) : OpenedGroup
 }
 
-/** The group's sealed name and avatar, under the group metadata key. */
+/**
+ * The group's sealed name and photo, under the group metadata key. [avatar] is an older, never-used field kept so the
+ * shape stays readable both ways; [photo] points at the encrypted photo and carries its thumbnail ([GroupPhotos]).
+ */
 @Serializable
-internal data class GroupMeta(val name: String, val avatar: String? = null)
+internal data class GroupMeta(val name: String, val avatar: String? = null, val photo: GroupPhotoRef? = null)
+
+/** The server's limit for `sealedMeta`, decoded (guide M5: at most 4 KB). */
+internal const val MaxSealedMetaBytes = 4 * 1024
 
 /**
  * Groups: sender keys (one per member per chat, rotated when someone leaves) and the metadata key the name is sealed
@@ -199,15 +205,44 @@ class GroupKeys(
 
     suspend fun latestMetaKey(chatId: String): ByteArray? = chats.latestMetaKey(chatId)?.let { store.openBytes(it.key, "meta:$chatId:${it.metaVersion}") }
 
-    fun sealMeta(key: ByteArray, name: String): String =
-        Base64.encode(crypto.aesGcmSeal(key, json.encodeToString(GroupMeta.serializer(), GroupMeta(name)).encodeToByteArray(), MetaAad))
+    fun sealMeta(key: ByteArray, name: String, photo: GroupPhotoRef? = null): String =
+        Base64.encode(crypto.aesGcmSeal(key, json.encodeToString(GroupMeta.serializer(), GroupMeta(name, photo = photo)).encodeToByteArray(), MetaAad))
+
+    /**
+     * [sealMeta] kept within the server's 4 KB: with the photo's thumbnail when it fits, else without it (the photo
+     * still loads, just not instantly). Null when even the name alone is too long.
+     */
+    fun sealMetaWithin(key: ByteArray, name: String, photo: GroupPhotoRef?): String? {
+        fun fits(sealed: String) = Base64.decode(sealed).size <= MaxSealedMetaBytes
+        sealMeta(key, name, photo).takeIf(::fits)?.let { return it }
+        if (photo?.thumb != null) sealMeta(key, name, photo.copy(thumb = null)).takeIf(::fits)?.let { return it }
+        return sealMeta(key, name).takeIf(::fits)
+    }
 
     /** The group's name, or null when this phone has no key for that version yet (it arrives with the sender key). */
-    suspend fun openMeta(chatId: String, sealedMeta: String?, metaVersion: Int): String? {
+    suspend fun openMeta(chatId: String, sealedMeta: String?, metaVersion: Int): String? = openGroupMeta(chatId, sealedMeta, metaVersion)?.name
+
+    private val opened = mutableMapOf<String, GroupMeta>()
+    private val openedLock = Mutex()
+
+    /**
+     * The whole sealed metadata (name and photo), remembered per sealed value so a busy chat list doesn't decrypt it
+     * on every redraw. A failure (no key yet) is not remembered: it is tried again once the key arrives.
+     */
+    internal suspend fun openGroupMeta(chatId: String, sealedMeta: String?, metaVersion: Int): GroupMeta? {
         if (sealedMeta == null) return null
-        val row = chats.metaKey(chatId, metaVersion) ?: chats.latestMetaKey(chatId) ?: return null
-        val key = store.openBytes(row.key, "meta:$chatId:${row.metaVersion}")
-        return runCatching { json.decodeFromString(GroupMeta.serializer(), crypto.aesGcmOpen(key, Base64.decode(sealedMeta), MetaAad).decodeToString()).name }.getOrNull()
+        val cacheKey = "$chatId:$metaVersion:${sealedMeta.hashCode()}:${sealedMeta.length}"
+        openedLock.withLock { opened[cacheKey] }?.let { return it }
+        val rows = listOfNotNull(chats.metaKey(chatId, metaVersion), chats.latestMetaKey(chatId)).distinctBy { it.metaVersion }
+        for (row in rows) {
+            val key = store.openBytes(row.key, "meta:$chatId:${row.metaVersion}")
+            val meta = runCatching { json.decodeFromString(GroupMeta.serializer(), crypto.aesGcmOpen(key, Base64.decode(sealedMeta), MetaAad).decodeToString()) }.getOrNull()
+            if (meta != null) {
+                openedLock.withLock { if (opened.size > 512) opened.clear(); opened[cacheKey] = meta }
+                return meta
+            }
+        }
+        return null
     }
 
     // ---- my sender key
