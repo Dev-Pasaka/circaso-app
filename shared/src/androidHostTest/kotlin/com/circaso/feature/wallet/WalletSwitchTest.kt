@@ -392,14 +392,6 @@ class WalletSwitchTest {
         assertEquals("Wanyamaplatform", com.circaso.feature.wallet.presentation.shortWalletName("Wanyamaplatform Investments Limited"))
     }
 
-    @Test fun aSpaceWalletSaysSoAndNeedsNoApproval() {
-        val space = com.circaso.feature.chama.presentation.GroupWalletUiState(
-            chat = kilimani, money = groupMoney(), loading = false,
-            wallet = aWallet("1000000", "gw-1").copy(owner = WalletOwner(WalletOwnerType.Space, null, "g1", "otieno")),
-        )
-        assertEquals("Space wallet · only Otieno can send", space.caption)
-    }
-
     @Test fun hidingBalancesCarriesToTheGroupWalletScreen() = runTest(dispatcher) {
         val privacy = com.circaso.feature.wallet.presentation.BalancePrivacy()
         val reader = GroupWalletReader(

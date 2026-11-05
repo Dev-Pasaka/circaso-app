@@ -59,16 +59,9 @@ data class NamedWallet(
     val canSign: Boolean,
     val status: WalletStatus,
     val signerUserId: String?,
-    /** A space's wallet (phase 3): the space it belongs to. Spaces aren't chats, so [chatId] is null for them. */
-    val spaceId: String? = null,
 ) {
     val personal get() = walletId == null
-    val space get() = kind == WalletOwnerType.Space
-    val subject get() = when {
-        walletId == null -> SignSubject(null, PersonalName)
-        kind == WalletOwnerType.Space -> SignSubject.space(walletId, name)
-        else -> SignSubject.group(walletId, name)
-    }
+    val subject get() = if (walletId == null) SignSubject(null, PersonalName) else SignSubject.group(walletId, name)
 
     companion object {
         const val PersonalName = "Personal"
@@ -81,8 +74,6 @@ fun nameWallets(
     listings: List<WalletListing>,
     chats: List<ChatSummary>,
     myAvatar: String? = null,
-    /** Unused since Spaces stopped (2026-11-05); kept so callers don't change while the switcher is redesigned. */
-    @Suppress("UNUSED_PARAMETER") spaces: Map<String, SpaceWalletName> = emptyMap(),
 ): List<NamedWallet> = listings.filter { it.owner.type != WalletOwnerType.Space }.map { w ->
     // A space's wallet (an older server's) is never offered: Spaces is archived and the app has no screen for it.
     if (w.personal) NamedWallet(null, null, NamedWallet.PersonalName, myAvatar, WalletOwnerType.Person, true, w.status, w.owner.signerUserId)
@@ -90,16 +81,6 @@ fun nameWallets(
         val chat = chats.firstOrNull { it.chat.chatId == w.owner.chatId }?.chat
         NamedWallet(w.walletId, w.owner.chatId, chat?.title ?: "Group wallet", chat?.avatarUrl, w.owner.type, w.canSign, w.status, w.owner.signerUserId)
     }
-}
-
-/** A space as the wallet screens name it (phase 3): from the spaces on the phone; the owner for an admin's caption. */
-data class SpaceWalletName(val name: String, val photoUrl: String?, val ownerName: String? = null)
-
-/** The spaces the phone knows, by id (installed by the spaces feature; none without it). */
-fun interface SpaceWalletNames {
-    fun names(): kotlinx.coroutines.flow.Flow<Map<String, SpaceWalletName>>
-
-    companion object { val None = SpaceWalletNames { kotlinx.coroutines.flow.flowOf(emptyMap()) } }
 }
 
 /** A wallet's small picture: the circle avatar (the person's, or the group's). */
@@ -176,7 +157,7 @@ fun ColumnScope.PayFromSheetContent(
             val on = w.walletId == selected
             val balance = balances[w.walletId]
             val money = balance?.let { b -> b.usdc?.let { amountText(it.amountMinor, b.fiat) } }
-            val kind = when { w.personal -> "your own money"; w.kind == WalletOwnerType.Space -> "space wallet"; else -> "group wallet, payouts need approval" }
+            val kind = when { w.personal -> "your own money"; else -> "group wallet, payouts need approval" }
             val sub = listOfNotNull(money, kind).joinToString(" · ") + (if (!online && asOf != null) " · as of $asOf" else "")
             Row(
                 Modifier.fillMaxWidth().pressable(role = Role.RadioButton, onClick = { onPick(w) })

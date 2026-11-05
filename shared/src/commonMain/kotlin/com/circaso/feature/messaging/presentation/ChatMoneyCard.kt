@@ -89,7 +89,6 @@ internal fun ChatMoneyCard(
         s.requestPayout -> "Request Payout from ${s.walletName}"
         s.groupPayout || s.payout -> "Pay Payout to $first"
         s.toGroup || s.contribution -> "Add to ${if (s.toGroup) group else s.goalName ?: group}"
-        s.spaceId != null -> "Pay $group"
         else -> "Send to $first"
     }
     // A slim summary over the composer (Pasaka, 2026-11-05): how much in the person's currency, the coin and the one fee
@@ -179,7 +178,7 @@ internal fun payLabel(s: PayUiState, amount: String? = s.fiatText ?: s.usdcText,
     s.step == PayStep.Signing -> "Waiting for your PIN…"
     s.failure != null -> "Try Again"
     s.requestPayout -> if (amount != null) "Request $amount Payout" else "Request Payout"
-    s.toGroup || s.contribution || s.payout || s.spaceId != null -> if (total != null) "Pay $total" else "Pay"
+    s.toGroup || s.contribution || s.payout -> if (total != null) "Pay $total" else "Pay"
     else -> if (total != null) "Send $total" else "Send"
 }
 

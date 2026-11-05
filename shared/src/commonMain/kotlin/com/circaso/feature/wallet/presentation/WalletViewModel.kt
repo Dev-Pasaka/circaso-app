@@ -95,8 +95,8 @@ data class WalletUiState(
     val selected: NamedWallet get() = wallets.firstOrNull { it.walletId == selectedWalletId } ?: NamedWallet.Personal
     /** The chosen group's chat, when the tab shows a group wallet. */
     val selectedGroupChat: String? get() = selected.chatId.takeIf { !selected.personal }
-    /** What the picked wallet's own parts are keyed on: its group's chat, or its space (a space wallet has no chat). */
-    val selectedGroupKey: String? get() = if (selected.personal) null else selected.chatId ?: selected.spaceId
+    /** What the picked wallet's own parts are keyed on: its group's chat. */
+    val selectedGroupKey: String? get() = selectedGroupChat
     /** The Personal | Groups control shows (group wallets on). */
     val showSwitcher get() = groupsEnabled
     /** The group wallets, in the server's order: what Groups chooses from. */
@@ -132,8 +132,6 @@ class WalletViewModel(
     /** Reads the group wallet picked in the switcher; null where group wallets aren't wired. */
     private val groupReader: GroupWalletReader? = null,
     private val privacy: BalancePrivacy = BalancePrivacy(),
-    /** Phase 3: who owns each space, for an admin's caption on a space wallet. */
-    private val spaceNames: SpaceWalletNames = SpaceWalletNames.None,
     /** Remembers Personal or Groups, and which group, between launches. */
     private val choices: WalletChoiceStore = WalletChoiceStore.memory(),
 ) : ViewModel() {
@@ -171,7 +169,7 @@ class WalletViewModel(
         local.update { change(it).reselected() }
         val now = local.value.selected
         if (now.walletId == before) return
-        groupLocal.value = GroupWalletUiState(myUserId = groupReader?.myUserId, nameHint = now.name, spaceId = now.spaceId, spaceCanSign = now.canSign)
+        groupLocal.value = GroupWalletUiState(myUserId = groupReader?.myUserId, nameHint = now.name)
         if (!now.personal) refreshGroup()
     }
 
@@ -218,15 +216,9 @@ class WalletViewModel(
         val chat = sel.chatId
         val reader = groupReader
         val walletId = sel.walletId
-        // SW1: a space's wallet has no chat and no CH7 behind it: its W1 and W6, named from the space on the phone.
-        if (sel.space && walletId != null && reader != null) combine(groupLocal, reader.observeLoneWallet(walletId), spaceNames.names()) { ui, d, names ->
-            val s = sel.spaceId?.let { names[it] }
-            ui.copy(wallet = d.wallet, activity = d.activity, nameHint = s?.name ?: sel.name, spaceId = sel.spaceId, spaceOwnerName = s?.ownerName, spaceCanSign = sel.canSign,
-                spaceNames = names.mapValues { it.value.name })
-        }
-        else if (sel.personal || chat == null || reader == null) flowOf(null)
-        else combine(groupLocal, reader.observe(chat, sel.walletId), spaceNames.names()) { ui, d, names ->
-            ui.copy(chat = d.chat, money = d.money, wallet = d.wallet, activity = d.activity, nameHint = sel.name, spaceNames = names.mapValues { it.value.name })
+        if (sel.personal || chat == null || reader == null || walletId == null) flowOf(null)
+        else combine(groupLocal, reader.observe(chat, walletId)) { ui, d ->
+            ui.copy(chat = d.chat, money = d.money, wallet = d.wallet, activity = d.activity, nameHint = sel.name)
         }
     }
 
@@ -283,12 +275,10 @@ class WalletViewModel(
     private fun refreshGroup() {
         val sel = local.value.selected
         val reader = groupReader ?: return
-        val spaceWallet = sel.walletId?.takeIf { sel.space }
-        val chat = sel.chatId
-        if (spaceWallet == null && chat == null) return
+        val chat = sel.chatId ?: return
         groupLocal.update { it.copy(loading = true) }
         viewModelScope.launch {
-            val f = (if (spaceWallet != null) reader.refreshLoneWallet(spaceWallet) else reader.refresh(chat!!, sel.walletId)) as? AppResult.Failure
+            val f = reader.refresh(chat, sel.walletId) as? AppResult.Failure
             // The answer belongs to the wallet that asked: if another was picked meanwhile, it isn't shown.
             if (local.value.selectedWalletId != sel.walletId) return@launch
             groupLocal.update { it.copy(loading = false, error = f?.let { e -> ErrorMessages.forError(e.error) }, reference = f?.let { e -> ErrorMessages.reference(e.error) }) }

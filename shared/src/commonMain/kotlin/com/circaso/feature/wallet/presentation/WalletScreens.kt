@@ -190,7 +190,7 @@ fun WalletTabContent(
         }
         // A group picked a moment ago may not be read yet: its own skeleton, named, until it is.
         val shown = state.selectedGroupKey?.let { chat ->
-            state.copy(group = state.group ?: com.circaso.feature.chama.presentation.GroupWalletUiState(nameHint = state.selected.name, online = state.online, spaceId = state.selected.spaceId, spaceCanSign = state.selected.canSign)) to chat
+            state.copy(group = state.group ?: com.circaso.feature.chama.presentation.GroupWalletUiState(nameHint = state.selected.name, online = state.online)) to chat
         }
         androidx.compose.animation.AnimatedContent(
             targetState = shown?.first ?: state.copy(group = null),
@@ -374,7 +374,7 @@ fun WalletContent(
                 BasicText(state.error ?: "Couldn't open your wallet.", style = t.body.copy(color = c.inkSecondary, textAlign = TextAlign.Center))
                 CircasoButton("Try Again", onRefresh, style = ButtonStyle.Secondary, enabled = state.online)
             }
-            g != null && wallet.status != WalletStatus.Active -> GroupWalletProblem(g, bottom, group?.onRetry ?: onRefresh, onFinishSetup = group?.actions?.onFinishSetup)
+            g != null && wallet.status != WalletStatus.Active -> GroupWalletProblem(g, bottom, group?.onRetry ?: onRefresh)
             wallet.status != WalletStatus.Active -> CreateWallet(state, bottom, onCreate)
             else -> ActiveWallet(state, wallet, bottom, actions, onReceive, onComing, group?.onRetry ?: onRefresh, onAddNetworks, onToggleHidden, group, header)
         }
@@ -425,15 +425,12 @@ private val WalletItemGap = 22.dp
  * ever read, a failed read (with its reference), a group without a wallet, or a wallet its signer hasn't finished.
  */
 @Composable
-private fun GroupWalletProblem(g: com.circaso.feature.chama.presentation.GroupWalletUiState, bottom: androidx.compose.ui.unit.Dp, onRetry: () -> Unit, onFinishSetup: (() -> Unit)? = null) {
+private fun GroupWalletProblem(g: com.circaso.feature.chama.presentation.GroupWalletUiState, bottom: androidx.compose.ui.unit.Dp, onRetry: () -> Unit) {
     val c = CircasoTheme.colors
     val t = CircasoTheme.typography
     val noWallet = g.money != null && g.money.wallet == null
     val (title, line) = when {
         noWallet -> "No wallet yet" to "${g.name} doesn’t have a wallet. An admin can add one from group info."
-        // SW1b: a space whose wallet isn't finished stays hidden until it is (plan §7); its owner finishes it here.
-        g.spaceId != null && g.settingUp -> "Being set up" to (if (g.spaceCanSign) "${g.name} goes live once its wallet is set up. Until then nobody else can see it."
-            else "${g.spaceOwnerName?.substringBefore(' ') ?: "The owner"} is still setting up ${g.name}’s wallet.")
         g.settingUp -> "Being set up" to (if (g.money?.isSigner == true) "Finish setting up ${g.name}’s wallet from group info." else "${g.signerName.replaceFirstChar { it.uppercase() }} is still setting up ${g.name}’s wallet.")
         !g.online -> "You’re offline" to "${g.name}’s wallet shows here once it has been read with a connection."
         else -> "Couldn’t open the wallet" to (g.error ?: com.circaso.core.common.ErrorMessages.SomethingWrong)
@@ -446,10 +443,6 @@ private fun GroupWalletProblem(g: com.circaso.feature.chama.presentation.GroupWa
         BasicText(line, style = t.body.copy(color = c.inkSecondary, textAlign = TextAlign.Center))
         if (!noWallet && !g.settingUp) g.reference?.let { BasicText("Ref $it", style = t.caption1.copy(color = c.inkTertiary)) }
         if (!noWallet && !g.settingUp && g.online) CircasoButton("Try Again", onRetry, style = ButtonStyle.Secondary, busy = g.loading)
-        if (g.spaceId != null && g.settingUp && g.spaceCanSign && onFinishSetup != null) {
-            CircasoButton("Finish Wallet Setup", onFinishSetup, enabled = g.online)
-            if (!g.online) BasicText("Needs a connection", style = t.footnote.copy(color = c.inkSecondary))
-        }
     }
 }
 
@@ -564,8 +557,7 @@ private fun ActiveWallet(
                     },
                 ) {
                     ChainCards(byValue(wallet.chains, fiat), fiat, hidden, onToggleHidden, onFocus = { network = it }, onAsset = actions.onAsset, onAssets = actions.onAssets, onGlow = { glow = it }) {
-                        if (g != null && group != null && g.spaceId != null) SpaceActionsRow(g, group.actions, onReceive = { onReceive(true) }, onComing = onComing)
-                        else if (g != null && group != null) GroupActionsRow(g, group.actions, onReceive = { onReceive(true) })
+                        if (g != null && group != null) GroupActionsRow(g, group.actions, onReceive = { onReceive(true) })
                         else Row(Modifier.fillMaxWidth().padding(horizontal = CircasoSpacing.s2), horizontalArrangement = Arrangement.SpaceBetween) {
                             ActionButton(CircasoIcon.Plus, "Add", { onComing(ComingFlow.AddMoney) })
                             ActionButton(CircasoIcon.ArrowUp, "Send", actions.onPay, enabled = state.canSend)
@@ -598,7 +590,7 @@ private fun ActiveWallet(
     }
     val statusItems: androidx.compose.foundation.lazy.LazyListScope.() -> Unit = {
         // No overall total (Pasaka, 2026-10-30): each network's card carries its own balance, the richest first.
-        if (!state.online || wallet.holdUntil != null || g != null && !state.showSwitcher || g?.spaceId != null) {
+        if (!state.online || wallet.holdUntil != null || g != null && !state.showSwitcher) {
             item(key = "status") {
                 Column(verticalArrangement = Arrangement.spacedBy(4.dp), modifier = Modifier.padding(horizontal = 4.dp)) {
                     // GW16's caption: whose money it is and who can move it (warning when its signer has left). In the
@@ -608,10 +600,7 @@ private fun ActiveWallet(
                     // Offline: why the money buttons are dim. The pushed screen's banner already gives the time.
                     if (!state.online) {
                         val asOf = if (g == null || inTab) "Offline · balances as of ${formatLocalTime(wallet.fetchedAt, LocalTimeStyle.Clock)}. " else ""
-                        BasicText(asOf + if (g != null && g.spaceId == null) "Adding money and payouts need a connection." else "Sending needs a connection.", style = t.caption1.copy(color = c.inkSecondary))
-                    } else if (g?.spaceId != null && g.spaceCanSign && g.spaceEmpty) {
-                        // SW1f: why Send is off on a new space wallet.
-                        BasicText("Nothing to send yet.", style = t.caption1.copy(color = c.inkSecondary))
+                        BasicText(asOf + if (g != null) "Adding money and payouts need a connection." else "Sending needs a connection.", style = t.caption1.copy(color = c.inkSecondary))
                     }
                     wallet.holdUntil?.let { BasicText("Payments are paused for a short while after a restore.", style = t.footnote.copy(color = c.warning)) }
                 }
@@ -656,7 +645,6 @@ private fun ActiveWallet(
             item(key = "recent-empty") {
                 BasicText(
                     when {
-                        g?.spaceId != null && payments.isEmpty() -> "No payments yet. Members pay when they join and renew, or with # in their private chat with you."
                         network != null && g != null && payments.isEmpty() -> "No payments yet. Members add money with # in the group chat."
                         network != null -> "Nothing on ${chainName(network!!).substringBefore(" (")} yet."
                         g != null -> "No payments yet. Members add money with # in the group chat."
@@ -722,27 +710,6 @@ private fun GroupActionsRow(g: com.circaso.feature.chama.presentation.GroupWalle
         ActionButton(CircasoIcon.ArrowUp, "Payout", actions.onPayout, enabled = live)
         ActionButton(CircasoIcon.ArrowDown, "Receive", onReceive, enabled = g.active)
         if (admin) ActionButton(CircasoIcon.Target, "Target", actions.onTarget, enabled = g.online)
-    }
-}
-
-/**
- * SW1: a space's wallet sends directly (no approvals, no daily cap, §7a), so its row is the personal one's: Add (the
- * honest coming sheet), Send, Receive, Cash Out (coming). Only the owner signs: an admin's Send and Cash Out are off,
- * with the caption saying who can send. A new wallet's Send waits for money (SW1f). Money never moves offline.
- */
-@Composable
-private fun SpaceActionsRow(
-    g: com.circaso.feature.chama.presentation.GroupWalletUiState,
-    actions: com.circaso.feature.chama.presentation.GroupWalletActions,
-    onReceive: () -> Unit,
-    onComing: (ComingFlow?) -> Unit,
-) {
-    val live = g.active && g.online
-    Row(Modifier.fillMaxWidth().padding(horizontal = CircasoSpacing.s2), horizontalArrangement = Arrangement.SpaceBetween) {
-        ActionButton(CircasoIcon.Plus, "Add", { onComing(ComingFlow.AddMoney) }, enabled = g.online)
-        ActionButton(CircasoIcon.ArrowUp, "Send", actions.onPayout, enabled = live && g.spaceCanSign && !g.spaceEmpty)
-        ActionButton(CircasoIcon.ArrowDown, "Receive", onReceive, enabled = g.active)
-        ActionButton(CircasoIcon.Bank, "Cash Out", { onComing(ComingFlow.CashOut) }, enabled = live && g.spaceCanSign)
     }
 }
 
