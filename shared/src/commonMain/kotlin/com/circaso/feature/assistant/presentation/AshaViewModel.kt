@@ -12,17 +12,10 @@ import com.circaso.core.platform.MaxVoiceSeconds
 import com.circaso.core.platform.RecordingStart
 import com.circaso.core.sync.ConnectionState
 import com.circaso.feature.assistant.domain.AskAshaUseCase
-import com.circaso.feature.assistant.domain.AshaActivity
-import com.circaso.feature.assistant.domain.AshaAvatarState
 import com.circaso.feature.assistant.domain.AshaEvent
-import com.circaso.feature.assistant.domain.AshaLook
-import com.circaso.feature.assistant.domain.AshaLookSource
-import com.circaso.feature.assistant.domain.AshaMascotContext
-import com.circaso.feature.assistant.domain.AshaMascotRules
-import com.circaso.feature.assistant.domain.AshaMascotTags
 import com.circaso.feature.assistant.domain.AshaMessage
-import com.circaso.feature.assistant.domain.AshaReaction
 import com.circaso.feature.assistant.domain.DeleteAshaHistoryUseCase
+import com.circaso.feature.assistant.domain.GetAshaUsageUseCase
 import com.circaso.feature.assistant.domain.ObserveAshaHistoryUseCase
 import com.circaso.feature.assistant.domain.RefreshAshaHistoryUseCase
 import com.circaso.feature.assistant.domain.SpeakUseCase
@@ -32,10 +25,7 @@ import kotlinx.coroutines.DelicateCoroutinesApi
 import kotlinx.coroutines.GlobalScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
@@ -64,23 +54,15 @@ data class AshaUiState(
     /** Asha's conversations, newest first, and the one on screen (C1). */
     val conversations: List<com.circaso.feature.assistant.domain.AshaConversation> = emptyList(),
     val currentConversation: String? = null,
-    val showHistory: Boolean = false,
-    /** What the server's tags have said so far in this conversation (scene, mood, activity). */
-    val mascotTags: AshaMascotTags = AshaMascotTags(),
-    val look: AshaLook = AshaLook.Asha,
+    /** The menu sheet's page; null when it is closed. */
+    val sheet: AshaSheet? = null,
+    /** This period's usage, read each time the menu opens. */
+    val usage: UsageUi = UsageUi.Loading,
+    /** The conversation waiting for its delete to be confirmed (long-pressed in the recents). */
+    val confirmDelete: String? = null,
 ) {
-    /** The mascot in the header (asha-next.md part B): still and idle offline, thinking while she answers, listening while recording. */
-    val mascot: AshaAvatarState
-        get() = AshaMascotRules.resolve(
-            look = look,
-            tags = mascotTags,
-            context = AshaMascotContext(online = online, lateNight = AshaMascotRules.isLateNight(com.circaso.core.platform.localHour(kotlin.time.Clock.System.now().toEpochMilliseconds()))),
-            appActivity = when {
-                voice == VoiceState.Recording -> AshaActivity.Listening
-                sending && streaming.isEmpty() -> AshaActivity.Thinking
-                else -> null
-            },
-        )
+    /** The open conversation's id: the one chosen, else the latest. */
+    val shownConversation: String? get() = currentConversation ?: conversations.firstOrNull()?.id
 
     /** The open conversation's title, for the header; "New chat" until it has one. */
     val conversationTitle: String? get() = (currentConversation?.let { id -> conversations.firstOrNull { it.id == id } } ?: conversations.firstOrNull())?.title
@@ -103,15 +85,9 @@ class AshaViewModel(
     private val speak: SpeakUseCase,
     /** The conversation list (C1–C4); absent in previews and tests that don't need it. */
     private val chats: com.circaso.feature.assistant.domain.AshaRepository? = null,
-    /** The mascot's look from the chosen voice; absent in previews and tests, which show Asha. */
-    private val look: AshaLookSource? = null,
-    /** Payments confirming, failing and arriving while Asha is open; absent in previews and tests. */
-    private val money: com.circaso.feature.assistant.domain.AshaMoneyReactions? = null,
+    /** This period's usage (A7) for the menu; absent in tests that don't need it. */
+    private val usage: GetAshaUsageUseCase? = null,
 ) : ViewModel() {
-    private val _reactions = MutableSharedFlow<AshaReaction>(extraBufferCapacity = 4)
-    /** One-shot mascot reactions the server asked for (thanks, goal reached, …). */
-    val reactions: Flow<AshaReaction> = _reactions
-
     private val local = MutableStateFlow(AshaUiState())
     private var job: Job? = null
     private var timer: Job? = null
@@ -119,43 +95,83 @@ class AshaViewModel(
 
     private val conversationsFlow = chats?.let { r -> combine(r.conversations, r.current) { list, cur -> list to cur } } ?: kotlinx.coroutines.flow.flowOf(emptyList<com.circaso.feature.assistant.domain.AshaConversation>() to null)
 
-    val state: StateFlow<AshaUiState> = combine(observeHistory(), local, connection.status, conversationsFlow, look?.look ?: flowOf(AshaLook.Asha)) { messages, ui, status, conv, shownLook ->
-        ui.copy(messages = messages, online = status == ConnectionStatus.Online, conversations = conv.first, currentConversation = conv.second, look = shownLook)
+    val state: StateFlow<AshaUiState> = combine(observeHistory(), local, connection.status, conversationsFlow) { messages, ui, status, conv ->
+        ui.copy(messages = messages, online = status == ConnectionStatus.Online, conversations = conv.first, currentConversation = conv.second)
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), AshaUiState())
 
-    fun onHistory(open: Boolean) = local.update { it.copy(showHistory = open) }
+    private var usageJob: Job? = null
+
+    /** The header's menu button: opens the sheet on its first page (and reads the usage afresh), or closes it. */
+    fun onMenu(open: Boolean) {
+        local.update { it.copy(sheet = if (open) AshaSheet.Menu else null, confirmDelete = null) }
+        if (open) loadUsage()
+    }
+
+    /** Moves between the sheet's pages (Menu, Recents, Usage). */
+    fun onSheet(page: AshaSheet) {
+        local.update { it.copy(sheet = page, confirmDelete = null) }
+        if (page == AshaSheet.Usage && local.value.usage !is UsageUi.Loaded) loadUsage()
+    }
+
+    /** Back inside the sheet: a sub-page returns to the menu; the menu closes. */
+    fun onSheetBack() = local.update { s -> s.copy(sheet = if (s.sheet == AshaSheet.Menu) null else AshaSheet.Menu, confirmDelete = null) }
+
+    fun onRetryUsage() = loadUsage()
+
+    private fun loadUsage() {
+        val u = usage ?: return
+        if (!state.value.online) {
+            local.update { it.copy(usage = if (it.usage is UsageUi.Loaded) it.usage else UsageUi.Offline) }
+            return
+        }
+        if (usageJob?.isActive == true) return
+        // A figure already on screen stays while the fresh one loads, so the sheet doesn't flicker.
+        local.update { if (it.usage is UsageUi.Loaded) it else it.copy(usage = UsageUi.Loading) }
+        usageJob = viewModelScope.launch {
+            val next = when (val r = u()) {
+                is AppResult.Success -> UsageUi.Loaded(r.value)
+                is AppResult.Failure -> UsageUi.from(r.error)
+            }
+            local.update { it.copy(usage = if (next is UsageUi.Offline && it.usage is UsageUi.Loaded) it.usage else next) }
+        }
+    }
 
     /** A brand-new conversation: Asha starts with no context (cheaper, and the reason to start one). */
     fun onNewChat() {
         val r = chats ?: return
         if (!state.value.online || state.value.sending) return
-        local.update { it.copy(showHistory = false, error = null, mascotTags = AshaMascotTags()) }
+        stopSpeaking()
+        local.update { it.copy(sheet = null, error = null, confirmDelete = null) }
         viewModelScope.launch {
             (r.newConversation() as? AppResult.Failure)?.let { f -> local.update { it.copy(error = message(f.error)) } }
         }
     }
 
+    /** Opens a recent chat. A tap while a delete is being confirmed only cancels that. */
     fun onOpenConversation(id: String) {
+        if (local.value.confirmDelete != null) { local.update { it.copy(confirmDelete = null) }; return }
         stopSpeaking()
         chats?.open(id)
-        local.update { it.copy(showHistory = false, mascotTags = AshaMascotTags()) }
+        local.update { it.copy(sheet = null) }
     }
 
-    fun onDeleteConversation(id: String) {
+    /** A long-press on a recent chat asks before deleting it (online only: the server deletes it). */
+    fun onRequestDelete(id: String) {
+        if (!state.value.online) return
+        local.update { it.copy(confirmDelete = id) }
+    }
+
+    fun onCancelDelete() = local.update { it.copy(confirmDelete = null) }
+
+    fun onConfirmDelete() {
+        val id = local.value.confirmDelete ?: return
         val r = chats ?: return
+        local.update { it.copy(confirmDelete = null) }
         viewModelScope.launch { (r.deleteConversation(id) as? AppResult.Failure)?.let { f -> local.update { it.copy(error = message(f.error)) } } }
     }
 
     init {
         viewModelScope.launch { refreshHistory() }
-        // The voice's gender, once per visit (a cheap GET); offline the saved look stays.
-        look?.let { l -> viewModelScope.launch { l.refresh() } }
-        // The person's own money moving plays a one-shot (coins, the paper plane, the caring wrench) while she's on screen.
-        money?.let { m ->
-            viewModelScope.launch {
-                m.reactions.collect { r -> if (AshaMascotRules.allowReaction(r, AshaMascotContext(online = state.value.online))) _reactions.tryEmit(r) }
-            }
-        }
     }
 
     fun onDraft(text: String) = local.update { it.copy(draft = text, error = null) }
@@ -178,11 +194,8 @@ class AshaViewModel(
                 when (event) {
                     is AshaEvent.Delta -> local.update { it.copy(streaming = it.streaming + event.text, status = null) }
                     is AshaEvent.UsingTool -> local.update { it.copy(status = "Reading your chats…") }
-                    is AshaEvent.Status -> {
-                        local.update { it.copy(status = event.label, mascotTags = it.mascotTags.merge(event.tags)) }
-                        event.tags?.reaction?.let { r -> if (AshaMascotRules.allowReaction(r, AshaMascotContext(online = state.value.online))) _reactions.tryEmit(r) }
-                    }
-                    is AshaEvent.Done -> local.update { it.copy(mascotTags = it.mascotTags.turnDone()) }
+                    is AshaEvent.Status -> local.update { it.copy(status = event.label) }
+                    is AshaEvent.Done -> Unit
                     is AshaEvent.Failed -> failed = event.error
                     is AshaEvent.ToolRequest -> Unit
                 }
@@ -190,8 +203,6 @@ class AshaViewModel(
             local.update {
                 it.copy(
                     pendingQuestion = null, streaming = "", status = null,
-                    // The turn is over however it ended (done, failed, cancelled): her work is released.
-                    mascotTags = it.mascotTags.turnDone(),
                     // Nothing was answered: give the question back so it is not lost.
                     draft = if (failed != null) question else it.draft,
                     error = failed?.let { e -> message(e) },

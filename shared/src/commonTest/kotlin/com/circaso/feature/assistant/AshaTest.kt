@@ -101,7 +101,7 @@ private class FakeAshaRemote : AshaRemote {
     override suspend fun toolResults(turnId: String, request: ToolResultsRequest): AppResult<NoBody> { toolResults += turnId to request; return toolResultsAnswer }
     override suspend fun transcribe(audio: ByteArray, contentType: String, seconds: Int) = AppResult.Success(TranscriptResponse("hello", seconds))
     override suspend fun speech(request: SpeechRequest) = AppResult.Success(byteArrayOf(1, 2, 3))
-    override suspend fun usage() = AppResult.Success(UsageResponse("free", 3, 7, 10, 50, "2026-10-26T00:00:00Z"))
+    override suspend fun usage() = AppResult.Success(UsageResponse(plan = "free", textTurnsUsed = 3, textTurnsLeft = 7, voiceSecondsUsed = 10, voiceSecondsLeft = 50, resetsAt = "2026-10-26T00:00:00Z"))
     override fun stream(request: SendMessageRequest): Flow<AppResult<SseEvent>> = flow { streamRequests += request; events.forEach { emit(it) } }
 }
 
@@ -178,6 +178,17 @@ class AshaRepositoryTest {
         assertEquals(true, request.chatReading)
     }
 
+    @Test fun theOldMascotFramesAreIgnoredAndToolStatusStillShows() = runSuspending {
+        remote.events = listOf(
+            ok("mascot", """{"scene":"beach","mood":"happy","activity":"thinking"}"""),
+            ok("tool_status", """{"label":"Checking your transactions…","scene":"office","mood":"focused"}"""),
+            ok("tool_done", "{}"),
+            ok("message", """{"delta":"ok"}"""),
+        )
+        val events = repo.ask("x", null, false).toList()
+        assertEquals(listOf(AshaEvent.Status("Checking your transactions…"), AshaEvent.Status(null), AshaEvent.Delta("ok")), events)
+    }
+
     @Test fun unknownAndMalformedEventsAreSkipped() = runSuspending {
         remote.events = listOf(ok("future_thing", "{}"), ok("message", "not json"), ok("message", """{"delta":"ok"}"""))
         assertEquals(listOf("ok"), repo.ask("x", null, false).toList().filterIsInstance<AshaEvent.Delta>().map { it.text })
@@ -196,7 +207,7 @@ class AshaRepositoryTest {
     }
 
     @Test fun usageAndSpeechPassThrough() = runSuspending {
-        assertEquals(7, (repo.usage() as AppResult.Success).value.textTurnsLeft)
+        assertEquals(7, (repo.usage() as AppResult.Success).value.messages.left)
         assertEquals(3, (repo.speak("hi", null) as AppResult.Success).value.size)
     }
 }

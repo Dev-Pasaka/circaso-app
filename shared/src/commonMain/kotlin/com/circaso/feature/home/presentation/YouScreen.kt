@@ -88,7 +88,6 @@ data class YouActions(
     val onHelp: () -> Unit = {},
     val onNeedsAttention: () -> Unit = {},
     val onCurrency: () -> Unit = {},
-    val onAshaVoice: () -> Unit = {},
     val onMoneySound: (Boolean) -> Unit = {},
     /** Who sees my moments (P1). */
     val onMomentsPrivacy: () -> Unit = {},
@@ -215,8 +214,6 @@ fun YouContent(
                 }
                 Section("Assistant") {
                     ListRow("Asha", sub = "Ask about your money by text or voice", trailing = { RowChevron() }, onClick = actions.onAsha)
-                    RowDivider(Modifier.padding(start = CircasoSpacing.s4))
-                    ListRow("Asha's voice", sub = "Pick how she sounds", trailing = { RowChevron() }, onClick = actions.onAshaVoice)
                     RowDivider(Modifier.padding(start = CircasoSpacing.s4))
                     ListRow("Help", sub = "Chat with a person at Circaso", trailing = { RowChevron() }, onClick = actions.onHelp)
                 }

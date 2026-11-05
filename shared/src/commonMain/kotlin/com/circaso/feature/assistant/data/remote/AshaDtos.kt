@@ -29,14 +29,25 @@ data class ChatMessageDto(
 @Serializable data class VoiceDto(val id: String, val name: String, val character: String? = null, val gender: String? = null, val default: Boolean = false)
 @Serializable data class VoicesResponse(val voices: List<VoiceDto> = emptyList())
 
+@Serializable data class UsageMeterDto(val used: Int = 0, val limit: Int? = null)
+
+/**
+ * A7. Two shapes are read: the period one (`messages` and `voiceSeconds` as used/limit, `periodStart`, `periodEnd`,
+ * `resetsAt`) and the day one A7 first shipped with (`textTurnsUsed`/`Left`, `voiceSecondsUsed`/`Left`). Every field
+ * is optional so either decodes.
+ */
 @Serializable
 data class UsageResponse(
-    val plan: String,
-    val textTurnsUsed: Int,
-    val textTurnsLeft: Int,
-    val voiceSecondsUsed: Int,
-    val voiceSecondsLeft: Int,
-    val resetsAt: String,
+    val plan: String = "free",
+    val periodStart: String? = null,
+    val periodEnd: String? = null,
+    val resetsAt: String? = null,
+    val messages: UsageMeterDto? = null,
+    val voiceSeconds: UsageMeterDto? = null,
+    val textTurnsUsed: Int? = null,
+    val textTurnsLeft: Int? = null,
+    val voiceSecondsUsed: Int? = null,
+    val voiceSecondsLeft: Int? = null,
 )
 
 /** The `data` of the stream's events. */

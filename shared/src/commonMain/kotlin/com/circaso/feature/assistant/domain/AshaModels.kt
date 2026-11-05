@@ -28,13 +28,24 @@ data class AshaMessage(
 /** A short piece of a chat that the phone hands Asha for one turn. Used for that turn only and never stored by the server. */
 data class Snippet(val chatId: String, val chatName: String?, val sender: String, val at: String, val text: String)
 
+/** One allowance in Asha's usage (messages, or seconds of voice). [limit] null means no cap on this plan. */
+data class UsageMeter(val used: Int, val limit: Int?) {
+    val left: Int? get() = limit?.let { (it - used).coerceAtLeast(0) }
+    /** How full the allowance is, 0..1; null when there is no cap. */
+    val fraction: Float? get() = limit?.let { if (it <= 0) 1f else (used.toFloat() / it).coerceIn(0f, 1f) }
+}
+
+/**
+ * This period's use of Asha against the plan's allowance (A7). Times are ISO-8601 instants as the server sends them;
+ * the period fields are null on a server that only reports a day.
+ */
 data class AshaUsage(
     val plan: String,
-    val textTurnsUsed: Int,
-    val textTurnsLeft: Int,
-    val voiceSecondsUsed: Int,
-    val voiceSecondsLeft: Int,
-    val resetsAt: String,
+    val messages: UsageMeter,
+    val voiceSeconds: UsageMeter,
+    val resetsAt: String?,
+    val periodStart: String? = null,
+    val periodEnd: String? = null,
 )
 
 /** What happens while Asha answers. */
@@ -49,7 +60,7 @@ sealed interface AshaEvent {
     data class UsingTool(val name: String) : AshaEvent
 
     /** What Asha is doing right now ("Checking your transactions…"), written by the server per tool; null when done. */
-    data class Status(val label: String?, val tags: AshaTags? = null) : AshaEvent
+    data class Status(val label: String?) : AshaEvent
 
     /** The reply is complete and saved. */
     data class Done(val message: AshaMessage) : AshaEvent

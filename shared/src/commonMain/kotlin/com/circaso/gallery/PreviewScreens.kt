@@ -354,10 +354,10 @@ fun PreviewScreens(name: String) {
         )
         "voice" -> VoiceContent(VoiceUiState(phase = VoicePhase.Listening, heard = "What did I spend on lunch this", micLevel = 0.6f, voiceSecondsLeft = 118), {}, {}, {}, {})
         "voice-speaking" -> VoiceContent(
-            VoiceUiState(phase = VoicePhase.Speaking, question = "How does Circaso keep my chats private?", reply = listOf("Every message is locked on your phone before it leaves.", "Only the people in the chat hold the keys, so Circaso can't read along."), voiceLevel = 0.7f),
+            VoiceUiState(phase = VoicePhase.Speaking, turns = listOf(com.circaso.feature.assistant.presentation.VoiceTurn("How does Circaso keep my chats private?", listOf("Every message is locked on your phone before it leaves.", "Only the people in the chat hold the keys, so Circaso can't read along."))), voiceLevel = 0.7f),
             {}, {}, {}, {},
         )
-        "voice-thinking" -> VoiceContent(VoiceUiState(phase = VoicePhase.Thinking, question = "Who did I chat with this week?", status = "Reading your chats…"), {}, {}, {}, {})
+        "voice-thinking" -> VoiceContent(VoiceUiState(phase = VoicePhase.Thinking, turns = listOf(com.circaso.feature.assistant.presentation.VoiceTurn("Who did I chat with this week?")), status = "Reading your chats…"), {}, {}, {}, {})
         "voice-ended" -> VoiceContent(VoiceUiState(phase = VoicePhase.Ended, ending = VoiceEnding.Quiet), {}, {}, {}, {})
         "wallet-cards" -> WalletContent(
             WalletUiState(wallet = sampleWallet().copy(chains = sampleWallet().chains + listOf(
@@ -402,7 +402,7 @@ fun PreviewScreens(name: String) {
             null, sampleChama(),
         )
         "transfer" -> TransferContent(TransferUiState(transfer = sampleTransfers().first(), fiat = sampleWallet().fiat), {})
-        else -> if (!GroupWalletPreview(name) && !ChatMoneyPreview(name) && !SpacesPreview(name)) BasicText("Unknown preview: $name")
+        else -> if (!GroupWalletPreview(name) && !ChatMoneyPreview(name) && !SpacesPreview(name) && !AshaPreview(name)) BasicText("Unknown preview: $name")
     }
 }
 

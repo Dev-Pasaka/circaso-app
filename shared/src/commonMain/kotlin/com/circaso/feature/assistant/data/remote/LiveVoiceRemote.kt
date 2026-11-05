@@ -184,10 +184,9 @@ class LiveVoiceSocketSession(private val socket: LiveSocket, private val json: J
                     json.decodeFromJsonElement(ChatMessageDto.serializer(), o.getValue("message")).toDomain(),
                     o["spoken"]?.jsonPrimitive?.booleanOrNull ?: true,
                 )
-                "tool_status" -> LiveVoiceEvent.Status(str("label"), AshaTagsParser.parse(o))
-                "tool_done" -> LiveVoiceEvent.Status(null, AshaTagsParser.parse(o))
-                // Backend PR #32: the mascot frame (before the first reply sentence, and with activity done after reply_done).
-                "mascot" -> LiveVoiceEvent.Status(null, AshaTagsParser.parse(o))
+                "tool_status" -> LiveVoiceEvent.Status(str("label"))
+                "tool_done" -> LiveVoiceEvent.Status(null)
+                // `mascot` frames (backend PR #32) may still arrive; the mascot is gone, so they are ignored like any unknown frame.
                 "tool_request" -> LiveVoiceEvent.ToolRequest(str("turnId").orEmpty(), str("callId").orEmpty(), str("name").orEmpty(), argumentsOf(o["arguments"]))
                 "timing" -> LiveVoiceEvent.Timing(
                     o["turn"]?.jsonPrimitive?.intOrNull ?: 0,
