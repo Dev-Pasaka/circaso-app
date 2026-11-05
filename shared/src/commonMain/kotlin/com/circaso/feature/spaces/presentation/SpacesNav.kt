@@ -37,6 +37,12 @@ class SpacesNav(
     val receive: () -> Unit = {},
     /** The person's own profile in the app (a member row → their chat or profile). */
     val openPerson: (userId: String) -> Unit = {},
+    /** A pushed wallet's own links (See All, assets, a payment), for the wallet on screen (SW1). */
+    val walletActions: (walletId: String?) -> com.circaso.feature.wallet.presentation.WalletActions = { _ ->
+        com.circaso.feature.wallet.presentation.WalletActions({}, {}, {}, {}, {})
+    },
+    /** SW1's Send: Pay, from that wallet (the space wallet sends directly; its owner's PIN). */
+    val payFrom: (walletId: String) -> Unit = {},
 ) {
     companion object {
         /** Previews: every action does nothing. */

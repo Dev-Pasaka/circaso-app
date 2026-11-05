@@ -163,6 +163,8 @@ fun AppNavigation(forceUpdate: Boolean, home: @Composable () -> Unit) {
             invites = { id -> backStack.add(SpaceInvitesRoute(id)) },
             spaceWallet = { id -> backStack.add(SpaceWalletRoute(id)) },
             asha = { if (backStack.lastOrNull() != AshaRoute) backStack.add(AshaRoute) },
+            walletActions = { id -> walletActions(id, backStack::add) },
+            payFrom = { id -> backStack.add(PayRoute(fromWalletId = id)) },
         )
     }
     val calls = koinInject<com.circaso.feature.calls.CallController>()
@@ -254,7 +256,7 @@ fun AppNavigation(forceUpdate: Boolean, home: @Composable () -> Unit) {
                         WalletTab(
                             walletViewModel, bottomPadding,
                             actions = { walletId -> walletActions(walletId, backStack::add) },
-                            groupActions = { chatId, gw -> groupWalletActions(chatId, gw, backStack::add) },
+                            groupActions = { key, gw -> gw.spaceId?.let { spaceWalletActions(it, gw, backStack::add) } ?: groupWalletActions(key, gw, backStack::add) },
                         )
                     },
                     walletActions = { WalletTitleActions(walletViewModel) },
@@ -610,6 +612,17 @@ internal fun walletActions(walletId: String?, open: (Route) -> Unit) = WalletAct
     onAssets = { chain -> open(NetworkAssetsRoute(chain, walletId)) },
     onNetworkActivity = { chain -> open(NetworkActivityRoute(chain, walletId)) },
 )
+
+/** A space's wallet (SW1): Send pays anyone from it directly (the owner's PIN); Finish Setup carries on SN5b. */
+internal fun spaceWalletActions(spaceId: String, state: com.circaso.feature.chama.presentation.GroupWalletUiState, open: (Route) -> Unit) =
+    com.circaso.feature.chama.presentation.GroupWalletActions(
+        onAdd = {},
+        onPayout = { state.walletId?.let { open(PayRoute(fromWalletId = it)) } },
+        onPayRequest = {},
+        onOpenTransfer = { id -> open(TransferRoute(id)) },
+        onTarget = {},
+        onFinishSetup = { open(SpaceWalletSetupRoute(spaceId)) },
+    )
 
 internal fun groupWalletActions(chatId: String, state: com.circaso.feature.chama.presentation.GroupWalletUiState, open: (Route) -> Unit) =
     com.circaso.feature.chama.presentation.GroupWalletActions(
