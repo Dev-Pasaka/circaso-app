@@ -66,6 +66,7 @@ import com.circaso.designsystem.theme.CircasoSizes
 import com.circaso.designsystem.theme.CircasoSpacing
 import com.circaso.designsystem.theme.CircasoTheme
 import com.circaso.feature.status.domain.MomentRing
+import com.circaso.feature.spaces.presentation.discover.spacesSections
 
 /** What the Spaces tab can open. */
 class SpacesActions(
@@ -81,28 +82,53 @@ fun SpacesTab(
     bottomPadding: PaddingValues,
     actions: SpacesActions,
     /** Spaces core (phase 3): where the spaces sections go; null keeps phase 1's "Spaces are coming" card. */
-    @Suppress("UNUSED_PARAMETER") spacesNav: com.circaso.feature.spaces.presentation.SpacesNav? = null,
+    spacesNav: com.circaso.feature.spaces.presentation.SpacesNav? = null,
+    /** Spaces core's sections (SD1); its state says whether the flag is on. */
+    spacesHome: com.circaso.feature.spaces.presentation.discover.SpacesHomeViewModel? = null,
 ) {
     val state by viewModel.state.collectAsState()
+    val home = spacesHome?.state?.collectAsState()?.value
     // Always current (Pasaka, 2026-11-03): fetched each time the tab shows and each time the app comes back to the
     // front. New moments posted meanwhile also arrive as status.posted frames; offline, the stored ones show.
     androidx.lifecycle.compose.LifecycleResumeEffect(Unit) {
         viewModel.refresh()
+        spacesHome?.refresh()
         onPauseOrDispose { }
     }
-    SpacesContent(state, bottomPadding, actions, onNew = { viewModel.onNew(true) }, onRetry = viewModel::refresh,
-        onRetryPost = viewModel::onRetryPost, onDeletePost = viewModel::onDeletePost)
+    val toast = com.circaso.designsystem.chrome.rememberToastState()
+    androidx.compose.runtime.LaunchedEffect(home?.toast) { home?.toast?.let { spacesHome?.onToastShown(); toast.show(it) } }
+    val sections = if (spacesHome != null && home?.enabled == true && spacesNav != null) com.circaso.feature.spaces.presentation.discover.SpacesHomeActions(
+        onOpen = { m -> if (m.me.isMember && m.space.state == com.circaso.feature.spaces.domain.SpaceState.Live) spacesNav.openSpaceChat(m.space.spaceId) else spacesNav.openSpace(m.space.spaceId) },
+        onOpenSuggestion = { s -> spacesNav.openSpace(s.space.spaceId) },
+        onFollow = spacesHome::onFollow,
+        onJoin = spacesNav.joinSpace,
+        onSeeAllSuggested = spacesNav.suggested,
+        onCreate = { spacesNav.create(null) },
+        onRetry = spacesHome::onRetrySuggestions,
+    ) else null
+    Box(Modifier.fillMaxSize()) {
+        SpacesContent(state, bottomPadding, actions, onNew = { viewModel.onNew(true) }, onRetry = viewModel::refresh,
+            onRetryPost = viewModel::onRetryPost, onDeletePost = viewModel::onDeletePost,
+            spaces = home?.takeIf { sections != null }, spacesActions = sections,
+            onSearch = spacesNav?.search?.takeIf { sections != null }, onAsha = spacesNav?.asha?.takeIf { sections != null })
+        com.circaso.designsystem.chrome.ToastHost(toast, Modifier.align(Alignment.TopCenter))
+    }
 }
 
-/** The tab's sheet (S2), in the home scaffold's overlay so it covers the tab bar. */
+/** The tab's sheet (S2), in the home scaffold's overlay so it covers the tab bar. [onSpace] when spaces are on (SN1). */
 @Composable
-fun BoxScope.SpacesOverlay(viewModel: SpacesViewModel, actions: SpacesActions) {
+fun BoxScope.SpacesOverlay(viewModel: SpacesViewModel, actions: SpacesActions, onSpace: (() -> Unit)? = null) {
     val state by viewModel.state.collectAsState()
-    NewSheet(state.newSheet, onDismiss = { viewModel.onNew(false) }, onMoment = { viewModel.onNew(false); actions.onCompose() })
+    NewSheet(state.newSheet, onDismiss = { viewModel.onNew(false) }, onMoment = { viewModel.onNew(false); actions.onCompose() },
+        onSpace = onSpace?.let { open -> { viewModel.onNew(false); open() } })
 }
 
+/** The tab's offline banner: with spaces on it says how old the spaces on screen are (SD1d), "as of 10:42". */
 @Composable
-fun SpacesBanner() = com.circaso.core.sync.ConnectionBanner(showing = "Showing moments saved on this phone")
+fun SpacesBanner(spacesAsOf: Long? = null) = com.circaso.core.sync.ConnectionBanner(
+    showing = if (spacesAsOf != null && spacesAsOf > 0) "Showing spaces as of ${com.circaso.core.platform.formatLocalTime(spacesAsOf, com.circaso.core.platform.LocalTimeStyle.Clock)}"
+    else "Showing moments saved on this phone",
+)
 
 /** Design S1 (phase 1): the Moments row on top, then the honest "Spaces are coming" card until phase 3. */
 @Composable
@@ -114,9 +140,15 @@ fun SpacesContent(
     onRetry: () -> Unit,
     onRetryPost: (String) -> Unit = {},
     onDeletePost: (String) -> Unit = {},
+    /** Spaces core (SD1): with these, the spaces sections replace the "Spaces are coming" card. */
+    spaces: com.circaso.feature.spaces.presentation.discover.SpacesHomeUiState? = null,
+    spacesActions: com.circaso.feature.spaces.presentation.discover.SpacesHomeActions? = null,
+    onSearch: (() -> Unit)? = null,
+    onAsha: (() -> Unit)? = null,
 ) {
     val c = CircasoTheme.colors
     val t = CircasoTheme.typography
+    val spacesOn = spaces != null && spacesActions != null
     Box(Modifier.fillMaxSize()) {
         LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = bottomPadding.calculateBottomPadding() + CircasoSpacing.s4)) {
             item {
@@ -125,16 +157,25 @@ fun SpacesContent(
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     BasicText("Spaces", Modifier.weight(1f).semantics { heading() }, style = t.title1.copy(color = c.ink, fontWeight = FontWeight.Bold))
+                    // SD1's header: Ask Asha, Search, New (the canvas's `spaces_buttons`).
+                    if (onAsha != null) Box(
+                        Modifier.size(CircasoSizes.controlMd).pressable(role = Role.Button, onClick = onAsha).semantics { contentDescription = "Ask Asha" },
+                        contentAlignment = Alignment.Center,
+                    ) { com.circaso.designsystem.components.AshaMark(size = CircasoSizes.avatarSm) }
+                    if (onSearch != null) CircasoIconButton(CircasoIcon.Search, "Search moments and spaces", onSearch)
                     CircasoIconButton(CircasoIcon.Plus, "New moment or space", onNew)
                 }
             }
             item { SectionLabel("Moments") }
             item { MomentsRow(state, actions) }
             // Nothing to show is never an error screen (Pasaka, 2026-11-03): the empty state stays, and a failed check
-            // is one quiet line under it with Try Again and the reference for support.
-            if ((state.failed && !state.checkFailedWithData) || (state.empty && !state.loading)) item { NoMoments(state.hasContacts, actions, offline = !state.online) }
+            // is one quiet line under it with Try Again and the reference for support. With spaces on (SD1) the tab
+            // belongs to them as well: the Moments row stays (my ring's + still shares one) without the big empty block.
+            if (!spacesOn && ((state.failed && !state.checkFailedWithData) || (state.empty && !state.loading))) item { NoMoments(state.hasContacts, actions, offline = !state.online) }
             if (state.failed) item { CheckFailed(state.requestId, onRetry) }
-            item {
+            if (spacesOn) {
+                spacesSections(spaces!!, spacesActions!!)
+            } else item {
                 Column(Modifier.padding(top = CircasoSpacing.s5)) {
                     SectionLabel("Spaces")
                     ComingCard()
@@ -368,13 +409,15 @@ private fun ComingCard() {
 
 /** S2: the + button. Moment goes to the camera; Space is coming in phase 3. */
 @Composable
-private fun BoxScope.NewSheet(visible: Boolean, onDismiss: () -> Unit, onMoment: () -> Unit) {
+private fun BoxScope.NewSheet(visible: Boolean, onDismiss: () -> Unit, onMoment: () -> Unit, onSpace: (() -> Unit)? = null) {
     val c = CircasoTheme.colors
     CircasoSheet(visible, onDismiss, label = "New") {
         SheetHead("New", onDismiss)
         ListGroup {
             ListRow("Moment", sub = "Text, photo, video or voice for 24 hours", leading = { IconDisc(CircasoIcon.Camera) }, trailing = { RowChevron() }, onClick = onMoment)
-            ListRow("Space", sub = "A community or shop with a chat and a wallet", leading = { IconDisc(CircasoIcon.Spaces) }, trailing = { TextBadge("Soon") })
+            // Spaces core on: Space opens SN1; off, it still says Soon.
+            if (onSpace != null) ListRow("Space", sub = "A community or shop with a chat and a wallet", leading = { IconDisc(CircasoIcon.Spaces) }, trailing = { RowChevron() }, onClick = onSpace)
+            else ListRow("Space", sub = "A community or shop with a chat and a wallet", leading = { IconDisc(CircasoIcon.Spaces) }, trailing = { TextBadge("Soon") })
         }
         Box(Modifier.size(1.dp).background(c.bg))
     }
