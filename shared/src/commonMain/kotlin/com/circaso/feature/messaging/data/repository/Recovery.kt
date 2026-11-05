@@ -29,7 +29,7 @@ import kotlin.io.encoding.Base64
  * A chat's payment cards, keyed by transfer: one card per transfer per chat, whichever way it arrives. Money is never
  * hidden by decryption: when the server's own record says a payment from this chat is on chain ([fromWallet]), the
  * card is there even if the end-to-end card is unreadable on this phone or never arrives (this phone may be new). When
- * the end-to-end card does arrive ([receive]), it fills in that card (its note, its message id, its place) instead of
+ * the end-to-end card does arrive ([receive]), it fills in that card (its note and message id; the card keeps its place) instead of
  * adding a second one. Nothing here is optimistic: a card from the wallet exists only for a confirmed transfer, and
  * every card shows the transfer's own state.
  */
@@ -83,8 +83,9 @@ class ChatPaymentCards(
         val existing = recovery.paymentCard(row.chatId, transferId)
         when {
             existing == null -> dao.insert(row)
+            // The card keeps its place: moving it under the person's eyes (perhaps under another day) would be a jump.
             existing.messageId == null && !existing.outgoing && existing.senderId == row.senderId -> dao.upsert(
-                existing.copy(messageId = row.messageId, text = row.text, sentAt = row.sentAt, orderAt = row.orderAt, replyTo = row.replyTo),
+                existing.copy(messageId = row.messageId, text = row.text, sentAt = row.sentAt, replyTo = row.replyTo),
             )
             else -> Unit
         }

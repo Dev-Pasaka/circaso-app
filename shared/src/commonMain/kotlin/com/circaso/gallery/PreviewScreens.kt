@@ -242,6 +242,9 @@ fun PreviewScreens(name: String) {
         ) {
             com.circaso.designsystem.components.MoneyCard("Received", "KES 2,000", "15.50 USDC · 12:41", outgoing = false, note = "for lunch", symbol = "USDC")
             com.circaso.designsystem.components.MoneyCard("Sent", "KES 500", "3.88 USDC · 12:45", outgoing = true, note = "bus fare", symbol = "USDC")
+            // Cards the wallet adds from its own record (an unreadable or missing encrypted card): no note.
+            com.circaso.designsystem.components.MoneyCard("Received", "KES 1,000", "7.70 USDC · 10:12", outgoing = false, symbol = "USDC")
+            com.circaso.designsystem.components.MoneyCard("Sent", "KES 1,000", "7.70 USDC · 10:12", outgoing = true, symbol = "USDC")
             com.circaso.designsystem.components.MoneyCard("Sent", "0.01 ETH", "09:40 · sending card", outgoing = true, pending = true, symbol = "ETH")
             com.circaso.designsystem.components.MoneyCard("Sent", "KES 140", "1.09 USDC · 09:40 · card not sent", outgoing = true, failed = true, symbol = "USDC")
         }

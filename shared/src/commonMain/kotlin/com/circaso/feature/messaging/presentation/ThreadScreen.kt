@@ -662,9 +662,10 @@ fun ThreadContent(
                                 else onOpenMoment(if (outgoing) state.chat?.peerId else null, q.momentId)
                             }) { onSelect(m) }
                         }
-                        is Message.Payment -> PaymentMessage(m, onOpen = { onOpenTransfer(m.transferId) }, moment = !m.outgoing && index == state.messages.lastIndex, onThanks = { onQuickReply("Asante!") }, chama = chama, fiat = state.fiat, groupName = state.chat?.title?.takeIf { state.groupMoney?.hasWallet == true },
+                        is Message.Payment -> PaymentMessage(m, onOpen = { onOpenTransfer(m.transferId) }, moment = !m.outgoing && index == state.messages.lastIndex && now - m.orderAt < MoneyMomentMillis, onThanks = { onQuickReply("Asante!") }, chama = chama, fiat = state.fiat, groupName = state.chat?.title?.takeIf { state.groupMoney?.hasWallet == true },
                             react = reactUi(m.messageId), transfer = state.paymentStates[m.transferId], pendingPayment = state.paymentPending(m, now),
-                            announce = m.outgoing && m.localId == lastOutgoingPayment,
+                            // Only a payment made just now is read out (not old cards a new phone's sync brings back).
+                            announce = m.outgoing && m.localId == lastOutgoingPayment && now - m.orderAt < AnnounceWithinMillis,
                             // Only my own payment from here comes back to the card; a payout is paid again from its request.
                             onRetry = if (m.outgoing && payable && m.note?.startsWith("Paid from") != true) ({ retryCard(m) }) else null)
                         is Message.Deleted -> MessageColumn(m.outgoing) { ChatBubble("This message was deleted", m.outgoing, quiet = true) }
@@ -865,6 +866,7 @@ private fun PaymentMessage(
     // The card says Sent (or Paid, or Received) only once the chain has it; until then Sending (Pasaka, 2026-11-04).
     val inFlight = pendingPayment
     val notSent = transfer?.notSent == true
+    val confirmed = transfer == com.circaso.feature.wallet.domain.TransferState.Confirmed
     val usdc = MinorUnits.coinText(m.amountMinor, m.asset)
     // Design D2/D3: in a group with a goal, money to the treasurer is a contribution and money from them is a payout;
     // the card reads it from the group's own copy, so the encrypted payload needs no goal field.
@@ -892,7 +894,11 @@ private fun PaymentMessage(
                 amount = shownFiat ?: usdc,
                 note = if (kind == "Contribution" && (chama != null || groupName != null)) "${if (m.outgoing) "You" else m.senderName.substringBefore(' ')} added to ${chama?.goal?.name ?: groupName}" else m.note,
                 foot = (if (shownFiat != null) "$usdc · " else "") + formatLocalTime(m.orderAt, LocalTimeStyle.Clock) + when { failed -> " · card not sent"; waiting -> " · sending card"; else -> "" },
-                outgoing = m.outgoing, pending = waiting || inFlight, failed = failed || notSent, onClick = onOpen, onLongClick = react?.onOpen, symbol = m.asset, announce = announce,
+                // Money on chain is never dimmed or greyed because its encrypted card is still going out or didn't
+                // (a card the wallet added on a new phone, then sent): the foot says that; the look follows the money.
+                outgoing = m.outgoing, pending = if (confirmed) inFlight else waiting || inFlight, failed = if (confirmed) notSent else failed || notSent,
+                // A card that can't take a reaction yet (no message id: the wallet added it) opens its details on a long press.
+                onClick = onOpen, onLongClick = react?.onOpen ?: onOpen, symbol = m.asset, announce = announce,
             ) }
             if (react != null) Reacted(react, m.outgoing, card) else card()
             if (notSent) NotSentLine(m.outgoing, onRetry)
@@ -904,6 +910,12 @@ private fun PaymentMessage(
         }
     }
 }
+
+/** Say Thanks / View Details show under money received in the last day only (a new phone restores older cards). */
+private const val MoneyMomentMillis = 24L * 60 * 60 * 1000
+
+/** A Sending → Sent card is read out only for a payment made in the last few minutes. */
+private const val AnnounceWithinMillis = 5L * 60 * 1000
 
 /** "Missed voice call", "Video call", "No answer", "Declined": how a call reads in the chat and in the list. */
 internal fun callLabel(m: Message.Call): String {
