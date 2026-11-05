@@ -119,6 +119,8 @@ fun WalletTab(
     bottomPadding: PaddingValues,
     actions: (walletId: String?) -> WalletActions,
     groupActions: ((chatId: String, group: com.circaso.feature.chama.presentation.GroupWalletUiState) -> com.circaso.feature.chama.presentation.GroupWalletActions)? = null,
+    /** The Groups menu's way out of the tab: the group's chat and its info. */
+    groupMenu: GroupMenuActions? = null,
 ) {
     val state by viewModel.state.collectAsState()
     // Fresh whenever the tab is in front: on coming back to the app, and quietly every 30 seconds while it stays open,
@@ -137,15 +139,17 @@ fun WalletTab(
             }
         },
         onSwitching = viewModel::onSwitching, onSelectWallet = viewModel::onSelectWallet,
+        onMode = viewModel::onMode, onAllGroups = viewModel::onAllGroups, groupMenu = groupMenu,
         onCreate = viewModel::onCreate, onRefresh = { viewModel.refresh(fromPull = true) }, onReceive = viewModel::onReceive, onComing = viewModel::onComing,
         onErrorShown = viewModel::onErrorShown, onAddNetworks = viewModel::onAddMissingNetworks, onToggleHidden = viewModel::onToggleHidden,
     )
 }
 
 /**
- * The tab without its view model (previews): the wallet switcher in the top-right corner when there is another wallet
- * (GW16, as Pasaka redrew it on 2026-11-04: no title), and the picked wallet in the one wallet design. Switching
- * crossfades the body; the layout itself never changes, only the money, the payments and a group's own parts.
+ * The tab without its view model (previews). With group wallets on: Personal | Groups at the top (Pasaka,
+ * 2026-11-05); under Groups the group on screen as the title with the platform's overflow menu (switch group, its
+ * chat, its info), or a calm empty state when there is no group wallet yet. The picked wallet is drawn in the one
+ * wallet design; switching crossfades the body, the layout itself never changes.
  */
 @Composable
 fun WalletTabContent(
@@ -162,11 +166,14 @@ fun WalletTabContent(
     onErrorShown: () -> Unit = {},
     onAddNetworks: () -> Unit = {},
     onToggleHidden: () -> Unit = {},
+    onMode: (WalletMode) -> Unit = {},
+    onAllGroups: (Boolean) -> Unit = {},
+    groupMenu: GroupMenuActions? = null,
 ) {
     Column(Modifier.fillMaxSize()) {
-        // The corner row. Already there when the tab opens with the list known, it doesn't move anything; when the
-        // list arrives (or the last group wallet goes) after the page is up, the row eases open or closed instead of
-        // the page jumping by its height (a fade alone with reduced motion is still a resize, so it eases too).
+        // The Personal | Groups row. Already there when the tab opens with the flag known, it doesn't move anything;
+        // when it arrives (or goes) after the page is up, it eases open or closed instead of the page jumping by its
+        // height (a fade alone with reduced motion is still a resize, so it eases too).
         val row = remember { androidx.compose.animation.core.MutableTransitionState(state.showSwitcher) }
         row.targetState = state.showSwitcher
         androidx.compose.animation.AnimatedVisibility(
@@ -174,11 +181,8 @@ fun WalletTabContent(
             enter = androidx.compose.animation.expandVertically(tween(CircasoMotion.BaseMs)) + androidx.compose.animation.fadeIn(tween(CircasoMotion.BaseMs)),
             exit = androidx.compose.animation.shrinkVertically(tween(CircasoMotion.QuickMs)) + androidx.compose.animation.fadeOut(tween(CircasoMotion.QuickMs)),
         ) {
-            Row(Modifier.fillMaxWidth().padding(horizontal = CircasoSpacing.s4), horizontalArrangement = Arrangement.End, verticalAlignment = Alignment.CenterVertically) {
-                WalletSwitcher(
-                    wallets = state.wallets, selected = state.selected, open = state.switching, balances = state.balances, locked = state.lockedWallets,
-                    hidden = state.hidden, onOpen = onSwitching, onPick = onSelectWallet,
-                )
+            Box(Modifier.fillMaxWidth().padding(horizontal = CircasoSpacing.s4).padding(top = CircasoSpacing.s1, bottom = CircasoSpacing.s2), contentAlignment = Alignment.Center) {
+                WalletModeControl(groups = state.showingGroups, onMode = onMode)
             }
         }
         // A group picked a moment ago may not be read yet: its own skeleton, named, until it is.
@@ -187,7 +191,7 @@ fun WalletTabContent(
         }
         androidx.compose.animation.AnimatedContent(
             targetState = shown?.first ?: state.copy(group = null),
-            contentKey = { it.selectedWalletId },
+            contentKey = { if (it.groupsEmpty) "groups-empty" else it.selectedWalletId ?: "personal" },
             transitionSpec = {
                 androidx.compose.animation.fadeIn(tween(CircasoMotion.BaseMs)) togetherWith androidx.compose.animation.fadeOut(tween(CircasoMotion.QuickMs))
             },
@@ -196,12 +200,22 @@ fun WalletTabContent(
         ) { s ->
             val chat = s.selectedGroupKey
             val g = s.group
-            WalletContent(
-                s, bottomPadding, actions(s.selectedWalletId),
-                onCreate = onCreate, onRefresh = onRefresh, onReceive = onReceive, onComing = onComing, onErrorShown = onErrorShown,
-                sheets = false, onAddNetworks = onAddNetworks, onToggleHidden = onToggleHidden,
-                group = if (chat != null && g != null) groupHooks(chat, g) else null,
-            )
+            if (s.groupsEmpty) {
+                GroupWalletsEmpty(bottomPadding.calculateBottomPadding() + CircasoSpacing.s4, Modifier.fillMaxSize())
+                return@AnimatedContent
+            }
+            Column(Modifier.fillMaxSize()) {
+                // The group on screen is the page's title; its menu switches group (the person's own wallet is Personal).
+                if (s.showingGroups) GroupWalletHeader(s, onSwitching, onSelectWallet, onAllGroups, groupMenu, Modifier.padding(bottom = CircasoSpacing.s1))
+                Box(Modifier.weight(1f)) {
+                    WalletContent(
+                        s, bottomPadding, actions(s.selectedWalletId),
+                        onCreate = onCreate, onRefresh = onRefresh, onReceive = onReceive, onComing = onComing, onErrorShown = onErrorShown,
+                        sheets = false, onAddNetworks = onAddNetworks, onToggleHidden = onToggleHidden,
+                        group = if (chat != null && g != null) groupHooks(chat, g) else null,
+                    )
+                }
+            }
         }
     }
 }
@@ -215,6 +229,10 @@ fun androidx.compose.foundation.layout.BoxScope.WalletOverlay(
 ) {
     val state by viewModel.state.collectAsState()
     WalletSheets(state, actions, viewModel::onReceive, viewModel::onComing)
+    // Every group wallet, searchable, for someone in more groups than the Groups menu lists.
+    CircasoSheet(state.allGroups, { viewModel.onAllGroups(false) }, label = "Group Wallets") {
+        AllGroupWalletsContent(state, onPick = viewModel::onSelectWallet, onClose = { viewModel.onAllGroups(false) })
+    }
     if (biometrics != null) {
         val bio by biometrics.state.collectAsState()
         // Asked once, right after the wallet is made; later it lives in You → Security → Payments. The sheet stays up
@@ -523,13 +541,13 @@ private fun ActiveWallet(
     }
     val statusItems: androidx.compose.foundation.lazy.LazyListScope.() -> Unit = {
         // No overall total (Pasaka, 2026-10-30): each network's card carries its own balance, the richest first.
-        if (!state.online || wallet.holdUntil != null || g != null) {
+        if (!state.online || wallet.holdUntil != null || g != null && !state.showSwitcher || g?.spaceId != null) {
             item(key = "status") {
                 Column(verticalArrangement = Arrangement.spacedBy(4.dp), modifier = Modifier.padding(horizontal = 4.dp)) {
-                    // GW16's caption: whose money it is and who can move it (warning when its signer has left). The tab
-                    // has no title, so there its full name leads; the pushed screen's bar already names it.
-                    val inTab = state.wallets.isNotEmpty()
-                    if (g != null) BasicText(if (inTab) g.namedCaption else g.caption, style = t.subhead.copy(color = if (g.locked) c.warning else c.inkSecondary))
+                    // GW16's caption: whose money it is and who can move it (warning when its signer has left). In the
+                    // tab the group's header above the card says it already; the pushed screen says it here.
+                    val inTab = state.showSwitcher
+                    if (g != null && !inTab) BasicText(g.caption, style = t.subhead.copy(color = if (g.locked) c.warning else c.inkSecondary))
                     // Offline: why the money buttons are dim. The pushed screen's banner already gives the time.
                     if (!state.online) {
                         val asOf = if (g == null || inTab) "Offline · balances as of ${formatLocalTime(wallet.fetchedAt, LocalTimeStyle.Clock)}. " else ""

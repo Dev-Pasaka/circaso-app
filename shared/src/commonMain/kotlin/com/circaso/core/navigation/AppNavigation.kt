@@ -225,6 +225,7 @@ fun AppNavigation(forceUpdate: Boolean, home: @Composable () -> Unit) {
                             walletViewModel, bottomPadding,
                             actions = { walletId -> walletActions(walletId, backStack::add) },
                             groupActions = { key, gw -> groupWalletActions(key, gw, backStack::add) },
+                            groupMenu = com.circaso.feature.wallet.presentation.GroupMenuActions(onOpenChat = ::openChatFromList, onGroupInfo = { backStack.add(ChatInfoRoute(it)) }),
                         )
                     },
                     walletActions = { WalletTitleActions(walletViewModel) },

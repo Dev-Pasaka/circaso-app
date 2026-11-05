@@ -77,7 +77,8 @@ val walletModule = module {
     factory { com.circaso.feature.wallet.domain.AddWalletNetworksUseCase(get()) }
     viewModel { com.circaso.feature.account.presentation.BiometricApprovalViewModel(get(), get(), get(), get()) }
     viewModel { WalletViewModel(get(), get(), get(), get(), get(), get(), get(), getChains = get(), addMissingChains = get(), groupWallets = get(), sources = get(), groupReader = get(), privacy = get(),
-        spaceNames = getOrNull<com.circaso.feature.wallet.presentation.SpaceWalletNames>() ?: com.circaso.feature.wallet.presentation.SpaceWalletNames.None) }
+        spaceNames = getOrNull<com.circaso.feature.wallet.presentation.SpaceWalletNames>() ?: com.circaso.feature.wallet.presentation.SpaceWalletNames.None,
+        choices = get<com.circaso.core.datastore.AppPreferences>().let { p -> com.circaso.feature.wallet.presentation.WalletChoiceStore.of(p::text, p::setText) }) }
     single { com.circaso.feature.wallet.presentation.BalancePrivacy() }
     viewModel { com.circaso.feature.wallet.presentation.CurrencyViewModel(get(), get()) }
     viewModel { (blockchain: String?, symbol: String?, walletId: String?) -> ActivityViewModel(get(), get(), blockchain, symbol, walletId, get(), get()) }

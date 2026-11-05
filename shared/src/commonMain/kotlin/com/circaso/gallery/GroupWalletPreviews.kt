@@ -67,6 +67,9 @@ import com.circaso.feature.wallet.presentation.WalletActions
 import com.circaso.feature.wallet.presentation.WalletContent
 import com.circaso.feature.wallet.presentation.WalletTabContent
 import com.circaso.feature.wallet.presentation.WalletUiState
+import com.circaso.feature.wallet.presentation.WalletMode
+import com.circaso.feature.wallet.presentation.GroupMenuActions
+import com.circaso.feature.wallet.presentation.AllGroupWalletsContent
 
 // Debug previews for group wallets (Spaces phase 2, frames GW1–GW19): `-preview=gw-…` on iOS, `--es preview gw-…` on Android.
 
@@ -166,7 +169,35 @@ private fun tabState(group: GroupWalletUiState, three: Boolean = false, member: 
         balances = mapOf(null to personalWallet(), "gw-1" to gwWallet(), "gw-2" to gwWallet("38760000", "gw-2")),
         lockedWallets = if (locked) setOf("gw-1") else emptySet(),
         loading = false,
+        groupsEnabled = true,
     )
+}
+
+/** Someone in many groups: more than the Groups menu lists, so it ends with "All Group Wallets…". */
+private fun manyGroups(base: WalletUiState): WalletUiState {
+    val names = listOf("Westlands Book Club", "Mama Mboga Savings Group", "Coast Trip 2026", "Office Lunch Kitty", "Ngong Road Runners", "Family Harambee", "Church Choir Welfare")
+    val more = names.mapIndexed { i, n -> NamedWallet("gw-${i + 2}", "g${i + 2}", n, null, WalletOwnerType.Group, i % 2 == 0, WalletStatus.Active, if (i % 2 == 0) "me" else "7") }
+    return base.copy(
+        wallets = base.wallets.take(2) + more,
+        balances = base.balances + more.mapIndexed { i, w -> w.walletId to gwWallet("${(i + 1) * 12_340_000}", w.walletId) }.toMap(),
+    )
+}
+
+/** The Groups side of the Wallet tab (Pasaka, 2026-11-05): a group, its menu, many groups, the full list, none yet. */
+@Composable
+internal fun WalletGroupsPreview(name: String, gwState: GroupWalletUiState, gwActions: GroupWalletActions): Boolean {
+    val groups = tabState(gwState, three = true).copy(mode = WalletMode.Groups, selectedWalletId = "gw-1", lastGroupWalletId = "gw-1")
+    when (name) {
+        "wallet-groups" -> TabPreview(groups, gwActions)
+        "wallet-groups-menu" -> TabPreview(groups.copy(switching = true), gwActions)
+        "wallet-groups-many" -> TabPreview(manyGroups(groups).copy(switching = true), gwActions)
+        "wallet-groups-all" -> TabPreview(manyGroups(groups).copy(allGroups = true), gwActions)
+        "wallet-groups-offline" -> TabPreview(groups.copy(online = false, group = gwState.copy(online = false)), gwActions)
+        "wallet-groups-loading" -> TabPreview(groups.copy(group = GroupWalletUiState(chat = kilimani, money = gwMoney())), gwActions)
+        "wallet-groups-empty" -> TabPreview(groups.copy(wallets = listOf(NamedWallet.Personal), selectedWalletId = null, lastGroupWalletId = null, group = null))
+        else -> return false
+    }
+    return true
 }
 
 /** The Wallet tab in Home, as the person sees it, with the tab's state drawn without a view model. */
@@ -181,7 +212,13 @@ private fun TabPreview(state: WalletUiState, gwActions: GroupWalletActions = Gro
             WalletTabContent(
                 shown, pad, { noActions }, groupHooks = { _, _ -> GroupWalletHooks(gwActions, { _, _ -> }, {}) },
                 onSwitching = {}, onSelectWallet = {}, onCreate = {}, onRefresh = {}, onReceive = {}, onComing = {},
+                groupMenu = GroupMenuActions({}, {}),
             )
+        },
+        walletOverlay = {
+            CircasoSheet(state.allGroups, {}, label = "Group Wallets") {
+                AllGroupWalletsContent(state, onPick = {}, onClose = {})
+            }
         },
         walletActions = {},
         you = {},
@@ -208,6 +245,7 @@ internal fun GroupWalletPreview(name: String): Boolean {
         Transfer("t2", TransferDirection.Out, TransferState.Confirmed, "BASE-SEPOLIA", "", null, "0x12", Amount("USDC", "92879000", "92.88"), null, "g1", null, null, "Coast Bus", null, nowMillis() - 3_600_000, 0, walletId = "gw-1"),
     ))
     val gwActions = GroupWalletActions({}, {}, {}, {}, {})
+    if (WalletGroupsPreview(name, gwState, gwActions)) return true
     when (name) {
         "gw-new-group" -> NewGroupContent(newGroup(false), {}, {}, {}, {}, {}, {}, {}, {}, {})
         "gw-new-group-wallet" -> NewGroupContent(newGroup(true), {}, {}, {}, {}, {}, {}, {}, {}, {})

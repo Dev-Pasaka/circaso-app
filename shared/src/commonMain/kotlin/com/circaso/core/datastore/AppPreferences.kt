@@ -52,7 +52,8 @@ class AppPreferences(private val store: DataStore<Preferences>) : com.circaso.co
 
     override suspend fun clear() {
         store.edit { prefs ->
-            prefs.asMap().keys.filter { it.name.startsWith("rt.seq.") || it.name == "flag.$BiometricApproval" || it.name.startsWith("flag.$BiometricApproval.") || it.name.startsWith("flag.biometric_lost.") }.forEach { prefs.remove(it) }
+            // The Wallet tab's remembered mode and group belong to the account too.
+            prefs.asMap().keys.filter { it.name.startsWith("rt.seq.") || it.name.startsWith("text.wallet.") || it.name == "flag.$BiometricApproval" || it.name.startsWith("flag.$BiometricApproval.") || it.name.startsWith("flag.biometric_lost.") }.forEach { prefs.remove(it) }
         }
     }
 
@@ -70,6 +71,10 @@ class AppPreferences(private val store: DataStore<Preferences>) : com.circaso.co
     }
     override suspend fun putLink(requestId: String, chatId: String, transferId: String) { store.edit { it[stringPreferencesKey("chama.link.$requestId")] = "$chatId|$transferId" } }
     override suspend fun removeLink(requestId: String) { store.edit { it.remove(stringPreferencesKey("chama.link.$requestId")) } }
+
+    /** Small text settings by name ("wallet.mode"); null when unset. Not for anything secret. */
+    fun text(name: String): Flow<String?> = store.data.map { it[stringPreferencesKey("text.$name")] }
+    suspend fun setText(name: String, value: String?) { store.edit { if (value == null) it.remove(stringPreferencesKey("text.$name")) else it[stringPreferencesKey("text.$name")] = value } }
 
     /** Small one-time flags ("asha.met"). */
     fun flag(name: String): Flow<Boolean> = store.data.map { it[booleanPreferencesKey("flag.$name")] ?: false }
