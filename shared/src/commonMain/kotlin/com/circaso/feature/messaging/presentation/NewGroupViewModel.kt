@@ -238,6 +238,8 @@ class NewGroupViewModel(
 
     private fun photoError(error: AppError) = when (error) {
         AppError.Network -> "The group is made, but its photo didn't upload. You're offline; try again when you're back."
+        // The server refused this photo: trying it again won't help, another one (or none) will.
+        is AppError.Api if error.code == "messaging.avatar_invalid" -> "The group is made, but we couldn't use that photo. Try another one, or go on without it."
         else -> "The group is made, but its photo didn't upload. " + ErrorMessages.forError(error)
     }
 

@@ -131,6 +131,7 @@ object ErrorMessages {
         "messaging.not_a_group" to "That only works in a group.",
         "messaging.group_full" to "This group is full.",
         "messaging.group_invalid" to "Those group details can't be saved. Check them and try again.",
+        "messaging.avatar_invalid" to "Couldn't use that photo. Try another one.",
         "messaging.version_conflict" to "This group changed just now. We've loaded the latest, so try again.",
         "messaging.message_too_large" to "That message is too long to send.",
         "messaging.recipients_mismatch" to "The members of this chat changed. Please send again.",

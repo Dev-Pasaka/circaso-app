@@ -46,8 +46,9 @@ data class GroupPhotoRef(
  * check and decrypt it lazily, keeping the decrypted copy on disk. Lists ask [localPath] and get the full photo when it
  * is here, else the thumbnail (and a fetch starts behind it); [changes] ticks when a full photo lands so lists redraw.
  *
- * Backend note: chat attachments are deleted 30 days after upload, so after that a group shows its thumbnail (never
- * initials) until an admin sets the photo again. A durable group-avatar object is a backend request (see the report).
+ * Durability: the photo change names the attachment as the group's `avatarMediaId` (M8, backend PR #47), and the server
+ * keeps that one past the usual 30 days. A group whose photo was set before that (the server says null) shows its
+ * thumbnail, never initials, once the old attachment is gone, until an admin sets the photo again.
  */
 class GroupPhotos(
     private val attachments: AttachmentsRemote,
@@ -72,6 +73,8 @@ class GroupPhotos(
     suspend fun upload(chatId: String, image: GroupPhotoImage): AppResult<GroupPhotoRef> {
         val key = crypto.randomBytes(32)
         val sealed = crypto.aesGcmSeal(key, image.full)
+        // The server takes a group photo of at most 2 MiB of ciphertext; the encoder stays far under it.
+        if (sealed.size > MaxCiphertextBytes) return AppResult.Failure(AppError.Api(AvatarInvalid, 400, null, null, emptyMap()))
         val digest = crypto.sha256(sealed)
         val slot = when (val r = attachments.create(chatId, sealed.size.toLong(), "image")) {
             is AppResult.Success -> r.value
@@ -98,10 +101,12 @@ class GroupPhotos(
     /**
      * The best picture on this phone for [ref]: the full photo when it is here, otherwise the thumbnail (written from
      * the metadata the first time), with a fetch of the full one started behind it. Null when there is neither.
+     * [serverId] is the group's `avatarMediaId`: when it names another attachment than [ref] it is tried first (still
+     * opened with [ref]'s key and checked against its digest), then [ref]'s own.
      */
-    suspend fun localPath(ref: GroupPhotoRef): String? {
+    suspend fun localPath(ref: GroupPhotoRef, serverId: String? = null): String? {
         files.path(fullName(ref.id))?.let { return it }
-        startFetch(ref)
+        startFetch(ref, serverId?.takeIf { it != ref.id })
         files.path(thumbName(ref.id))?.let { return it }
         val thumb = ref.thumb?.let { runCatching { Base64.decode(it) }.getOrNull() } ?: return null
         files.write(thumbName(ref.id), thumb)
@@ -111,7 +116,7 @@ class GroupPhotos(
     /** Somebody changed what lists should draw (a new photo sealed): redraw them. */
     fun notifyChanged() = _changes.update { it + 1 }
 
-    private suspend fun startFetch(ref: GroupPhotoRef) {
+    private suspend fun startFetch(ref: GroupPhotoRef, serverId: String?) {
         val go = lock.withLock {
             val failedAt = lastFailure[ref.id]
             if (ref.id in unavailable || ref.id in fetching || (failedAt != null && now() - failedAt < RetryAfterMillis)) false
@@ -119,7 +124,8 @@ class GroupPhotos(
         }
         if (!go) return
         scope.launch {
-            val result = fetch(ref)
+            val fromServer = serverId?.let { fetch(ref, it) }
+            val result = if (fromServer is MediaLoad.Loaded) fromServer else fetch(ref)
             lock.withLock {
                 fetching -= ref.id
                 when (result) {
@@ -132,11 +138,14 @@ class GroupPhotos(
         }
     }
 
-    /** AT3, then the digest from the sealed metadata, then decrypt; the plain photo is kept on disk. */
-    internal suspend fun fetch(ref: GroupPhotoRef): MediaLoad {
+    /**
+     * AT3 for [id] (the group's members only), then the digest from the sealed metadata, then decrypt; the plain photo
+     * is kept on disk under [ref]'s id. A size other than the sealed one is another photo: not downloaded.
+     */
+    internal suspend fun fetch(ref: GroupPhotoRef, id: String = ref.id): MediaLoad {
         val key = runCatching { Base64.decode(ref.key) }.getOrNull() ?: return MediaLoad.Damaged
         val digest = runCatching { Base64.decode(ref.digest) }.getOrNull() ?: return MediaLoad.Damaged
-        val link = when (val r = attachments.download(ref.id)) {
+        val link = when (val r = attachments.download(id)) {
             is AppResult.Success -> r.value
             is AppResult.Failure -> return when {
                 r.error is AppError.Network -> MediaLoad.Offline
@@ -144,6 +153,7 @@ class GroupPhotos(
                 else -> MediaLoad.Failed
             }
         }
+        if (id != ref.id && link.sizeBytes != null && link.sizeBytes != ref.size) return MediaLoad.Damaged
         val response = runCatching { storage.get(link.downloadUrl) }.getOrNull() ?: return MediaLoad.Offline
         if (response.status.value == 404) return MediaLoad.Gone
         val sealed = runCatching { response.takeIf { it.status.isSuccess() }?.readRawBytes() }.getOrNull() ?: return MediaLoad.Failed
@@ -155,6 +165,8 @@ class GroupPhotos(
 
     private companion object {
         const val RetryAfterMillis = 60_000L
+        const val MaxCiphertextBytes = 2 * 1024 * 1024
+        const val AvatarInvalid = "messaging.avatar_invalid"
         fun fullName(id: String) = "gphoto-$id"
         fun thumbName(id: String) = "gthumb-$id"
     }

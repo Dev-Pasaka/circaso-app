@@ -162,6 +162,24 @@ class NewGroupViewModelTest {
         assertEquals(2, chats.photos.size)
     }
 
+    @Test fun aPhotoTheServerRefusesAsksForAnother() = runTest(dispatcher) {
+        val vm = vm()
+        vm.onToggle("1"); vm.onNext(); vm.onName("Holiday Fund")
+        vm.onPhotoPicked(PickedImage(ByteArray(5), "image/jpeg"), null)
+        chats.photoResult = AppResult.Failure(AppError.Api("messaging.avatar_invalid", 400, "req-9", null, emptyMap()))
+        var opened: String? = null
+        vm.onCreate { opened = it }
+        assertNull(opened)
+        assertEquals("g1", vm.state.value.createdChatId, "the group stays made")
+        assertEquals("The group is made, but we couldn't use that photo. Try another one, or go on without it.", vm.state.value.error)
+        // Another photo, then Try Again: only the photo goes again.
+        vm.onPhotoPicked(PickedImage(ByteArray(6), "image/jpeg"), null)
+        chats.photoResult = null
+        vm.onCreate { opened = it }
+        assertEquals("g1", opened)
+        assertEquals(1, chats.drafts.size)
+    }
+
     @Test fun goingOnWithoutThePhotoOpensTheGroup() = runTest(dispatcher) {
         val vm = vm()
         vm.onToggle("1"); vm.onNext(); vm.onName("Holiday Fund")

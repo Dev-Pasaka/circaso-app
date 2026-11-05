@@ -27,6 +27,8 @@ data class ChatEntity(
     val updatedAt: Long,
     /** The private chat with a space's owner (SH2): which space it came through. Null for every other chat. */
     @androidx.room.ColumnInfo(defaultValue = "NULL") val viaSpaceId: String? = null,
+    /** The group photo the server keeps ([com.circaso.feature.messaging.data.remote.ChatDto.avatarMediaId]); null for none or unknown. */
+    @androidx.room.ColumnInfo(defaultValue = "NULL") val avatarMediaId: String? = null,
 )
 
 @Entity(tableName = "chat_member", primaryKeys = ["chatId", "userId"])

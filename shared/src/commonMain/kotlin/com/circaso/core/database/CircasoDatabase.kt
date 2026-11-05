@@ -65,7 +65,7 @@ import kotlinx.coroutines.Dispatchers
         com.circaso.feature.status.data.local.MutedPosterEntity::class, com.circaso.feature.status.data.local.MomentPrivacyEntity::class,
         com.circaso.feature.messaging.data.local.MessageReactionEntity::class, com.circaso.feature.messaging.data.local.MessageRetryEntity::class,
     ],
-    version = 20,
+    version = 21,
     autoMigrations = [
         AutoMigration(from = 1, to = 2), AutoMigration(from = 2, to = 3),
         AutoMigration(from = 3, to = 4), AutoMigration(from = 4, to = 5),
@@ -80,6 +80,8 @@ import kotlinx.coroutines.Dispatchers
         // 20: Spaces stopped (2026-11-05, tag archive/spaces-v1): its six tables go, and its queued posts and reactions
         // with them. Everything else is kept as it is; chat.viaSpaceId stays (such a chat is an ordinary chat now).
         AutoMigration(from = 19, to = 20, spec = DropSpacesTables::class),
+        // 21: chat.avatarMediaId, the group photo the server keeps (backend PR #47). Null until the next refresh.
+        AutoMigration(from = 20, to = 21),
     ],
 )
 @ConstructedBy(CircasoDatabaseConstructor::class)
