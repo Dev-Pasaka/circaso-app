@@ -85,8 +85,17 @@ data class GroupWalletUiState(
     val myUserId: String? = null,
     /** The wallet's name before its chat is read (W16 named from the chat list, in the Wallet tab's switcher). */
     val nameHint: String? = null,
+    // ---- A space's wallet in the same design (phase 3, SW1): no chat and no CH7 behind it.
+    /** The space this wallet belongs to; set for a space wallet. */
+    val spaceId: String? = null,
+    /** The space's owner, for an admin's caption ("only Baraka (owner) can send"). */
+    val spaceOwnerName: String? = null,
+    /** This person signs for the space wallet (its owner); admins only see it. */
+    val spaceCanSign: Boolean = false,
+    /** Spaces on the phone by id, so a payment to or from a space's wallet is named ("Space" when unknown). */
+    val spaceNames: Map<String, String> = emptyMap(),
 ) {
-    val name get() = chat?.title ?: nameHint ?: "Group wallet"
+    val name get() = chat?.title ?: nameHint ?: if (spaceId != null) "Space wallet" else "Group wallet"
     val walletId get() = money?.wallet?.walletId ?: wallet?.walletId
     val locked get() = signerLeft(chat, money)
     val signerName get() = chat?.members?.firstOrNull { it.userId == money?.wallet?.signerUserId }?.displayName?.substringBefore(' ') ?: "the signer"
@@ -96,13 +105,26 @@ data class GroupWalletUiState(
     val active get() = money?.walletActive ?: (wallet?.status == WalletStatus.Active)
     val settingUp get() = money?.settingUp == true || wallet?.status == WalletStatus.SettingUp
     /** A space's wallet sends to anyone (Send); a group's sends only approved payouts (Payout, a request). */
-    val space get() = wallet?.owner?.type == WalletOwnerType.Space
+    val space get() = spaceId != null || wallet?.owner?.type == WalletOwnerType.Space
+    /** SW1f: a space wallet with nothing in it yet: Send waits until there is money. */
+    val spaceEmpty get() = wallet?.chains.orEmpty().all { ch -> ch.assets.all { com.circaso.feature.wallet.domain.MinorUnits.isZero(it.amountMinor) } }
 
     /** GW16's caption: whose money it is and who can move it ("Group wallet · …", under a bar that names it). */
-    val caption: String get() = captionAfter(if (space) "Space wallet" else "Group wallet")
+    val caption: String get() = if (spaceId != null) spaceCaption("Space wallet", named = false) else captionAfter(if (space) "Space wallet" else "Group wallet")
 
     /** The caption in the Wallet tab, which has no title: the wallet's full name leads ("Kilimani Chama · …"). */
-    val namedCaption: String get() = captionAfter(name)
+    val namedCaption: String get() = if (spaceId != null) spaceCaption(name, named = true) else captionAfter(name)
+
+    /** SW1/SW1c: a space wallet sends directly; only its owner signs, admins see it. */
+    private fun spaceCaption(lead: String, named: Boolean): String {
+        val kind = if (named) " · space wallet" else ""
+        val owner = spaceOwnerName?.substringBefore(' ') ?: "the owner"
+        return when {
+            settingUp -> "$lead$kind · being set up"
+            spaceCanSign -> "$lead$kind · only you send"
+            else -> "$lead · view only · only $owner (owner) can send"
+        }
+    }
 
     private fun captionAfter(lead: String): String {
         val after = if (space) "" else ", after approval"
@@ -117,8 +139,11 @@ data class GroupWalletUiState(
 
     /** Payments as the group wallet lists them (GW16): who, and whether it was a contribution or a payout. */
     val rows: List<Pair<Transfer, String>> get() = activity.map { tr ->
-        val who = tr.counterpartName ?: tr.counterpartGroupId?.let { "A group" } ?: shortAddress(if (tr.outgoing) tr.toAddress else tr.from).ifEmpty { "Someone" }
-        tr.copy(counterpartName = who) to (if (tr.outgoing) "Payout" else "Contribution")
+        val who = tr.counterpartName ?: tr.counterpartSpaceId?.let { spaceNames[it] ?: "Space" } ?: tr.counterpartGroupChat?.let { "A group" }
+            ?: shortAddress(if (tr.outgoing) tr.toAddress else tr.from).ifEmpty { "Someone" }
+        // SW1: into a space it was a payment (joining, renewing, # in the private chat); out of it, a send.
+        val kind = if (spaceId != null) (if (tr.outgoing) "Sent" else "Payment") else if (tr.outgoing) "Payout" else "Contribution"
+        tr.copy(counterpartName = who) to kind
     }
 }
 
@@ -164,6 +189,17 @@ class GroupWalletReader(
 
     /** CH5, online-only. */
     suspend fun decide(request: ChamaRequest, approve: Boolean) = decideRequest(request.requestId, approve)
+
+    /** A wallet with no group behind it (a space's, SW1): its W1 and W6 only. */
+    fun observeLoneWallet(walletId: String): Flow<GroupWalletData> =
+        combine(observeWallet.invoke(walletId), observeActivity(walletId)) { w, a -> GroupWalletData(null, null, w, a) }
+
+    /** W1 and W6 for a wallet with no group behind it. */
+    suspend fun refreshLoneWallet(walletId: String): AppResult<Unit> {
+        val w = refreshWallet.invoke(walletId)
+        refreshActivity(walletId)
+        return when (w) { is AppResult.Success -> AppResult.Success(Unit); is AppResult.Failure -> w }
+    }
 }
 
 /** The pushed group wallet (GroupWalletRoute): one group's wallet, in the Wallet tab's own design. */
@@ -217,6 +253,8 @@ class GroupWalletActions(
     val onPayRequest: (ChamaRequest) -> Unit,
     val onOpenTransfer: (String) -> Unit,
     val onTarget: () -> Unit,
+    /** A space wallet still being set up (SW1b): its owner finishes it (SN5b). */
+    val onFinishSetup: (() -> Unit)? = null,
 )
 
 /** The group-only parts of the one wallet design: its actions, approving payout requests, retrying, its messages. */
@@ -256,7 +294,11 @@ fun ColumnScope.GroupReceiveContent(state: GroupWalletUiState, onClose: () -> Un
     val t = CircasoTheme.typography
     val clipboard = LocalClipboardManager.current
     SheetHead("Receive into ${state.name}", onClose)
-    BasicText("Members pay in with # in the group chat. From outside Circaso, send USDC to the group wallet’s address on the same network.", style = t.subhead.copy(color = c.inkSecondary))
+    BasicText(
+        if (state.spaceId != null) "Members pay when they join and renew, or with # in their private chat with you. From outside Circaso, send USDC to the space wallet’s address on the same network."
+        else "Members pay in with # in the group chat. From outside Circaso, send USDC to the group wallet’s address on the same network.",
+        style = t.subhead.copy(color = c.inkSecondary),
+    )
     if (state.locked) BasicText("${state.signerName} signs for this wallet and has left the group, so nothing can leave it for now. Don’t send money in until it’s sorted.", style = t.footnote.copy(color = c.warning))
     val chains = state.wallet?.chainsReceiving.orEmpty()
     if (chains.isEmpty()) BasicText("The wallet’s addresses appear here once it’s on a network.", style = t.subhead.copy(color = c.inkSecondary))

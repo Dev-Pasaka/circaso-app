@@ -97,6 +97,9 @@ interface WalletRepository {
 
     // ---- Space wallets (phase 3, W18–W19). Defaults keep the older fakes building; WalletRepositoryImpl has them.
 
+    /** Space wallets' names as their `payment.received` frames gave them (walletId → space name), for this run. */
+    val walletNamesHeard: Flow<Map<String, String>> get() = kotlinx.coroutines.flow.flowOf(emptyMap())
+
     /** W19: a space's wallet (its owner and admins). */
     suspend fun spaceWallet(spaceId: String): AppResult<SpaceWallet> = AppResult.Failure(com.circaso.core.common.AppError.Unexpected(null))
 

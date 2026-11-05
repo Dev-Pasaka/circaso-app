@@ -82,6 +82,10 @@ data class Transfer(
 ) {
     val outgoing get() = direction == TransferDirection.Out
     val settled get() = state == TransferState.Confirmed
+    /** The other side is a space's wallet (W6 `toSpaceId`/`fromSpaceId`, phase 3): name it from the space on the phone. */
+    val counterpartSpaceId: String? get() = counterpartGroupId?.takeIf { it.startsWith("space:") }?.removePrefix("space:")
+    /** A group's wallet on the other side (not a space). */
+    val counterpartGroupChat: String? get() = counterpartGroupId?.takeIf { !it.startsWith("space:") }
 }
 
 /** Money that arrived from on chain (`payment.received`), kept beside transfers so Recent shows it. */

@@ -104,6 +104,8 @@ class WalletRepositoryImpl(
 
     /** Who asked this person to set up a wallet (`setup.requested`), for the tab's nudge; cleared once a wallet exists. */
     private val _setupRequestedBy = MutableStateFlow<String?>(null)
+    private val _walletNamesHeard = MutableStateFlow<Map<String, String>>(emptyMap())
+    override val walletNamesHeard: kotlinx.coroutines.flow.Flow<Map<String, String>> = _walletNamesHeard
     val setupRequestedBy: StateFlow<String?> = _setupRequestedBy.asStateFlow()
 
     /** Flipped by `wallet.ready`, so a create or add-chain stops polling at once. */
@@ -434,6 +436,8 @@ class WalletRepositoryImpl(
                 val id = str("transactionId") ?: return
                 // Money into a group wallet: its history and balance, not the person's own list.
                 val groupWallet = str("walletId")
+                // A space wallet's frame names its space (phase 3): kept so the money is labelled before Room has the space.
+                if (groupWallet != null && str("ownerType") == "SPACE") str("spaceName")?.let { name -> _walletNamesHeard.value = _walletNamesHeard.value + (groupWallet to name) }
                 if (groupWallet != null) { refreshWallet(groupWallet); refreshActivity(groupWallet); return }
                 // Heard once per payment, even if the frame is replayed after a reconnect.
                 if (dao.transfer(id) == null) onMoneyReceived()
@@ -501,12 +505,17 @@ internal fun WalletListingDto.toDomain() = WalletListing(walletId, owner.toDomai
 
 internal fun GroupWalletResponse.toDomain() = GroupWallet(chatId, walletStatus(status), wallet?.toDomain())
 
+/** How a space counterparty is kept in `wallet_activity.counterpartGroupId` (no schema change); see [Transfer.counterpartSpaceId]. */
+internal const val SpacePrefix = "space:"
+
 internal fun TransactionDto.toActivity(walletId: String): WalletActivityEntity = WalletActivityEntity(
     walletId = walletId, rowId = id, transferId = transferId, direction = direction, state = state, blockchain = blockchain,
     asset = amount.asset, amountMinor = amount.amountMinor, amount = amount.amount,
     counterpartName = counterparty?.displayName ?: counterparty?.handle?.let { "@$it" }, counterpartHandle = counterparty?.handle,
     counterpartAvatar = counterparty?.avatarUrl, counterpartUserId = counterparty?.userId, counterpartAddress = counterparty?.address,
-    counterpartGroupId = counterparty?.groupId, chatId = chatId, txHash = txHash, occurredAt = isoMillis(occurredAt) ?: nowMillis(),
+    // A space on the other side (phase 3) has no name on the wire: kept as "space:{id}" and named from the phone's spaces.
+    counterpartGroupId = counterparty?.groupId ?: (counterparty?.spaceId ?: if (direction == "OUT") toSpaceId else fromSpaceId)?.let { SpacePrefix + it },
+    chatId = chatId, txHash = txHash, occurredAt = isoMillis(occurredAt) ?: nowMillis(),
 )
 
 internal fun WalletActivityEntity.toDomain(): Transfer {

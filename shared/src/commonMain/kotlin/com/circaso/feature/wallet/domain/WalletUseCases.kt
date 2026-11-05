@@ -32,6 +32,11 @@ class GetGroupWalletUseCase(private val wallet: WalletRepository) { suspend oper
 /** Online-only: W14 and the group wallet's PIN in the Circle SDK. */
 class StartGroupWalletUseCase(private val wallet: WalletRepository) { suspend operator fun invoke(chatId: String, name: String) = wallet.startGroupWallet(chatId, name) }
 class AwaitGroupWalletUseCase(private val wallet: WalletRepository) { suspend operator fun invoke(chatId: String) = wallet.awaitGroupWallet(chatId) }
+/** Online-only: W18 then the space wallet's own PIN (SN4). */
+class StartSpaceWalletUseCase(private val wallet: WalletRepository) { suspend operator fun invoke(spaceId: String, name: String) = wallet.startSpaceWallet(spaceId, name) }
+class AwaitSpaceWalletUseCase(private val wallet: WalletRepository) { suspend operator fun invoke(spaceId: String) = wallet.awaitSpaceWallet(spaceId) }
+/** W19: the space's wallet as its owner and admins see it. */
+class GetSpaceWalletUseCase(private val wallet: WalletRepository) { suspend operator fun invoke(spaceId: String) = wallet.spaceWallet(spaceId) }
 /** Online-only: one wallet's fingerprint / Face ID. */
 class EnableWalletBiometricsUseCase(private val wallet: WalletRepository) { suspend operator fun invoke(subject: SignSubject) = wallet.enableBiometricApproval(subject) }
 /** Online-only: W13 for one wallet. */

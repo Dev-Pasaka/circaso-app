@@ -73,7 +73,8 @@ val walletModule = module {
     factory { com.circaso.feature.wallet.domain.EnableWalletBiometricsUseCase(get()) }
     factory { com.circaso.feature.wallet.domain.AddWalletNetworksUseCase(get()) }
     viewModel { com.circaso.feature.account.presentation.BiometricApprovalViewModel(get(), get(), get(), get()) }
-    viewModel { WalletViewModel(get(), get(), get(), get(), get(), get(), get(), getChains = get(), addMissingChains = get(), groupWallets = get(), sources = get(), groupReader = get(), privacy = get()) }
+    viewModel { WalletViewModel(get(), get(), get(), get(), get(), get(), get(), getChains = get(), addMissingChains = get(), groupWallets = get(), sources = get(), groupReader = get(), privacy = get(),
+        spaceNames = getOrNull<com.circaso.feature.wallet.presentation.SpaceWalletNames>() ?: com.circaso.feature.wallet.presentation.SpaceWalletNames.None) }
     single { com.circaso.feature.wallet.presentation.BalancePrivacy() }
     viewModel { com.circaso.feature.wallet.presentation.CurrencyViewModel(get(), get()) }
     viewModel { (blockchain: String?, symbol: String?, walletId: String?) -> ActivityViewModel(get(), get(), blockchain, symbol, walletId, get(), get()) }
@@ -84,6 +85,14 @@ val walletModule = module {
         val profiles = get<com.circaso.feature.profile.domain.ProfileRepository>()
         PayViewModel(intent, get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), scanner = get(), findHandle = { profiles.findByHandle(it) }, groupWallets = get(), wallets = get(), observeTransfer = get())
     }
-    factory { com.circaso.feature.wallet.presentation.GroupWalletSources(get(), get(), get(), get(), get(), get(), get(), get(), get()) }
+    factory {
+        com.circaso.feature.wallet.presentation.GroupWalletSources(
+            get(), get(), get(), get(), get(), get(), get(), get(), get(),
+            spaceNames = getOrNull<com.circaso.feature.wallet.presentation.SpaceWalletNames>() ?: com.circaso.feature.wallet.presentation.SpaceWalletNames.None,
+        )
+    }
+    factory { com.circaso.feature.wallet.domain.StartSpaceWalletUseCase(get()) }
+    factory { com.circaso.feature.wallet.domain.AwaitSpaceWalletUseCase(get()) }
+    factory { com.circaso.feature.wallet.domain.GetSpaceWalletUseCase(get()) }
     viewModel { SendToWalletViewModel(get(), get(), get(), get(), scanner = get()) }
 }

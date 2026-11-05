@@ -56,6 +56,8 @@ import kotlinx.serialization.Serializable
     val fee: AmountDto? = null, val chatId: String? = null, val origin: String? = null, val txHash: String? = null, val failureReason: String? = null,
     val createdAt: String? = null, val updatedAt: String? = null,
     val fromGroupId: String? = null, val toGroupId: String? = null, val signerUserId: String? = null, val payoutRequestId: String? = null,
+    // Phase 3: a space's wallet on either side (W5); the phone names it from its spaces.
+    val fromSpaceId: String? = null, val toSpaceId: String? = null,
 )
 
 /** W6: the person's money in and out, newest first; [nextCursor] null on the last page. */
@@ -64,11 +66,15 @@ import kotlinx.serialization.Serializable
     val id: String, val transferId: String? = null, val direction: String, val state: String, val blockchain: String, val amount: AmountDto,
     val counterparty: CounterpartyDto? = null, val chatId: String? = null, val origin: String? = null, val txHash: String? = null,
     val occurredAt: String,
+    // Phase 3 (W6): a space's wallet on either side, named on the phone.
+    val fromSpaceId: String? = null, val toSpaceId: String? = null,
 )
 @Serializable data class CounterpartyDto(
     val userId: String? = null, val displayName: String? = null, val handle: String? = null, val avatarUrl: String? = null, val address: String? = null,
     /** The other side is a group's wallet: name it from the group on the phone. */
     val groupId: String? = null,
+    /** The other side is a space's wallet (phase 3): name it from the space on the phone. */
+    val spaceId: String? = null,
 )
 
 @Serializable data class RecipientResponse(val userId: String, val status: String, val canReceive: Boolean, val blockchains: List<String> = emptyList())
