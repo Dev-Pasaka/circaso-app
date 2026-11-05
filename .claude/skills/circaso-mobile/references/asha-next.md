@@ -41,6 +41,8 @@ separate from the money features). So everything about Asha lives inside Asha's 
 - **Everyday human moments in every scene** (Pasaka): the mascot does normal things that fit the place, not only the
   topic. Beach: sipping a margarita, reading a book, watching the sunset. Apply the same to every scene (gym: water
   bottle and towel; office: coffee mug; driving: singing along to the radio; trading desk: coffee and a phone call).
+- **Approved 2026-11-05 (Pasaka):** the look (navy octopus, Asha and Robbie) and the scenes, including the dark-mode
+  night versions. The app branch `worktree-agent-a59a7c0f104ffd408` is ready for the merge session.
 - **Names:** the female-voice look is **Asha**, the male-voice look is **Robbie** **Decided 2026-11-05:** Robbie is the look only;
   the assistant is always called Asha, whatever the voice, so the product has one name.
 
