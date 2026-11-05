@@ -532,7 +532,12 @@ class WalletRepositoryImpl(
     } catch (e: Exception) { null }
 
     private companion object {
-        const val AwaitMillis = 60_000L
+        /**
+         * How long a wallet set-up (personal, group or space) waits for Circle to finish creating it. Circle's smart
+         * contract wallets took 1 min 43 s on testnet (2026-11-05), past the old 60 s, so a space was left "failed" though
+         * its wallet was made; the answer still lands at once (frame or the 3 s check) when it's quicker.
+         */
+        const val AwaitMillis = 240_000L
         const val PollMillis = 3_000L
         /** History rows older than this don't add cards to chats (a new phone isn't flooded with old money). */
         const val ChatCardsWithinMillis = 30L * 24 * 60 * 60 * 1000
