@@ -137,7 +137,9 @@ fun TransferContent(state: TransferUiState, onBack: () -> Unit) {
                 DetailRow("Amount in coin", usdc)
                 state.fiat?.takeIf { dollar }?.let { DetailRow("Rate", "1 ${transfer.amount.asset} = ${it.currency} ${it.rate.substringBefore('.')}.${it.rate.substringAfter('.', "00").take(2).padEnd(2, '0')}") }
                 // Circaso pays the network fee on what its people send; money from outside paid its own.
-                if (!incoming) DetailRow("Fee", transfer.fee?.let { f -> f.amount.ifEmpty { null }?.let { "$it ${f.asset}" } } ?: "No fee")
+                // From the fee's minor units (the phone's copy keeps no display string): "KES 12.99 · 0.10 USDC". It
+                // said "No fee" for a charged fee before (2026-11-05).
+                if (!incoming) DetailRow("Fee", feeText(transfer.fee, state.fiat))
                 DetailRow("Status", statusText(transfer))
             }
             transfer.failureReason?.takeIf { transfer.state == TransferState.Failed }?.let { BasicText(it, style = t.footnote.copy(color = c.critical, textAlign = TextAlign.Center)) }
@@ -315,4 +317,12 @@ fun NetworksScreen(viewModel: NetworksViewModel, onBack: () -> Unit) {
             }
         }
     }
+}
+
+/** The fee a person paid, in their currency first for dollar coins, then the coin; "No fee" only when none was taken. */
+private fun feeText(fee: com.circaso.feature.wallet.domain.Amount?, rate: com.circaso.feature.wallet.domain.FiatValue?): String {
+    val minor = fee?.amountMinor?.takeIf { it.isNotBlank() && !MinorUnits.isZero(it) } ?: return "No fee"
+    val coin = MinorUnits.toDisplay(minor, MinorUnits.decimalsOf(fee.asset)) + " " + fee.asset
+    val fiat = rate?.takeIf { MinorUnits.isDollar(fee.asset) }?.let { r -> usdcToFiat(minor, r.rate)?.let { formatFiat(r.currency, it) } }
+    return if (fiat != null) "$fiat · $coin" else coin
 }
