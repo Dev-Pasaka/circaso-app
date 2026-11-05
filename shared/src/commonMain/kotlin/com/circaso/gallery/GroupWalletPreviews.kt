@@ -60,6 +60,7 @@ import com.circaso.feature.wallet.domain.WalletStatus
 import com.circaso.feature.wallet.presentation.NamedWallet
 import com.circaso.feature.wallet.presentation.PayContent
 import com.circaso.feature.wallet.presentation.PayFailure
+import com.circaso.feature.wallet.presentation.PayFee
 import com.circaso.feature.wallet.presentation.PayUiState
 import com.circaso.feature.wallet.presentation.PayStep
 import com.circaso.feature.wallet.presentation.WalletActions
@@ -256,6 +257,11 @@ internal fun GroupWalletPreview(name: String): Boolean {
         "gw-request-payout" -> PayPreview(payState(PayUiState(payee = Person("2", "Otieno Ouma", null, null, null), chatId = "dm", amountText = "5000", note = "Venue deposit", groupMoney = gwMoney())).copy(payingFrom = kilimaniWallet, wallet = gwWallet()))
         "gw-pay-personal" -> PayPreview(payState(PayUiState(payee = Person("6", "Mum", null, null, null), chatId = "dm", amountText = "500", note = "for lunch tomorrow")))
         "gw-pay-from" -> PayPreview(payState(PayUiState(payee = Person("6", "Mum", null, null, null), chatId = "dm", amountText = "500", note = "for lunch tomorrow", choosing = true)))
+        // Phase 2F on the Pay screen (Wallet tab Send): the same fee line, GW13 to GW13d, GW20.
+        "gw-pay-fee" -> PayPreview(payState(PayUiState(payee = Person("6", "Mum", null, null, null), chatId = "dm", amountText = "500", note = "for lunch tomorrow", fee = PayFee.Quoted("19380", 50, quoteId = "q1", expiresAt = kotlin.time.Instant.fromEpochMilliseconds(nowMillis() + 900_000).toString()))))
+        "gw-pay-fee-quoting" -> PayPreview(payState(PayUiState(payee = Person("6", "Mum", null, null, null), chatId = "dm", amountText = "500", fee = PayFee.Quoting)))
+        "gw-pay-fee-error" -> PayPreview(payState(PayUiState(payee = Person("6", "Mum", null, null, null), chatId = "dm", amountText = "500", fee = PayFee.Failed("req_F9a2Lm"))))
+        "gw-pay-fee-short" -> PayPreview(payState(PayUiState(payee = Person("6", "Mum", null, null, null), chatId = "dm", amountText = "18240", note = "rent", fee = PayFee.Quoted("706900", 50), block = com.circaso.feature.wallet.presentation.PayBlock.Funds("140480000"))))
         "gw-pay-offline" -> PayPreview(payState(PayUiState(payee = Person("6", "Mum", null, null, null), chatId = "dm", amountText = "500")).copy(online = false))
         else -> return false
     }
@@ -294,6 +300,16 @@ private fun ChatPreview(
     quickPay = pay?.let { quick(it) }, payout = payout?.let { quick(it) },
 )
 
+/** A quote held 15 minutes from now, and a cap that frees up in four hours, for the fee previews. */
+private val feeHeld get() = kotlin.time.Instant.fromEpochMilliseconds(nowMillis() + 15 * 60_000).toString()
+private val capFits get() = kotlin.time.Instant.fromEpochMilliseconds(nowMillis() + 4 * 3_600_000).toString()
+
+/** GW14c: an approved payout of 1,160.99 USDC that waits for the group's daily limit. */
+private val waitingRequest = com.circaso.feature.chama.domain.ChamaRequest(
+    "r9", "g1", "2", null, null, "Coast Bus", "1160990000", "the December trip", com.circaso.feature.chama.domain.RequestState.Approved, 2,
+    listOf(com.circaso.feature.chama.domain.Approval("2", true, ""), com.circaso.feature.chama.domain.Approval("3", true, "")), null, "", "", "",
+)
+
 /** Draws a chat-money preview; false when [name] isn't one. */
 @Composable
 internal fun ChatMoneyPreview(name: String): Boolean {
@@ -319,6 +335,32 @@ internal fun ChatMoneyPreview(name: String): Boolean {
             group.copy(draft = ""),
             payout = payState(PayUiState(payee = Person("", "Coast Bus", null, null, null), chatId = "g1", amountText = "92.879", inFiat = false, requestId = "r1", goalName = "December trip", groupMoney = gwMoney(), note = "the bus deposit"))
                 .copy(payingFrom = kilimaniWallet, wallet = gwWallet()),
+        )
+        // Phase 2F, the fee and the limits on the card (GW13–GW13d, GW14, GW14b, GW20).
+        "chat-fee" -> ChatPreview(direct, mumPay.copy(fee = PayFee.Quoted("19380", 50, quoteId = "q1", expiresAt = feeHeld)))
+        "chat-fee-quoting" -> ChatPreview(direct, mumPay.copy(fee = PayFee.Quoting))
+        "chat-fee-minimum" -> ChatPreview(direct, mumPay.copy(amountText = "50", note = "mandazi", fee = PayFee.Quoted("40000", 50, minimum = true, quoteId = "q1", expiresAt = feeHeld)))
+        "chat-fee-changed" -> ChatPreview(direct, mumPay.copy(fee = PayFee.Quoted("25000", 50, quoteId = "q2", expiresAt = feeHeld), feeChange = com.circaso.feature.wallet.presentation.FeeChange("19380", "25000")))
+        "chat-fee-error" -> ChatPreview(direct, mumPay.copy(fee = PayFee.Failed("req_F9a2Lm")))
+        "chat-fee-offline" -> ChatPreview(direct.copy(online = false), mumPay.copy(online = false, fee = PayFee.Offline))
+        "chat-fee-short" -> ChatPreview(direct, mumPay.copy(amountText = "18240", note = "rent", fee = PayFee.Quoted("706900", 50, quoteId = "q1", expiresAt = feeHeld), block = com.circaso.feature.wallet.presentation.PayBlock.Funds("140480000")))
+        "chat-contribute-fee" -> ChatPreview(group, contribute.copy(fee = PayFee.Quoted("77400", 100, quoteId = "q1", expiresAt = feeHeld)))
+        "chat-payout-cap" -> ChatPreview(
+            group.copy(draft = ""),
+            payout = payState(PayUiState(payee = Person("", "Coast Bus", null, null, null), chatId = "g1", amountText = "1160.99", inFiat = false, requestId = "r1", goalName = "December trip", groupMoney = gwMoney()))
+                .copy(
+                    payingFrom = kilimaniWallet, wallet = gwWallet(), fee = PayFee.Quoted("11609900", 100),
+                    block = com.circaso.feature.wallet.presentation.PayBlock.Daily("0", "10000000000", capFits, capFits, "0"),
+                ),
+        )
+        "chat-request-cap" -> ChatPreview(
+            direct.copy(draft = "#150000 Stock for December"),
+            payState(PayUiState(payee = Person("6", "Mum", null, null, null), chatId = "dm", amountText = "150000", note = "Stock for December", groupMoney = gwMoney()))
+                .copy(payingFrom = kilimaniWallet, wallet = gwWallet(), fee = PayFee.Quoted("11627900", 100), block = com.circaso.feature.wallet.presentation.PayBlock.Daily("599000000", "10000000000", null, capFits, "594000000")),
+        )
+        // GW14c: the approved payout's card in the thread when it waits for the limit.
+        "chat-request-waits" -> ChatPreview(
+            group.copy(draft = "", groupMoney = gwMoney().let { m -> m.copy(openRequests = listOf(waitingRequest)) }, payoutWaits = mapOf("r9" to capFits)),
         )
         // After the PIN: Sending until confirmed, then Sent; Not sent with Try Again when the chain refused it.
         "chat-cards" -> ChatPreview(

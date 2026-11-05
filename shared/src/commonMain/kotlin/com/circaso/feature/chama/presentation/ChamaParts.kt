@@ -115,12 +115,19 @@ fun RequestCard(
     modifier: Modifier = Modifier,
     /** Group wallets: the money is in the group's own wallet and its signer pays (GW9); otherwise the treasurer model. */
     inGroupWallet: Boolean = false,
+    /** GW14c: approved, but it fits the group wallet's daily limit only from this time (ISO); null when it fits now. */
+    waitsUntil: String? = null,
+    /** Who signs for the group wallet, as the card names them ("Pasaka can pay it then"). */
+    signerName: String? = null,
 ) {
     val c = CircasoTheme.colors
     val t = CircasoTheme.typography
     val payee = request.payeeUserId?.let(nameOf) ?: request.payeeName ?: request.payeeAddress?.let(::shortAddress) ?: "someone"
     val decided = myUserId != null && request.approvals.any { it.userId == myUserId }
     val hours = hoursUntil(request.expiresAt)
+    // GW14c: only an approved, unpaid payout from the group wallet waits for the limit.
+    val waits = waitsUntil?.takeIf { request.state == RequestState.Approved && request.transferId == null && inGroupWallet }
+        ?.let { com.circaso.feature.wallet.presentation.clockOf(it) }
     Column(
         modifier.fillMaxWidth().clip(CircasoShapes.lg).background(c.surface).border(1.dp, c.separator, CircasoShapes.lg).padding(CircasoSpacing.s4),
         verticalArrangement = Arrangement.spacedBy(CircasoSpacing.s3),
@@ -129,7 +136,8 @@ fun RequestCard(
             BasicText("Payment request", style = t.footnote.copy(color = c.inkSecondary, fontWeight = FontWeight.SemiBold))
             when (request.state) {
                 RequestState.Pending -> TextBadge("${request.approvedBy.size} of ${request.approvalsNeeded} approvals", warning = true, icon = com.circaso.designsystem.components.CircasoIcon.Clock)
-                RequestState.Approved -> TextBadge(if (request.transferId != null) "Paying" else "Approved")
+                RequestState.Approved -> if (waits != null) TextBadge("Approved · waits for the limit", warning = true, icon = com.circaso.designsystem.components.CircasoIcon.Clock)
+                    else TextBadge(if (request.transferId != null) "Paying" else "Approved")
                 RequestState.Paid -> TextBadge("Paid")
                 RequestState.Declined -> TextBadge("Declined", warning = true)
                 RequestState.Expired -> TextBadge("Expired", warning = true)
@@ -148,9 +156,10 @@ fun RequestCard(
         val line = listOfNotNull(
             if (approvers.isNotEmpty()) "Approved by ${approvers.joinToString()}" else null,
             if (request.state == RequestState.Pending && hours != null) "Expires in $hours hour${if (hours == 1L) "" else "s"}" else null,
-            if (request.state == RequestState.Approved && isTreasurer && request.transferId == null) (if (inGroupWallet) "It’s ready for you to pay from the group wallet" else "Waiting for you to pay it") else null,
-            if (request.state == RequestState.Approved && !isTreasurer && inGroupWallet && request.transferId == null) "Paid from the group wallet once its signer sends it" else null,
-        ).joinToString(" · ")
+            if (waits != null) "It fits the group wallet’s daily limit from $waits; ${if (isTreasurer) "you" else signerName ?: "its signer"} can pay it then." else null,
+            if (waits == null && request.state == RequestState.Approved && isTreasurer && request.transferId == null) (if (inGroupWallet) "It’s ready for you to pay from the group wallet" else "Waiting for you to pay it") else null,
+            if (waits == null && request.state == RequestState.Approved && !isTreasurer && inGroupWallet && request.transferId == null) "Paid from the group wallet once its signer sends it" else null,
+        ).joinToString(if (waits != null) ". " else " · ")
         if (line.isNotEmpty()) BasicText(line, style = t.footnote.copy(color = c.inkSecondary))
         val canDecide = request.state == RequestState.Pending && isAdmin && !decided
         val canPay = request.state == RequestState.Approved && isTreasurer && request.transferId == null
@@ -159,6 +168,8 @@ fun RequestCard(
                 CircasoButton("Approve", onApprove, modifier = Modifier.weight(1f), size = ButtonSize.Medium, enabled = !busy && online, busy = busy)
                 CircasoButton("Decline", onDecline, modifier = Modifier.weight(1f), style = ButtonStyle.Secondary, size = ButtonSize.Medium, enabled = !busy && online)
             }
+            // GW14c: the button wakes up at the time the server gives.
+            canPay && waits != null -> CircasoButton("Pay After $waits", onPay, size = ButtonSize.Medium, block = true, enabled = false)
             canPay -> CircasoButton(if (inGroupWallet) "Pay Payout" else "Pay from the Group", onPay, size = ButtonSize.Medium, block = true, enabled = !busy && online)
             else -> Unit
         }

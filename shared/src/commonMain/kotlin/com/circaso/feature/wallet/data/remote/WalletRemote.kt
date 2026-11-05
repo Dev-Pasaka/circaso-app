@@ -26,6 +26,11 @@ interface WalletRemote {
     suspend fun addChain(blockchain: String, idempotencyKey: String): AppResult<AddChainResponse>
     suspend fun addMissingChains(idempotencyKey: String, walletId: String? = null): AppResult<AddMissingChainsResponse>
     suspend fun prepare(request: PrepareTransferRequest, idempotencyKey: String): AppResult<PrepareTransferResponse>
+    /**
+     * W17: the fee for exactly this payment before it is signed (phase 2F). Null when the server has no fees yet (it
+     * answers `request.not_found`), so the payment goes as before with no fee line.
+     */
+    suspend fun quote(request: PrepareTransferRequest, idempotencyKey: String): AppResult<QuoteTransferResponse?> = AppResult.Success(null)
     suspend fun transfer(transferId: String): AppResult<TransferResponse>
     suspend fun transactions(cursor: String? = null, limit: Int = 50, walletId: String? = null): AppResult<TransactionsResponse>
     suspend fun recipient(userId: String, blockchain: String?, chatId: String?): AppResult<RecipientResponse>
@@ -122,6 +127,21 @@ class KtorWalletRemote(private val api: CircasoApi, private val groupWallets: Gr
             contentType(ContentType.Application.Json)
             setBody(request)
         }
+    }
+
+    override suspend fun quote(request: PrepareTransferRequest, idempotencyKey: String): AppResult<QuoteTransferResponse?> {
+        val groupShaped = request.walletId != null || request.to.groupId != null
+        if (groupShaped && !groupWallets.canSendWalletId) return refused()
+        val answer = api.call<QuoteTransferResponse> {
+            method = HttpMethod.Post
+            url("/v1/wallet/transfers/quote")
+            idempotencyKey(idempotencyKey)
+            contentType(ContentType.Application.Json)
+            setBody(request.copy(quoteId = null, payoutRequestId = null))
+        }
+        // A server before phase 2F has no W17: no fee is charged there, so there is nothing to show.
+        if (answer is AppResult.Failure && (answer.error as? AppError.Api)?.code == "request.not_found") return AppResult.Success(null)
+        return answer
     }
 
     override suspend fun transfer(transferId: String) = api.call<TransferResponse> {

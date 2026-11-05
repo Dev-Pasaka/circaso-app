@@ -17,9 +17,9 @@ import com.circaso.designsystem.platform.PlatformStyle
 import com.circaso.designsystem.theme.CircasoTheme
 
 /** Semantic icon names. Each is drawn per platform (chevron back on iOS, arrow back on Android). */
-enum class CircasoIcon { Back, Close, Check, Delete, Backspace, Offline, Clock, Chat, Wallet, Person, ChevronRight, Plus, Search, Send, Mic, MicOff, Speaker, Stop, Waveform, ArrowUp, ArrowDown, Bank, Eye, EyeOff, Copy, Share, Clipboard, Network, Money, Warning, Scan, Phone, Video, VideoOff, FlipCamera, Minimise, Pin, Play, Pause, Photo, Camera, Spaces, Flash, More, Lock, Heart, HeartFilled, People, VolumeOff, ChevronDown, Trash, Forward, Scissors, Target, Fingerprint, FaceId,
+enum class CircasoIcon { Back, Close, Check, Delete, Backspace, Offline, Clock, Chat, Wallet, Person, ChevronRight, Plus, Search, Send, Mic, MicOff, Speaker, Stop, Waveform, ArrowUp, ArrowDown, Bank, Eye, EyeOff, Copy, Share, Clipboard, Network, Money, Warning, Scan, Phone, Video, VideoOff, FlipCamera, Minimise, Pin, Play, Pause, Photo, Camera, Spaces, Flash, More, Lock, Heart, HeartFilled, People, VolumeOff, ChevronDown, Trash, Forward, Scissors, Target, Fingerprint, FaceId, Info,
     // Spaces (phase 3), drawn from the canvas's SVG paths.
-    Globe, Ticket, Flag, Link, Shield, Bell, Ban, UserMinus, UserPlus, Reply, Mail, Qr, Info, Pencil, Gear, Mute }
+    Globe, Ticket, Flag, Link, Shield, Bell, Ban, UserMinus, UserPlus, Reply, Mail, Qr, Pencil, Gear, Mute }
 
 /** Icons kept as the canvas's own SVG path data (24 grid, stroked), parsed once per draw. */
 private val SvgIcons = mapOf(
@@ -35,7 +35,6 @@ private val SvgIcons = mapOf(
     CircasoIcon.Reply to "M10 6L4 12l6 6M4 12h10a6 6 0 0 1 6 6",
     CircasoIcon.Mail to "M4 6.5h16v11H4zM4.5 7.5l7.5 5.5l7.5-5.5",
     CircasoIcon.Qr to "M4 4h6v6H4zM14 4h6v6h-6zM4 14h6v6H4zM14 14h2v2h-2zM18 18h2v2h-2zM14 18h2v2h-2zM18 14h2v2h-2z",
-    CircasoIcon.Info to "M12 3.5a8.5 8.5 0 1 0 0 17a8.5 8.5 0 0 0 0-17zM12 11v5M12 8h.01",
     CircasoIcon.Pencil to "M12 20h8M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z",
     CircasoIcon.Gear to "M12 9a3 3 0 1 0 0 6a3 3 0 0 0 0-6zM12 2.8v2.4M12 18.8v2.4M2.8 12h2.4M18.8 12h2.4M5.5 5.5l1.7 1.7M16.8 16.8l1.7 1.7M5.5 18.5l1.7-1.7M16.8 7.2l1.7-1.7",
     CircasoIcon.Mute to "M4 4l16 16M9 5.5A3 3 0 0 1 15 6.5v4M15 14a3 3 0 0 1-6-2.5V9M5.5 11a6.5 6.5 0 0 0 10.4 5.2M18.5 11c0 .8-.1 1.5-.4 2.2M12 17.5v3",
@@ -236,6 +235,11 @@ fun CircasoIconImage(icon: CircasoIcon, tint: Color, modifier: Modifier = Modifi
                 CircasoIcon.Warning -> {
                     p.moveTo(12f, 4f); p.lineTo(21f, 20f); p.lineTo(3f, 20f); p.close()
                     p.moveTo(12f, 10f); p.lineTo(12f, 14.5f); p.moveTo(12f, 17f); p.lineTo(12f, 17.1f)
+                }
+                // The design's `info`: a ring with the i's stem and dot (GW20).
+                CircasoIcon.Info -> {
+                    p.addOval(Rect(3.5f, 3.5f, 20.5f, 20.5f))
+                    p.moveTo(12f, 11f); p.lineTo(12f, 16f); p.moveTo(12f, 8f); p.lineTo(12f, 8.1f)
                 }
                 else -> SvgIcons[icon]?.let { d -> p.addPath(androidx.compose.ui.graphics.vector.PathParser().parsePathString(d).toPath()) }
             }

@@ -40,6 +40,8 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
 
 /** Where the payment is (designs C4 → C5 → C6). */
@@ -83,16 +85,45 @@ data class PayIntent(
 data class PayFailure(val wallet: String, val message: String, val reference: String?)
 
 /**
- * The one Circaso fee (spaces-plan §7b: gas included, the sender pays it on top, quoted by W4 for this exact payment
- * and held 15 minutes). Phase 2F fills [Quoting] and [Quoted] from W4's `fee`; until then the server charges none.
+ * The one Circaso fee (spaces-plan §7b: network cost included, the sender pays it on top, quoted by W17 for this exact
+ * payment and held 15 minutes, then charged by W4 with [Quoted.quoteId]). Phase 2F, 2026-11-04.
  */
 sealed interface PayFee {
-    /** No fee on this payment (today, before 2F; also a 0 % rule). */
+    /** No fee line yet (no amount), or a server that takes no fees. */
     data object None : PayFee
     /** GW13: being worked out; Pay waits. */
     data object Quoting : PayFee
-    /** GW9b/GW9d: [amountMinor] in USDC minor units at [rateBps] (0..200). */
-    data class Quoted(val amountMinor: String, val rateBps: Int) : PayFee
+    /**
+     * GW9b/GW9d/GW13b: [amountMinor] in the payment's coin at [rateBps] (0..200); [minimum] when the floor that covers
+     * the network cost set it. [quoteId] holds it for W4 until [expiresAt] (only for the wallet's signer).
+     */
+    data class Quoted(
+        val amountMinor: String,
+        val rateBps: Int?,
+        val minimum: Boolean = false,
+        val quoteId: String? = null,
+        val expiresAt: String? = null,
+    ) : PayFee
+    /** GW13d: couldn't be worked out (5xx after retries, or the network). Nothing can be signed; Try Again. */
+    data class Failed(val reference: String?, val message: String? = null, val retryable: Boolean = true) : PayFee
+    /** Offline: a fee can't be worked out, and money doesn't move offline anyway (G3/GW15). */
+    data object Offline : PayFee
+}
+
+/** GW13c: W4 found a higher fee than the one shown (the quote ran out); the person sees it before signing. */
+data class FeeChange(val fromMinor: String, val toMinor: String)
+
+/**
+ * Why W17 (or W4's refusal) says this payment can't go as it is (spaces-plan §7a, GW14/GW14b/GW20). Amounts in the
+ * payment's coin minor units; [fitsAt] (ISO) when this payment fits the rolling 24 hours, null when it never can.
+ */
+sealed interface PayBlock {
+    /** GW20: the amount fits but not with its fee; [maxAmountMinor] is the most that does. */
+    data class Funds(val maxAmountMinor: String?) : PayBlock
+    /** One payment's cap. */
+    data class PerPayment(val maxAmountMinor: String?) : PayBlock
+    /** GW14/GW14b: the rolling 24-hour cap, fees included. */
+    data class Daily(val leftMinor: String?, val dailyMaxMinor: String?, val fitsAt: String?, val moreAt: String?, val maxAmountMinor: String?) : PayBlock
 }
 
 /** Why the chosen person can't be paid right now, and what the screen offers. */
@@ -159,8 +190,14 @@ data class PayUiState(
     val requested: com.circaso.feature.chama.domain.ChamaRequest? = null,
     /** When the wallets' balances were read, for "as of" offline. */
     val asOf: String? = null,
-    /** §7b's fee line; [PayFee.None] until phase 2F quotes it. */
+    /** §7b's fee line, from W17 (phase 2F). */
     val fee: PayFee = PayFee.None,
+    /** The fee shown was asked for an earlier version of this payment; the new answer is on its way and Pay waits. */
+    val feeStale: Boolean = false,
+    /** GW13c: the fee rose since it was shown; said once, until the next quote. */
+    val feeChange: FeeChange? = null,
+    /** GW14/GW14b/GW20: what stops this payment as it is, from W17 or W4's refusal. */
+    val block: PayBlock? = null,
     /** Spaces: paying into this space's wallet (SH2b), or its membership quote (SM1, personal wallet, amount fixed). */
     val spaceId: String? = null,
     val spacePaymentId: String? = null,
@@ -225,14 +262,37 @@ data class PayUiState(
 
     val usdcText: String? get() = amountMinor?.let { MinorUnits.toDisplay(it, decimals) + " " + asset }
 
-    /** The fee row's words: "No fee", "Working it out", or "KES 2.50 · 0.5%" (in the person's currency when there is a rate). */
+    /**
+     * The fee row's words (GW9b, GW13, GW13b, GW13d): "No fee", "Working it out", "KES 2.50 · 0.5%", "KES 5 · minimum",
+     * and for a payout request, whose fee is set when it is paid, "about KES 50 · 1%, set when paid" (GW9c).
+     */
     val feeText: String
         get() = when (val f = fee) {
             PayFee.None -> "No fee"
             PayFee.Quoting -> "Working it out"
-            is PayFee.Quoted -> (rate?.let { r -> currency?.let { cur -> usdcToFiat(f.amountMinor, r)?.let { "$cur $it" } } } ?: (MinorUnits.toDisplay(f.amountMinor, 6) + " USDC")) +
-                " · " + (f.rateBps / 100.0).toString().removeSuffix(".0") + "%"
+            PayFee.Offline -> "Needs a connection"
+            is PayFee.Failed -> "Couldn’t work it out"
+            is PayFee.Quoted -> if (MinorUnits.isZero(f.amountMinor)) "No fee" else {
+                val money = moneyText(f.amountMinor)
+                val why = if (f.minimum) "minimum" else f.rateBps?.let(::rateText)
+                val line = listOfNotNull(money, why).joinToString(" · ")
+                if (requestPayout) "about $line, set when paid" else line
+            }
         }
+
+    /** A coin amount in the person's currency when there is a rate ("KES 2.50", "KES 5"), else in the coin. */
+    fun moneyText(minor: String): String =
+        if (inUsdc && rate != null && currency != null) usdcToFiat(minor, rate!!)?.let { "$currency ${fiatDisplay(MinorUnits.fromDisplay(it, 2) ?: "0")}" } ?: (MinorUnits.toDisplay(minor, decimals) + " " + asset)
+        else MinorUnits.toDisplay(minor, decimals) + " " + asset
+
+    /** The fee's minor units, when one is quoted. */
+    val feeMinor: String? get() = (fee as? PayFee.Quoted)?.amountMinor
+
+    /** The fee is known (or there is none), so the total can be shown and signed. */
+    val feeSettled: Boolean get() = (fee is PayFee.None || fee is PayFee.Quoted) && !feeStale
+
+    /** A payout request may be over today's cap (it waits once approved, GW14); everything else waits on [block]. */
+    val blocked: Boolean get() = block != null && !requestPayout
 
     /** What leaves the wallet: the amount plus the fee (the receiver gets exactly the amount, §7b). */
     val totalMinor: String? get() = amountMinor?.let { a -> (fee as? PayFee.Quoted)?.let { MinorUnits.add(a, it.amountMinor) } ?: a }
@@ -254,7 +314,7 @@ data class PayUiState(
             ?: if (inUsdc && currency != null && rate != null) amountMinor?.let { usdcToFiat(it, rate!!) }?.let { "$currency $it" } else null
     val overBalance: Boolean get() = totalMinor?.let { MinorUnits.lessThan(balanceMinor, it) } ?: false
     val onHold: Boolean get() = wallet?.holdUntil != null
-    val canPay: Boolean get() = online && !onHold && payee != null && payChain != null && problem == null && !checking && !assetMissing && amountMinor?.let { !MinorUnits.isZero(it) } == true && !overBalance && step == PayStep.Amount && fee != PayFee.Quoting &&
+    val canPay: Boolean get() = online && !onHold && payee != null && payChain != null && problem == null && !checking && !assetMissing && amountMinor?.let { !MinorUnits.isZero(it) } == true && !overBalance && step == PayStep.Amount && (feeSettled || requestPayout) && !blocked &&
         // A request needs the group's own chat to post in; a payout needs the request it pays.
         (!requestPayout || payingFrom.chatId != null)
     val filteredContacts get() = contacts.filter { query.isBlank() || it.displayName.contains(query, true) || it.handle?.contains(query.trimStart('@'), true) == true }
@@ -298,6 +358,12 @@ class PayViewModel(
     private val wallets: GroupWalletSources? = null,
     /** The phone's copy of one transfer: GW17 waits on it, so a group payment says Paid only once the chain has it. */
     private val observeTransfer: com.circaso.feature.wallet.domain.ObserveTransferUseCase? = null,
+    /** W17, the fee and limits before signing (phase 2F); absent in older tests and previews, which show no fee. */
+    private val quotePayment: com.circaso.feature.wallet.domain.QuotePaymentUseCase? = null,
+    /** The pause after the last change before quoting again (GW13: "after a short pause"). */
+    private val quoteDelayMillis: Long = QuoteDelayMillis,
+    /** The clock the quote's hold and the limit's time are measured against (tests move it). */
+    private val now: () -> Long = { com.circaso.core.sync.nowMillis() },
 ) : ViewModel() {
     private val userId = intent.userId
     private val chatId = intent.chatId
@@ -377,6 +443,19 @@ class PayViewModel(
         )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), local.value)
 
+    // Declared before init: the quoting collector starts at once (Main.immediate) and would read them unset.
+    /** Bumped by Try Again on GW13d, so the same payment is quoted once more. */
+    private val quoteTry = MutableStateFlow(0)
+
+    /** The server has no W17 (before phase 2F): no fee is charged there, so nothing more is asked. */
+    private var quotesUnsupported = false
+
+    /** What the quote on the card was asked for; a re-ask of the same payment compares against it (GW13c). */
+    private var quotedFor: QuoteKey? = null
+
+    /** Marks the fee on the card out of date at once, so a tap can't sign it for another amount (before the re-ask). */
+    private fun staleFee() { if (quotePayment != null && !quotesUnsupported) local.update { it.copy(feeStale = true) } }
+
     /** GW10: open or close the switcher. */
     fun onChoosing(open: Boolean) { if (!open || state.value.canSwitch) local.update { it.copy(choosing = open) } }
 
@@ -384,6 +463,7 @@ class PayViewModel(
     fun onPayFrom(wallet: NamedWallet) {
         fromId.value = wallet.walletId
         idempotencyKey = newIdempotencyKey()
+        staleFee()
         local.update { it.copy(choosing = false, blockchain = null, failure = null) }
         state.value.payee?.userId?.takeIf { it.isNotEmpty() }?.let { check(it, null) }
     }
@@ -393,6 +473,111 @@ class PayViewModel(
         // wallet is checked by W4 itself (members only).
         if (userId != null) check(userId, null)
         wallets?.let { w -> viewModelScope.launch { if (groupWallets.isOn) w.refresh(intent.fromWalletId, intent.groupId ?: intent.chatId) } }
+        quotePayment?.let { quote -> viewModelScope.launch { quoteAsTyped(quote) } }
+    }
+
+    /**
+     * GW13: whenever what decides the fee changes (who, how much, which coin and network, Paying from), the fee row says
+     * "Working it out" at once and Pay waits; after a short pause W17 is asked, and only the latest answer counts.
+     * Offline there is no quote (money never moves offline, G3/GW15). Nothing is guessed: a failure is GW13d.
+     */
+    @OptIn(kotlinx.coroutines.FlowPreview::class, kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+    private suspend fun quoteAsTyped(quote: com.circaso.feature.wallet.domain.QuotePaymentUseCase) {
+        combine(state, quoteTry) { s, attempt -> keyOf(s)?.copy(attempt = attempt) to s.online }
+            .distinctUntilChanged()
+            .collectLatest { (key, online) ->
+                if (quotesUnsupported) return@collectLatest
+                if (key == null) { local.update { it.copy(fee = PayFee.None, feeStale = false, block = null, feeChange = null) }; return@collectLatest }
+                if (!online) { local.update { it.copy(fee = PayFee.Offline, feeStale = false, block = null) }; return@collectLatest }
+                // The last answer stays on the card, marked stale, until the next one: the card doesn't jump while typing.
+                val before = local.value.fee as? PayFee.Quoted
+                val sameAsked = quotedFor?.request == key.request
+                local.update { it.copy(fee = if (it.fee is PayFee.Quoted || it.fee is PayFee.Failed) it.fee else PayFee.Quoting, feeStale = true) }
+                // A re-ask of the same payment (Try Again, a hold run out, the limit freed) goes at once.
+                if (!sameAsked) delay(quoteDelayMillis)
+                when (val r = quote(key.request)) {
+                    is AppResult.Success -> {
+                        val q = r.value
+                        if (q == null) { quotesUnsupported = true; local.update { it.copy(fee = PayFee.None, feeStale = false, block = null) }; return@collectLatest }
+                        quotedFor = key
+                        local.update {
+                            it.copy(
+                                fee = PayFee.Quoted(q.feeMinor, q.rateBps, q.minimum, q.quoteId, q.expiresAt),
+                                feeStale = false,
+                                block = q.blockOf(),
+                                feeChange = when {
+                                    // GW13c: the same payment quoted again after its hold ran out, at another fee.
+                                    sameAsked && before != null && before.amountMinor != q.feeMinor -> FeeChange(before.amountMinor, q.feeMinor)
+                                    // Anything else asked is a new payment: the notice goes with the old one.
+                                    sameAsked -> it.feeChange
+                                    else -> it.feeChange?.takeIf { c -> c.toMinor == q.feeMinor }
+                                },
+                            )
+                        }
+                        // Ask again when the hold runs out (GW13c) or the daily limit frees this payment (GW14b).
+                        millisUntil(q.expiresAt, (q.blockOf() as? PayBlock.Daily)?.fitsAt)?.let { wait ->
+                            delay(wait)
+                            quoteTry.update { it + 1 }
+                        }
+                    }
+                    is AppResult.Failure -> local.update {
+                        val api = r.error as? AppError.Api
+                        // GW13d only for what Try Again can fix (Circle or the network); a refusal says why, as W4 would.
+                        val retryable = api == null || api.code == "wallet.custody_unavailable" || api.httpStatus >= 500
+                        it.copy(fee = PayFee.Failed(ErrorMessages.reference(r.error), ErrorMessages.forError(r.error), retryable), feeStale = false, block = null)
+                    }
+                }
+            }
+    }
+
+    /** Milliseconds (plus a second) until the earlier of these instants still ahead; null when none is. */
+    private fun millisUntil(vararg isos: String?): Long? {
+        val at = now()
+        return isos.mapNotNull { iso -> iso?.let { runCatching { kotlin.time.Instant.parse(it).toEpochMilliseconds() - at }.getOrNull() } }
+            .filter { it > 0 }.minOrNull()?.let { it + 1_000 }
+    }
+
+    /**
+     * What W17 is asked for this card as it stands, or null when there is nothing to quote yet: no amount, no payee or
+     * network, a payee that can't be paid, or a coin the wallet doesn't hold.
+     */
+    private fun keyOf(s: PayUiState): QuoteKey? {
+        val payee = s.payee ?: return null
+        val chain = s.payChain ?: return null
+        val minor = s.amountMinor?.takeIf { !MinorUnits.isZero(it) } ?: return null
+        // Not the step: signing keeps the quote it signs, and coming back to the card mustn't ask again.
+        if (s.step == PayStep.Pick || s.problem != null || s.assetMissing) return null
+        val toAddress = address?.takeIf { payee.userId.isEmpty() && !s.toGroup }
+        val toUser = payee.userId.takeIf { it.isNotEmpty() && toAddress == null && !s.toGroup }
+        if (toAddress == null && toUser == null && s.groupId == null && s.spaceId == null) return null
+        // Paying a space: no person and no address; the space rate (§7b) is quoted for `to.spaceId`.
+        val space = s.spaceId != null
+        return QuoteKey(
+            PaymentRequest(
+                blockchain = chain, toUserId = toUser.takeIf { !space }, toAddress = toAddress.takeIf { !space }, amountMinor = minor, asset = s.asset, chatId = chatId,
+                toGroupId = s.groupId, fromWalletId = s.payingFrom.walletId.takeIf { !s.membership },
+                toSpaceId = s.spaceId, spacePaymentId = s.spacePaymentId,
+            ),
+        )
+    }
+
+    /** GW13d's Try Again: the same payment, quoted again. */
+    fun onRetryQuote() { quoteTry.update { it + 1 } }
+
+    /** GW14 / GW20's offer: the most that fits, in the unit the person is typing in, never a cent over. */
+    fun onUseMax() {
+        val s = state.value
+        val max = when (val b = s.block) {
+            is PayBlock.Funds -> b.maxAmountMinor
+            is PayBlock.PerPayment -> b.maxAmountMinor
+            is PayBlock.Daily -> b.maxAmountMinor
+            null -> null
+        } ?: return
+        if (MinorUnits.isZero(max)) return
+        // The same amount the offer names (FeeParts.fittedAmount): never a cent over what fits.
+        val text = fittedAmount(s, max) ?: return
+        staleFee()
+        local.update { it.copy(amountText = text, error = null, failure = null) }
     }
 
     fun onQuery(q: String) = local.update { it.copy(query = q) }
@@ -449,6 +634,7 @@ class PayViewModel(
 
     /** They can be paid on one of their chains: pay from there if this wallet is on it too. */
     fun onChain(blockchain: String) {
+        staleFee()
         local.update { it.copy(blockchain = blockchain, problem = null) }
         state.value.payee?.let { check(it.userId, blockchain) }
     }
@@ -472,6 +658,7 @@ class PayViewModel(
         if (clean.count { it == '.' } > 1) return
         val max = if (state.value.inFiat) 2 else 6
         if (clean.substringAfter('.', "").length > max) return
+        staleFee()
         local.update { it.copy(amountText = clean, error = null) }
     }
 
@@ -486,6 +673,7 @@ class PayViewModel(
             next -> usdcToFiat(minor, s.rate!!) ?: ""
             else -> MinorUnits.toDisplay(minor, 6).replace(",", "")
         }
+        staleFee()
         local.update { it.copy(inFiat = next, amountText = text) }
     }
 
@@ -494,6 +682,7 @@ class PayViewModel(
     /** The chat's "@eth": pay in that asset if the wallet holds it (the recipient is checked on its chain). */
     fun onAssetTag(tag: String?) {
         if (local.value.assetTag == tag) return
+        staleFee()
         local.update { it.copy(assetTag = tag) }
         state.value.payee?.userId?.takeIf { it.isNotEmpty() }?.let { check(it, state.value.payChain) }
     }
@@ -504,7 +693,8 @@ class PayViewModel(
      */
     fun onPay() {
         val s = state.value
-        if (!s.canPay) return
+        // The fee may have gone stale this instant (the amount just changed): never sign the old quote for it.
+        if (!s.canPay || (local.value.feeStale && !s.requestPayout)) return
         val payee = s.payee ?: return
         val chain = s.payChain ?: return
         val minor = s.amountMinor ?: return
@@ -529,6 +719,7 @@ class PayViewModel(
                 blockchain = chain, toUserId = payee.userId.takeIf { it.isNotEmpty() && toAddress == null && !s.toGroup && !toSpace }, toAddress = toAddress, amountMinor = minor,
                 asset = s.asset, chatId = chatId, note = note, counterpartName = payee.displayName ?: group,
                 toGroupId = s.groupId, fromWalletId = s.payingFrom.walletId.takeIf { !s.membership }, payoutRequestId = s.requestId.takeIf { s.groupPayout }, subject = subject,
+                quoteId = (s.fee as? PayFee.Quoted)?.quoteId,
                 toSpaceId = s.spaceId, spacePaymentId = s.spacePaymentId,
             )
             when (val r = pay(request, idempotencyKey)) {
@@ -549,7 +740,9 @@ class PayViewModel(
                 }
                 is AppResult.Failure -> {
                     val code = (r.error as? AppError.Api)?.code
-                    if (code != "wallet.cancelled") idempotencyKey = newIdempotencyKey().takeIf { code == "wallet.sdk_failed" || code == "wallet.payout_in_progress" } ?: idempotencyKey
+                    if (code != "wallet.cancelled") idempotencyKey = newIdempotencyKey().takeIf { code == "wallet.sdk_failed" || code == "wallet.payout_in_progress" || code in Refusals } ?: idempotencyKey
+                    // Phase 2F: refused before anything was prepared, with the numbers to say why (GW13c, GW14b, GW20).
+                    if (refusedWithNumbers(s, r.error as? AppError.Api)) return@launch
                     // G2 / GW19: say Not sent, and that nothing was taken from the named wallet; the approval stands.
                     val failure = if (code == "wallet.cancelled") null else PayFailure(s.walletName.takeIf { s.fromGroupWallet } ?: "your wallet", ErrorMessages.forError(r.error), ErrorMessages.reference(r.error))
                     local.update { it.copy(step = PayStep.Amount, failure = failure) }
@@ -658,13 +851,58 @@ class PayViewModel(
         state.value.payee?.userId?.takeIf { it.isNotEmpty() }?.let { check(it, state.value.payChain) }
     }
 
+    /**
+     * W4 refused before preparing anything, with its numbers in `details.fields` (phase 2F): a higher fee than the one
+     * shown (GW13c: the new fee and its quote are shown, and the next tap pays it), a limit (GW14b) or the balance with
+     * the fee (GW20). The card stays, and says it; "Not sent" would be untrue, nothing was attempted. False when the
+     * refusal isn't one of these, so the ordinary failure line shows.
+     */
+    private fun refusedWithNumbers(s: PayUiState, error: AppError.Api?): Boolean {
+        val f = error?.fields ?: return false
+        when (error.code) {
+            "wallet.fee_changed" -> {
+                val fee = f["feeMinor"] ?: return false
+                local.update {
+                    it.copy(
+                        step = PayStep.Amount, failure = null, feeStale = false,
+                        fee = PayFee.Quoted(fee, f["rateBps"]?.toIntOrNull(), f["minimum"] == "true", f["quoteId"], f["expiresAt"]),
+                        feeChange = FeeChange(f["quotedFeeMinor"] ?: s.feeMinor ?: "0", fee),
+                    )
+                }
+            }
+            "wallet.limit_exceeded" -> {
+                val block = when (f["limit"]) {
+                    "DAILY" -> PayBlock.Daily(f["leftMinor"], f["limitMinor"], f["resetsAt"], f["moreAt"], f["maxAmountMinor"])
+                    "PER_PAYMENT" -> PayBlock.PerPayment(f["maxAmountMinor"])
+                    else -> return false
+                }
+                local.update { it.copy(step = PayStep.Amount, failure = null, block = block) }
+            }
+            "wallet.insufficient_funds" -> {
+                val max = f["maxAmountMinor"] ?: return false
+                local.update { it.copy(step = PayStep.Amount, failure = null, block = PayBlock.Funds(max)) }
+            }
+            else -> return false
+        }
+        return true
+    }
+
     private companion object {
         const val AttachAttempts = 3
         const val AttachBackoffMillis = 1_000L
+
+        /** W4 refusals that prepared nothing: the same key would be answered from the replay cache, so the next try is new. */
+        val Refusals = setOf("wallet.fee_changed", "wallet.limit_exceeded", "wallet.insufficient_funds")
     }
 }
 
+/** GW13: the pause after the last keystroke before the fee is asked for. */
+const val QuoteDelayMillis = 400L
+
 /** What the group-wallet side of the review reads, combined. */
+/** "0.5%", "1%", "2%" from basis points. */
+internal fun rateText(bps: Int): String = (bps / 100.0).toString().removeSuffix(".0") + "%"
+
 /** "500", "1,000", "502.50": whole amounts as the design writes them, cents only when there are some. */
 internal fun fiatDisplay(cents: String): String {
     val digits = cents.trimStart('0')
@@ -673,6 +911,17 @@ internal fun fiatDisplay(cents: String): String {
 }
 
 /** What the person typed, from a card's note ("Added to Holiday Fund · November" → "November"). */
+/** One quote's question: the payment, and which try (GW13d's Try Again asks the same again). */
+internal data class QuoteKey(val request: PaymentRequest, val attempt: Int = 0)
+
+/** What W17 says stops the payment as it is, in the card's words. */
+internal fun com.circaso.feature.wallet.domain.PaymentQuote.blockOf(): PayBlock? = when (problem) {
+    com.circaso.feature.wallet.domain.QuoteProblem.InsufficientFunds -> PayBlock.Funds(maxAmountMinor)
+    com.circaso.feature.wallet.domain.QuoteProblem.PerPaymentLimit -> PayBlock.PerPayment(maxAmountMinor)
+    com.circaso.feature.wallet.domain.QuoteProblem.DailyLimit -> PayBlock.Daily(leftMinor, dailyMaxMinor, fitsAt, moreAt, maxAmountMinor)
+    null -> null
+}
+
 internal fun cardNoteTyped(note: String?): String {
     val n = note?.trim().orEmpty()
     if (!n.startsWith("Added to ") && !n.startsWith("Paid from ")) return n

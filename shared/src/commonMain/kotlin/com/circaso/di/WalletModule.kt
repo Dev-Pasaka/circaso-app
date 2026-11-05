@@ -60,6 +60,7 @@ val walletModule = module {
     factory { RemindRecipientUseCase(get()) }
     factory { ValidateAddressUseCase(get()) }
     factory { PayUseCase(get()) }
+    factory { com.circaso.feature.wallet.domain.QuotePaymentUseCase(get()) }
     factory { com.circaso.feature.wallet.domain.AddMissingChainsUseCase(get()) }
     factory { com.circaso.feature.wallet.domain.ObserveWalletsUseCase(get()) }
     factory { com.circaso.feature.wallet.domain.RefreshWalletsUseCase(get()) }
@@ -82,7 +83,7 @@ val walletModule = module {
     viewModel { NetworksViewModel(get(), get(), get()) }
     viewModel { (intent: PayIntent) ->
         val profiles = get<com.circaso.feature.profile.domain.ProfileRepository>()
-        PayViewModel(intent, get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), scanner = get(), findHandle = { profiles.findByHandle(it) }, groupWallets = get(), wallets = get(), observeTransfer = get())
+        PayViewModel(intent, get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), scanner = get(), findHandle = { profiles.findByHandle(it) }, groupWallets = get(), wallets = get(), observeTransfer = get(), quotePayment = get())
     }
     factory { com.circaso.feature.wallet.presentation.GroupWalletSources(get(), get(), get(), get(), get(), get(), get(), get(), get()) }
     viewModel { SendToWalletViewModel(get(), get(), get(), get(), scanner = get()) }

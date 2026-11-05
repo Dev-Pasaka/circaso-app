@@ -44,12 +44,33 @@ import kotlinx.serialization.Serializable
     val walletId: String? = null,
     /** From a group wallet: the approved payout (CH4/CH5) this pays, same payee and amount. */
     val payoutRequestId: String? = null,
+    /** W17's hold on the fee the person was shown (phase 2F): W4 charges exactly it while it holds. */
+    val quoteId: String? = null,
     /** A members-only space's membership quote (SP13): personal wallet, exactly its amount. */
     val spacePaymentId: String? = null,
 )
 @Serializable data class PrepareTransferResponse(
     val transferId: String, val state: String, val blockchain: String, val amount: AmountDto, val challengeId: String? = null, val sdk: SdkDto? = null,
-    val fee: AmountDto? = null, val expiresAt: String, val walletId: String? = null,
+    val fee: FeeDto? = null, val expiresAt: String, val walletId: String? = null, val total: AmountDto? = null,
+)
+
+/** The one Circaso fee (phase 2F): an amount, plus how it was priced; [rateBps] and [minimum] are absent on a repeat. */
+@Serializable data class FeeDto(
+    val asset: String, val amountMinor: String, val amount: String = "", val rateBps: Int? = null, val minimum: Boolean? = null,
+    val ruleId: String? = null, val ruleVersion: Int? = null,
+)
+
+/** Where a wallet stands against its limits (phase 2F); a null cap is no cap. */
+@Serializable data class LimitDto(
+    val perPaymentMax: AmountDto? = null, val dailyMax: AmountDto? = null, val used: AmountDto? = null, val left: AmountDto? = null,
+    val windowHours: Int = 24, val moreAt: String? = null,
+)
+
+/** W17 `POST /v1/wallet/transfers/quote`: the fee for exactly this payment before it is signed (GW13). */
+@Serializable data class QuoteTransferResponse(
+    val blockchain: String, val amount: AmountDto, val fee: FeeDto, val total: AmountDto, val balance: AmountDto? = null,
+    val maxAmount: AmountDto? = null, val limit: LimitDto? = null, val problem: String? = null, val fitsAt: String? = null,
+    val quoteId: String? = null, val expiresAt: String,
 )
 @Serializable data class TransferResponse(
     val transferId: String, val direction: String, val state: String, val blockchain: String, val from: String, val to: PayeeDto, val amount: AmountDto,

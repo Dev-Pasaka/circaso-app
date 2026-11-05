@@ -81,6 +81,7 @@ fun PayScreen(viewModel: PayViewModel, onBack: () -> Unit, onOpenTransfer: (Stri
     PayContent(
         state, onBack, viewModel::onQuery, viewModel::onPick, { if (!viewModel.onBackToPick()) onBack() }, viewModel::onAmount, viewModel::onToggleUnit, viewModel::onNote, viewModel::onChain, viewModel::onRemind, viewModel::onPay, viewModel::onErrorShown, onOpenTransfer, onOpenChat,
         onAttachAgain = viewModel::onAttachAgain, onScan = if (viewModel.canScan) viewModel::onScan else null, onChoosing = viewModel::onChoosing, onPayFrom = viewModel::onPayFrom,
+        onRetryQuote = viewModel::onRetryQuote, onUseMax = viewModel::onUseMax,
     )
 }
 
@@ -106,6 +107,10 @@ fun PayContent(
     /** GW10: open or close "Pay from", and pick a wallet. */
     onChoosing: (Boolean) -> Unit = {},
     onPayFrom: (NamedWallet) -> Unit = {},
+    /** GW13d's Try Again on the fee. */
+    onRetryQuote: () -> Unit = {},
+    /** GW14 / GW20's "… Instead": the most that fits with its fee. */
+    onUseMax: () -> Unit = {},
 ) {
     val c = CircasoTheme.colors
     val t = CircasoTheme.typography
@@ -140,7 +145,7 @@ fun PayContent(
     ) { padding ->
         when (state.step) {
             PayStep.Pick -> PickPerson(state, padding, onQuery, onPick)
-            PayStep.Amount, PayStep.Signing, PayStep.Sending -> AmountStep(state, padding, onAmount, onToggleUnit, onNote, onChain, onRemind, onPay, onChoosing)
+            PayStep.Amount, PayStep.Signing, PayStep.Sending -> AmountStep(state, padding, onAmount, onToggleUnit, onNote, onChain, onRemind, onPay, onChoosing, onRetryQuote, onUseMax)
             PayStep.Done -> DoneStep(state, padding, onBack, onOpenTransfer, onOpenChat, onAttachAgain)
         }
     }
@@ -165,7 +170,7 @@ private fun PickPerson(state: PayUiState, padding: PaddingValues, onQuery: (Stri
 
 /** Design C4: the person, the amount big, a note, from/fee/receives, then the button. The SDK takes over for C5. */
 @Composable
-private fun AmountStep(state: PayUiState, padding: PaddingValues, onAmount: (String) -> Unit, onToggleUnit: () -> Unit, onNote: (String) -> Unit, onChain: (String) -> Unit, onRemind: () -> Unit, onPay: () -> Unit, onChoosing: (Boolean) -> Unit = {}) {
+private fun AmountStep(state: PayUiState, padding: PaddingValues, onAmount: (String) -> Unit, onToggleUnit: () -> Unit, onNote: (String) -> Unit, onChain: (String) -> Unit, onRemind: () -> Unit, onPay: () -> Unit, onChoosing: (Boolean) -> Unit = {}, onRetryQuote: () -> Unit = {}, onUseMax: () -> Unit = {}) {
     val c = CircasoTheme.colors
     val t = CircasoTheme.typography
     val payee = state.payee
@@ -215,7 +220,7 @@ private fun AmountStep(state: PayUiState, padding: PaddingValues, onAmount: (Str
             BasicText(listOfNotNull(state.fiatText?.let { "≈ $it" }, "The amount the admins approved").joinToString(" · "), style = t.footnote.copy(color = c.inkSecondary, textAlign = TextAlign.Center))
         }
         else if (state.canUseFiat) SuggestionChip(other?.let { "≈ $it · switch" } ?: "Type in ${if (state.inFiat) "USDC" else state.currency}", onToggleUnit)
-        if (state.overBalance) BasicText((if (state.fromGroupWallet) "${state.walletName} has" else "You have") + " ${MinorUnits.toDisplay(state.balanceMinor, 6)} USDC on ${chainName(state.blockchain.orEmpty())}.", style = t.footnote.copy(color = c.critical))
+        if (state.overBalance && state.block == null) BasicText((if (state.fromGroupWallet) "${state.walletName} has" else "You have") + " ${MinorUnits.toDisplay(state.balanceMinor, 6)} USDC on ${chainName(state.blockchain.orEmpty())}.", style = t.footnote.copy(color = c.critical))
         // G2 / GW19: the payment didn't go; nothing was taken, and the approval (if any) still stands.
         state.failure?.let { f ->
             com.circaso.designsystem.chrome.Banner(
@@ -247,6 +252,8 @@ private fun AmountStep(state: PayUiState, padding: PaddingValues, onAmount: (Str
             null -> Unit
         }
 
+        // GW13c / GW14 / GW14b / GW20, above the details as the frames put them.
+        FeeProblems(state, onUseMax)
         // Design `.cx-details`: a raised card with hairlines between the rows.
         Column(Modifier.fillMaxWidth().clip(CircasoShapes.md).background(c.surfaceRaised).border(1.dp, c.separator, CircasoShapes.md)) {
             if (state.showPayingFrom) {
@@ -270,8 +277,9 @@ private fun AmountStep(state: PayUiState, padding: PaddingValues, onAmount: (Str
             }
             (state.chama?.memberCount ?: state.groupMoney?.memberCount?.takeIf { state.toGroup || state.fromGroupWallet })?.let { RowDivider(); DetailRow("Visible to", "All $it members") }
             RowDivider()
-            // §7b's one fee (gas included): PayFee.None until phase 2F quotes it (GW13).
-            DetailRow("Fee", state.feeText)
+            // §7b's one fee, network cost included, worked out by W17 for exactly this payment (GW13*).
+            DetailRow("Fee", Modifier.semantics(mergeDescendants = true) {}) { FeeValue(state, onRetryQuote, t.subhead) }
+            totalValue(state)?.let { RowDivider(); DetailRow("Total", it) }
             RowDivider()
             DetailRow("${payee?.displayName?.substringBefore(' ') ?: "They"} receive${if (payee == null) "" else "s"}", state.usdcText ?: "—")
         }
@@ -301,9 +309,10 @@ private fun AmountStep(state: PayUiState, padding: PaddingValues, onAmount: (Str
         }
         Spacer(Modifier.height(CircasoSpacing.s2))
         // The button carries the total (the amount plus §7b's fee); the same as the amount while there is no fee.
-        val amount = state.totalText ?: if (state.inFiat && state.fiatText != null) state.fiatText else state.usdcText
+        // GW13 / GW13d: a bare verb until the fee for what is typed is known.
+        val amount = buttonTotal(state)
         CircasoButton(
-            text = when {
+            text = blockedLabel(state)?.takeIf { state.step == PayStep.Amount && state.failure == null } ?: when {
                 state.step == PayStep.Sending -> "Sending from ${if (state.fromGroupWallet) state.walletName else "your wallet"}…"
                 state.failure != null -> "Try Again"
                 state.step == PayStep.Signing && state.requestPayout -> "Asking the admins…"
@@ -323,7 +332,7 @@ private fun AmountStep(state: PayUiState, padding: PaddingValues, onAmount: (Str
             onClick = onPay, size = ButtonSize.Large, block = true, enabled = state.canPay, busy = state.step == PayStep.Signing || state.step == PayStep.Sending,
         )
         if (state.step == PayStep.Sending) BasicText("This takes a few seconds. You can close this; the card in the chat updates.", Modifier.semantics { liveRegion = androidx.compose.ui.semantics.LiveRegionMode.Polite }, style = t.footnote.copy(color = c.inkSecondary, textAlign = TextAlign.Center))
-        state.failure?.reference?.let { BasicText("Ref $it", style = t.caption1.copy(color = c.inkTertiary, fontFeatureSettings = "tnum")) }
+        feeFootnote(state).takeIf { it.isNotEmpty() }?.let { BasicText(it, style = t.caption1.copy(color = c.inkTertiary, textAlign = TextAlign.Center, fontFeatureSettings = "tnum")) }
         // GW11: the approval names its wallet; behind Circle's PIN (and iOS's bare Face ID glyph) this stays on screen.
         if (state.step == PayStep.Signing && state.fromGroupWallet && !state.requestPayout) {
             BasicText("Approve from ${state.walletName} · ${state.walletName}’s PIN, not your personal one.", Modifier.semantics { liveRegion = androidx.compose.ui.semantics.LiveRegionMode.Polite }, style = t.footnote.copy(color = c.inkSecondary, textAlign = TextAlign.Center))

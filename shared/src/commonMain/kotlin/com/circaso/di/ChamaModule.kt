@@ -39,7 +39,7 @@ val chamaModule = module {
     factory { com.circaso.feature.chama.domain.RefreshGroupMoneyUseCase(get()) }
     factory { com.circaso.feature.chama.domain.SetApprovalPolicyUseCase(get()) }
     factory { com.circaso.feature.chama.domain.RemoveGoalUseCase(get()) }
-    factory { ThreadChama(get(), get(), get(), get(), get(), get(), groupWallets = get(), observeMoney = get(), refreshMoney = get()) }
+    factory { ThreadChama(get(), get(), get(), get(), get(), get(), groupWallets = get(), observeMoney = get(), refreshMoney = get(), quotePayment = get(), observeWalletOf = get()) }
     // Group wallets (phase 2): group info's money rows, the wallet set-up (GW2–GW5) and the target form (GW7b).
     factory {
         val bio = get<com.circaso.core.platform.Biometrics>()
