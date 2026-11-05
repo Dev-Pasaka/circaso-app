@@ -21,6 +21,20 @@ import org.koin.dsl.bind
 import org.koin.dsl.module
 
 /**
+ * Each area's ViewModels live with its screens, so the areas never edit the same module. Declared before
+ * [spacesModule], which includes it: top-level values initialise in file order, and a module included before it
+ * exists is null at startup (it crashed the app on launch, 2026-11-05).
+ */
+val spacesViewModels = module {
+    includes(
+        com.circaso.feature.spaces.presentation.discover.spacesDiscoverModule,
+        com.circaso.feature.spaces.presentation.page.spacePageModule,
+        com.circaso.feature.spaces.presentation.create.spaceCreateModule,
+        com.circaso.feature.spaces.presentation.chat.spaceChatModule,
+    )
+}
+
+/**
  * Spaces core (phase 3, references/spaces-api.md): read from Room, posts and reactions through the outbox, everything
  * else live. Behind `SpacesFlag` (CoreModule). The screens' ViewModels are declared in [spacesViewModels].
  */
@@ -50,14 +64,4 @@ val spacesModule = module {
     single { SpacePostHandler { get<SpacesRepositoryImpl>() } } bind OutboxHandler::class
     single { SpaceReactionHandler { get<SpacesRepositoryImpl>() } } bind OutboxHandler::class
     includes(spacesViewModels)
-}
-
-/** Each area's ViewModels live with its screens, so the areas never edit the same module. */
-val spacesViewModels = module {
-    includes(
-        com.circaso.feature.spaces.presentation.discover.spacesDiscoverModule,
-        com.circaso.feature.spaces.presentation.page.spacePageModule,
-        com.circaso.feature.spaces.presentation.create.spaceCreateModule,
-        com.circaso.feature.spaces.presentation.chat.spaceChatModule,
-    )
 }
