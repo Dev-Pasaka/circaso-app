@@ -98,102 +98,74 @@ internal fun ChatMoneyCard(
         s.spaceId != null -> "Pay $group"
         else -> "Send to $first"
     }
+    // Slim (Pasaka, 2026-11-05): only what decides the payment. The amount in the person's currency and in the coin, the
+    // one fee on the same line, Paying from, and Send. Who it goes to is the chat itself; the network is what `@` picked;
+    // the note is the text they typed. Problems show only when there is one.
+    val shape = CircasoShapes.md
     Column(
         modifier.fillMaxWidth().padding(horizontal = CircasoSpacing.s3).padding(bottom = CircasoSpacing.s2)
             .then(if (maxHeight != androidx.compose.ui.unit.Dp.Unspecified) Modifier.heightIn(max = maxHeight) else Modifier)
-            // Solid, not glass: on Android the glass has no blur, so the chat behind read through the money rows.
-            .shadow(12.dp, CircasoShapes.lg, ambientColor = androidx.compose.ui.graphics.Color.Black.copy(alpha = 0.25f), spotColor = androidx.compose.ui.graphics.Color.Black.copy(alpha = 0.25f))
-            .clip(CircasoShapes.lg).background(CircasoTheme.colors.surfaceRaised)
-            .then(if (CircasoTheme.colors.isHighContrast) Modifier.border(1.dp, CircasoTheme.colors.separator, CircasoShapes.lg) else Modifier)
-            .padding(start = CircasoSpacing.s4, end = CircasoSpacing.s3, top = CircasoSpacing.s3, bottom = CircasoSpacing.s3),
+            // Solid, not glass: on Android the glass has no blur, so the chat behind read through it.
+            .shadow(8.dp, shape, ambientColor = androidx.compose.ui.graphics.Color.Black.copy(alpha = 0.2f), spotColor = androidx.compose.ui.graphics.Color.Black.copy(alpha = 0.2f))
+            .clip(shape).background(c.surfaceRaised)
+            .then(if (c.isHighContrast) Modifier.border(1.dp, c.separator, shape) else Modifier)
+            .padding(horizontal = CircasoSpacing.s3, vertical = CircasoSpacing.s2),
         verticalArrangement = Arrangement.spacedBy(CircasoSpacing.s2),
     ) {
-        // Who and how much: the amount large in the person's currency, the coin under it (C4's head, in the chat).
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(CircasoSpacing.s3)) {
-            if (s.toGroup) WalletAvatar(group, payee?.avatarUrl, group = true, size = CircasoSizes.avatarMd)
-            else Avatar(payee?.displayName ?: "", size = CircasoSizes.avatarMd, imageUrl = payee?.avatarUrl)
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(CircasoSpacing.s2)) {
             Column(Modifier.weight(1f).semantics(mergeDescendants = true) {
                 heading()
                 contentDescription = listOfNotNull(title, amount, s.usdcText.takeIf { s.fiatText != null }, "the amount the admins approved".takeIf { s.payout }).joinToString(", ")
             }) {
-                BasicText(title, style = t.subhead.copy(color = c.inkSecondary), maxLines = 1, overflow = TextOverflow.Ellipsis)
-                BasicText(amount ?: "Type an amount after #", style = (if (amount != null) t.title2 else t.callout).copy(color = if (amount != null) c.ink else c.inkSecondary, fontWeight = FontWeight.SemiBold, fontFeatureSettings = "tnum"))
-                val under = listOfNotNull(s.usdcText.takeIf { s.fiatText != null }, "The amount the admins approved".takeIf { s.payout }).joinToString(" · ")
-                if (under.isNotEmpty()) BasicText(under, style = t.footnote.copy(color = c.inkSecondary, fontFeatureSettings = "tnum"))
+                BasicText(
+                    amount ?: "Type an amount after #",
+                    style = (if (amount != null) t.title3 else t.callout).copy(color = if (amount != null) c.ink else c.inkSecondary, fontWeight = FontWeight.SemiBold, fontFeatureSettings = "tnum"),
+                    maxLines = 1, overflow = TextOverflow.Ellipsis,
+                )
+                if (amount != null) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        val coin = listOfNotNull(s.usdcText.takeIf { s.fiatText != null }, "approved".takeIf { s.payout }).joinToString(" · ")
+                        if (coin.isNotEmpty()) BasicText("$coin · ", style = t.footnote.copy(color = c.inkSecondary, fontFeatureSettings = "tnum"), maxLines = 1)
+                        BasicText("Fee ", style = t.footnote.copy(color = c.inkSecondary))
+                        com.circaso.feature.wallet.presentation.FeeValue(s, onRetryQuote, t.footnote)
+                    }
+                }
+            }
+            if (s.showPayingFrom) {
+                Box(Modifier.defaultMinSize(minHeight = CircasoSizes.controlMd), contentAlignment = Alignment.Center) {
+                    PayingFromChip(s.payingFrom, if (s.canSwitch && !signing) onChoose else null)
+                }
             }
             if (onClose != null && !signing) CircasoIconButton(CircasoIcon.Close, "Close", onClose)
         }
-        // The middle scrolls when there isn't room for it all; the header above and Pay below stay put.
-        Column(
-            Modifier.fillMaxWidth().weight(1f, fill = false).verticalScroll(rememberScrollState()),
-            verticalArrangement = Arrangement.spacedBy(CircasoSpacing.s2),
-        ) {
-            // GW19 / G2: refused before it reached the chain. Nothing was taken; a payout's approval stands.
-            s.failure?.let { f ->
-                com.circaso.designsystem.chrome.Banner(
-                    "Not sent. Nothing was taken from ${f.wallet}." + (if (s.payout) " The approval still stands." else "") +
-                        (f.message.takeIf { it != com.circaso.core.common.ErrorMessages.SomethingWrong && !it.contains("Nothing was sent") && !it.contains("Nothing was taken") }?.let { " $it" } ?: ""),
-                    CircasoIcon.Warning, tone = com.circaso.designsystem.chrome.BannerTone.Critical,
-                )
-            }
-            // GW13c / GW14 / GW14b / GW20, above the rows as the frames put them: the reason Pay waits is in view first.
-            com.circaso.feature.wallet.presentation.FeeProblems(s, onUseMax)
-            val problem = s.feeChange != null || s.blocked
-            // The review's rows, compact (GW9b / GW9d / GW9): nothing here is typed, it all came from the chat.
-            Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(CircasoSpacing.s1)) {
-                if (s.showPayingFrom) {
-                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(CircasoSpacing.s2)) {
-                        BasicText("Paying from", Modifier.weight(1f), style = t.footnote.copy(color = c.inkSecondary))
-                        Box(Modifier.defaultMinSize(minHeight = CircasoSizes.controlMd), contentAlignment = Alignment.Center) {
-                            PayingFromChip(s.payingFrom, if (s.canSwitch && !signing) onChoose else null)
-                        }
-                    }
+        // Only when something needs saying; scrolls if it ever outgrows the room above the composer.
+        val (line, tone) = statusLine(s, first)
+        val anything = s.failure != null || s.feeChange != null || s.block != null || line != null
+        if (anything) {
+            Column(Modifier.fillMaxWidth().weight(1f, fill = false).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(CircasoSpacing.s2)) {
+                // GW19 / G2: refused before it reached the chain. Nothing was taken; a payout's approval stands.
+                s.failure?.let { f ->
+                    com.circaso.designsystem.chrome.Banner(
+                        "Not sent. Nothing was taken from ${f.wallet}." + (if (s.payout) " The approval still stands." else "") +
+                            (f.message.takeIf { it != com.circaso.core.common.ErrorMessages.SomethingWrong && !it.contains("Nothing was sent") && !it.contains("Nothing was taken") }?.let { " $it" } ?: ""),
+                        CircasoIcon.Warning, tone = com.circaso.designsystem.chrome.BannerTone.Critical,
+                    )
                 }
-                // With a problem the frames drop Network and For, so the numbers that matter stay in view.
-                if (!problem) s.payChain?.let { CardRow("Network", "${s.asset} on ${chainName(it)}") }
-                if (!problem) s.note.trim().takeIf { it.isNotEmpty() }?.let { CardRow("For", it) }
-                s.payoutRequest?.takeIf { s.groupPayout }?.let { r ->
-                    val names = r.approvedBy.map { s.memberNames[it]?.substringBefore(' ') ?: "an admin" }
-                    CardRow("Request", if (names.isEmpty()) "Approved" else "Approved by " + names.joinToString(" and "))
+                // GW13c / GW14 / GW14b / GW20: why Pay waits (a changed fee, a limit, not enough money).
+                com.circaso.feature.wallet.presentation.FeeProblems(s, onUseMax)
+                if (line != null) {
+                    BasicText(
+                        line,
+                        Modifier.semantics { liveRegion = LiveRegionMode.Polite },
+                        style = t.footnote.copy(color = when (tone) { Tone.Critical -> c.critical; Tone.Warning -> c.warning; Tone.Quiet -> c.inkSecondary }),
+                    )
                 }
-                if (s.requestPayout) CardRow("Approvals", if (s.groupMoney?.approvalPolicy == ApprovalPolicy.AnyAdmin) "Any admin" else "2 admins")
-                // Only once there is an amount: "receives —" beside "Type an amount" says nothing.
-                if (amount != null) {
-                    // §7b's one fee (GW13*): worked out by W17 for exactly this payment; a request's is "about", set when paid.
-                    CardRowContent("Fee") { com.circaso.feature.wallet.presentation.FeeValue(s, onRetryQuote, t.footnote) }
-                    com.circaso.feature.wallet.presentation.totalValue(s)?.let { CardRow("Total", it) }
-                    CardRow(if (s.toGroup || s.spaceId != null) "$group receives" else "$first receives", amount)
-                }
-            }
-            // GW9a2/GW9d: where the group's target will stand once this lands.
-            val after = s.progressAfter
-            val goal = s.groupMoney?.goal?.takeIf { s.toGroup }
-            if (after != null && amount != null) {
-                if (goal != null) {
-                    val got = MinorUnits.add(s.groupMoney!!.contributedMinor, s.amountMinor ?: "0")
-                    GoalProgress(amountText(got, s.wallet?.fiat), amountNumber(goal.targetMinor, s.wallet?.fiat), after, meta = "After your contribution", label = "Target after your contribution")
-                } else s.chama?.takeIf { s.contribution }?.let { ch ->
-                    val got = MinorUnits.add(ch.contributedMinor, s.amountMinor ?: "0")
-                    GoalProgress(amountText(got, s.wallet?.fiat), amountNumber(ch.goal.targetMinor, s.wallet?.fiat), after, meta = "After your contribution", label = "${ch.goal.name} after your contribution")
-                }
-            }
-            // Why it can't go yet, or what's happening: one line, announced when it changes.
-            val (line, tone) = statusLine(s, first)
-            if (line != null) {
-                BasicText(
-                    line,
-                    Modifier.semantics { liveRegion = LiveRegionMode.Polite },
-                    style = t.footnote.copy(color = when (tone) { Tone.Critical -> c.critical; Tone.Warning -> c.warning; Tone.Quiet -> c.inkSecondary }),
-                )
             }
         }
-        val total = com.circaso.feature.wallet.presentation.buttonTotal(s)
         CircasoButton(
-            text = payLabel(s, amount, total),
-            onClick = onPay, size = ButtonSize.Large, block = true, enabled = s.canPay, busy = signing,
+            text = payLabel(s, amount, com.circaso.feature.wallet.presentation.buttonTotal(s)),
+            onClick = onPay, size = ButtonSize.Medium, block = true, enabled = s.canPay, busy = signing,
         )
-        val foot = com.circaso.feature.wallet.presentation.feeFootnote(s)
-        if (foot.isNotEmpty()) BasicText(foot, style = t.caption1.copy(color = c.inkTertiary, fontFeatureSettings = "tnum"))
     }
 }
 
