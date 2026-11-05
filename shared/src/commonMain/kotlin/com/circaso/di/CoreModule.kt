@@ -133,11 +133,18 @@ val coreModule = module {
 
 private var started = false
 
+/**
+ * Every module the app starts with, the platform's last. One list, so a test can build the same graph the app does
+ * (`KoinGraphTest`): a module read before its top-level `val` is initialised is null here, and Koin crashes at launch.
+ */
+fun appModules(platform: Module): List<Module> =
+    listOf(coreModule, authModule, profileModule, contactsModule, accountModule, assistantModule, realtimeModule, messagingModule, walletModule, chamaModule, statusModule, spacesModule, callsModule, homeModule, platform)
+
 /** Starts Koin once. Called from each platform's entry point with its platform module. */
 fun initKoin(platform: Module) {
     if (started) return
     started = true
-    val koin = startKoin { modules(coreModule, authModule, profileModule, contactsModule, accountModule, assistantModule, realtimeModule, messagingModule, walletModule, chamaModule, statusModule, spacesModule, callsModule, homeModule, platform) }.koin
+    val koin = startKoin { modules(appModules(platform)) }.koin
     // Open the stores off the main thread while the first frame is being prepared, and put any write that a
     // crash left half-sent back in line (its Idempotency-Key makes the retry safe).
     val scope = koin.get<CoroutineScope>()

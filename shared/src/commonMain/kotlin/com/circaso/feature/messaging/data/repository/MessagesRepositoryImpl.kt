@@ -80,6 +80,7 @@ class MessagesRepositoryImpl(
     private val ownUserId: suspend () -> String?,
     private val now: () -> Long = ::nowMillis,
     private val reactionsDao: com.circaso.feature.messaging.data.local.ReactionsDao? = null,
+    private val paymentCards: ChatPaymentCards? = null,
 ) : MessagesRepository {
     /** messageId -> each person's reaction (userId to emoji), oldest first. */
     override fun reactions(chatId: String): kotlinx.coroutines.flow.Flow<Map<String, List<Pair<String, String>>>> =
@@ -146,14 +147,25 @@ class MessagesRepositoryImpl(
     override suspend fun sendPayment(chatId: String, card: PaymentCard) {
         val me = ownUserId() ?: return
         val at = now()
-        val localId = dao.insert(
-            MessageEntity(
-                clientMessageId = newClientMessageId(), messageId = null, chatId = chatId, senderId = me, outgoing = true,
-                kind = MessageKind.Payment, text = card.note, replyTo = null, status = MessageStatus.Waiting, errorCode = null,
-                cachedRequest = null, sentAt = null, orderAt = at, createdAt = at,
-                transferId = card.transferId, amountMinor = card.amountMinor, asset = card.asset, blockchain = card.blockchain,
-            ),
-        )
+        val write = suspend {
+            // The wallet may already have put this payment's card in the chat (it confirmed before this ran): that
+            // card is sent instead of a second one.
+            val walletCard = paymentCards?.walletCardFor(chatId, card.transferId)
+            if (walletCard != null) {
+                dao.upsert(walletCard.copy(clientMessageId = newClientMessageId(), text = card.note, status = MessageStatus.Waiting, createdAt = at))
+                walletCard.localId
+            } else {
+                dao.insert(
+                    MessageEntity(
+                        clientMessageId = newClientMessageId(), messageId = null, chatId = chatId, senderId = me, outgoing = true,
+                        kind = MessageKind.Payment, text = card.note, replyTo = null, status = MessageStatus.Waiting, errorCode = null,
+                        cachedRequest = null, sentAt = null, orderAt = at, createdAt = at,
+                        transferId = card.transferId, amountMinor = card.amountMinor, asset = card.asset, blockchain = card.blockchain,
+                    ),
+                )
+            }
+        }
+        val localId = paymentCards?.exclusive(write) ?: write()
         chats.touch(chatId, at)
         outbox.enqueue(OutboxType.ChatMessage, json.encodeToString(ChatMessageJob.serializer(), ChatMessageJob(localId)))
         kickOutbox()
@@ -377,18 +389,25 @@ class ChatSendHandler(
     }
 
     private suspend fun build(chat: ChatEntity, message: MessageEntity): AppResult<SendChatMessageRequest> {
-        val sentAt = Instant.fromEpochMilliseconds(message.createdAt).toString()
-        val payload = if (message.kind == MessageKind.Payment) {
-            ChatPayload(type = ChatPayload.Payment, text = message.text, clientSentAt = sentAt, transferId = message.transferId, amountMinor = message.amountMinor, asset = message.asset, blockchain = message.blockchain)
-        } else if (isMediaKind(message.kind)) {
-            (MediaDetails.read(message.text) ?: return AppResult.Failure(AppError.Unexpected(null))).toPayload(sentAt)
-        } else if (message.kind == MessageKind.Reaction) {
-            ChatPayload(type = ChatPayload.Reaction, text = message.text, replyTo = message.replyTo, clientSentAt = sentAt)
-        } else {
-            ChatPayload(type = ChatPayload.Text, text = message.text, replyTo = message.replyTo, clientSentAt = sentAt,
-                moment = message.momentQuote?.let { runCatching { json.decodeFromString(com.circaso.core.crypto.MomentQuote.serializer(), it) }.getOrNull() })
-        }
+        val payload = message.toChatPayload(json) ?: return AppResult.Failure(AppError.Unexpected(null))
         return sealer.seal(chat, ChatPayload.encode(payload), message.clientMessageId, pushable = true)
+    }
+}
+
+/**
+ * What one of my messages says, end to end, rebuilt from its row: what the outbox sends, and what a retry receipt
+ * sends again. Null for a row that can't be sent (a notice, a call, media whose details are gone).
+ */
+internal fun MessageEntity.toChatPayload(json: Json): ChatPayload? {
+    val sentAt = Instant.fromEpochMilliseconds(createdAt).toString()
+    return when {
+        kind == MessageKind.System || kind == MessageKind.Call -> null
+        kind == MessageKind.Payment ->
+            ChatPayload(type = ChatPayload.Payment, text = text, clientSentAt = sentAt, transferId = transferId, amountMinor = amountMinor, asset = asset, blockchain = blockchain)
+        isMediaKind(kind) -> MediaDetails.read(text)?.toPayload(sentAt)
+        kind == MessageKind.Reaction -> ChatPayload(type = ChatPayload.Reaction, text = text, replyTo = replyTo, clientSentAt = sentAt)
+        else -> ChatPayload(type = ChatPayload.Text, text = text, replyTo = replyTo, clientSentAt = sentAt,
+            moment = momentQuote?.let { runCatching { json.decodeFromString(com.circaso.core.crypto.MomentQuote.serializer(), it) }.getOrNull() })
     }
 }
 
@@ -458,8 +477,27 @@ class InboxProcessor(
     /** A payment card arrived: the wallet reads the transfer (W5) so the card can show its state. */
     private val onPaymentReceived: suspend (transferId: String) -> Unit = {},
     private val reactionsDao: com.circaso.feature.messaging.data.local.ReactionsDao? = null,
+    /** Asks for unreadable messages again and answers others' asks (retry receipts). */
+    private val retries: RetryReceipts? = null,
+    /** Payment cards keyed by transfer, so the wallet's fallback card and the end-to-end one are one card. */
+    private val paymentCards: ChatPaymentCards? = null,
 ) {
     private val lock = Mutex()
+
+    /** Set when a message couldn't be opened, so a live frame's [askAgain] has something to ask for. */
+    private var unreadableSince = false
+
+    /**
+     * Asks the senders of messages this phone couldn't open to send them again (outside the inbox lock: it goes to
+     * the network). After a sync always (older unreadable rows and asks the rate limit held back); after a live frame
+     * only when it was unreadable.
+     */
+    private suspend fun askAgain(always: Boolean) {
+        val r = retries ?: return
+        if (!always && !unreadableSince) return
+        unreadableSince = false
+        r.sweep()
+    }
 
     /** A reaction that just arrived, by the id of the message that carried it: what a push names ("reacted 👍 to …"). */
     class ArrivedReaction(val chatId: String, val senderId: String, val emoji: String, val targetMessageId: String)
@@ -467,7 +505,9 @@ class InboxProcessor(
     fun reactionCarriedBy(messageId: String): ArrivedReaction? = recentReactions.remove(messageId)
 
 
-    suspend fun sync(): AppResult<Unit> = lock.withLock {
+    suspend fun sync(): AppResult<Unit> = syncLocked().also { if (it is AppResult.Success) askAgain(always = true) }
+
+    private suspend fun syncLocked(): AppResult<Unit> = lock.withLock {
         var after: String? = null
         do {
             val page = when (val r = remote.inbox(after)) {
@@ -491,6 +531,7 @@ class InboxProcessor(
             )
         }.getOrNull() ?: return
         lock.withLock { if (handle(dto)) ack(listOf(dto.messageId)) }
+        askAgain(always = false)
     }
 
     private suspend fun ack(ids: List<String>) {
@@ -527,30 +568,51 @@ class InboxProcessor(
                 is OpenedGroup.Plain -> deliver(dto, opened.bytes)
             }
             WireFormat.Type.SenderKeyDistribution -> unreadable(dto, "bare distribution")
+            // Someone couldn't open one of my messages and asks for it again (never shown; answered once).
+            WireFormat.Type.RetryRequest -> { retries?.onRequest(dto.chatId, dto.senderId, frame.body); true }
         }
     }
 
-    private suspend fun deliver(dto: InboxMessageDto, plaintext: ByteArray): Boolean {
-        val payload = ChatPayload.decode(plaintext) ?: return unreadable(dto, "not a payload")
+    private suspend fun deliver(received: InboxMessageDto, plaintext: ByteArray): Boolean {
+        val payload = ChatPayload.decode(plaintext) ?: return unreadable(received, "not a payload")
+        // A message sent again because this phone asked: it takes the place (id, time) of the row that couldn't show.
+        var replaces: MessageEntity? = null
+        val dto = when (val original = payload.resendOf) {
+            null -> received
+            else -> {
+                // Only what a thread shows is ever sent again; keys and controls never are.
+                if (payload.type in NeverResent) return true
+                val (asSaved, target) = retries?.resent(received, original) ?: return true
+                replaces = target
+                asSaved
+            }
+        }
+        val saved = deliverPayload(dto, payload)
+        replaces?.let { if (saved) dao.delete(it.localId) }
+        return true
+    }
+
+    /** True when [payload] was saved or applied; false when it was refused as unreadable. */
+    private suspend fun deliverPayload(dto: InboxMessageDto, payload: ChatPayload): Boolean {
         when (payload.type) {
             ChatPayload.Text, ChatPayload.Payment -> {
                 val at = isoToMillis(dto.sentAt) ?: now()
                 val payment = payload.type == ChatPayload.Payment
-                if (payment && payload.transferId.isNullOrBlank()) return unreadable(dto, "payment without a transfer")
-                dao.insert(
-                    MessageEntity(
-                        clientMessageId = newClientMessageId(), messageId = dto.messageId, chatId = dto.chatId, senderId = dto.senderId, outgoing = false,
-                        kind = if (payment) MessageKind.Payment else MessageKind.Text, text = if (payment) payload.text else payload.text.orEmpty(), replyTo = payload.replyTo,
-                        status = MessageStatus.Received, errorCode = null, cachedRequest = null, sentAt = dto.sentAt, orderAt = at, createdAt = now(),
-                        transferId = payload.transferId, amountMinor = payload.amountMinor, asset = payload.asset, blockchain = payload.blockchain,
-                        momentQuote = payload.moment?.let { kotlinx.serialization.json.Json.encodeToString(com.circaso.core.crypto.MomentQuote.serializer(), it) },
-                    ),
+                if (payment && payload.transferId.isNullOrBlank()) return refuse(dto, "payment without a transfer")
+                val row = MessageEntity(
+                    clientMessageId = newClientMessageId(), messageId = dto.messageId, chatId = dto.chatId, senderId = dto.senderId, outgoing = false,
+                    kind = if (payment) MessageKind.Payment else MessageKind.Text, text = if (payment) payload.text else payload.text.orEmpty(), replyTo = payload.replyTo,
+                    status = MessageStatus.Received, errorCode = null, cachedRequest = null, sentAt = dto.sentAt, orderAt = at, createdAt = now(),
+                    transferId = payload.transferId, amountMinor = payload.amountMinor, asset = payload.asset, blockchain = payload.blockchain,
+                    momentQuote = payload.moment?.let { kotlinx.serialization.json.Json.encodeToString(com.circaso.core.crypto.MomentQuote.serializer(), it) },
                 )
+                // One card per transfer: the wallet may already have put this payment's card in the chat.
+                if (payment && paymentCards != null) paymentCards.receive(row) else dao.insert(row)
                 chats.touch(dto.chatId, at)
                 if (payment) onPaymentReceived(payload.transferId!!)
             }
             ChatPayload.Image, ChatPayload.Voice, ChatPayload.Video, ChatPayload.Location, ChatPayload.LiveLocation -> {
-                val details = payload.toMediaDetails() ?: return unreadable(dto, "incomplete ${payload.type}")
+                val details = payload.toMediaDetails() ?: return refuse(dto, "incomplete ${payload.type}")
                 val at = isoToMillis(dto.sentAt) ?: now()
                 dao.insert(
                     MessageEntity(
@@ -564,7 +626,7 @@ class InboxProcessor(
             ChatPayload.LiveUpdate, ChatPayload.LiveStop -> moveLiveShare(dto, payload)
             // Someone's reaction: kept with the message it is on, never shown as a message of its own.
             ChatPayload.Reaction -> {
-                val target = payload.replyTo ?: return unreadable(dto, "reaction without a target")
+                val target = payload.replyTo ?: return refuse(dto, "reaction without a target")
                 val emoji = payload.text.orEmpty()
                 if (emoji.isNotEmpty()) recentReactions[dto.messageId] = ArrivedReaction(dto.chatId, dto.senderId, emoji, target)
                 if (emoji.isEmpty()) reactionsDao?.remove(target, dto.senderId)
@@ -576,10 +638,12 @@ class InboxProcessor(
                 loadChat(dto.chatId)
                 retryPending(dto.chatId, dto.senderId)
             }
-            else -> return unreadable(dto, "unknown payload ${payload.type}")
+            else -> return refuse(dto, "unknown payload ${payload.type}")
         }
         return true
     }
+
+    private suspend fun refuse(dto: InboxMessageDto, reason: String): Boolean { unreadable(dto, reason); return false }
 
     /**
      * A live location's update or stop: moves (or ends) the pin of the message the share started as. An update older
@@ -622,6 +686,7 @@ class InboxProcessor(
     private suspend fun unreadable(dto: InboxMessageDto, reason: String): Boolean {
         Diagnostics.note("inbox: unreadable message ($reason)")
         if (dto.kind == MessagingWire.KindMessage) {
+            unreadableSince = true // ask its sender to send it again (retry receipt)
             dao.insert(
                 MessageEntity(
                     clientMessageId = newClientMessageId(), messageId = dto.messageId, chatId = dto.chatId, senderId = dto.senderId, outgoing = false,
@@ -639,6 +704,7 @@ class InboxProcessor(
 
     private companion object {
         const val PendingKeepMillis = 24L * 60 * 60 * 1000
+        val NeverResent = setOf(ChatPayload.SenderKey, ChatPayload.MetaKey, ChatPayload.Control, ChatPayload.MomentBody, ChatPayload.LiveUpdate, ChatPayload.LiveStop)
     }
 }
 

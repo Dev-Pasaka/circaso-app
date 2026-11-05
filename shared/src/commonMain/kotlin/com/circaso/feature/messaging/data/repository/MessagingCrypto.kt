@@ -132,6 +132,27 @@ class SessionCipher(
         AppResult.Success(true)
     }
 
+    /**
+     * Throws my session with [peerId] away and starts a new one from their **current** bundle, whatever the identity
+     * in it: for when they say they couldn't open one of my messages (a retry receipt). [refresh] keeps a session whose
+     * identity is unchanged, but a session can break without an identity change (their phone lost its half, a bad mac),
+     * and resending on it would fail the same way. True when their identity changed. A failed fetch keeps the old one.
+     */
+    suspend fun restart(peerId: String): AppResult<Boolean> = lockFor(peerId).withLock {
+        val fetched = when (val r = keys.peerBundle(peerId)) {
+            is AppResult.Failure -> return r
+            is AppResult.Success -> r.value
+        }
+        store.deleteSession(peerId)
+        if (fetched.identityChanged) identityChanged(peerId)
+        try {
+            store.saveSession(peerId, crypto.startSession(identity(), PeerAddress(peerId), fetched.bundle, null).session, now())
+        } catch (e: SignalException) {
+            // No session saved: the next seal fetches a bundle and tries again.
+        }
+        AppResult.Success(fetched.identityChanged)
+    }
+
     suspend fun securityCode(myId: String, peerId: String): String? {
         val mine = store.identity() ?: return null
         val theirs = store.peerIdentity(peerId) ?: return null

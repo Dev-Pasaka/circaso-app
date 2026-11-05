@@ -86,10 +86,18 @@ class WalletRepositoryImpl(
     onBiometricsLost: suspend (walletId: String?) -> Unit = {},
     /** Money arrived while the app is open (the frame, not a push): the coins sound, if the person has it on. */
     private val onMoneyReceived: suspend () -> Unit = {},
+    /**
+     * A confirmed payment made from a chat, from the server's own record: the chat shows its card even when the
+     * end-to-end card can't be read on this phone (or this phone is new). Messaging dedupes it by transfer.
+     */
+    private val onChatPayment: suspend (com.circaso.feature.wallet.domain.ChatPaymentSeen) -> Unit = {},
 ) : WalletRepository {
     // Before init: a frame handled on Main.immediate could reach [save] while the class is still being built.
     private val settledOut = kotlinx.coroutines.flow.MutableSharedFlow<Transfer>(extraBufferCapacity = 16)
     override val settled: Flow<Transfer> = settledOut
+
+    /** Money-in frames already heard (the coins sound plays once per payment). */
+    private val heardMoney = mutableSetOf<String>()
 
     init { scope?.launch { com.circaso.feature.wallet.domain.WalletSignerBridge.biometricsLost.collect { onBiometricsLost(it.walletId) } } }
 
@@ -126,9 +134,23 @@ class WalletRepositoryImpl(
      */
     private suspend fun syncHistory() {
         val page = (remote.transactions(limit = HistoryPage) as? AppResult.Success)?.value ?: return
+        val recentSince = nowMillis() - ChatCardsWithinMillis
         page.transactions.forEach { row ->
             val key = row.transferId ?: row.id
-            dao.upsert(row.toEntity(key, dao.transfer(key)))
+            // Money in that a Circaso payment brought now names its transfer (2026-11-05): one row, not two.
+            if (row.direction == "IN" && row.transferId != null) dao.deleteIncoming(row.id)
+            val entity = row.toEntity(key, dao.transfer(key))
+            dao.upsert(entity)
+            // A chat's payment that this phone has no card for (a new phone, an unreadable card): the card, from here.
+            val chatId = row.chatId
+            if (row.transferId != null && chatId != null && row.state == "CONFIRMED" && entity.createdAt >= recentSince) {
+                onChatPayment(
+                    com.circaso.feature.wallet.domain.ChatPaymentSeen(
+                        chatId = chatId, transferId = row.transferId, outgoing = row.direction != "IN", counterpartUserId = row.counterparty?.userId,
+                        amountMinor = row.amount.amountMinor, asset = row.amount.asset, blockchain = row.blockchain, at = isoMillis(row.occurredAt) ?: entity.createdAt,
+                    ),
+                )
+            }
         }
     }
 
@@ -456,19 +478,39 @@ class WalletRepositoryImpl(
                 // A space wallet's frame names its space (phase 3): kept so the money is labelled before Room has the space.
                 if (groupWallet != null && str("ownerType") == "SPACE") str("spaceName")?.let { name -> _walletNamesHeard.value = _walletNamesHeard.value + (groupWallet to name) }
                 if (groupWallet != null) { refreshWallet(groupWallet); refreshActivity(groupWallet); return }
-                // Heard once per payment, even if the frame is replayed after a reconnect.
-                if (dao.transfer(id) == null) onMoneyReceived()
+                // A Circaso payment names its transfer (2026-11-05): kept under it, so the chat's card and the
+                // history are one row. Money from outside Circaso stays under the history row's id.
+                val transferId = str("transferId")
+                val key = transferId ?: id
+                // Heard once per payment, even if the frame is replayed after a reconnect (the chat's card may have
+                // read the transfer first, so the row alone can't say).
+                if (heardMoney.add(key) && dao.transfer(id) == null && dao.transfer(key)?.state != "CONFIRMED") onMoneyReceived()
+                if (transferId != null) dao.deleteIncoming(id)
                 val amount = data?.get("amount")?.jsonObject
                 val now = nowMillis()
+                val existing = dao.transfer(key)
+                val asset = amount?.get("asset")?.jsonPrimitive?.contentOrNull ?: Wallet.Usdc
+                val amountMinor = amount?.get("amountMinor")?.jsonPrimitive?.contentOrNull ?: "0"
                 dao.upsert(
-                    TransferEntity(
-                        transferId = id, direction = TransferDirection.In.name, state = "CONFIRMED", blockchain = str("blockchain").orEmpty(),
-                        fromAddress = "", toUserId = null, toAddress = "", asset = amount?.get("asset")?.jsonPrimitive?.contentOrNull ?: Wallet.Usdc,
-                        amountMinor = amount?.get("amountMinor")?.jsonPrimitive?.contentOrNull ?: "0", amount = amount?.get("amount")?.jsonPrimitive?.contentOrNull ?: "0",
-                        feeMinor = null, chatId = null, txHash = null, failureReason = null, counterpartName = str("fromName"), note = null,
-                        createdAt = dao.transfer(id)?.createdAt ?: now, updatedAt = now,
-                    ),
+                    existing?.copy(state = "CONFIRMED", chatId = existing.chatId ?: str("chatId"), counterpartName = existing.counterpartName ?: str("fromName"), updatedAt = now)
+                        ?: TransferEntity(
+                            transferId = key, direction = TransferDirection.In.name, state = "CONFIRMED", blockchain = str("blockchain").orEmpty(),
+                            fromAddress = "", toUserId = null, toAddress = "", asset = asset,
+                            amountMinor = amountMinor, amount = amount?.get("amount")?.jsonPrimitive?.contentOrNull ?: "0",
+                            feeMinor = null, chatId = str("chatId"), txHash = null, failureReason = null, counterpartName = str("fromName"), note = null,
+                            createdAt = now, updatedAt = now,
+                        ),
                 )
+                // Paid from a chat: that chat shows the card, whatever happened to the end-to-end one.
+                val chatId = str("chatId")
+                if (transferId != null && chatId != null) {
+                    onChatPayment(
+                        com.circaso.feature.wallet.domain.ChatPaymentSeen(
+                            chatId = chatId, transferId = transferId, outgoing = false, counterpartUserId = str("fromUserId"),
+                            amountMinor = amountMinor, asset = asset, blockchain = str("blockchain").orEmpty(), at = existing?.createdAt ?: now,
+                        ),
+                    )
+                }
                 refresh()
             }
             "wallet.ready" -> {
@@ -492,6 +534,8 @@ class WalletRepositoryImpl(
     private companion object {
         const val AwaitMillis = 60_000L
         const val PollMillis = 3_000L
+        /** History rows older than this don't add cards to chats (a new phone isn't flooded with old money). */
+        const val ChatCardsWithinMillis = 30L * 24 * 60 * 60 * 1000
     }
 }
 

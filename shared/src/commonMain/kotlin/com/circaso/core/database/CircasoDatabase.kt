@@ -59,12 +59,12 @@ import kotlinx.coroutines.Dispatchers
         com.circaso.feature.wallet.data.local.WalletActivityEntity::class, com.circaso.feature.chama.data.local.GroupMoneyEntity::class,
         com.circaso.feature.status.data.local.MomentEntity::class, com.circaso.feature.status.data.local.PendingMomentEntity::class,
         com.circaso.feature.status.data.local.MutedPosterEntity::class, com.circaso.feature.status.data.local.MomentPrivacyEntity::class,
-        com.circaso.feature.messaging.data.local.MessageReactionEntity::class,
+        com.circaso.feature.messaging.data.local.MessageReactionEntity::class, com.circaso.feature.messaging.data.local.MessageRetryEntity::class,
         com.circaso.feature.spaces.data.local.SpaceEntity::class, com.circaso.feature.spaces.data.local.MySpaceEntity::class,
         com.circaso.feature.spaces.data.local.SpacePostEntity::class, com.circaso.feature.spaces.data.local.SpaceInviteEntity::class,
         com.circaso.feature.spaces.data.local.SpaceReceiptEntity::class, com.circaso.feature.spaces.data.local.SpaceMetaEntity::class,
     ],
-    version = 18,
+    version = 19,
     autoMigrations = [
         AutoMigration(from = 1, to = 2), AutoMigration(from = 2, to = 3),
         AutoMigration(from = 3, to = 4), AutoMigration(from = 4, to = 5),
@@ -74,6 +74,8 @@ import kotlinx.coroutines.Dispatchers
         AutoMigration(from = 16, to = 17),
         // 18: Spaces core (phase 3): space, space_mine, space_post, space_invite, space_receipt, space_meta, chat.viaSpaceId.
         AutoMigration(from = 17, to = 18),
+        // 19: retry receipts (message_retry): which unreadable messages were asked for again, and which I sent again.
+        AutoMigration(from = 18, to = 19),
     ],
 )
 @ConstructedBy(CircasoDatabaseConstructor::class)
@@ -90,6 +92,7 @@ abstract class CircasoDatabase : RoomDatabase() {
     abstract fun chamaDao(): ChamaDao
     abstract fun momentsDao(): com.circaso.feature.status.data.local.MomentsDao
     abstract fun reactionsDao(): com.circaso.feature.messaging.data.local.ReactionsDao
+    abstract fun recoveryDao(): com.circaso.feature.messaging.data.local.RecoveryDao
     abstract fun spacesDao(): com.circaso.feature.spaces.data.local.SpacesDao
 }
 

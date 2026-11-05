@@ -48,6 +48,23 @@ data class Amount(val asset: String, val amountMinor: String, val amount: String
 enum class TransferState { AwaitingSignature, Submitted, Confirmed, Failed, Expired }
 enum class TransferDirection { Out, In }
 
+/**
+ * The server's own record says a payment made from a chat is on chain (W5, W6, `payment.received`): the chat must
+ * show its card whatever happened to the end-to-end one (it may be unreadable on this phone, or this phone may be
+ * new). [counterpartUserId] is the other person when known; [at] is when it happened (epoch ms). No note: the note
+ * only ever travels end to end.
+ */
+data class ChatPaymentSeen(
+    val chatId: String,
+    val transferId: String,
+    val outgoing: Boolean,
+    val counterpartUserId: String?,
+    val amountMinor: String,
+    val asset: String,
+    val blockchain: String,
+    val at: Long,
+)
+
 /** W5: one payment, from this phone's copy. */
 data class Transfer(
     val transferId: String,

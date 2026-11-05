@@ -201,6 +201,13 @@ interface ChatsDao {
     @Query("DELETE FROM sender_key_delivery WHERE chatId = :chatId AND userId = :userId")
     suspend fun deleteDelivery(chatId: String, userId: String)
 
+    /**
+     * [userId] has a new identity (a new phone): none of my sender keys, in any group, reached it. Deliveries were
+     * kept per person, not per identity, so without this their new phone could never open my group messages.
+     */
+    @Query("DELETE FROM sender_key_delivery WHERE userId = :userId")
+    suspend fun deleteDeliveriesTo(userId: String)
+
     @Query("DELETE FROM chat") suspend fun clearChats()
     @Query("DELETE FROM chat_member") suspend fun clearMembers()
     @Query("DELETE FROM group_meta_key") suspend fun clearMetaKeys()
@@ -329,6 +336,42 @@ interface MessagesDao {
     @Query("DELETE FROM message") suspend fun clearMessages()
     @Query("DELETE FROM message_receipt") suspend fun clearReceipts()
     @Query("DELETE FROM pending_inbox") suspend fun clearPending()
+}
+
+/**
+ * Retry receipts (DB v19): which of their messages I asked a sender to send again ([role] [RetryRole.Asked], [peerId]
+ * the sender) and which of mine I sent again for someone ([RetryRole.Answered], [peerId] who asked). Each happens
+ * once per message and person.
+ */
+@Entity(tableName = "message_retry", primaryKeys = ["messageId", "peerId", "role"])
+data class MessageRetryEntity(val messageId: String, val peerId: String, val role: String, val chatId: String, val at: Long)
+
+object RetryRole {
+    const val Asked = "asked"
+    const val Answered = "answered"
+}
+
+/** What recovery needs: unreadable messages not yet asked about, retry bookkeeping, and a chat's payment card by transfer. */
+@Dao
+interface RecoveryDao {
+    /** Their messages this phone couldn't open, received since [since], that nobody has been asked to send again; newest first. */
+    @Query(
+        "SELECT * FROM message m WHERE m.status = 'undecryptable' AND m.outgoing = 0 AND m.messageId IS NOT NULL AND m.createdAt >= :since " +
+            "AND NOT EXISTS (SELECT 1 FROM message_retry r WHERE r.messageId = m.messageId AND r.role = 'asked') ORDER BY m.orderAt DESC LIMIT :limit",
+    )
+    suspend fun unreadableToAsk(since: Long, limit: Int): List<MessageEntity>
+
+    @Query("SELECT * FROM message_retry WHERE messageId = :messageId AND peerId = :peerId AND role = :role")
+    suspend fun retry(messageId: String, peerId: String, role: String): MessageRetryEntity?
+
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun insertRetry(row: MessageRetryEntity): Long
+
+    /** The payment card for [transferId] in [chatId], mine or theirs, whether it came end to end or from the wallet. */
+    @Query("SELECT * FROM message WHERE chatId = :chatId AND kind = 'payment' AND transferId = :transferId ORDER BY localId LIMIT 1")
+    suspend fun paymentCard(chatId: String, transferId: String): MessageEntity?
+
+    @Query("DELETE FROM message_retry") suspend fun clear()
 }
 
 suspend fun ChatsDao.clearAll() { clearChats(); clearMembers(); clearMetaKeys(); clearDeliveries() }

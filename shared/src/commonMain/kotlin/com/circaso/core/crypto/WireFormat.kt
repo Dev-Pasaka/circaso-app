@@ -11,7 +11,14 @@ object WireFormat {
     const val Version: Byte = 1
 
     enum class Type(val code: Byte) {
-        PreKeyMessage(1), WhisperMessage(2), SenderKeyMessage(3), SenderKeyDistribution(4);
+        PreKeyMessage(1), WhisperMessage(2), SenderKeyMessage(3), SenderKeyDistribution(4),
+
+        /**
+         * A retry receipt (Signal's "decryption error" message): "I couldn't open your message X, send it again". Not
+         * encrypted (the session it would need is the one that broke); the body is [RetryRequest] JSON and says only
+         * which message. Older apps don't know the type and drop it quietly (it never travels as a `MESSAGE`).
+         */
+        RetryRequest(5);
 
         companion object {
             fun of(code: Byte) = entries.firstOrNull { it.code == code }
@@ -28,6 +35,20 @@ object WireFormat {
         val type = Type.of(bytes[1]) ?: return null
         return Frame(type, bytes.copyOfRange(2, bytes.size))
     }
+
+    /** What a [Type.RetryRequest] carries. */
+    @Serializable
+    data class RetryRequest(val v: Int = 1, val messageId: String)
+
+    private val retryJson = Json { ignoreUnknownKeys = true; encodeDefaults = true }
+
+    fun retryRequest(messageId: String): ByteArray =
+        encode(Type.RetryRequest, retryJson.encodeToString(RetryRequest.serializer(), RetryRequest(messageId = messageId)).encodeToByteArray())
+
+    /** The message id a retry request names, or null for bytes that aren't one. */
+    fun readRetryRequest(body: ByteArray): String? =
+        runCatching { retryJson.decodeFromString(RetryRequest.serializer(), body.decodeToString()).messageId }.getOrNull()
+            ?.takeIf { it.isNotBlank() && it.length <= 64 }
 
     fun typeOf(kind: CiphertextKind) = when (kind) {
         CiphertextKind.PreKey -> Type.PreKeyMessage
@@ -98,6 +119,11 @@ data class ChatPayload(
     val thumb: String? = null,
     /** A moment's body sealed again for one person (type [MomentBody]): which moment; [text] is the body JSON. */
     val momentId: String? = null,
+    /**
+     * This is my message [resendOf] sent again because the other phone asked (a retry receipt): it replaces that
+     * message's "can't show" row, keeping its id and its place in the thread. Only ever sent 1:1, to the phone that asked.
+     */
+    val resendOf: String? = null,
 ) {
     companion object {
         const val Text = "text"

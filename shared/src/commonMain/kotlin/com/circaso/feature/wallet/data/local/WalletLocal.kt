@@ -111,6 +111,10 @@ interface WalletDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsert(row: TransferEntity)
 
+    /** Money in kept under its history row id before the server named its transfer; now kept under the transfer. */
+    @Query("DELETE FROM transfer WHERE transferId = :id AND direction = 'In'")
+    suspend fun deleteIncoming(id: String)
+
     @Query("SELECT * FROM wallet_cache WHERE walletId = :walletId")
     fun observeCached(walletId: String): Flow<WalletCacheEntity?>
 

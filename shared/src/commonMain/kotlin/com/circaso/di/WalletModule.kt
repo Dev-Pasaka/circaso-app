@@ -46,6 +46,8 @@ val walletModule = module {
             // Only that wallet falls back to its PIN; its row says why (GW8b).
             prefs.setFlag(com.circaso.feature.chama.presentation.GroupInfoMoneySource.lostFlag(walletId), true)
         },
+        // Money is never hidden by decryption: a confirmed chat payment always has its card in that chat.
+        onChatPayment = { seen -> get<com.circaso.feature.messaging.data.repository.ChatPaymentCards>().fromWallet(seen) },
     ) }
     single<WalletRepository> { get<WalletRepositoryImpl>() }
     factory { ObserveWalletUseCase(get()) }

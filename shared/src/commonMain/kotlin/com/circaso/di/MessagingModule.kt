@@ -74,13 +74,27 @@ val messagingModule = module {
     single<suspend () -> String?>(named("ownUserId")) { val auth = get<AuthManager>(); { auth.userId } }
     single {
         val chats = get<com.circaso.feature.messaging.data.local.ChatsDao>()
-        // A new identity (new phone) no longer holds my moments key: my next moment carries a fresh copy for them.
-        SessionCipher(get(), get(), get(), identityChanged = { chats.deleteDelivery(com.circaso.feature.status.data.repository.MomentKeys.Scope, it) })
+        // A new identity (new phone) holds none of my keys: not my moments key (my next moment carries a fresh copy for
+        // them) and not my sender key in any group (my next group message hands it over again). The moments scope is
+        // one of the chat ids, so the second covers it; both are kept for clarity.
+        SessionCipher(get(), get(), get(), identityChanged = {
+            chats.deleteDelivery(com.circaso.feature.status.data.repository.MomentKeys.Scope, it)
+            chats.deleteDeliveriesTo(it)
+        })
     }
     single { GroupKeys(get(), get(), get(), get(), get(), get(), get(named("ownUserId"))) }
     single { ChatsRepositoryImpl(get(), get(), get(), get(), get(), get(named("ownUserId"))) } bind ChatsRepository::class
-    single { InboxProcessor(get(), get(), get(), get(), get(), get<RealtimeClient>(), { id -> get<ChatsRepositoryImpl>().refreshChat(id) }, onPaymentReceived = { id -> get<com.circaso.feature.wallet.domain.WalletRepository>().loadTransfer(id) }, reactionsDao = get()) }
-    single { MessagesRepositoryImpl(get(), get(), get(), get(), get(), get(named("kickOutbox")), get<RealtimeClient>(), get(), get(named("ownUserId")), reactionsDao = get()) } bind MessagesRepository::class
+    single { get<CircasoDatabase>().recoveryDao() }
+    single { com.circaso.feature.messaging.data.repository.ChatPaymentCards(get(), get(), get(), get(named("ownUserId")), { id -> get<ChatsRepositoryImpl>().refreshChat(id) }) }
+    single { com.circaso.feature.messaging.data.repository.RetryReceipts(get(), get(), get(), get(), get(), get(), get(), get(named("ownUserId"))) }
+    single {
+        InboxProcessor(
+            get(), get(), get(), get(), get(), get<RealtimeClient>(), { id -> get<ChatsRepositoryImpl>().refreshChat(id) },
+            onPaymentReceived = { id -> get<com.circaso.feature.wallet.domain.WalletRepository>().loadTransfer(id) }, reactionsDao = get(),
+            retries = get(), paymentCards = get(),
+        )
+    }
+    single { MessagesRepositoryImpl(get(), get(), get(), get(), get(), get(named("kickOutbox")), get<RealtimeClient>(), get(), get(named("ownUserId")), reactionsDao = get(), paymentCards = get()) } bind MessagesRepository::class
     single { ChatSendHandler(get(), get(), get(), get(), get(), get(), get(named("ownUserId")), { id -> get<ChatsRepositoryImpl>().refreshChat(id) },
             uploadMedia = { id -> get<com.circaso.feature.messaging.data.repository.MediaMessages>().uploadPending(id) },
             uploads = getOrNull<com.circaso.core.platform.BackgroundUploads>() ?: com.circaso.core.platform.NoBackgroundUploads) } bind OutboxHandler::class

@@ -123,6 +123,7 @@ internal class FakeWalletDao : WalletDao {
     override suspend fun transfer(id: String) = transfers.value[id]
     override fun observeTransfersIn(ids: List<String>): Flow<List<TransferEntity>> = transfers.map { m -> ids.mapNotNull { m[it] } }
     override suspend fun upsert(row: TransferEntity) { transfers.value = transfers.value + (row.transferId to row) }
+    override suspend fun deleteIncoming(id: String) { if (transfers.value[id]?.direction == "In") transfers.value = transfers.value - id }
     override suspend fun clearSnapshot() { snapshot.value = null }
     override suspend fun clearTransfers() { transfers.value = emptyMap() }
 }

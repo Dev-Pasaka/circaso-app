@@ -411,6 +411,40 @@ override `-spaces=on|off|default`, Android `--es spaces off`). Architecture: `ap
 | Welcome screen's terms line has no links | Needs the terms and privacy URLs. |
 | Circle SDK on Android pinned at 1.0.1192 (1.1.2 exists) | The bridge targets 1.0.1192; upgrade later deliberately. |
 | iOS must ship Facebook's SDK (Circle's binary links it) | Switched off in Info.plist (no app id, no auto-init, no tracking). |
+| A confirmed payment showed no Received card: the receiver's phone couldn't open the E2E card after the sender signed in on a new phone (incident 2026-11-05) | **Fixed in the app** (2026-11-05, see "Recovery" below); the server half is backend PR #35 (**not merged or deployed**). |
+| Group sender keys were tracked per person, not per identity, so a member's new phone never got my key | **Fixed** 2026-11-05: any identity change forgets that person's deliveries in every group (`ChatsDao.deleteDeliveriesTo`); a group retry receipt hands the key over again too. |
+
+### Recovery: money cards and retry receipts (2026-11-05)
+
+- **Money is never hidden by decryption.** `ChatPaymentCards` (messaging `Recovery.kt`) keeps one payment card per
+  transfer per chat. The wallet tells it about confirmed chat payments from the server's own record:
+  `payment.received` with `transferId`/`chatId` (then W5), and W6 rows with `transferId` + `chatId` in `CONFIRMED`
+  (the last 30 days, so a new phone isn't flooded). Then a Received card, or my own Sent card on a new phone, shows
+  in a **direct** chat even if the E2E card is unreadable or never arrives. Groups have their own money cards. That
+  card has no note (the server never has one) and no `messageId`. When the E2E card arrives, it fills in that card
+  (its note, id and time), and my own send takes over a wallet card instead of adding a second. Incoming money is
+  kept under its transfer id in the wallet (one row, not two). Until backend PR #35 is deployed, the frame and W6 IN
+  rows carry no `transferId`: the receiver gets no fallback card yet, but retry receipts (below) still recover the
+  E2E card. Tests: `MessageRecoveryTest` (part 1), `ChatPaymentSeenTest`.
+- **Retry receipts (Signal-style), no backend change.** A `MESSAGE` this phone can't open (an Undecryptable row)
+  makes it ask the sender, **once per message**, at most 5 a minute, for messages received in the last 30 days.
+  Rows from before this fix (like the incident's) are asked about at the next inbox sync. The request is a plain
+  `WireFormat.Type.RetryRequest` (type 5, JSON `{v, messageId}`, unencrypted, as Signal's decryption-error messages
+  are). It goes as a `CONTROL` message in a direct chat, or a 1:1 `SENDER_KEY` message to the sender alone in a group
+  (the only kinds the server sends to one member). Neither is pushed. Older apps drop type 5 quietly. The sender
+  answers if the message is its own and under 30 days old, the asker is still in the chat, it hasn't answered that
+  person for that message, and they're under 10 answers a minute. It starts a fresh session from the asker's current
+  bundle (`SessionCipher.restart`, at most once a minute per person). Unlike `refresh`, it always restarts, because a
+  session can break without an identity change. In a group, it hands its sender key over again. It then sends the
+  message 1:1 again (`CONTROL` / `SENDER_KEY`, not pushed) with `ChatPayload.resendOf` = the original id. The
+  receiver saves it under the original id and time and deletes the "can't show" row; a resend can't replace a
+  message that opened or that is someone else's. Bookkeeping: `message_retry` (DB v19). Tests: `MessageRecoveryTest`
+  (part 2).
+- **Launch safety:** `appModules(platform)` is the one module list `initKoin` starts with, and `KoinGraphTest`
+  builds it, failing on a null or late-declared module (checked by planting one).
+- Follow-ups: the incident's own payment row predates the backend link (no backfill), so its Received card comes
+  from the retry receipt once both phones update. A "can't show" row whose sender no longer has the message stays
+  as it is.
 
 ## 7. Open design questions
 
