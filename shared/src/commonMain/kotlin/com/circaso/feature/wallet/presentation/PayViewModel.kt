@@ -207,9 +207,11 @@ data class PayUiState(
     /** Paying from a group wallet (only ever its signer). */
     val fromGroupWallet get() = !payingFrom.personal
     /** GW9: an approved payout, paid from the group wallet with its PIN. */
-    val groupPayout get() = groupWallets && requestId != null && fromGroupWallet
+    val groupPayout get() = groupWallets && requestId != null && fromGroupWallet && !fromSpaceWallet
     /** GW9c: from a group wallet without an approved request: the review becomes Request Payout (CH4). */
-    val requestPayout get() = groupWallets && requestId == null && fromGroupWallet
+    val requestPayout get() = groupWallets && requestId == null && fromGroupWallet && !fromSpaceWallet
+    /** SW2: a space wallet sends directly (no approvals, no daily cap, plan §7a); only its owner signs. */
+    val fromSpaceWallet get() = payingFrom.kind == com.circaso.feature.wallet.domain.WalletOwnerType.Space
     /** Pay into a group wallet. */
     val toGroup get() = groupId != null
     /** Show GW9b's chip: the person has other wallets, or this one is a group's. */
@@ -386,7 +388,10 @@ class PayViewModel(
     /** The group whose money matters here: the one paid into, or the one whose wallet pays. */
     private val groupChatId: kotlinx.coroutines.flow.Flow<String?> =
         if (intent.groupId != null) flowOf(intent.groupId)
-        else combine(fromId, wallets?.named ?: flowOf(emptyList())) { id, list -> id?.let { w -> list.firstOrNull { it.walletId == w }?.chatId ?: chatId } }
+        else combine(fromId, wallets?.named ?: flowOf(emptyList())) { id, list ->
+            // A space wallet has no group behind it (SW2): no group money to read.
+            id?.let { w -> val n = list.firstOrNull { it.walletId == w }; if (n?.space == true) null else n?.chatId ?: chatId }
+        }
 
     @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
     private val groupSide: kotlinx.coroutines.flow.Flow<GroupSide> = if (wallets == null) flowOf(GroupSide()) else
@@ -955,8 +960,11 @@ class GroupWalletSources(
     private val observeMoney: com.circaso.feature.chama.domain.ObserveGroupMoneyUseCase,
     private val refreshMoney: com.circaso.feature.chama.domain.RefreshGroupMoneyUseCase,
     val createRequest: com.circaso.feature.chama.domain.CreateChamaRequestUseCase,
+    /** Phase 3: space wallets are named after their spaces. */
+    private val spaceNames: SpaceWalletNames = SpaceWalletNames.None,
 ) {
-    val named: kotlinx.coroutines.flow.Flow<List<NamedWallet>> = combine(observeWallets(), observeChats()) { list, chats -> nameWallets(list, chats) }
+    val named: kotlinx.coroutines.flow.Flow<List<NamedWallet>> =
+        combine(observeWallets(), observeChats(), spaceNames.names()) { list, chats, spaces -> nameWallets(list, chats, spaces = spaces) }
     fun walletOf(walletId: String?) = observeWalletOf(walletId)
     fun money(chatId: String) = observeMoney(chatId)
     fun chat(chatId: String) = observeChat(chatId)

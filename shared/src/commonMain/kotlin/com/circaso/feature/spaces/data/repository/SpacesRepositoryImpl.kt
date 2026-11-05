@@ -249,6 +249,7 @@ class SpacesRepositoryImpl(
             name = change.name?.trim(), about = change.about?.trim(), topic = change.topic?.wire, photoMediaId = photoId,
             postingMode = change.postingMode?.wire, handle = change.handle?.trimStart('@')?.lowercase(), visibility = change.visibility?.wire,
             price = change.price?.let { PriceRequest(amountMinor = it.amountMinor, period = it.period.wire) }, privateMessages = change.privateMessages?.wire,
+            removePhoto = true.takeIf { change.removePhoto && photoId == null }, removeCover = true.takeIf { change.removeCover },
         )
         return remote.update(spaceId, request, newIdempotencyKey()).map { SpaceUpdated(save(it.space), it.notified) }
     }

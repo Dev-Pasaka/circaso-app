@@ -59,8 +59,11 @@ data class NamedWallet(
     val canSign: Boolean,
     val status: WalletStatus,
     val signerUserId: String?,
+    /** A space's wallet (phase 3): the space it belongs to. Spaces aren't chats, so [chatId] is null for them. */
+    val spaceId: String? = null,
 ) {
     val personal get() = walletId == null
+    val space get() = kind == WalletOwnerType.Space
     val subject get() = when {
         walletId == null -> SignSubject(null, PersonalName)
         kind == WalletOwnerType.Space -> SignSubject.space(walletId, name)
@@ -74,12 +77,39 @@ data class NamedWallet(
 }
 
 /** W16's list with names from the person's chats. A group the phone doesn't know yet reads "Group wallet". */
-fun nameWallets(listings: List<WalletListing>, chats: List<ChatSummary>, myAvatar: String? = null): List<NamedWallet> = listings.map { w ->
+fun nameWallets(
+    listings: List<WalletListing>,
+    chats: List<ChatSummary>,
+    myAvatar: String? = null,
+    /** Spaces on the phone by id (phase 3): a space wallet is named after its space; one not known yet reads "Space wallet". */
+    spaces: Map<String, SpaceWalletName> = emptyMap(),
+): List<NamedWallet> = listings.map { w ->
     if (w.personal) NamedWallet(null, null, NamedWallet.PersonalName, myAvatar, WalletOwnerType.Person, true, w.status, w.owner.signerUserId)
-    else {
+    else if (w.owner.type == WalletOwnerType.Space) {
+        // By space id from the phone's spaces; else by wallet id (a name heard from a `payment.received` frame).
+        val s = w.owner.spaceId?.let { spaces[it] } ?: spaces[w.walletId]
+        NamedWallet(w.walletId, null, s?.name ?: "Space wallet", s?.photoUrl, WalletOwnerType.Space, w.canSign, w.status, w.owner.signerUserId, spaceId = w.owner.spaceId)
+    } else {
         val chat = chats.firstOrNull { it.chat.chatId == w.owner.chatId }?.chat
         NamedWallet(w.walletId, w.owner.chatId, chat?.title ?: "Group wallet", chat?.avatarUrl, w.owner.type, w.canSign, w.status, w.owner.signerUserId)
     }
+}
+
+/** A space as the wallet screens name it (phase 3): from the spaces on the phone; the owner for an admin's caption. */
+data class SpaceWalletName(val name: String, val photoUrl: String?, val ownerName: String? = null)
+
+/** The spaces the phone knows, by id (installed by the spaces feature; none without it). */
+fun interface SpaceWalletNames {
+    fun names(): kotlinx.coroutines.flow.Flow<Map<String, SpaceWalletName>>
+
+    companion object { val None = SpaceWalletNames { kotlinx.coroutines.flow.flowOf(emptyMap()) } }
+}
+
+/** A wallet's small picture: a space is a rounded square (its tile), everything else the circle avatar. */
+@Composable
+fun WalletGlyph(wallet: NamedWallet, size: Dp) {
+    if (wallet.space) com.circaso.feature.spaces.presentation.SpaceTile(wallet.name, wallet.avatarUrl, size)
+    else Avatar(wallet.name, size = size, imageUrl = wallet.avatarUrl)
 }
 
 /**
@@ -117,7 +147,7 @@ fun PayingFromChip(wallet: NamedWallet, onClick: (() -> Unit)?) {
             .padding(start = 4.dp, end = if (onClick != null) 10.dp else 12.dp, top = 4.dp, bottom = 4.dp),
         verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp),
     ) {
-        Avatar(wallet.name, size = 22.dp, imageUrl = wallet.avatarUrl)
+        WalletGlyph(wallet, 22.dp)
         BasicText(wallet.name, Modifier.widthIn(max = 150.dp), style = t.subhead.copy(color = c.ink, fontWeight = FontWeight.SemiBold), maxLines = 1, overflow = TextOverflow.Ellipsis)
         CircasoIconImage(if (onClick != null) CircasoIcon.ChevronDown else CircasoIcon.Lock, c.inkSecondary, Modifier.size(14.dp))
     }
@@ -158,7 +188,7 @@ fun ColumnScope.PayFromSheetContent(
                     .padding(horizontal = CircasoSpacing.s4, vertical = CircasoSpacing.s3),
                 verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(CircasoSpacing.s3),
             ) {
-                Avatar(w.name, size = CircasoSizes.avatarMd, imageUrl = w.avatarUrl)
+                WalletGlyph(w, CircasoSizes.avatarMd)
                 Column(Modifier.weight(1f)) {
                     BasicText(w.name, style = t.body.copy(color = c.ink), maxLines = 1, overflow = TextOverflow.Ellipsis)
                     BasicText(sub, style = t.subhead.copy(color = c.inkSecondary), maxLines = 2)

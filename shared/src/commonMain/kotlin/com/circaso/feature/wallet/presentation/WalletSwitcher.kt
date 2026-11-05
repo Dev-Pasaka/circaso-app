@@ -127,7 +127,8 @@ fun WalletSwitcher(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(CircasoSpacing.s1 + CircasoSpacing.s1 / 2),
         ) {
-            CircasoIconImage(CircasoIcon.Wallet, c.ink, Modifier.size(18.dp))
+            // SW1: a space's wallet carries its tile in the corner, so the money on screen is plainly the space's.
+            if (selected.space) WalletGlyph(selected, 22.dp) else CircasoIconImage(CircasoIcon.Wallet, c.ink, Modifier.size(18.dp))
             BasicText(shortWalletName(label), Modifier.widthIn(max = LabelMaxWidth), style = t.subhead.copy(color = c.ink, fontWeight = FontWeight.SemiBold), maxLines = 1, overflow = TextOverflow.Ellipsis)
             CircasoIconImage(CircasoIcon.ChevronDown, c.inkSecondary, Modifier.size(14.dp).graphicsLayer { rotationZ = turn }, strokeWidth = 2.4f)
         }
@@ -216,8 +217,8 @@ internal fun WalletMenu(
             val sub = when {
                 w.personal -> "Your own money"
                 isLocked -> "Locked · its signer left"
-                w.status == WalletStatus.SettingUp -> "Being set up"
-                w.kind == WalletOwnerType.Space -> if (w.canSign) "Space wallet · you send" else "Space wallet · view only"
+                w.status == WalletStatus.SettingUp -> if (w.space) "Space wallet · being set up" else "Being set up"
+                w.space -> if (w.canSign) "Space wallet · you send" else "Space wallet · view only"
                 w.canSign -> "You send, after approval"
                 else -> "View only · payouts need approval"
             }
@@ -236,7 +237,7 @@ internal fun WalletMenu(
                     Box(Modifier.size(CircasoSizes.avatarSm).clip(CircasoShapes.circle).background(c.fill), contentAlignment = Alignment.Center) {
                         CircasoIconImage(CircasoIcon.Wallet, c.ink, Modifier.size(16.dp))
                     }
-                } else Avatar(w.name, size = CircasoSizes.avatarSm, imageUrl = w.avatarUrl)
+                } else WalletGlyph(w, CircasoSizes.avatarSm)
                 Column(Modifier.weight(1f)) {
                     BasicText(w.name, style = t.body.copy(color = c.ink, fontWeight = if (on) FontWeight.SemiBold else FontWeight.Normal), maxLines = if (large) 2 else 1, overflow = TextOverflow.Ellipsis)
                     BasicText(sub, style = t.footnote.copy(color = if (isLocked) c.warning else c.inkSecondary), maxLines = 2)

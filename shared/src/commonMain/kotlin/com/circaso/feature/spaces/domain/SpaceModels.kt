@@ -234,6 +234,9 @@ data class SpaceChange(
     val visibility: SpaceVisibility? = null,
     val price: SpacePrice? = null,
     val privateMessages: PrivateMessages? = null,
+    /** Take the photo or cover away (SP5 `removePhoto` / `removeCover`). */
+    val removePhoto: Boolean = false,
+    val removeCover: Boolean = false,
 )
 
 data class SpaceUpdated(val space: Space, val notified: Int)
