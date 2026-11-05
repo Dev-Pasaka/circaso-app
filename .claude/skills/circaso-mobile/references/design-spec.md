@@ -6,6 +6,11 @@ Circaso (formerly CoinX) is a chat-first social money app: you send money the wa
 
 > **Naming.** The new **Circaso mark and wordmark** are applied to the logo spots. Body copy in many screens still says "CoinX" (for example "CoinX Assistant", "CoinX Support"); the full rename of copy is a separate, pending pass. Component names keep the `CoinX.` namespace until the design system is renamed.
 
+> **Spaces is archived (2026-11-05).** This spec has no Spaces section; the Spaces frames (SD, SS, SN, SM, SI, SH, SR,
+> SW and the Spaces tab S1) live in `assets/Circaso-Spaces.html` and are **archived**, not to be built: see
+> `spaces-plan.md` → "STOPPED 2026-11-05". The Moments frames there (S1's ring states, M, V, P) and the group wallet
+> frames (GW) stay current; Moments now show in Chats under a Moments chip, not on a Spaces tab.
+
 **How to read a screen entry**
 
 - The heading is the screen's ID and name from the canvas; the line under it gives the source file, size and default theme. Every phone screen also has a Dark appearance.

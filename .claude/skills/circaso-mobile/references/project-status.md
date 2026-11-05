@@ -1,9 +1,23 @@
 # Circaso app: project status
 
-Snapshot of 2026-11-04. Every design decision, what is built, what is pending, and known bugs, in one place.
+Snapshot of 2026-11-05. Every design decision, what is built, what is pending, and known bugs, in one place.
 Lives in the `circaso-mobile` skill (`references/project-status.md`). Deeper detail: `SKILL.md`,
 `references/app-architecture.md`, `references/design-spec.md` §15, `references/offline-first.md`,
-`references/spaces-plan.md` (the next feature) and `docs/adaptive-layout-plan.md`.
+`references/spaces-plan.md` (stopped; the record for Moments, group wallets and fees) and `docs/adaptive-layout-plan.md`.
+
+## 0. Current focus (Pasaka, 2026-11-05)
+
+**Spaces is stopped.** Focus is chats, groups, chamas and wallets: **polish, premium feel and optimisation; no new
+features.** Spaces was removed from the app on 2026-11-05 (branch `worktree-agent-a0d7b47b9255ac3c1`; last commit with
+Spaces tagged `archive/spaces-v1`; Room v20 drops its tables); the backend keeps it archived behind
+`SPACES_ENABLED=false` with its data. Why, what was removed and how to restore: `spaces-plan.md` → "STOPPED 2026-11-05".
+- **Tabs:** Chats, Wallet, You (no Spaces tab).
+- **Moments** stay, WhatsApp-style in Chats: a **Moments** chip after All / Unread / Groups (a dot while there are unseen
+  moments) swaps the list for My moment, Recent, Viewed and Muted (folded); the floating + becomes the camera; a person
+  with an unseen moment has a ring on their chat avatar, and the avatar opens it. Privacy: You → Security → Moments.
+  See `app-architecture.md` → "Moments in Chats".
+- **Stays from the Spaces plan:** groups with optional wallets, the one Circaso fee, daily caps, Paying from, the
+  wallet PIN and biometrics per wallet.
 
 ## 1. Where the code is
 
@@ -84,7 +98,8 @@ Media3 1.4.1, multiplatform-markdown-renderer 0.46.0.
 ### Chats
 - D-C1 End-to-end encrypted with libsignal (PQXDH); server only sees public keys and ciphertext.
 - D-C2 Chats open at the latest message; older messages load in pages of 100; jump-to-latest button.
-- D-C3 Filter chips All / Unread (round count badge) / Groups.
+- D-C3 Filter chips All / Unread (round count badge) / Groups / Moments (a dot for unseen moments; swaps the list for
+  the Moments list in place, 2026-11-05).
 - D-C4 Presence: Online / last seen today, yesterday, weekday or date; **never assumed online**; away 15 s after leaving the app.
 - D-C5 Media: photos, in-app WhatsApp-style gallery, voice notes, video (Media3 / AVKit), location.
 - D-C6 Live location WhatsApp-style (15 min / 1 h / 8 h), keeps updating in the background (Android foreground service
@@ -140,6 +155,7 @@ Media3 1.4.1, multiplatform-markdown-renderer 0.46.0.
 | Wallet | Create (Circle PIN), balance per network with fiat, Send / Receive (QR show and scan), pay from chat, send to an address, payment detail, history, networks, money cards in chat, quick replies, currency setting, coin icons, money sound. |
 | Chamas | Goal strip, contributions, payout requests and approvals, group wallet screen, intro card (treasurer model, flag off). |
 | Groups with wallets (flag) | New Group with the wallet switch (GW1), group wallet set-up with its own PIN and biometrics (GW2–GW5c), group info money rows (GW6–GW8b, locked, leaving blocked), target (GW7b), one wallet design for every wallet with the corner switcher (GW16 as redrawn 2026-11-04, D-M9), contribute (GW9a2/GW9d), Pay Payout (GW9, GW11, GW19), Paying from and Request Payout (GW9b, GW9c, GW10). Not yet on a device. |
+| Moments | Composer (text, camera, gallery, voice), viewer, replies in chat, reactions, privacy, contact-saved rule, push; shown in Chats under the Moments chip with rings on chat avatars (2026-11-05). |
 | Asha | Text and live voice, rich answers, PDF statements, conversations, voice picker. |
 | Support | Help screen, support chat UI (needs the support account), recovery case (SP06). |
 | Adaptive | Phones portrait and landscape, iPad 11"/13" checked on simulators. |
@@ -156,6 +172,8 @@ Media3 1.4.1, multiplatform-markdown-renderer 0.46.0.
 7. Answer open design questions in §7.
 
 ### Next work (suggested order)
+0. **Focus (2026-11-05): polish, premium feel and optimisation of chats, groups, chamas and wallets; no new features.**
+   First: run the Moments-in-Chats change and the Room v20 upgrade (an install with Spaces data) on a device.
 1. Check the splash and notification icon on a device; commit.
 2. Merge the backend presence PR (`presence.changed` frames); until then Online / last seen shows only when the server sends it.
 3. **iOS push** in the app: APNs token (`IosKoin` uses `NoPushToken` and `NoChatNotifications` today) and the Notification Service Extension that decrypts messages (M7).
@@ -165,7 +183,12 @@ Media3 1.4.1, multiplatform-markdown-renderer 0.46.0.
 7. Adaptive: check signed-in flows on a real tablet and on a phone on its side.
 8. Smaller: collapsing nav bar on scroll (`NavBar.kt`), SMS code auto-fill, H2 "Add people" to a call (needs a backend route), `goal` field in the encrypted `payment` payload.
 
-### New feature in planning: Spaces (added 2026-11-03)
+### ~~New feature in planning: Spaces (added 2026-11-03)~~ Stopped 2026-11-05
+
+**Spaces stopped and removed from the app on 2026-11-05** (see §0 and `spaces-plan.md` → "STOPPED 2026-11-05").
+What follows is the history of the Spaces work, kept for the record; the Spaces tab, spaces core (phase 3) and space
+wallets described in it are gone from the app. Moments (phase 1), group wallets (phase 2) and fees and caps (2F) stay.
+
 New **Spaces** tab between Chats and Wallet: WhatsApp-style statuses for mutual contacts on top, public spaces
 (follow = join, live rooms, a space wallet to pay into) below, and **group and space wallets** separate from personal
 ones (chamas and groups merge into Groups; a wallet is optional for groups and required for spaces; biometrics per
@@ -345,7 +368,8 @@ Nothing to show is never an error screen. The first moment was posted through th
   its webhook confirms the transfer. Release note: an app without this build gets `wallet.fee_changed` on every paid
   payment once PR #31 is live.
 
-**Phase 3, Spaces core, built in the app (2026-11-05, branch `worktree-agent-a8a33e7f818615802`, not yet on `main`).**
+**Phase 3, Spaces core, built in the app (2026-11-05, branch `worktree-agent-a8a33e7f818615802`), then removed the
+same day when Spaces stopped (code kept at tag `archive/spaces-v1`).**
 Contract `references/spaces-api.md` (to 3f2a9ea); backend PR #33 merged and deployed on the dev sandbox. Behind
 `SpacesFlag` (on in debug, off in release, off for the run on `404 request.not_found` from any SP route; debug
 override `-spaces=on|off|default`, Android `--es spaces off`). Architecture: `app-architecture.md` → "Spaces core".

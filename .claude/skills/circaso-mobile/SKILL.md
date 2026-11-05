@@ -10,16 +10,17 @@ Three sources, kept in this skill so they travel with the repo. Open only what t
 ## Start here when resuming
 
 Read `references/project-status.md` first: where the code is, every design decision, what is built, pending tasks,
-known bugs and open questions. The next feature (Spaces tab: Moments, spaces with shops and live, group wallets, fees
-and limits) is planned in `references/spaces-plan.md`, with all decisions taken; its next step is phase 0, design.
-Update both files when things change.
+known bugs and open questions. **Spaces is stopped (2026-11-05)** and removed from the app (tag `archive/spaces-v1`);
+Moments live in Chats (the Moments chip) and groups, group wallets, fees and caps stay. The current focus is polish,
+premium feel and optimisation of chats, groups, chamas and wallets, with **no new features** (see `references/spaces-plan.md`
+→ "STOPPED 2026-11-05"). Update both files when things change.
 
 | Need | Open |
 | --- | --- |
 | Project status: decisions, built, pending, bugs, open questions (2026-11-03) | `references/project-status.md` |
 | Asha next: settings inside Asha, the animated mascot (Rive; scenes, moods, activities), support and tickets through Asha (decided 2026-11-04) | `references/asha-next.md` |
 | Asha and Robbie mascots: personalities, sass rules, moods, reactions, per-scene acting, triggers (2026-11-04) | `references/asha-mascot-personality.md` |
-| Plan for Spaces, Moments, group wallets, shops, fees and limits (decided 2026-11-03) | `references/spaces-plan.md` |
+| Spaces plan, **stopped 2026-11-05** (why, what was removed, restore from `archive/spaces-v1`); still the record for Moments, group wallets, fees and limits | `references/spaces-plan.md` |
 | How to call the backend: headers, tokens, device key, flows, every endpoint, encrypted chats and messages, realtime, Asha, request/response types, build order (updated 2026-10-28; read its "Changed on" notes in section 1 first) | `references/mobile-integration.md` |
 | What a screen says and does: copy, buttons, components, states, per flow; design decisions and open questions | `references/design-spec.md` (99 KB; read the contents table, then only the section you need; section 15 has decisions) |
 | Exact markup of a screen | `references/design-screens.md` (index), then `python3 scripts/extract_screen.py <id>` |

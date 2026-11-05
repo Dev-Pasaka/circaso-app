@@ -2,6 +2,53 @@
 
 Lives in the `circaso-mobile` skill (`references/spaces-plan.md`).
 
+## STOPPED 2026-11-05: Spaces is archived
+
+**Decision (Pasaka, 2026-11-05):** Spaces is stopped. The focus is groups, chamas, wallets and polish. On mobile,
+Spaces is removed entirely; Moments stay, shown WhatsApp-style from the Chats tab. Everything about groups and group
+wallets that came from this plan stays.
+
+**Why:**
+- **Focus on chat and money.** Circaso is a chat-first money app; Spaces (public communities, shops, live rooms,
+  paid memberships) was a second product next to it.
+- **Trust and safety.** Spaces let strangers pay strangers (shops, memberships, `#` in a space's private chat). That
+  needs moderation, fraud handling, disputes and reports at a scale we can't staff now, and one bad experience costs
+  the trust the money side depends on.
+- **The core needs polish first.** Chats, groups, chamas and wallets are built but not yet at the premium bar on
+  devices; that is where the time goes now (polish, premium feel, optimisation; no new features).
+
+**What was removed on mobile** (branch `worktree-agent-a0d7b47b9255ac3c1`, 2026-11-05):
+- The Spaces tab: the tabs are **Chats, Wallet, You**.
+- All of `feature/spaces/**` (discover and search, Suggested, the space page and joining, space chat, private chat via
+  a space, members, roles, reports, invites, create, settings, the space wallet set-up), `SpacesNav`, the 16 space
+  routes, `SpacesModule`, `SpacesFlag` and its `-spaces` debug override, the `spaces` realtime frames, the gallery's
+  `Spaces*Previews` and their tests (`SpacesRepositoryTest`, `DiscoverViewModelsTest`, `SpacePageViewModelTest`,
+  `SpaceCreateViewModelsTest`, `SpaceChatViewModelsTest`, `SpacesFakes`).
+- In Chats: the Spaces chip, space invite cards, space rows and the "Private · via space" label. A chat that came
+  through a space (`chat.viaSpaceId`) is an ordinary chat now: no via-space line, no "Join to Pay" block, `#` pays the
+  person.
+- Space wallets: never offered in the wallet chooser (filtered out of `nameWallets`); W18/W19 (space wallet set-up)
+  removed from the wallet data layer. Some space-wallet fields remain in the wallet UI code (`PayViewModel`,
+  `WalletViewModel`, `GroupWalletUiState`) as dead branches, left for the wallet switcher redesign to drop.
+- Pushes: `space.*` kinds are ignored (no notification); `spaces` realtime frames and its `resync` are ignored.
+- Room: version **20** drops `space`, `space_mine`, `space_post`, `space_invite`, `space_receipt`, `space_meta`
+  (`AutoMigration(19 → 20, spec = DropSpacesTables)` with `@DeleteTable`) and deletes queued `space.post` /
+  `space.reaction` outbox rows; nothing else changes (the `chat.viaSpaceId` column stays). Tested by
+  `SpacesRemovalMigrationTest` (iOS test target: a real version-19 file upgrades and keeps its chats and outbox).
+
+**Archive and restore:** the last commit with Spaces in the app is tagged **`archive/spaces-v1`** (main at `4a8eba3`,
+2026-11-05; pushed by the lead). To look: `git show archive/spaces-v1:shared/src/commonMain/kotlin/com/circaso/feature/spaces/...`.
+To restore: branch from the tag (`git switch -c spaces-restore archive/spaces-v1`) and port forward, or bring the
+folders back with `git checkout archive/spaces-v1 -- shared/src/commonMain/kotlin/com/circaso/feature/spaces ...`; then
+re-add the entities with a new Room version (never reuse 18/19), the module, routes, tab and flag.
+
+**Backend:** archived behind `SPACES_ENABLED=false`; its data is kept. The app no longer calls any SP route.
+
+**What stays from this plan:** Moments (phase 1) in the Chats tab's **Moments** chip (My moment, Recent, Viewed,
+Muted; rings on chat avatars; the + becomes the camera; privacy under You); groups with optional wallets (phase 2);
+the one Circaso fee (2F, §7b), the daily caps (§7a), "Paying from", the wallet PIN and biometrics per wallet. The rest
+of this file is kept as the record of what was planned and built.
+
 Status (2026-11-04): **phase 0 done and approved (2026-11-03); phase 1 (Moments) live on the dev sandbox and in both apps (PRs #26, #27, #29 deployed); phase 2 (groups with wallets) backend deployed (PR #28) and app built on `main` (99bdd86, flag on in debug), not yet run on a device; next: phase 2F (fees and limits).** Details in `project-status.md`. Earlier: the fee spike is done (§7b); the phase 0a frames for phases 1 and 2
 
 **Phase 0b (Spaces core frames SD, SS, SN, SM, SI, SH, SR, SW in `Circaso-Spaces.html`) approved by Pasaka on 2026-11-04, with its gap decisions (canvas page "Design decisions in the gaps" → Phase 3). Phase 3 build started the same day.**
