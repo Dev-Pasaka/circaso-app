@@ -209,15 +209,14 @@ fun WalletTabContent(
             }
             Column(Modifier.fillMaxSize()) {
                 // The group on screen is the page's title; its menu switches group (the person's own wallet is Personal).
-                if (s.showingGroups) GroupWalletHeader(s, onSwitching, onSelectWallet, onAllGroups, groupMenu, Modifier.padding(bottom = CircasoSpacing.s1))
-                Box(Modifier.weight(1f)) {
-                    WalletContent(
-                        s, bottomPadding, actions(s.selectedWalletId),
-                        onCreate = onCreate, onRefresh = onRefresh, onReceive = onReceive, onComing = onComing, onErrorShown = onErrorShown,
-                        sheets = false, onAddNetworks = onAddNetworks, onToggleHidden = onToggleHidden,
-                        group = if (chat != null && g != null) groupHooks(chat, g) else null,
-                    )
-                }
+                // It is the page's first row, so it scrolls with the page (the personal wallet pins nothing either).
+                WalletContent(
+                    s, bottomPadding, actions(s.selectedWalletId),
+                    onCreate = onCreate, onRefresh = onRefresh, onReceive = onReceive, onComing = onComing, onErrorShown = onErrorShown,
+                    sheets = false, onAddNetworks = onAddNetworks, onToggleHidden = onToggleHidden,
+                    group = if (chat != null && g != null) groupHooks(chat, g) else null,
+                    header = if (s.showingGroups) ({ inList -> GroupWalletHeader(s, onSwitching, onSelectWallet, onAllGroups, groupMenu, inList = inList) }) else null,
+                )
             }
         }
     }
@@ -345,6 +344,11 @@ fun WalletContent(
      * caption, Add / Payout / Receive / Target, the target and the payout requests (Pasaka, 2026-11-04).
      */
     group: com.circaso.feature.chama.presentation.GroupWalletHooks? = null,
+    /**
+     * The Groups header (the group's name and its menu): the page's first row, so it scrolls away with the page as
+     * the personal wallet's top does, never pinned over the card. Above the other states, which don't scroll.
+     */
+    header: (@Composable (inList: Boolean) -> Unit)? = null,
 ) {
     val c = CircasoTheme.colors
     val t = CircasoTheme.typography
@@ -355,7 +359,12 @@ fun WalletContent(
     LaunchedEffect(g?.message) { g?.message?.let { toast.show(it); group?.onMessageShown?.invoke() } }
     val wallet = g?.wallet ?: state.wallet.takeIf { g == null }
     val bottom = bottomPadding.calculateBottomPadding() + CircasoSpacing.s4
+    // The active wallet scrolls its header with it; every other state is still, with the header above it.
+    val showsActive = wallet != null && wallet.status == WalletStatus.Active
     androidx.compose.foundation.layout.Box(Modifier.fillMaxSize()) {
+      Column(Modifier.fillMaxSize()) {
+        if (header != null && !showsActive) header(false)
+        Box(Modifier.weight(1f)) {
         when {
             // The wallet's own shape while it opens (a card, the actions, two rows), so nothing jumps when it arrives.
             wallet == null && (if (g != null) g.loading && g.money?.wallet != null || g.empty && g.loading else state.loading) ->
@@ -367,8 +376,10 @@ fun WalletContent(
             }
             g != null && wallet.status != WalletStatus.Active -> GroupWalletProblem(g, bottom, group?.onRetry ?: onRefresh, onFinishSetup = group?.actions?.onFinishSetup)
             wallet.status != WalletStatus.Active -> CreateWallet(state, bottom, onCreate)
-            else -> ActiveWallet(state, wallet, bottom, actions, onReceive, onComing, group?.onRetry ?: onRefresh, onAddNetworks, onToggleHidden, group)
+            else -> ActiveWallet(state, wallet, bottom, actions, onReceive, onComing, group?.onRetry ?: onRefresh, onAddNetworks, onToggleHidden, group, header)
         }
+        }
+      }
         ToastHost(toast, Modifier.align(Alignment.TopCenter).padding(top = 8.dp))
         if (sheets) WalletSheets(state, actions, onReceive, onComing)
     }
@@ -481,6 +492,7 @@ private fun ActiveWallet(
     onAddNetworks: () -> Unit = {},
     onToggleHidden: () -> Unit = {},
     group: com.circaso.feature.chama.presentation.GroupWalletHooks? = null,
+    header: (@Composable (inList: Boolean) -> Unit)? = null,
 ) {
     val c = CircasoTheme.colors
     val t = CircasoTheme.typography
@@ -667,7 +679,10 @@ private fun ActiveWallet(
             Column(
                 Modifier.weight(1f).fillMaxHeight().verticalScroll(rememberScrollState())
                     .padding(start = CircasoSpacing.s4, end = CircasoSpacing.s2, top = 10.dp, bottom = bottom),
-            ) { cardsBlock() }
+            ) {
+                header?.let { it(true); Spacer(Modifier.height(CircasoSpacing.s3)) }
+                cardsBlock()
+            }
             LazyColumn(
                 Modifier.weight(1f).fillMaxHeight(),
                 contentPadding = PaddingValues(start = CircasoSpacing.s2, end = CircasoSpacing.s4, top = 10.dp, bottom = bottom),
@@ -680,6 +695,7 @@ private fun ActiveWallet(
         }
     } else {
         LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(start = CircasoSpacing.s4, end = CircasoSpacing.s4, top = 10.dp, bottom = bottom), verticalArrangement = Arrangement.spacedBy(22.dp)) {
+            header?.let { h -> item(key = "header") { h(true) } }
             statusItems()
             item(key = "cards") { cardsBlock() }
             groupItems()

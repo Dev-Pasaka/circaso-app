@@ -68,6 +68,8 @@ import com.circaso.feature.wallet.presentation.WalletContent
 import com.circaso.feature.wallet.presentation.WalletTabContent
 import com.circaso.feature.wallet.presentation.WalletUiState
 import com.circaso.feature.wallet.presentation.WalletMode
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
 import com.circaso.feature.wallet.presentation.GroupMenuActions
 import com.circaso.feature.wallet.presentation.AllGroupWalletsContent
 
@@ -202,7 +204,9 @@ internal fun WalletGroupsPreview(name: String, gwState: GroupWalletUiState, gwAc
 
 /** The Wallet tab in Home, as the person sees it, with the tab's state drawn without a view model. */
 @Composable
-private fun TabPreview(state: WalletUiState, gwActions: GroupWalletActions = GroupWalletActions({}, {}, {}, {}, {})) {
+private fun TabPreview(start: WalletUiState, gwActions: GroupWalletActions = GroupWalletActions({}, {}, {}, {}, {})) {
+    // The menu and the full list open and close by touch on the phone, as in the app (the view model's own rules).
+    var state by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(start) }
     com.circaso.feature.home.presentation.HomeScreen(
         initialTab = 1, // Wallet (tabs: Chats, Wallet, You since Spaces was removed)
         chats = {}, chatsActions = {}, chatsBanner = {},
@@ -211,13 +215,16 @@ private fun TabPreview(state: WalletUiState, gwActions: GroupWalletActions = Gro
             val shown = if (state.selectedGroupChat == null) state.copy(group = null) else state
             WalletTabContent(
                 shown, pad, { noActions }, groupHooks = { _, _ -> GroupWalletHooks(gwActions, { _, _ -> }, {}) },
-                onSwitching = {}, onSelectWallet = {}, onCreate = {}, onRefresh = {}, onReceive = {}, onComing = {},
+                onSwitching = { open -> state = state.copy(switching = open && state.selectedWalletId != null) },
+                onSelectWallet = { w -> state = state.copy(selectedWalletId = w.walletId, switching = false, allGroups = false) },
+                onAllGroups = { open -> state = state.copy(allGroups = open, switching = false) },
+                onCreate = {}, onRefresh = {}, onReceive = {}, onComing = {},
                 groupMenu = GroupMenuActions({}, {}),
             )
         },
         walletOverlay = {
-            CircasoSheet(state.allGroups, {}, label = "Group Wallets") {
-                AllGroupWalletsContent(state, onPick = {}, onClose = {})
+            CircasoSheet(state.allGroups, { state = state.copy(allGroups = false) }, label = "Group Wallets") {
+                AllGroupWalletsContent(state, onPick = { w -> state = state.copy(selectedWalletId = w.walletId, allGroups = false) }, onClose = { state = state.copy(allGroups = false) })
             }
         },
         walletActions = {},

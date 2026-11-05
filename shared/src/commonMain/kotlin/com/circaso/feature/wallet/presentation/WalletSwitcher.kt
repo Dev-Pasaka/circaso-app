@@ -161,6 +161,8 @@ fun GroupWalletHeader(
     onAllGroups: (Boolean) -> Unit,
     menu: GroupMenuActions?,
     modifier: Modifier = Modifier,
+    /** Inside the page's list, which already insets its rows; else it insets itself like the page. */
+    inList: Boolean = false,
 ) {
     val c = CircasoTheme.colors
     val t = CircasoTheme.typography
@@ -171,7 +173,7 @@ fun GroupWalletHeader(
     val line = g?.takeIf { it.money != null }?.caption?.substringAfter(" · ", "")?.replaceFirstChar { it.uppercase() }?.takeIf { it.isNotEmpty() }
         ?: walletLine(w, locked)
     Row(
-        modifier.fillMaxWidth().padding(start = CircasoSpacing.s4, end = CircasoSpacing.s2),
+        modifier.fillMaxWidth().padding(start = if (inList) CircasoSpacing.s1 else CircasoSpacing.s4, end = if (inList) 0.dp else CircasoSpacing.s2),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(CircasoSpacing.s3),
     ) {
