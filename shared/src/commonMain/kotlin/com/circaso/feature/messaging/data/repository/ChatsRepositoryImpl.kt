@@ -83,7 +83,6 @@ class ChatsRepositoryImpl(
 
     override suspend fun openDirect(userId: String): AppResult<Chat> = remote.openDirect(userId).map { store(it) }
 
-    override suspend fun openViaSpace(userId: String, spaceId: String): AppResult<Chat> = remote.openDirect(userId, spaceId).map { store(it) }
 
     override suspend fun createGroup(draft: GroupDraft, idempotencyKey: String): AppResult<GroupCreated> {
         val key = groupKeys.newMetaKey()

@@ -16,8 +16,6 @@ interface ChatsRemote {
     suspend fun chats(): AppResult<ChatsResponse>
     suspend fun chat(chatId: String): AppResult<ChatDto>
     suspend fun openDirect(userId: String): AppResult<ChatDto>
-    /** M4 with `viaSpaceId` (Spaces SH2): the private chat with that space's owner, apart from any ordinary chat. */
-    suspend fun openDirect(userId: String, viaSpaceId: String?): AppResult<ChatDto> = openDirect(userId)
     suspend fun createGroup(request: CreateGroupRequest, idempotencyKey: String): AppResult<ChatDto>
     suspend fun updateGroup(chatId: String, request: UpdateGroupRequest): AppResult<ChatDto>
     suspend fun addMembers(chatId: String, request: AddMembersRequest): AppResult<ChatDto>
@@ -37,9 +35,8 @@ interface MessagesRemote {
 class KtorChatsRemote(private val api: CircasoApi) : ChatsRemote {
     override suspend fun chats() = api.call<ChatsResponse> { method = HttpMethod.Get; url("/v1/chats") }
     override suspend fun chat(chatId: String) = api.call<ChatDto> { method = HttpMethod.Get; url("/v1/chats/$chatId") }
-    override suspend fun openDirect(userId: String) = openDirect(userId, null)
-    override suspend fun openDirect(userId: String, viaSpaceId: String?) = api.call<ChatDto> {
-        method = HttpMethod.Post; url("/v1/chats/direct"); contentType(ContentType.Application.Json); setBody(OpenDirectChatRequest(userId, viaSpaceId))
+    override suspend fun openDirect(userId: String) = api.call<ChatDto> {
+        method = HttpMethod.Post; url("/v1/chats/direct"); contentType(ContentType.Application.Json); setBody(OpenDirectChatRequest(userId))
     }
     override suspend fun createGroup(request: CreateGroupRequest, idempotencyKey: String) = api.call<ChatDto> {
         method = HttpMethod.Post; url("/v1/chats/groups"); idempotencyKey(idempotencyKey); contentType(ContentType.Application.Json); setBody(request)

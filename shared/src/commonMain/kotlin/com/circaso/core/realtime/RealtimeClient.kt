@@ -27,7 +27,7 @@ interface RealtimeCursors {
 }
 
 /** Modules the server sequences today. */
-private val KnownModules = listOf("users", "messaging", "wallet", "chama", "calls", "status", "spaces")
+private val KnownModules = listOf("users", "messaging", "wallet", "chama", "calls", "status")
 
 /** What a finished connection tells the supervisor. */
 enum class ConnectionEnd { Closed, Unauthorized, Failed }

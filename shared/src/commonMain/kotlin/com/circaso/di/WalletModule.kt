@@ -94,8 +94,5 @@ val walletModule = module {
             spaceNames = getOrNull<com.circaso.feature.wallet.presentation.SpaceWalletNames>() ?: com.circaso.feature.wallet.presentation.SpaceWalletNames.None,
         )
     }
-    factory { com.circaso.feature.wallet.domain.StartSpaceWalletUseCase(get()) }
-    factory { com.circaso.feature.wallet.domain.AwaitSpaceWalletUseCase(get()) }
-    factory { com.circaso.feature.wallet.domain.GetSpaceWalletUseCase(get()) }
     viewModel { SendToWalletViewModel(get(), get(), get(), get(), scanner = get()) }
 }

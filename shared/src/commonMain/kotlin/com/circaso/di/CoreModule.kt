@@ -109,8 +109,6 @@ val coreModule = module {
     single { AppPreferences(get()) }
     // Group wallets (phase 2): on in debug builds, off in release; turns itself off on a server without them.
     single { com.circaso.core.flags.GroupWalletsFlag(defaultOn = get<ClientInfo>().debugBuild, override = get<AppPreferences>().groupWalletsOverride, scope = get()) }
-    // Spaces core (phase 3): on in debug builds, off in release; turns itself off on a server without the spaces module.
-    single { com.circaso.core.flags.SpacesFlag(defaultOn = get<ClientInfo>().debugBuild, override = get<AppPreferences>().spacesOverride, scope = get()) }
     single {
         val auth = get<AuthManager>(); val api = get<CircasoApi>(); val connection = get<ConnectionState>()
         PushTokenRegistrar(
@@ -138,7 +136,7 @@ private var started = false
  * (`KoinGraphTest`): a module read before its top-level `val` is initialised is null here, and Koin crashes at launch.
  */
 fun appModules(platform: Module): List<Module> =
-    listOf(coreModule, authModule, profileModule, contactsModule, accountModule, assistantModule, realtimeModule, messagingModule, walletModule, chamaModule, statusModule, spacesModule, callsModule, homeModule, platform)
+    listOf(coreModule, authModule, profileModule, contactsModule, accountModule, assistantModule, realtimeModule, messagingModule, walletModule, chamaModule, statusModule, callsModule, homeModule, platform)
 
 /** Starts Koin once. Called from each platform's entry point with its platform module. */
 fun initKoin(platform: Module) {

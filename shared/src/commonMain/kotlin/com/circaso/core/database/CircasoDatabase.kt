@@ -2,6 +2,10 @@ package com.circaso.core.database
 
 import androidx.room.AutoMigration
 import androidx.room.ConstructedBy
+import androidx.room.DeleteTable
+import androidx.room.migration.AutoMigrationSpec
+import androidx.sqlite.SQLiteConnection
+import androidx.sqlite.execSQL
 import androidx.room.Database
 import androidx.room.RoomDatabase
 import androidx.room.RoomDatabaseConstructor
@@ -60,11 +64,8 @@ import kotlinx.coroutines.Dispatchers
         com.circaso.feature.status.data.local.MomentEntity::class, com.circaso.feature.status.data.local.PendingMomentEntity::class,
         com.circaso.feature.status.data.local.MutedPosterEntity::class, com.circaso.feature.status.data.local.MomentPrivacyEntity::class,
         com.circaso.feature.messaging.data.local.MessageReactionEntity::class, com.circaso.feature.messaging.data.local.MessageRetryEntity::class,
-        com.circaso.feature.spaces.data.local.SpaceEntity::class, com.circaso.feature.spaces.data.local.MySpaceEntity::class,
-        com.circaso.feature.spaces.data.local.SpacePostEntity::class, com.circaso.feature.spaces.data.local.SpaceInviteEntity::class,
-        com.circaso.feature.spaces.data.local.SpaceReceiptEntity::class, com.circaso.feature.spaces.data.local.SpaceMetaEntity::class,
     ],
-    version = 19,
+    version = 20,
     autoMigrations = [
         AutoMigration(from = 1, to = 2), AutoMigration(from = 2, to = 3),
         AutoMigration(from = 3, to = 4), AutoMigration(from = 4, to = 5),
@@ -76,6 +77,9 @@ import kotlinx.coroutines.Dispatchers
         AutoMigration(from = 17, to = 18),
         // 19: retry receipts (message_retry): which unreadable messages were asked for again, and which I sent again.
         AutoMigration(from = 18, to = 19),
+        // 20: Spaces stopped (2026-11-05, tag archive/spaces-v1): its six tables go, and its queued posts and reactions
+        // with them. Everything else is kept as it is; chat.viaSpaceId stays (such a chat is an ordinary chat now).
+        AutoMigration(from = 19, to = 20, spec = DropSpacesTables::class),
     ],
 )
 @ConstructedBy(CircasoDatabaseConstructor::class)
@@ -93,7 +97,20 @@ abstract class CircasoDatabase : RoomDatabase() {
     abstract fun momentsDao(): com.circaso.feature.status.data.local.MomentsDao
     abstract fun reactionsDao(): com.circaso.feature.messaging.data.local.ReactionsDao
     abstract fun recoveryDao(): com.circaso.feature.messaging.data.local.RecoveryDao
-    abstract fun spacesDao(): com.circaso.feature.spaces.data.local.SpacesDao
+}
+
+/** Version 19 → 20: Spaces was removed from the app; its tables and its outbox rows are dropped. */
+@DeleteTable(tableName = "space")
+@DeleteTable(tableName = "space_mine")
+@DeleteTable(tableName = "space_post")
+@DeleteTable(tableName = "space_invite")
+@DeleteTable(tableName = "space_receipt")
+@DeleteTable(tableName = "space_meta")
+class DropSpacesTables : AutoMigrationSpec {
+    override fun onPostMigrate(connection: SQLiteConnection) {
+        // A queued space post or reaction has no sender any more: drop it rather than show it as failed forever.
+        connection.execSQL("DELETE FROM outbox WHERE type IN ('space.post', 'space.reaction')")
+    }
 }
 
 // Room generates the actual for each platform.

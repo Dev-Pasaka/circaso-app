@@ -20,9 +20,6 @@ import kotlinx.serialization.Serializable
 @Serializable data class WalletListingDto(val walletId: String, val owner: WalletOwnerDto, val status: String, val canSign: Boolean = false, val blockchains: List<String> = emptyList())
 @Serializable data class WalletsResponse(val wallets: List<WalletListingDto> = emptyList())
 @Serializable data class GroupWalletResponse(val chatId: String, val status: String, val wallet: WalletListingDto? = null)
-// Space wallets (phase 3, W18–W19): owner type SPACE, the owner signs, admins view.
-@Serializable data class SpaceWalletResponse(val spaceId: String, val status: String, val wallet: WalletListingDto? = null)
-@Serializable data class SpaceWalletSetupResponse(val walletId: String, val spaceId: String, val status: String, val challengeId: String? = null, val sdk: SdkDto)
 @Serializable data class GroupWalletSetupResponse(val walletId: String, val chatId: String, val status: String, val challengeId: String? = null, val sdk: SdkDto)
 
 @Serializable data class SdkDto(val appId: String, val userToken: String, val encryptionKey: String, val expiresAt: String)

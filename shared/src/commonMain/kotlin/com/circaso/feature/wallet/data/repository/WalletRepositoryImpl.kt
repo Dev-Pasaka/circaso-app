@@ -49,12 +49,10 @@ import com.circaso.feature.wallet.data.local.WalletActivityEntity
 import com.circaso.feature.wallet.data.local.WalletCacheEntity
 import com.circaso.feature.wallet.data.local.WalletListEntity
 import com.circaso.feature.wallet.data.remote.GroupWalletResponse
-import com.circaso.feature.wallet.data.remote.SpaceWalletResponse
 import com.circaso.feature.wallet.data.remote.WalletListingDto
 import com.circaso.feature.wallet.data.remote.WalletOwnerDto
 import com.circaso.feature.wallet.data.remote.WalletsResponse
 import com.circaso.feature.wallet.domain.GroupWallet
-import com.circaso.feature.wallet.domain.SpaceWallet
 import com.circaso.feature.wallet.domain.SignPurpose
 import com.circaso.feature.wallet.domain.SignSubject
 import com.circaso.feature.wallet.domain.WalletListing
@@ -369,54 +367,6 @@ class WalletRepositoryImpl(
         return AppResult.Success(GroupWallet(chatId, walletStatus(started.status), listing))
     }
 
-    // ---- Space wallets (phase 3): the group wallet's set-up, for an owner of type SPACE.
-
-    override suspend fun spaceWallet(spaceId: String): AppResult<SpaceWallet> = remote.spaceWallet(spaceId).map { it.toDomain() }
-
-    override suspend fun startSpaceWallet(spaceId: String, name: String): AppResult<SpaceWallet> {
-        val keyName = "space:$spaceId"
-        val key = setupKeys.getOrPut(keyName) { newIdempotencyKey() }
-        val started = when (val r = remote.setUpSpaceWallet(spaceId, key)) {
-            is AppResult.Failure -> {
-                Diagnostics.note("wallet: space set-up failed (${(r.error as? AppError.Api)?.code ?: r.error::class.simpleName})")
-                if ((r.error as? AppError.Api)?.code == "wallet.already_exists") { setupKeys.remove(keyName); return spaceWallet(spaceId) }
-                return r
-            }
-            is AppResult.Success -> r.value
-        }
-        started.challengeId?.let { challenge ->
-            val subject = SignSubject.space(started.walletId, name, SignPurpose.SetPin)
-            when (val outcome = sign(started.sdk.toDomain(subject), challenge)) {
-                SignOutcome.Done -> Unit
-                else -> { Diagnostics.note("wallet: space PIN ${outcome.describe()}"); setupKeys.remove(keyName); return AppResult.Failure(outcome.toError()) }
-            }
-        }
-        // A new key next time: W18 again while it is setting up gives a fresh challenge (SN5b); it must not replay this one.
-        setupKeys.remove(keyName)
-        val listing = WalletListing(started.walletId, WalletOwner(WalletOwnerType.Space, null, null, "", spaceId), walletStatus(started.status), true, emptyList())
-        return AppResult.Success(SpaceWallet(spaceId, walletStatus(started.status), listing))
-    }
-
-    override suspend fun awaitSpaceWallet(spaceId: String): AppResult<SpaceWallet> {
-        var last: AppResult<SpaceWallet> = AppResult.Failure(AppError.Network)
-        withTimeoutOrNull(AwaitMillis) {
-            while (true) {
-                val seen = spaceWallet(spaceId)
-                last = seen
-                if (seen is AppResult.Success && seen.value.status == WalletStatus.Active) return@withTimeoutOrNull
-                if (seen is AppResult.Failure && seen.error is AppError.Api) return@withTimeoutOrNull
-                val tick = ready.value
-                try { withTimeoutOrNull(PollMillis) { ready.collect { if (it != tick) throw ReadyArrived } } } catch (e: ReadyArrived) { }
-            }
-        }
-        val done = last
-        if (done is AppResult.Success) {
-            done.value.wallet?.walletId?.let { refreshWallet(it) }
-            refreshWallets()
-        }
-        return done
-    }
-
     override suspend fun awaitGroupWallet(chatId: String): AppResult<GroupWallet> {
         var last: AppResult<GroupWallet> = AppResult.Failure(AppError.Network)
         withTimeoutOrNull(AwaitMillis) {
@@ -566,8 +516,6 @@ internal fun WalletOwnerDto.toDomain() = WalletOwner(
     type = when (type) { "GROUP" -> WalletOwnerType.Group; "SPACE" -> WalletOwnerType.Space; else -> WalletOwnerType.Person },
     userId = userId, chatId = chatId, signerUserId = signerUserId, spaceId = spaceId,
 )
-
-internal fun SpaceWalletResponse.toDomain() = SpaceWallet(spaceId, walletStatus(status), wallet?.toDomain())
 
 internal fun WalletListingDto.toDomain() = WalletListing(walletId, owner.toDomain(), walletStatus(status), canSign, blockchains)
 

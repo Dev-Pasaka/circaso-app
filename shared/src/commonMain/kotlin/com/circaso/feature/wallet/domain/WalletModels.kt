@@ -127,8 +127,6 @@ data class WalletListing(val walletId: String, val owner: WalletOwner, val statu
     val personal get() = owner.type == WalletOwnerType.Person
 }
 
-/** W19: a space's wallet as the server's rows say (its owner and admins; cheap to poll during set-up, SN5). */
-data class SpaceWallet(val spaceId: String, val status: WalletStatus, val wallet: WalletListing?)
 
 /** W15: a group's wallet as the server's rows say (cheap to poll during set-up). */
 data class GroupWallet(val chatId: String, val status: WalletStatus, val wallet: WalletListing?)

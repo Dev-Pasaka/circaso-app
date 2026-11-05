@@ -84,11 +84,6 @@ class AppPreferences(private val store: DataStore<Preferences>) : com.circaso.co
         store.edit { if (value == "on" || value == "off") it[stringPreferencesKey(GroupWalletsKey)] = value else it.remove(stringPreferencesKey(GroupWalletsKey)) }
     }
 
-    /** Spaces core (phase 3) on or off on this phone, over the build's default; null follows the build. See `SpacesFlag`. */
-    val spacesOverride: Flow<Boolean?> = store.data.map { prefs -> prefs[stringPreferencesKey(SpacesKey)]?.let { it == "on" } }
-    suspend fun setSpacesOverride(value: String?) {
-        store.edit { if (value == "on" || value == "off") it[stringPreferencesKey(SpacesKey)] = value else it.remove(stringPreferencesKey(SpacesKey)) }
-    }
 
     /** Fingerprint / Face ID approval for one wallet ([walletId] null: the personal wallet). Each wallet has its own. */
     fun walletBiometrics(walletId: String?): Flow<Boolean> = flag(biometricFlag(walletId))
@@ -110,7 +105,6 @@ class AppPreferences(private val store: DataStore<Preferences>) : com.circaso.co
         const val MoneySoundOff = "money_sound_off"
 
         private const val GroupWalletsKey = "flag.override.group_wallets"
-        private const val SpacesKey = "flag.override.spaces"
 
         /** The flag that says a wallet approves with biometrics: the personal one keeps its old name. */
         fun biometricFlag(walletId: String?) = if (walletId == null) BiometricApproval else "$BiometricApproval.$walletId"

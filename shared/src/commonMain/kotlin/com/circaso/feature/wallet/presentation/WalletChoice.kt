@@ -81,15 +81,12 @@ fun nameWallets(
     listings: List<WalletListing>,
     chats: List<ChatSummary>,
     myAvatar: String? = null,
-    /** Spaces on the phone by id (phase 3): a space wallet is named after its space; one not known yet reads "Space wallet". */
-    spaces: Map<String, SpaceWalletName> = emptyMap(),
-): List<NamedWallet> = listings.map { w ->
+    /** Unused since Spaces stopped (2026-11-05); kept so callers don't change while the switcher is redesigned. */
+    @Suppress("UNUSED_PARAMETER") spaces: Map<String, SpaceWalletName> = emptyMap(),
+): List<NamedWallet> = listings.filter { it.owner.type != WalletOwnerType.Space }.map { w ->
+    // A space's wallet (an older server's) is never offered: Spaces is archived and the app has no screen for it.
     if (w.personal) NamedWallet(null, null, NamedWallet.PersonalName, myAvatar, WalletOwnerType.Person, true, w.status, w.owner.signerUserId)
-    else if (w.owner.type == WalletOwnerType.Space) {
-        // By space id from the phone's spaces; else by wallet id (a name heard from a `payment.received` frame).
-        val s = w.owner.spaceId?.let { spaces[it] } ?: spaces[w.walletId]
-        NamedWallet(w.walletId, null, s?.name ?: "Space wallet", s?.photoUrl, WalletOwnerType.Space, w.canSign, w.status, w.owner.signerUserId, spaceId = w.owner.spaceId)
-    } else {
+    else {
         val chat = chats.firstOrNull { it.chat.chatId == w.owner.chatId }?.chat
         NamedWallet(w.walletId, w.owner.chatId, chat?.title ?: "Group wallet", chat?.avatarUrl, w.owner.type, w.canSign, w.status, w.owner.signerUserId)
     }
@@ -105,11 +102,10 @@ fun interface SpaceWalletNames {
     companion object { val None = SpaceWalletNames { kotlinx.coroutines.flow.flowOf(emptyMap()) } }
 }
 
-/** A wallet's small picture: a space is a rounded square (its tile), everything else the circle avatar. */
+/** A wallet's small picture: the circle avatar (the person's, or the group's). */
 @Composable
 fun WalletGlyph(wallet: NamedWallet, size: Dp) {
-    if (wallet.space) com.circaso.feature.spaces.presentation.SpaceTile(wallet.name, wallet.avatarUrl, size)
-    else Avatar(wallet.name, size = size, imageUrl = wallet.avatarUrl)
+    Avatar(wallet.name, size = size, imageUrl = wallet.avatarUrl)
 }
 
 /**

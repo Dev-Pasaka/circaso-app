@@ -51,7 +51,6 @@ val realtimeModule = module {
                 val field = { k: String -> (data?.get(k) as? kotlinx.serialization.json.JsonPrimitive)?.content }
                 get<com.circaso.feature.status.domain.MomentsRepository>().onFrame(type, field("momentId"), field("posterId"), field("requesterId"))
             },
-            onSpacesFrame = { type, data -> get<com.circaso.feature.spaces.domain.SpacesRepository>().onFrame(type, data) },
         )
     }
 }

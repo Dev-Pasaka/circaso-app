@@ -63,6 +63,8 @@ class CircasoMessagingService : FirebaseMessagingService() {
             }
             return
         }
+        // Spaces is archived (2026-11-05): an older server's space.* pushes have nothing to open here, so say nothing.
+        if (message.data["kind"]?.startsWith("space.") == true) return
         val chatId = message.data["chatId"] ?: return
         val messageId = message.data["messageId"]
         runCatching {
