@@ -139,6 +139,8 @@ fun AppNavigation(forceUpdate: Boolean, home: @Composable () -> Unit) {
     val spacesArg = remember { launchValue("-spaces") }
     LaunchedEffect(spacesArg) { if (spacesArg != null && client.debugBuild) prefs.setSpacesOverride(spacesArg) }
     fun backToHome() { droppedTo[0] = -1; while (backStack.size > 1 && backStack.last() != HomeRoute) backStack.removeAt(backStack.lastIndex) }
+    val chatsForSpaces = koinInject<com.circaso.feature.messaging.domain.ChatsRepository>()
+    val spacesScope = androidx.compose.runtime.rememberCoroutineScope()
     val spacesNav = remember(backStack) {
         com.circaso.feature.spaces.presentation.SpacesNav(
             back = ::pop,
@@ -163,6 +165,14 @@ fun AppNavigation(forceUpdate: Boolean, home: @Composable () -> Unit) {
             invites = { id -> backStack.add(SpaceInvitesRoute(id)) },
             spaceWallet = { id -> backStack.add(SpaceWalletRoute(id)) },
             asha = { if (backStack.lastOrNull() != AshaRoute) backStack.add(AshaRoute) },
+            // A person found in search or a member row: their ordinary chat on this phone, else opened on the server.
+            openPerson = { userId ->
+                spacesScope.launch {
+                    val local = chatsForSpaces.chats.first().firstOrNull { it.chat.peerId == userId && it.chat.viaSpaceId == null }?.chat?.chatId
+                    val chatId = local ?: (chatsForSpaces.openDirect(userId) as? com.circaso.core.common.AppResult.Success)?.value?.chatId
+                    if (chatId != null) openChatFromList(chatId)
+                }
+            },
         )
     }
     val calls = koinInject<com.circaso.feature.calls.CallController>()
