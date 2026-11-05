@@ -53,6 +53,13 @@ internal fun AshaPreview(name: String): Boolean {
             VoiceUiState(phase = VoicePhase.Thinking, turns = listOf(VoiceTurn("What did I spend on transport last month?")), status = "Checking your transactions…"),
             {}, {}, {}, {},
         )
+        "asha-usage-loading" -> Chat(AshaSheet.Usage, usage = UsageUi.Loading)
+        "asha-usage-failed" -> Chat(AshaSheet.Usage, usage = UsageUi.Failed("Something went wrong. Try again."))
+        "asha-voice-connecting" -> VoiceContent(VoiceUiState(), {}, {}, {}, {})
+        "asha-voice-offline" -> VoiceContent(
+            VoiceUiState(phase = VoicePhase.Ended, ending = com.circaso.feature.assistant.presentation.VoiceEnding.Offline, turns = listOf(VoiceTurn("Who did I chat with this week?", listOf("Mostly Amina and Otieno."), done = true))),
+            {}, {}, {}, {},
+        )
         "asha-voice-muted" -> VoiceContent(VoiceUiState(phase = VoicePhase.Listening, muted = true), {}, {}, {}, {})
         else -> return false
     }

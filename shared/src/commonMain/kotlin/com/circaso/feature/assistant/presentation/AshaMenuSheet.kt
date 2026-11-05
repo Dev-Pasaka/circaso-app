@@ -143,7 +143,9 @@ private fun SheetSection(title: String, action: String? = null, onAction: (() ->
             if (action != null && onAction != null) {
                 BasicText(
                     action,
-                    Modifier.clip(CircasoShapes.xs).pressable(role = Role.Button, onClick = onAction).padding(horizontal = CircasoSpacing.s1, vertical = 2.dp),
+                    // A full 44 dp target round a small label.
+                    Modifier.defaultMinSize(minHeight = CircasoSizes.controlMd).clip(CircasoShapes.xs).pressable(role = Role.Button, onClick = onAction)
+                        .padding(horizontal = CircasoSpacing.s2, vertical = CircasoSpacing.s3),
                     style = t.footnote.copy(color = c.ink, fontWeight = FontWeight.SemiBold),
                 )
             }
@@ -218,7 +220,7 @@ private fun ColumnScope.MenuPage(state: AshaUiState, a: AshaMenuActions) {
             SheetSection("Recent chats", action = if (more) "See All" else null, onAction = { a.onPage(AshaSheet.Recents) }) {
                 state.conversations.take(MenuRecentCount).forEachIndexed { i, conv ->
                     if (i > 0) GroupDivider(inset = false)
-                    ConversationRow(conv, current = conv.id == state.shownConversation, confirming = false, online = state.online, actions = a)
+                    ConversationRow(conv, current = conv.id == state.shownConversation, confirming = conv.id == state.confirmDelete, online = state.online, actions = a)
                 }
             }
         }
@@ -259,7 +261,7 @@ private fun ColumnScope.RecentsPage(state: AshaUiState, a: AshaMenuActions) {
         return
     }
     BasicText(
-        if (state.online) "Touch and hold a chat to delete it." else "You can open past chats offline. Deleting needs a connection.",
+        if (state.online) "Touch and hold a chat to delete it." else "Deleting a chat needs a connection.",
         Modifier.padding(horizontal = CircasoSpacing.s1),
         style = t.footnote.copy(color = c.inkSecondary),
     )
@@ -388,7 +390,7 @@ private fun MeterBar(meter: UsageMeter, modifier: Modifier, label: String) {
 }
 
 @Composable
-private fun UsagePage(state: AshaUiState, a: AshaMenuActions) {
+private fun ColumnScope.UsagePage(state: AshaUiState, a: AshaMenuActions) {
     val c = CircasoTheme.colors
     val t = CircasoTheme.typography
     PageHead("Usage & credits", onBack = a.onBack, onClose = a.onClose)
@@ -400,7 +402,8 @@ private fun UsagePage(state: AshaUiState, a: AshaMenuActions) {
             UsageNote(CircasoIcon.Warning, "Couldn't load your usage", u.message)
             CircasoButton("Try Again", a.onRetryUsage, style = ButtonStyle.Secondary, size = ButtonSize.Medium, block = true, enabled = state.online)
         }
-        is UsageUi.Loaded -> UsageDetail(u.usage)
+        // Scrolls, so large text or a phone on its side never cuts the meters off.
+        is UsageUi.Loaded -> Column(Modifier.fillMaxWidth().weight(1f, fill = false).verticalScroll(rememberScrollState())) { UsageDetail(u.usage) }
     }
 }
 
@@ -436,7 +439,7 @@ private fun UsageDetail(u: AshaUsage) {
         SheetGroup {
             MeterRow("Messages", messagesLine(u.messages), u.messages.left?.let { "$it left" } ?: "No limit on this plan", u.messages)
             GroupDivider(inset = false)
-            MeterRow("Voice", voiceLine(u.voiceSeconds), u.voiceSeconds.left?.let { "${(it + 59) / 60} min left" } ?: "No limit on this plan", u.voiceSeconds)
+            MeterRow("Voice", voiceLine(u.voiceSeconds), u.voiceSeconds.left?.let { "${it / 60} min left" } ?: "No limit on this plan", u.voiceSeconds)
         }
         BasicText(
             "Messages count each question you send. Voice counts the minutes you talk with Asha. Both start again when the allowance resets.",

@@ -197,7 +197,7 @@ private sealed interface Line {
 /** The call so far, newest at the bottom: each turn's question and answer, then what the person is saying now. */
 @Composable
 private fun Transcript(state: VoiceUiState, modifier: Modifier) {
-    val lines = buildList {
+    val lines = androidx.compose.runtime.remember(state.turns, state.heard, state.heardFinal, state.status) { buildList {
         state.turns.forEachIndexed { i, turn ->
             if (turn.question.isNotBlank()) add(Line.Mine("q$i", turn.question, live = false))
             val open = i == state.turns.lastIndex && !turn.done
@@ -207,8 +207,9 @@ private fun Transcript(state: VoiceUiState, modifier: Modifier) {
                 open && state.heard.isEmpty() -> add(Line.Hers("a$i", state.status ?: "…", waiting = true, interrupted = false))
             }
         }
-        if (state.heard.isNotEmpty()) add(Line.Mine("heard", state.heard, live = !state.heardFinal))
-    }
+        // Keyed as the question it is about to become, so the bubble stays in place when the turn is taken.
+        if (state.heard.isNotEmpty()) add(Line.Mine("q${state.turns.size}", state.heard, live = !state.heardFinal))
+    } }
     LazyColumn(
         modifier,
         reverseLayout = true,
@@ -243,10 +244,18 @@ private fun TranscriptRow(line: Line, modifier: Modifier) {
     }
 }
 
+/** "5 hours" under two days, else "3 days"; singular for one. */
+private fun resetsIn(seconds: Long): String {
+    val hours = (seconds + 3_599) / 3_600
+    if (hours < 48) return if (hours == 1L) "1 hour" else "$hours hours"
+    val days = (seconds + 86_399) / 86_400
+    return "$days days"
+}
+
 private fun endingText(e: VoiceEnding?): String = when (e) {
     VoiceEnding.Quiet -> "It went quiet, so I hung up. Tap to talk again."
     VoiceEnding.Offline -> "The connection dropped. Try again when you're back online."
-    is VoiceEnding.OutOfVoice -> "You've used this month's voice time with Asha." + (e.resetsInSeconds?.let { " It resets in about ${(it + 86_399) / 86_400} days." } ?: "")
+    is VoiceEnding.OutOfVoice -> "You've used your voice time with Asha for this period." + (e.resetsInSeconds?.let { " It resets in about ${resetsIn(it)}." } ?: "")
     VoiceEnding.UseClips -> "Live voice isn't available here. You can still record a question in the chat."
     VoiceEnding.NoMicrophone -> "Allow the microphone in Settings to talk to Asha."
     is VoiceEnding.Failed -> e.message

@@ -160,7 +160,8 @@ fun AshaVoiceLogo(visual: VoiceVisual, level: Float, modifier: Modifier = Modifi
         AshaMark(
             Modifier.graphicsLayer {
                 val b = breathing?.value ?: 0f
-                val swell = if (visual == VoiceVisual.Speaking || visual == VoiceVisual.Listening) 0.05f * smooth.value else 0f
+                // Reduced motion: the mark holds still too, whatever the voice does.
+                val swell = if (!still && (visual == VoiceVisual.Speaking || visual == VoiceVisual.Listening)) 0.05f * smooth.value else 0f
                 val s = 1f + 0.03f * b + swell
                 scaleX = s; scaleY = s
                 alpha = if (visual == VoiceVisual.Ended || visual == VoiceVisual.Connecting) 0.75f else 1f

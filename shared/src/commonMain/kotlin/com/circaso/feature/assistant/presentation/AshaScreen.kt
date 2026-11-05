@@ -118,9 +118,9 @@ fun AshaContent(
         overlay = {
             CircasoSheet(state.sheet != null, { onMenu(false) }, label = "Asha menu") {
                 // The last page stays while the sheet slides away, so it doesn't jump back to the menu as it closes.
-                val page = remember { mutableStateOf(AshaSheet.Menu) }
-                state.sheet?.let { page.value = it }
-                AshaMenuSheetContent(state, page.value, menu)
+                val last = remember { mutableStateOf(AshaSheet.Menu) }
+                androidx.compose.runtime.SideEffect { state.sheet?.let { last.value = it } }
+                AshaMenuSheetContent(state, state.sheet ?: last.value, menu)
             }
             ConfirmSheet(
                 visible = state.confirmClear, title = "Delete all conversations?",

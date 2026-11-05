@@ -166,6 +166,7 @@ class AshaViewModel(
     fun onConfirmDelete() {
         val id = local.value.confirmDelete ?: return
         val r = chats ?: return
+        if (!state.value.online) { local.update { it.copy(confirmDelete = null) }; return }
         local.update { it.copy(confirmDelete = null) }
         viewModelScope.launch { (r.deleteConversation(id) as? AppResult.Failure)?.let { f -> local.update { it.copy(error = message(f.error)) } } }
     }
