@@ -332,6 +332,26 @@ class WalletSwitchTest {
         assertFalse(vm.state.value.allGroups)
     }
 
+    @Test fun groupsSaysNoneYetOnlyOnceTheListIsKnown() = runTest(dispatcher) {
+        listings.value = emptyList()
+        val vm = vm()
+        keep(vm)
+        vm.onMode(WalletMode.Groups)
+        assertTrue(vm.state.value.groupsEmpty)
+        // The stub's W16 answers with the (empty) list, so after the read the phone knows there are none.
+        assertTrue(vm.state.value.groupsKnown, "W16 read this run")
+        val unread = com.circaso.feature.wallet.presentation.WalletUiState(groupsEnabled = true, mode = WalletMode.Groups)
+        assertTrue(unread.groupsEmpty)
+        assertFalse(unread.groupsKnown, "nothing saved and nothing read: never \"No group wallets yet\"")
+    }
+
+    @Test fun theTabWaitsForTheRememberedSide() = runTest(dispatcher) {
+        val vm = vm(choices = WalletChoiceStore.memory(SavedWalletChoice(WalletMode.Groups, "gw-1")))
+        keep(vm)
+        assertTrue(vm.state.value.choiceRestored)
+        assertEquals("gw-1", vm.state.value.selectedWalletId)
+    }
+
     @Test fun withTheFlagOffARememberedGroupIsIgnored() = runTest(dispatcher) {
         val vm = vm(GroupWalletsFlag.off(), WalletChoiceStore.memory(SavedWalletChoice(WalletMode.Groups, "gw-1")))
         keep(vm)

@@ -170,6 +170,9 @@ fun WalletTabContent(
     onAllGroups: (Boolean) -> Unit = {},
     groupMenu: GroupMenuActions? = null,
 ) {
+    // The remembered side (Personal or Groups) takes a few milliseconds to read: the tab waits for it rather than
+    // drawing Personal and then sliding across to Groups on every launch.
+    if (state.showSwitcher && !state.choiceRestored) { Box(Modifier.fillMaxSize()); return }
     Column(Modifier.fillMaxSize()) {
         // The Personal | Groups row. Already there when the tab opens with the flag known, it doesn't move anything;
         // when it arrives (or goes) after the page is up, it eases open or closed instead of the page jumping by its
@@ -201,7 +204,7 @@ fun WalletTabContent(
             val chat = s.selectedGroupKey
             val g = s.group
             if (s.groupsEmpty) {
-                GroupWalletsEmpty(bottomPadding.calculateBottomPadding() + CircasoSpacing.s4, Modifier.fillMaxSize())
+                GroupsNothingToShow(s, bottomPadding.calculateBottomPadding() + CircasoSpacing.s4, onRefresh)
                 return@AnimatedContent
             }
             Column(Modifier.fillMaxSize()) {
@@ -214,6 +217,48 @@ fun WalletTabContent(
                         sheets = false, onAddNetworks = onAddNetworks, onToggleHidden = onToggleHidden,
                         group = if (chat != null && g != null) groupHooks(chat, g) else null,
                     )
+                }
+            }
+        }
+    }
+}
+
+/**
+ * Groups with no group wallet on screen. "No group wallets yet" only once the phone knows the list (saved, or read
+ * this run); before that, the list's own shape while it's read, offline the honest reason, else a failed read with
+ * Try Again. Pull down to read again, as on the wallet.
+ */
+@Composable
+private fun GroupsNothingToShow(state: WalletUiState, bottom: androidx.compose.ui.unit.Dp, onRefresh: () -> Unit) {
+    val c = CircasoTheme.colors
+    val t = CircasoTheme.typography
+    var pulled by remember { mutableStateOf(false) }
+    LaunchedEffect(state.loading) { if (!state.loading) pulled = false }
+    val pull = androidx.compose.material3.pulltorefresh.rememberPullToRefreshState()
+    @OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
+    androidx.compose.material3.pulltorefresh.PullToRefreshBox(
+        isRefreshing = pulled, onRefresh = { pulled = true; onRefresh() }, state = pull, modifier = Modifier.fillMaxSize(),
+        indicator = {
+            androidx.compose.material3.pulltorefresh.PullToRefreshDefaults.Indicator(
+                state = pull, isRefreshing = pulled, modifier = Modifier.align(Alignment.TopCenter), containerColor = c.surfaceRaised, color = c.ink,
+            )
+        },
+    ) {
+        when {
+            state.groupsKnown -> GroupWalletsEmpty(bottom, Modifier.fillMaxSize())
+            state.loading -> WalletSkeleton("Opening your group wallets", caption = true)
+            else -> Column(
+                Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = CircasoSpacing.s6).padding(bottom = bottom),
+                verticalArrangement = Arrangement.spacedBy(CircasoSpacing.s3, Alignment.CenterVertically), horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                Spacer(Modifier.height(CircasoSpacing.s10))
+                if (!state.online) {
+                    BasicText("You’re offline", Modifier.semantics { heading() }, style = t.title3.copy(color = c.ink, textAlign = TextAlign.Center))
+                    BasicText("Your group wallets show here once they’ve been read with a connection.", style = t.body.copy(color = c.inkSecondary, textAlign = TextAlign.Center))
+                } else {
+                    BasicText("Couldn’t load your group wallets", Modifier.semantics { heading() }, style = t.title3.copy(color = c.ink, textAlign = TextAlign.Center))
+                    BasicText(state.error ?: com.circaso.core.common.ErrorMessages.SomethingWrong, style = t.body.copy(color = c.inkSecondary, textAlign = TextAlign.Center))
+                    CircasoButton("Try Again", onRefresh, style = ButtonStyle.Secondary)
                 }
             }
         }

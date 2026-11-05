@@ -992,11 +992,12 @@ class GroupWalletSources(
         if (choices.isEmpty()) flowOf(emptyMap())
         else combine(choices.map { w -> observeWalletOf(w.walletId).map { w.walletId to it } }) { pairs -> pairs.toMap() }
 
-    /** W16, the wallet paid from, and the group's money: once, when the review opens. */
-    suspend fun refresh(fromWalletId: String?, groupChatId: String?) {
-        val list = (refreshWallets() as? AppResult.Success)?.value.orEmpty()
-        list.filter { !it.personal && it.canSign }.forEach { refreshWalletOf(it.walletId) }
+    /** W16, the wallet paid from, and the group's money: once, when the review opens. True when W16 was read. */
+    suspend fun refresh(fromWalletId: String?, groupChatId: String?): Boolean {
+        val read = (refreshWallets() as? AppResult.Success)?.value
+        read.orEmpty().filter { !it.personal && it.canSign }.forEach { refreshWalletOf(it.walletId) }
         fromWalletId?.let { refreshWalletOf(it) }
         groupChatId?.let { refreshMoney(it) }
+        return read != null
     }
 }

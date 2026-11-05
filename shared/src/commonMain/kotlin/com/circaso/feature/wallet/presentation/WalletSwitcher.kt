@@ -20,7 +20,9 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.text.BasicText
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -64,8 +66,6 @@ private val ModeControlWidth = 232.dp
 // A segment's height inside the 3 dp track: 38 + 3 + 3 = the 44 dp touch target.
 private val SegmentHeight = 38.dp
 private val TrackInset = 3.dp
-// The group's picture beside its name in the header: between the avatar sizes, so the name leads.
-private val HeaderAvatar = 36.dp
 
 /** The overflow menu's actions that leave the tab: the group's chat and its info (members, approvals, its wallet). */
 class GroupMenuActions(val onOpenChat: (chatId: String) -> Unit, val onGroupInfo: (chatId: String) -> Unit)
@@ -98,6 +98,7 @@ fun WalletModeControl(groups: Boolean, onMode: (WalletMode) -> Unit, modifier: M
         label = "segment",
     )
     val width = ModeControlWidth * LocalDensity.current.fontScale.coerceIn(1f, 1.6f)
+    val rtl = if (androidx.compose.ui.platform.LocalLayoutDirection.current == androidx.compose.ui.unit.LayoutDirection.Rtl) -1f else 1f
     Box(
         modifier.widthIn(max = width).fillMaxWidth().clip(CircasoShapes.pill).background(c.fill).padding(TrackInset)
             .semantics { selectableGroup() },
@@ -106,7 +107,7 @@ fun WalletModeControl(groups: Boolean, onMode: (WalletMode) -> Unit, modifier: M
         Box(Modifier.matchParentSize()) {
             Box(
                 Modifier.fillMaxWidth(0.5f).fillMaxHeight()
-                    .graphicsLayer { translationX = at * size.width }
+                    .graphicsLayer { translationX = at * size.width * rtl }
                     .clip(CircasoShapes.pill).background(c.fillSelected),
             )
         }
@@ -179,7 +180,7 @@ fun GroupWalletHeader(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(CircasoSpacing.s3),
         ) {
-            WalletGlyph(w, HeaderAvatar)
+            WalletAvatar(w.name, w.avatarUrl, group = true, size = CircasoSizes.avatarMd)
             Column(Modifier.weight(1f)) {
                 BasicText(w.name, style = t.headline.copy(color = c.ink), maxLines = 2, overflow = TextOverflow.Ellipsis)
                 BasicText(line, style = t.footnote.copy(color = if (locked) c.warning else c.inkSecondary), maxLines = 2, overflow = TextOverflow.Ellipsis)
@@ -229,8 +230,9 @@ fun GroupWalletHeader(
 fun GroupWalletsEmpty(bottom: androidx.compose.ui.unit.Dp, modifier: Modifier = Modifier) {
     val c = CircasoTheme.colors
     val t = CircasoTheme.typography
+    // Scrolls, so the largest text sizes on a small phone never cut the copy off (and the tab's pull still works).
     Column(
-        modifier.fillMaxWidth().padding(horizontal = CircasoSpacing.s8).padding(bottom = bottom),
+        modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = CircasoSpacing.s8).padding(bottom = bottom),
         verticalArrangement = Arrangement.spacedBy(CircasoSpacing.s3, Alignment.CenterVertically),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
@@ -274,10 +276,10 @@ fun ColumnScope.AllGroupWalletsContent(state: WalletUiState, onPick: (NamedWalle
     } else {
         LazyColumn(
             Modifier.fillMaxWidth().heightIn(max = 420.dp).clip(CircasoShapes.lg).background(c.surfaceRaised).border(1.dp, c.separator, CircasoShapes.lg)
-                .semantics { contentDescription = "Group wallets" },
+                .semantics { selectableGroup() },
         ) {
-            items(shown, key = { it.walletId ?: "personal" }) { w ->
-                if (w != shown.first()) RowDivider(Modifier.padding(start = CircasoSpacing.s4 + CircasoSizes.avatarSm + CircasoSpacing.s3))
+            itemsIndexed(shown, key = { _, w -> w.walletId ?: "personal" }) { i, w ->
+                if (i > 0) RowDivider(Modifier.padding(start = CircasoSpacing.s4 + CircasoSizes.avatarSm + CircasoSpacing.s3))
                 WalletChoiceRow(w, on = w.walletId == state.selectedWalletId, locked = w.walletId in state.lockedWallets, balance = balanceLine(state.balances, w.walletId, state.hidden), hidden = state.hidden) { onPick(w) }
             }
         }

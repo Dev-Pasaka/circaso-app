@@ -21,7 +21,6 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.paneTitle
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
-import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.DpOffset
@@ -41,7 +40,8 @@ private val MenuMaxWidth = 300.dp
 /**
  * Android: the vertical three dots (Material "more vert") in a 44 dp target with the ripple, and Material's own
  * anchored dropdown, dressed in Circaso's surfaces: groups first (picture, name, balance, a tick on the one shown),
- * a divider, then the actions. Back or a tap outside closes it; Material plays its own open and close.
+ * a divider, then the actions. Back or a tap outside closes it; Material plays its own open and close, which follows
+ * the phone's animation scale (Remove animations) rather than a per-screen setting.
  */
 @Composable
 internal actual fun NativeMoreMenu(
@@ -59,10 +59,7 @@ internal actual fun NativeMoreMenu(
         Box(
             Modifier.size(CircasoSizes.controlMd).clip(CircasoShapes.circle)
                 .pressable(role = Role.Button, onClick = { onExpandedChange(!expanded) })
-                .semantics {
-                    this.contentDescription = contentDescription
-                    stateDescription = if (expanded) "Expanded" else "Collapsed"
-                },
+                .semantics { this.contentDescription = contentDescription },
             contentAlignment = Alignment.Center,
         ) {
             CircasoIconImage(CircasoIcon.More, c.ink, Modifier.size(22.dp).graphicsLayer { rotationZ = 90f }, strokeWidth = 3f)
@@ -73,6 +70,8 @@ internal actual fun NativeMoreMenu(
             offset = DpOffset(0.dp, CircasoSpacing.s1),
             shape = CircasoShapes.md,
             containerColor = c.surfaceRaised,
+            // The high-contrast themes give the menu a visible edge against the page.
+            border = if (c.isHighContrast) androidx.compose.foundation.BorderStroke(1.dp, c.separator) else null,
             modifier = Modifier.widthIn(max = MenuMaxWidth).semantics { paneTitle = title },
         ) {
             sections.forEachIndexed { i, section ->

@@ -78,6 +78,10 @@ data class WalletUiState(
     val lastGroupWalletId: String? = null,
     /** The searchable list of every group wallet, for someone in more groups than the menu lists. */
     val allGroups: Boolean = false,
+    /** W16 has been read with a connection this run: an empty Groups is then really empty, not just not read yet. */
+    val groupsRead: Boolean = false,
+    /** The remembered mode and group are in: until then the tab doesn't draw, so it never opens on the wrong side. */
+    val choiceRestored: Boolean = true,
     /**
      * The group wallet on screen, drawn with the personal wallet's own design (Pasaka, 2026-11-04); null for the
      * person's own. Set by the tab when a group is picked in the switcher, and by the pushed group wallet.
@@ -99,8 +103,10 @@ data class WalletUiState(
     val groupWallets: List<NamedWallet> get() = wallets.filter { it.kind == com.circaso.feature.wallet.domain.WalletOwnerType.Group }
     /** Groups is chosen; the tab shows a group wallet, or the empty state when there is none. */
     val showingGroups get() = showSwitcher && (mode == WalletMode.Groups || !selected.personal)
-    /** Groups is chosen and the person has no group wallet yet. */
+    /** Groups is chosen and nothing is on screen: no group wallet, or the list isn't known yet ([groupsKnown]). */
     val groupsEmpty get() = showingGroups && selectedWalletId == null
+    /** The phone knows the person's wallets: a list is saved, or W16 was read. Only then may Groups say "none yet". */
+    val groupsKnown get() = wallets.isNotEmpty() || groupsRead
     val status get() = wallet?.status ?: WalletStatus.None
     val active get() = status == WalletStatus.Active
     val canSend get() = active && online && wallet?.holdUntil == null
@@ -131,7 +137,7 @@ class WalletViewModel(
     /** Remembers Personal or Groups, and which group, between launches. */
     private val choices: WalletChoiceStore = WalletChoiceStore.memory(),
 ) : ViewModel() {
-    private val local = MutableStateFlow(WalletUiState())
+    private val local = MutableStateFlow(WalletUiState(choiceRestored = false))
     /** The picked group wallet's own refresh, approval and message state; fresh whenever another wallet is picked. */
     private val groupLocal = MutableStateFlow(GroupWalletUiState(myUserId = groupReader?.myUserId))
 
@@ -153,9 +159,9 @@ class WalletViewModel(
         }
         // The last mode and group, from the previous run.
         viewModelScope.launch {
-            val saved = runCatching { choices.walletChoice.first() }.getOrNull() ?: return@launch
-            if (chosen) return@launch
-            reselect { it.copy(mode = saved.mode, lastGroupWalletId = saved.groupWalletId ?: it.lastGroupWalletId) }
+            val saved = try { choices.walletChoice.first() } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) { null }
+            if (saved == null || chosen) { local.update { it.copy(choiceRestored = true) }; return@launch }
+            reselect { it.copy(mode = saved.mode, lastGroupWalletId = saved.groupWalletId ?: it.lastGroupWalletId, choiceRestored = true) }
         }
     }
 
@@ -172,12 +178,15 @@ class WalletViewModel(
     private fun saveChoice() {
         chosen = true
         val s = local.value
-        viewModelScope.launch { runCatching { choices.saveWalletChoice(SavedWalletChoice(s.mode, s.selectedWalletId ?: s.lastGroupWalletId)) } }
+        viewModelScope.launch {
+            try { choices.saveWalletChoice(SavedWalletChoice(s.mode, s.selectedWalletId ?: s.lastGroupWalletId)) }
+            catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) { /* a lost preference write only forgets the choice */ }
+        }
     }
 
     /** The segmented control: Personal shows the person's own wallet; Groups the last group shown (or the first). */
     fun onMode(mode: WalletMode) {
-        reselect { it.copy(mode = mode, switching = false, allGroups = false, receiveSheet = false) }
+        reselect { it.copy(mode = mode, switching = false, allGroups = false, receiveSheet = false, choiceRestored = true) }
         // The group Groups opened on is now the one it comes back to (only a choice the person made moves it, so a
         // list still loading at launch never overwrites the remembered group).
         local.value.selectedWalletId?.let { id -> local.update { it.copy(lastGroupWalletId = id) } }
@@ -196,7 +205,7 @@ class WalletViewModel(
      */
     fun onSelectWallet(wallet: NamedWallet) {
         reselect {
-            val closed = it.copy(switching = false, allGroups = false, receiveSheet = false)
+            val closed = it.copy(switching = false, allGroups = false, receiveSheet = false, choiceRestored = true)
             if (wallet.personal) closed.copy(mode = WalletMode.Personal) else closed.copy(mode = WalletMode.Groups, lastGroupWalletId = wallet.walletId)
         }
         saveChoice()
@@ -264,7 +273,7 @@ class WalletViewModel(
         local.update { it.copy(loading = true, error = null) }
         viewModelScope.launch {
             val result = refreshWallet()
-            if (groupWallets.isOn) sources?.refresh(null, null)
+            if (groupWallets.isOn && sources?.refresh(null, null) == true) local.update { it.copy(groupsRead = true) }
             loadMissingNetworks()
             local.update { it.copy(loading = false, error = (result as? AppResult.Failure)?.let { f -> ErrorMessages.forError(f.error) }?.takeIf { _ -> fromPull || state.value.wallet == null }) }
         }

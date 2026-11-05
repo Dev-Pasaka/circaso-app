@@ -19,7 +19,6 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.viewinterop.UIKitInteropInteractionMode
 import androidx.compose.ui.viewinterop.UIKitInteropProperties
 import androidx.compose.ui.viewinterop.UIKitView
 import com.circaso.designsystem.components.CircasoIcon
@@ -42,10 +41,11 @@ import platform.UIKit.setAccessibilityLabel
 import platform.UIKit.UIMenuOptionsDisplayInline
 import platform.UIKit.UIUserInterfaceStyle
 
-// The drawn button's circle, like a toolbar's `ellipsis` button; the UIKit anchor sits inside it, a little smaller,
-// so the circle covers it completely (an interop view leaves a clear hole in Compose's drawing).
+// The drawn button's circle, like a toolbar's `ellipsis` button. The UIKit anchor is a point at its centre, under the
+// middle dot: an interop view leaves a clear hole in Compose's drawing, and a point-sized one can't show through the
+// disc while it dims on press or fades in a crossfade. UIMenu still hangs from the button, placed from that point.
 private val ButtonCircle = 30.dp
-private val AnchorSize = 26.dp
+private val AnchorSize = 2.dp
 
 /**
  * iOS: a real UIKit pull-down menu (UIMenu), the same one a `UIButton` with `showsMenuAsPrimaryAction` opens: its
@@ -54,6 +54,9 @@ private val AnchorSize = 26.dp
  * it sits in the page's own layers, under sheets and screen transitions, over the wallet's glow); under it, the size
  * of its circle, a plain UIButton holds the menu and is what the menu hangs from. A tap asks it to open
  * (`performPrimaryAction`, iOS 17.4; the app needs 18.2).
+ *
+ * Known platform limit: UIMenu follows the app's light/dark choice (set on the anchor) but takes contrast from the
+ * phone's Increase Contrast setting, not from the app's own high-contrast themes.
  */
 @Composable
 internal actual fun NativeMoreMenu(
@@ -74,6 +77,8 @@ internal actual fun NativeMoreMenu(
             preferredMenuElementOrder = UIContextMenuConfigurationElementOrderFixed
             backgroundColor = UIColor.clearColor
             // VoiceOver reads the drawn button; the anchor is not a second element.
+            // Every tap comes through the drawn button and `performPrimaryAction`: one path, one feel.
+            userInteractionEnabled = false
             setIsAccessibilityElement(false)
             setAccessibilityElementsHidden(true)
         }
@@ -96,7 +101,7 @@ internal actual fun NativeMoreMenu(
         UIKitView(
             factory = { anchor },
             modifier = Modifier.size(AnchorSize),
-            properties = UIKitInteropProperties(interactionMode = UIKitInteropInteractionMode.NonCooperative, isNativeAccessibilityEnabled = false),
+            properties = UIKitInteropProperties(interactionMode = null, isNativeAccessibilityEnabled = false),
         )
         // Drawn after the anchor, so it covers the anchor's hole; opaque, so nothing shows through it.
         val fill = c.fill.compositeOver(c.bg)
@@ -133,5 +138,5 @@ private fun uiMenu(title: String, sections: List<List<NativeMenuItem>>, onSelect
 private fun NativeMenuIcon.symbol() = when (this) {
     NativeMenuIcon.Chat -> "bubble.left.and.bubble.right"
     NativeMenuIcon.Info -> "info.circle"
-    NativeMenuIcon.List -> "list.bullet"
+    NativeMenuIcon.List -> "person.3"
 }
