@@ -455,6 +455,9 @@ private fun PhotoViewer(
         val density = LocalDensity.current
         coil3.compose.AsyncImage(
             model = coil3.request.ImageRequest.Builder(coil3.compose.LocalPlatformContext.current).data(photo)
+                // Decoded for the full width it opens to: sized by the layout, it would decode at the small circle it
+                // starts from and stretch that across the screen (the photo looked blurry).
+                .size(side.toInt().coerceAtLeast(1))
                 .memoryCacheKey("$key#full").diskCacheKey(key).placeholderMemoryCacheKey("$key@${CircasoSizes.avatarHero.value.toInt()}").crossfade(true).build(),
             contentDescription = "$name's photo",
             contentScale = androidx.compose.ui.layout.ContentScale.Crop,

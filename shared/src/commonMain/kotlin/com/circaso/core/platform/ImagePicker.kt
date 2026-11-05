@@ -12,8 +12,21 @@ interface ImagePicker {
     suspend fun pick(): PickedImage?
 }
 
-/** The longest side of a profile picture we upload, in pixels. */
-const val AvatarMaxSide = 2048
+/**
+ * The longest side of a profile picture we upload, in pixels: a phone's own 12 MP photo keeps its full size (Pasaka,
+ * 2026-11-05: no visible compression). Only a larger one (50 MP) is brought down to this.
+ */
+const val AvatarMaxSide = 4096
 
-/** JPEG quality for a profile photo: high enough that the full-screen view stays crisp (the user, 2026-10-31). */
-const val AvatarJpegQuality = 92
+/**
+ * JPEG quality for a profile photo: visually lossless. It is still re-encoded once, because that applies the photo's
+ * rotation and drops its metadata (the place it was taken would otherwise be on a public profile picture).
+ */
+const val AvatarJpegQuality = 95
+
+/** Under the server's 5 MB limit for a profile photo, with room to spare. */
+const val AvatarMaxBytes = 4_900_000
+
+/** Qualities tried in turn, then sizes, until the photo fits [AvatarMaxBytes]: most photos stop at the first. */
+val AvatarQualitySteps = listOf(AvatarJpegQuality, 92, 88)
+val AvatarSideSteps = listOf(AvatarMaxSide, 3072, 2560)

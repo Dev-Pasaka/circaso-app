@@ -37,17 +37,28 @@ object ImagePickerBridge {
 class AndroidImagePicker(private val context: Context) : ImagePicker {
     override suspend fun pick(): PickedImage? {
         val uri = ImagePickerBridge.pick() ?: return null
-        return withContext(Dispatchers.IO) {
-            val bitmap = decode(uri) ?: return@withContext null
-            val out = ByteArrayOutputStream()
-            bitmap.compress(Bitmap.CompressFormat.JPEG, AvatarJpegQuality, out)
-            val (w, h) = bitmap.width to bitmap.height
+        return withContext(Dispatchers.IO) { encodeForUpload(context, uri) }
+    }
+}
+
+/**
+ * The photo at full size (up to [AvatarMaxSide]) as a near-lossless JPEG, rotation applied and metadata dropped. Only a
+ * photo that would pass the upload limit is taken down a step, quality first, then size.
+ */
+internal fun encodeForUpload(context: Context, uri: Uri): PickedImage? {
+    for (side in AvatarSideSteps) {
+        val bitmap = decodeScaled(context, uri, side) ?: return null
+        try {
+            for (quality in AvatarQualitySteps) {
+                val out = ByteArrayOutputStream()
+                bitmap.compress(Bitmap.CompressFormat.JPEG, quality, out)
+                if (out.size() <= AvatarMaxBytes) return PickedImage(out.toByteArray(), "image/jpeg", bitmap.width, bitmap.height)
+            }
+        } finally {
             bitmap.recycle()
-            PickedImage(out.toByteArray(), "image/jpeg", w, h)
         }
     }
-
-    private fun decode(uri: Uri): Bitmap? = decodeScaled(context, uri, AvatarMaxSide)
+    return null
 }
 
 /** Decodes already scaled down so a 50 MP photo never sits in memory at full size. */

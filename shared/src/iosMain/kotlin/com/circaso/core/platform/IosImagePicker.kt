@@ -56,15 +56,24 @@ private class PickerDelegate(private val done: (PickedImage?) -> Unit) : NSObjec
     }
 }
 
-/** Scales the longest side to [AvatarMaxSide] and re-encodes as JPEG. Drawing through UIKit also applies the photo's rotation. */
-private fun scaledJpeg(data: NSData): PickedImage? {
-    val image = UIImage(data = data) ?: return null
+/**
+ * The photo at full size (up to [AvatarMaxSide]) as a near-lossless JPEG; only one that would pass the upload limit is
+ * taken down a step, quality first, then size. Drawing through UIKit applies the rotation and drops the metadata.
+ */
+internal fun scaledJpeg(data: NSData): PickedImage? = UIImage(data = data)?.let(::encodeForUpload)
+
+internal fun encodeForUpload(image: UIImage): PickedImage? {
     val (w, h) = image.size.useContents { width to height }
-    val scale = if (max(w, h) > AvatarMaxSide) AvatarMaxSide / max(w, h) else 1.0
-    val target = CGSizeMake(w * scale, h * scale)
     // Exactly that many pixels: the renderer otherwise multiplies by the screen's scale (3x on iPhones).
     val format = platform.UIKit.UIGraphicsImageRendererFormat.defaultFormat().apply { setScale(1.0) }
-    val drawn = UIGraphicsImageRenderer(size = target, format = format).imageWithActions { image.drawInRect(CGRectMake(0.0, 0.0, w * scale, h * scale)) }
-    val jpeg = UIImageJPEGRepresentation(drawn, AvatarJpegQuality / 100.0) ?: return null
-    return PickedImage(jpeg.toByteArray(), "image/jpeg", (w * scale).toInt(), (h * scale).toInt())
+    for (side in AvatarSideSteps) {
+        val scale = if (max(w, h) > side) side / max(w, h) else 1.0
+        val drawn = UIGraphicsImageRenderer(size = CGSizeMake(w * scale, h * scale), format = format)
+            .imageWithActions { image.drawInRect(CGRectMake(0.0, 0.0, w * scale, h * scale)) }
+        for (quality in AvatarQualitySteps) {
+            val jpeg = UIImageJPEGRepresentation(drawn, quality / 100.0) ?: return null
+            if (jpeg.length.toInt() <= AvatarMaxBytes) return PickedImage(jpeg.toByteArray(), "image/jpeg", (w * scale).toInt(), (h * scale).toInt())
+        }
+    }
+    return null
 }
