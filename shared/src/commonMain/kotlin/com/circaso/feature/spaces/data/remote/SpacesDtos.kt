@@ -127,6 +127,9 @@ import kotlinx.serialization.Serializable
     val visibility: String? = null,
     val price: PriceRequest? = null,
     val privateMessages: String? = null,
+    /** SP5: `true` takes the photo or cover away (a null media id can't say it: nulls are left out). */
+    val removePhoto: Boolean? = null,
+    val removeCover: Boolean? = null,
 )
 @Serializable data class UpdatedSpaceDto(val space: SpaceDto, val notified: Int = 0)
 @Serializable data class DeletedDto(val deleted: Boolean = true)
