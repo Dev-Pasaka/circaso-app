@@ -345,6 +345,40 @@ Nothing to show is never an error screen. The first moment was posted through th
   its webhook confirms the transfer. Release note: an app without this build gets `wallet.fee_changed` on every paid
   payment once PR #31 is live.
 
+**Phase 3, Spaces core, built in the app (2026-11-05, branch `worktree-agent-a8a33e7f818615802`, not yet on `main`).**
+Contract `references/spaces-api.md` (to 3f2a9ea); backend PR #33 merged and deployed on the dev sandbox. Behind
+`SpacesFlag` (on in debug, off in release, off for the run on `404 request.not_found` from any SP route; debug
+override `-spaces=on|off|default`, Android `--es spaces off`). Architecture: `app-architecture.md` → "Spaces core".
+- Built per frame group: SD1–SD3 (Spaces tab sections replace "Spaces are coming"; search with @handles and people;
+  Suggested), SS1–SS6e and SI2b (the space page for every join type, visitor and member, About, Members, all states),
+  SN1–SN8b (three steps, live @handle check, the space wallet's PIN via W18/W19 as its own Circle user, set-up ticks,
+  failed/hidden, settings, details with Remove Photo, price change), SM1–SM6 (the join card on the page, Paying from
+  fixed to Personal, the fee through W17 at the space rate with `quoteId`, PIN directly, membership only once
+  confirmed, renewal banner, grace, ended, leave), SI1–SI4b (invite people, invite cards at the top of Chats with
+  Accept/Decline and Undo before SP22, invites and requests), SH1–SH1f (space chat: not end-to-end encrypted line, role
+  badges, counted reactions in the post's popover, admins-only, muted, removed tombstones, offline queue), SH2–SH2e
+  (private chat with the owner through M4 `viaSpaceId`, "Private · via {space}", `#` pays the space, Follow/Join to
+  Pay for non-members; owner inbox labels and the Spaces filter chip), SR1–SR4d (members with popovers, roles, report
+  screen, reports queue), SW1–SW2b (space wallets in the unified Wallet tab: tile and name in the switcher, owner
+  sends, admins view; paying from a space wallet in a chat sends directly).
+- Previews: `sd-*`, `si-invite*`, `sh-owner-inbox`, `sh-inbox-labels` (discover); `space-*` page and join names;
+  `space-new*`, `space-pin`, `space-setting-up`, `space-setup-*`, `space-live`, `space-settings*`, `space-details`,
+  `space-price-change`, `space-wallet*` (create and wallet); `space-chat*`, `space-private*`, `space-members*`,
+  `space-member-*`, `space-roles`, `space-report*`, `space-reports*`, `space-invite*`, `space-invites*` (chat and admin).
+- Tests: `SpacesRepositoryTest` (16), `DiscoverViewModelsTest` (10), `SpacePageViewModelTest` (15),
+  `SpaceCreateViewModelsTest` (13), `SpaceChatViewModelsTest` (14).
+- Left: space posts are text only (no media upload/display yet, SP33/SP34 exist); payment cards in the private chat
+  still read Sent/Received rather than "Paid to / Received into {space}" (needs a payload or head change); the
+  personal transfer table has no `toSpaceId` column (named from what Pay set); SM1g's Receive has no route to the
+  Wallet tab's Receive sheet from a pushed screen (`SpacesNav.receive` is a no-op); cover photo editing (not designed);
+  pushes `kind = space.*` don't deep-link yet; no device run yet.
+- To test on the sandbox: sign in two accounts on the emulator (debug build, flag on); A creates a public space and a
+  members-only one (0.10 USDC monthly) and sets the space wallet PIN; B finds it by `@handle`, follows, posts and
+  reacts (and offline: posts wait, then send), messages the owner privately and pays `#1`; B joins the members-only
+  space (card → PIN → Joining → welcome, receipt in the private chat); A invites B to an invite-only space (card in
+  Chats), mutes, removes and bans B, resolves a report; A sees the space wallet in the Wallet tab and pays a supplier
+  from it.
+
 ### Backend gaps (design exists, no API yet)
 - W7/W8: statements on the server, PIN change and restore.
 - Server notification inbox (F4 is built locally), KYC, add money, cash out, business groups (D7).

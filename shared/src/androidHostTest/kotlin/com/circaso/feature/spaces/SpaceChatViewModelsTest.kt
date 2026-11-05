@@ -82,7 +82,7 @@ import kotlin.test.assertFalse
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
-private class Monitor : ConnectivityMonitor { override val osStatus = MutableStateFlow(ConnectionStatus.Online) }
+private class ChatTestMonitor : ConnectivityMonitor { override val osStatus = MutableStateFlow(ConnectionStatus.Online) }
 
 private class Chats : ChatsRepository {
     val opened = mutableListOf<String>()
@@ -127,7 +127,7 @@ private class Contacts : ContactsRepository {
 class SpaceChatViewModelsTest {
     private val dispatcher = StandardTestDispatcher()
     private val json = Json { ignoreUnknownKeys = true; explicitNulls = false; encodeDefaults = true }
-    private lateinit var monitor: Monitor
+    private lateinit var monitor: ChatTestMonitor
     private lateinit var connection: ConnectionState
     private val dao = FakeSpacesDao()
     private val remote = FakeSpacesRemote()
@@ -140,7 +140,7 @@ class SpaceChatViewModelsTest {
 
     @BeforeTest fun setUp() {
         Dispatchers.setMain(dispatcher)
-        monitor = Monitor()
+        monitor = ChatTestMonitor()
         connection = ConnectionState(monitor, NetworkHealth(), CoroutineScope(dispatcher), offlineDelayMs = 0)
     }
     @AfterTest fun tearDown() = Dispatchers.resetMain()

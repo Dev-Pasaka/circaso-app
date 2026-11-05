@@ -84,7 +84,7 @@ private inline fun <reified T : Any> fake(noinline answer: (String, List<Any?>) 
         }
     } as T
 
-private class Monitor(online: Boolean = true) : ConnectivityMonitor { override val osStatus = MutableStateFlow(if (online) ConnectionStatus.Online else ConnectionStatus.Offline) }
+private class CreateTestMonitor(online: Boolean = true) : ConnectivityMonitor { override val osStatus = MutableStateFlow(if (online) ConnectionStatus.Online else ConnectionStatus.Offline) }
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class SpaceCreateViewModelsTest {
@@ -117,7 +117,7 @@ class SpaceCreateViewModelsTest {
 
     @BeforeTest fun setUp() {
         Dispatchers.setMain(dispatcher)
-        connection = ConnectionState(Monitor(), NetworkHealth(), CoroutineScope(dispatcher), offlineDelayMs = 0)
+        connection = ConnectionState(CreateTestMonitor(), NetworkHealth(), CoroutineScope(dispatcher), offlineDelayMs = 0)
     }
     @AfterTest fun tearDown() = Dispatchers.resetMain()
 
@@ -218,7 +218,7 @@ class SpaceCreateViewModelsTest {
     }
 
     @Test fun offlineNextIsDisabledAndTheDraftStays() = runTest(dispatcher) {
-        val monitor = Monitor(online = false)
+        val monitor = CreateTestMonitor(online = false)
         connection = ConnectionState(monitor, NetworkHealth(), CoroutineScope(dispatcher), offlineDelayMs = 0)
         val vm = newSpace()
         vm.fillDetails(); advanceUntilIdle()
