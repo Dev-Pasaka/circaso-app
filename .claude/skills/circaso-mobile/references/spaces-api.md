@@ -4,7 +4,7 @@ Written 2026-11-04, before either side was built, so the backend module and both
 Source of decisions: `spaces-plan.md` (§5, §5b, §7, §7b, §8, §9 phase 3) and the approved phase 0b frames in
 `Circaso-Spaces.html` (SD, SS, SN, SM, SI, SH, SR, SW and "Design decisions in the gaps" → Phase 3). When the
 backend's `docs/mobile-integration.md` gains its Spaces section, that copy wins (rule 1 of the skill) and this file is
-updated to match. Backend branch `feat/spaces`.
+updated to match. Backend branch `feat/spaces` (merged with phase 2F, so fees are live for space payments).
 
 Conventions as everywhere: base `/v1`, scope `app` unless marked `ops`, `DefaultResponse` envelope, `Idempotency-Key`
 on every non-GET (the gateway replays the first answer for 24 h), ids are UUIDv7 strings, times ISO-8601 UTC, money
@@ -110,7 +110,7 @@ unmuted". `relation: BANNED` → SS6e. `request.canAskAgainAt` is 30 days after 
 | SP10 | `POST /spaces/{spaceId}/follow` | → `Me` | Public spaces: you're a `MEMBER` at once (SS1b). Not optimistic: show progress until it answers. Errors: `spaces.banned` (403), `spaces.payment_required` (403: members-only, use SP13), `spaces.invite_required` (403: invite-only, use SP14), `spaces.space_not_found`, `spaces.account_restricted`. Following again when already in answers your `Me`. |
 | SP11 | `DELETE /spaces/{spaceId}/membership` | → `{ left: true }` | Unfollow or leave (SS1c, SM6). A paid membership ends now and isn't refunded. Errors: `spaces.owner_cannot_leave` (409), `spaces.not_member` (403). |
 | SP12 | `PUT /spaces/{spaceId}/notifications` | `{ level: ALL \| MENTIONS \| OFF }` → `Me` | Errors: `spaces.not_member`. |
-| SP13 | `POST /spaces/{spaceId}/membership/payment` | → `MembershipPayment` | Members-only spaces: what joining, renewing or rejoining costs, held 15 minutes (SM1, SM3b, SM5). Then **W4** with `to: { spaceId }`, `spacePaymentId`, exactly `amount`, from your **personal** wallet, on one of `blockchains`. You're a member only when the transfer is **confirmed** (`space.membership_updated`), never from the tap (SM1c). Errors: `spaces.not_paid_space` (409), `spaces.already_member` (409: one-time membership already paid, or a period active and not yet in its renewal window, `details.fields.renewFrom`), `spaces.banned`, `spaces.wallet_not_ready` (409), `spaces.space_not_found`, `spaces.account_restricted`. |
+| SP13 | `POST /spaces/{spaceId}/membership/payment` | → `MembershipPayment` | Members-only spaces: what joining, renewing or rejoining costs, held 15 minutes (SM1, SM3b, SM5). Then **W17** and **W4** with `to: { spaceId }`, `spacePaymentId`, exactly `amount` (and W17's `quoteId` on W4), from your **personal** wallet, on one of `blockchains`. You're a member only when the transfer is **confirmed** (`space.membership_updated`), never from the tap (SM1c). Errors: `spaces.not_paid_space` (409), `spaces.already_member` (409: one-time membership already paid, or a period active and not yet in its renewal window, `details.fields.renewFrom`), `spaces.banned`, `spaces.wallet_not_ready` (409), `spaces.space_not_found`, `spaces.account_restricted`. |
 
 `MembershipPayment`:
 ```json
@@ -220,8 +220,12 @@ owner sends directly.
   then. **From** a space wallet: `walletId` = the space wallet, the owner signs, no `payoutRequestId`.
   New errors: `wallet.space_not_found`, `wallet.space_not_member`, `wallet.space_payment_invalid`,
   `wallet.space_payment_personal_only`.
-- **W17** (phase 2F, fees) takes the same body, so the fee for a space payment is quoted at the space rate (seed 1 %)
-  once 2F is deployed. Until then the fee is zero, as for every payment.
+- **Fees (phase 2F, deployed):** call **W17** `POST /wallet/transfers/quote` with W4's exact body (`to: { spaceId }`,
+  `spacePaymentId` for a membership) while the money card is open: it answers the fee at the **space rate** (seed
+  1 %, `rateBps: 100`, or the gas `minimum`), the total, and for the signer a `quoteId` held 15 minutes. Send that
+  `quoteId` on W4; the fee is charged on top in the same signature, the space receives exactly `amount`. A payment
+  *from* a space wallet is priced the same way (sender SPACE). Spaces have no daily cap (§7a). W17 runs the same
+  space checks as W4 (`wallet.space_not_member`, `wallet.space_payment_invalid`, …).
 - **W5** and the events gain `fromSpaceId`, `toSpaceId`, `spacePaymentId`. Frames for a space wallet carry `walletId`:
   `transfer.updated` and `payment.received` go to the owner; `wallet.ready` to the owner and admins.
 - **I14** (delete account) is refused with `wallet.group_funds_remaining` while a space wallet you sign for holds money
@@ -233,7 +237,7 @@ owner sends directly.
 | --- | --- | --- | --- |
 | SP35 | `POST /spaces/{spaceId}/reports` | `{ postId?, reason, detail? }` → `{ reportId }` | SR3. A post (`postId`) or the whole space (no `postId`). `reason`: `SPAM_SCAM`, `COUNTERFEIT`, `HARASSMENT`, `HATE_VIOLENCE`, `SEXUAL`, `OTHER`; `detail` up to 500 characters. Online only. Post reports reach the space's moderators and admins (`space.report_new`) **and** Circaso's queue; space reports only Circaso's. The reporter's name never reaches the space's team. "Also block" is users' block route, called by the app. One open report per person and target (a repeat answers the same `reportId`). Errors: `spaces.report_invalid` (400), `spaces.post_not_found`, `spaces.too_many_reports` (429: 20 a day). |
 | SP36 | `GET /spaces/{spaceId}/reports?state=OPEN\|DONE&cursor=` | → `{ reports: [ReportGroup], next }` | SR4, moderators and up. One entry per reported post: open ones most reported first; done ones newest first, with who acted. Errors: `spaces.not_moderator`. |
-| SP37 | `POST /spaces/{spaceId}/reports/{postId}/resolve` | `{ action: KEEP \| REMOVE_POST \| MUTE \| REMOVE_MEMBER, muteDuration? }` → `ReportGroup` | Moderators and up (`REMOVE_MEMBER`: admins). Acts (as SP30/SP25/SP26) and closes every open report on that post; each reporter gets `space.report_resolved` and a push. Errors: `spaces.not_moderator`, `spaces.not_admin`, `spaces.report_not_found` (404), `spaces.cannot_moderate`. |
+| SP37 | `POST /spaces/{spaceId}/reports/{postId}/resolve` | `{ action: KEEP \| REMOVE_POST \| MUTE \| REMOVE_MEMBER, muteDuration? }` → `{ resolved: true }` | Moderators and up (`REMOVE_MEMBER`: admins). Acts (as SP30/SP25/SP26) and closes every open report on that post; each reporter gets `space.report_resolved` and a push. Errors: `spaces.not_moderator`, `spaces.not_admin`, `spaces.report_not_found` (404), `spaces.cannot_moderate`. |
 | SPO1 | `GET /ops/spaces/reports?cursor=` (scope `ops`) | → `{ reports: [OpsReport], next }` | Circaso's queue, newest first, with the reporter (Circaso sees who reported rule-breaking). |
 | SPO2 | `POST /ops/spaces/{spaceId}/remove` (scope `ops`) | `{ reason }` → `{ removed: true }` | Circaso removes a space (`REMOVED`, SS6d). Members get `space.updated`. |
 
