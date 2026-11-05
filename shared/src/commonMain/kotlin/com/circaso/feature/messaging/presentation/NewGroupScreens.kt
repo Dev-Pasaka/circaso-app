@@ -126,8 +126,9 @@ fun NewGroupScreen(viewModel: NewGroupViewModel, onBack: () -> Unit, onCreated: 
     val state by viewModel.state.collectAsState()
     val created = { id: String -> onCreated(id, viewModel.walletPlan()) }
     val photos = viewModel.photos
-    val back = { if (!viewModel.onBack()) onBack() }
-    BackOnDetails(state.step == NewGroupStep.Details) { back() }
+    // The group exists (its photo didn't go up): back is "Continue Without Photo", it opens the group.
+    val back = { if (state.photoFailed && !state.creating) viewModel.onSkipPhoto(created) else if (!viewModel.onBack()) onBack() }
+    BackOnDetails(state.step == NewGroupStep.Details || state.creating) { back() }
     NewGroupContent(
         state,
         NewGroupActions(
@@ -324,6 +325,11 @@ private fun ChosenStrip(chosen: List<Contact>, onRemove: (String) -> Unit) {
     }
 }
 
+/**
+ * Step 2. Departure from D1/GW1, decided for the premium bar: the photo is a centred hero (112 dp with "Add Photo")
+ * rather than a 64 dp disc beside the name, because the owner asked for the group photo to be obvious; the rest keeps
+ * the frames' order (name, members, wallet card).
+ */
 @Composable
 private fun DetailsStep(state: NewGroupUiState, actions: NewGroupActions, padding: PaddingValues) {
     val c = CircasoTheme.colors
@@ -367,9 +373,6 @@ private fun DetailsStep(state: NewGroupUiState, actions: NewGroupActions, paddin
                 )
             }
         }
-        if (state.walletsAvailable) {
-            item(key = "wallet") { GroupWalletCard(state, actions, Modifier.padding(horizontal = CircasoSpacing.s4, vertical = CircasoSpacing.s3)) }
-        }
         item(key = "members") {
             val people = state.selectedContacts
             ListCaption("${people.size + 1} members")
@@ -388,6 +391,10 @@ private fun DetailsStep(state: NewGroupUiState, actions: NewGroupActions, paddin
                     }
                 }
             }
+        }
+        // D1/GW1 order: name, members, then the wallet card.
+        if (state.walletsAvailable) {
+            item(key = "wallet") { GroupWalletCard(state, actions, Modifier.padding(horizontal = CircasoSpacing.s4, vertical = CircasoSpacing.s4)) }
         }
     }
 }
@@ -458,9 +465,12 @@ private fun GroupWalletCard(state: NewGroupUiState, actions: NewGroupActions, mo
     val c = CircasoTheme.colors
     val t = CircasoTheme.typography
     Column(
-        modifier.fillMaxWidth().clip(CircasoShapes.lg).background(c.surface).padding(horizontal = CircasoSpacing.s4, vertical = 14.dp),
-        verticalArrangement = Arrangement.spacedBy(14.dp),
+        // GW1: radius-md, surface, a hairline separator edge.
+        modifier.fillMaxWidth().clip(CircasoShapes.md).background(c.surface).border(1.dp, c.separator, CircasoShapes.md)
+            .padding(horizontal = CircasoSpacing.s4, vertical = CircasoSpacing.s3),
+        verticalArrangement = Arrangement.spacedBy(CircasoSpacing.s3),
     ) {
+        val reduce = CircasoTheme.reduceMotion
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(CircasoSpacing.s3)) {
             Column(Modifier.weight(1f)) {
                 BasicText("Group wallet", style = t.headline.copy(color = c.ink))
@@ -472,8 +482,12 @@ private fun GroupWalletCard(state: NewGroupUiState, actions: NewGroupActions, mo
             }
             CircasoSwitch(state.walletOn, actions.onWalletSwitch, enabled = state.online && !state.creating && !state.photoFailed, modifier = Modifier.semantics { contentDescription = "Group wallet" })
         }
-        AnimatedVisibility(state.walletOn) {
-            Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+        AnimatedVisibility(
+            state.walletOn,
+            enter = if (reduce) fadeIn(snap()) else expandVertically(tween(CircasoMotion.BaseMs)) + fadeIn(tween(CircasoMotion.BaseMs)),
+            exit = if (reduce) fadeOut(snap()) else shrinkVertically(tween(CircasoMotion.QuickMs)) + fadeOut(tween(CircasoMotion.QuickMs)),
+        ) {
+            Column(verticalArrangement = Arrangement.spacedBy(CircasoSpacing.s3)) {
                 CircasoTextField(
                     value = state.targetText, onValueChange = actions.onTarget, label = "Target (optional)",
                     placeholder = if (state.fiat != null) "50,000" else "400",
@@ -499,8 +513,9 @@ private fun GroupWalletCard(state: NewGroupUiState, actions: NewGroupActions, mo
                     CircasoIconImage(CircasoIcon.Lock, c.inkSecondary, Modifier.padding(top = 2.dp).size(14.dp))
                     BasicText(
                         if (state.approvalPolicy == com.circaso.feature.chama.domain.ApprovalPolicy.AnyAdmin)
-                            "Only you can send from this wallet, and only after an admin approves each payout (an admin’s own request counts). Everyone sees every payment."
-                        else "Only you can send from this wallet, and only after 2 admins approve each payout (the admin who asks counts as one). Everyone sees every payment.",
+                            "Only you can send from this wallet, and only after an admin approves each payout (an admin’s own request counts). Everyone sees every payment. A daily limit caps what can leave it in 24 hours; you'll see it once the wallet is set up."
+                        else "Only you can send from this wallet, and only after 2 admins approve each payout (the admin who asks counts as one). Everyone sees every payment." +
+                            " A daily limit caps what can leave it in 24 hours; you'll see it once the wallet is set up.",
                         style = t.footnote.copy(color = c.inkSecondary),
                     )
                 }

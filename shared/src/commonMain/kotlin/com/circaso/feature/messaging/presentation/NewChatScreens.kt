@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -174,7 +175,7 @@ fun NewChatContent(state: NewChatUiState, actions: NewChatActions, onMessageShow
                                     title = person.name, sub = person.sub,
                                     leading = { Avatar(person.name, imageUrl = person.avatarUrl) },
                                     trailing = { if (state.opening == person.userId) Spinner(c.inkSecondary, Modifier.size(18.dp)) },
-                                    onClick = if (state.online && state.opening == null) ({ actions.onPick(person.userId) }) else null,
+                                    onClick = if (state.opening == null) ({ actions.onPick(person.userId) }) else null,
                                 )
                                 RowDivider(Modifier.padding(start = PeopleDividerInset - CircasoSpacing.s4))
                             }
@@ -248,7 +249,7 @@ private fun RecentStrip(recent: List<PersonRow>, opening: String?, online: Boole
         items(recent, key = { it.userId }) { p ->
             Column(
                 Modifier.width(68.dp).clip(CircasoShapes.md)
-                    .pressable(enabled = online && opening == null, role = Role.Button, onClick = { onPick(p.userId) })
+                    .pressable(enabled = opening == null, role = Role.Button, onClick = { onPick(p.userId) })
                     .padding(vertical = CircasoSpacing.s1)
                     .semantics(mergeDescendants = true) { contentDescription = "Chat with ${p.name}" },
                 horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(6.dp),
@@ -276,7 +277,7 @@ internal fun SearchField(value: String, onValueChange: (String) -> Unit, placeho
     val c = CircasoTheme.colors
     val t = CircasoTheme.typography
     Row(
-        modifier.fillMaxWidth().height(36.dp).clip(CircasoShapes.pill).background(c.fill).padding(start = 12.dp, end = 6.dp),
+        modifier.fillMaxWidth().heightIn(min = 36.dp).clip(CircasoShapes.pill).background(c.fill).padding(start = 12.dp, end = 0.dp),
         horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically,
     ) {
         CircasoIconImage(CircasoIcon.Search, c.inkSecondary, Modifier.size(18.dp))
@@ -296,7 +297,7 @@ internal fun SearchField(value: String, onValueChange: (String) -> Unit, placeho
             exit = if (reduce) fadeOut(snap()) else fadeOut(tween(CircasoMotion.QuickMs)),
         ) {
             Box(
-                Modifier.size(28.dp).clip(CircasoShapes.circle).pressable(role = Role.Button, onClick = { onValueChange("") }).semantics { contentDescription = "Clear search" },
+                Modifier.size(CircasoSizes.iconButton).clip(CircasoShapes.circle).pressable(role = Role.Button, onClick = { onValueChange("") }).semantics { contentDescription = "Clear search" },
                 contentAlignment = Alignment.Center,
             ) {
                 Box(Modifier.size(18.dp).background(c.inkTertiary, CircasoShapes.circle), contentAlignment = Alignment.Center) {

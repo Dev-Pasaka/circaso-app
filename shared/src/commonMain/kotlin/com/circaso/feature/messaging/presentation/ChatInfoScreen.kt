@@ -200,7 +200,7 @@ fun ChatInfoScreen(
                     if (state.isGroup && state.amAdmin && state.photosAvailable) {
                         // M8: admins change the group's photo from here (the profile photo's sheet and camera).
                         GroupPhotoButton(
-                            name = chat?.title ?: "", bytes = null, imageUrl = chat?.avatarUrl, busy = state.photoBusy,
+                            name = chat?.title ?: "", bytes = state.pendingPhoto, imageUrl = chat?.avatarUrl, busy = state.photoBusy,
                             enabled = state.canChangePhoto, onClick = { viewModel.photos?.open() }, size = CircasoSizes.avatarXl,
                             available = state.canChangePhoto || state.hasGroupPhoto,
                         )
@@ -210,6 +210,9 @@ fun ChatInfoScreen(
                     BasicText(chat?.title ?: "", style = t.title1.copy(color = c.ink, textAlign = TextAlign.Center))
                     if (state.isGroup) BasicText("${chat?.members?.size ?: 0} members" + if (state.money.enabled && state.money.money?.hasWallet == true) " · Group wallet" else "", style = t.subhead.copy(color = c.inkSecondary))
                     else chat?.members?.firstOrNull { it.userId == chat.peerId }?.handle?.let { BasicText("@$it", style = t.body.copy(color = c.inkSecondary)) }
+                    if (state.isGroup && state.amAdmin && state.photosAvailable && !state.online) {
+                        BasicText("Changing the group photo needs a connection.", style = t.footnote.copy(color = c.inkTertiary, textAlign = TextAlign.Center))
+                    }
                 }
             }
             if (!state.isGroup) {

@@ -118,13 +118,18 @@ class NewChatViewModel(
     private val _state = MutableStateFlow(NewChatUiState())
     val state: StateFlow<NewChatUiState> = _state.asStateFlow()
 
+    /** Direct chats already on this phone, by the other person: they open at once, online or not. */
+    private var existing: Map<String, String> = emptyMap()
+
     init {
         viewModelScope.launch { observeContacts().collect { list -> _state.update { it.copy(contacts = list, loaded = true) } } }
         viewModelScope.launch { connection.status.collect { s -> _state.update { it.copy(online = s == ConnectionStatus.Online) } } }
         observeChats?.let { chats ->
             viewModelScope.launch {
                 chats().collect { list ->
-                    val recent = list.filter { it.chat.kind == ChatKind.Direct }.sortedByDescending { it.latest?.orderAt ?: 0L }.filter { it.latest != null }
+                    val direct = list.filter { it.chat.kind == ChatKind.Direct && it.chat.viaSpaceId == null }
+                    val recent = direct.sortedByDescending { it.latest?.orderAt ?: 0L }.filter { it.latest != null }
+                    existing = direct.mapNotNull { s -> s.chat.peerId?.let { it to s.chat.chatId } }.toMap()
                     _state.update { it.copy(recentChats = recent) }
                 }
             }
@@ -135,10 +140,12 @@ class NewChatViewModel(
     fun onMessageShown() = _state.update { it.copy(message = null) }
     fun onShared() = _state.update { it.copy(share = null) }
 
-    /** Opens (or finds) the direct chat and hands its id to [onOpened]. */
+    /** Opens the direct chat: the one on this phone at once (offline too), else found or made on the server (M4). */
     fun onPick(userId: String, onOpened: (chatId: String) -> Unit) {
         val s = _state.value
-        if (!s.online || s.opening != null) return
+        if (s.opening != null) return
+        existing[userId]?.let { onOpened(it); return }
+        if (!s.online) { _state.update { it.copy(message = "Starting a new chat needs a connection.") }; return }
         _state.update { it.copy(opening = userId, message = null) }
         viewModelScope.launch { open(userId, onOpened) }
     }

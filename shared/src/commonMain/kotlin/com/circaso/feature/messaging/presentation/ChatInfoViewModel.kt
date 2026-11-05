@@ -72,6 +72,8 @@ data class ChatInfoUiState(
     val photosAvailable: Boolean = false,
     /** A new group photo is being prepared, sent or removed (M8). */
     val photoBusy: Boolean = false,
+    /** The new photo while it is being sent: shown under the spinner at once, so the change is visible. */
+    val pendingPhoto: ByteArray? = null,
     val photoChoice: com.circaso.feature.profile.presentation.PhotoChoiceState = com.circaso.feature.profile.presentation.PhotoChoiceState(),
 ) {
     /** Admins change the group's photo (M8); it needs a connection, like every change to the group. */
@@ -138,8 +140,9 @@ class ChatInfoViewModel(
         viewModelScope.launch {
             val image = try { encoder.encode(picked.bytes) } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) { null }
             if (image == null) { _state.update { it.copy(photoBusy = false, message = "Couldn't use that photo. Try another one.") }; return@launch }
+            _state.update { it.copy(pendingPhoto = image.full) }
             val r = set(chatId, image)
-            _state.update { it.copy(photoBusy = false, message = if (r is AppResult.Failure) withRef(r.error) else "The group photo is updated.") }
+            _state.update { it.copy(photoBusy = false, pendingPhoto = null, message = if (r is AppResult.Failure) withRef(r.error) else "The group photo is updated.") }
         }
     }
 

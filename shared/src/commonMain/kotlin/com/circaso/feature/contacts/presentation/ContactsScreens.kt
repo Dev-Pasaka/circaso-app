@@ -180,14 +180,30 @@ fun ContactsContent(state: ContactsUiState, actions: ContactsActions) {
                     }
                     state.sections.forEach { (letter, people) ->
                         item(key = "sec-$letter") {
-                            Column(Modifier.padding(top = CircasoSpacing.s2)) {
-                                BasicText(letter, Modifier.padding(start = CircasoSpacing.s4, bottom = 6.dp), style = t.footnote.copy(color = c.inkSecondary, fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold))
-                                ListGroup {
-                                    people.forEachIndexed { i, contact ->
-                                        if (i > 0) RowDivider(Modifier.padding(start = PeopleDividerInset - CircasoSpacing.s4))
-                                        ContactRow(contact, onClick = { actions.onSelect(contact) })
-                                    }
-                                }
+                            BasicText(
+                                letter, Modifier.padding(start = CircasoSpacing.s4, top = CircasoSpacing.s3, bottom = 6.dp),
+                                style = t.footnote.copy(color = c.inkSecondary, fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold),
+                            )
+                        }
+                        // One lazy item per person (a real phone book scrolls smoothly); the inset group's corners are
+                        // drawn on the first and last row of each letter.
+                        val last = people.lastIndex
+                        items(people.size, key = { "c-" + people[it].person.userId }) { i ->
+                            val contact = people[i]
+                            val r = GroupCorner
+                            val shape = androidx.compose.foundation.shape.RoundedCornerShape(
+                                topStart = if (i == 0) r else 0.dp, topEnd = if (i == 0) r else 0.dp,
+                                bottomStart = if (i == last) r else 0.dp, bottomEnd = if (i == last) r else 0.dp,
+                            )
+                            Column(
+                                Modifier.animateItem(
+                                    fadeInSpec = androidx.compose.animation.core.tween(com.circaso.designsystem.theme.CircasoMotion.BaseMs),
+                                    fadeOutSpec = androidx.compose.animation.core.tween(com.circaso.designsystem.theme.CircasoMotion.QuickMs),
+                                    placementSpec = if (CircasoTheme.reduceMotion) null else androidx.compose.animation.core.tween(com.circaso.designsystem.theme.CircasoMotion.BaseMs),
+                                ).clip(shape).background(c.surface),
+                            ) {
+                                if (i > 0) RowDivider(Modifier.padding(start = PeopleDividerInset - CircasoSpacing.s4))
+                                ContactRow(contact, onClick = { actions.onSelect(contact) })
                             }
                         }
                     }
@@ -345,3 +361,6 @@ fun BlockedContent(state: BlockedUiState, onBack: () -> Unit, onUnblock: (Person
         }
     }
 }
+
+/** The inset group's corner (ListGroup draws CircasoShapes.lg, radius-lg); rows drawn one by one need it as a size. */
+private val GroupCorner = 22.dp

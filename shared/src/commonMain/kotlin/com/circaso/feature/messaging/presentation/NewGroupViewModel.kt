@@ -147,7 +147,9 @@ class NewGroupViewModel(
     /** Back from the details goes to the people (nothing is lost); from the people it leaves. True when it was handled here. */
     fun onBack(): Boolean {
         val s = _state.value
-        if (s.step == NewGroupStep.Details && !s.creating && s.createdChatId == null) { _state.update { it.copy(step = NewGroupStep.Members) }; return true }
+        // While the group or its photo is being sent, back waits (leaving would cancel the upload half way).
+        if (s.creating) return true
+        if (s.step == NewGroupStep.Details && s.createdChatId == null) { _state.update { it.copy(step = NewGroupStep.Members) }; return true }
         return false
     }
 

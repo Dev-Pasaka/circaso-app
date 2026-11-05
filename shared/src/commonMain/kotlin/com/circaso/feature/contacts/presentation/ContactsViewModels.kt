@@ -145,7 +145,7 @@ class ContactsViewModel(
                     else -> "Found $n friends on Circaso."
                 }
                 is AppResult.Failure -> (r.error as? AppError.Api)?.takeIf { it.code == "request.rate_limited" }?.let { "You can look for friends 5 times an hour. Try again a little later." }
-                    ?: ErrorMessages.forError(r.error)
+                    ?: withRef(r.error)
             }
             local.update { it.copy(syncing = false, message = message) }
         }
