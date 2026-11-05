@@ -9,6 +9,7 @@ import com.circaso.feature.messaging.data.local.ChatMemberEntity
 import com.circaso.feature.messaging.data.local.ChatsDao
 import com.circaso.feature.messaging.data.local.MessagesDao
 import com.circaso.feature.messaging.data.remote.AddMembersRequest
+import com.circaso.feature.messaging.data.remote.AvatarChange
 import com.circaso.feature.messaging.data.remote.ChatDto
 import com.circaso.feature.messaging.data.remote.ChatSettingsDto
 import com.circaso.feature.messaging.data.remote.ChatsRemote
@@ -70,11 +71,16 @@ class ChatsRepositoryImpl(
             chat?.toDomain(members, me, groupPhoto(chat))
         }
 
-    /** The group's photo on this phone (full, else its thumbnail), from the sealed metadata; null for none or a direct chat. */
+    /**
+     * The group's photo on this phone (full, else its thumbnail), from the sealed metadata; null for none or a direct
+     * chat. The sealed reference holds the key, so it decides what is shown; the server's [ChatEntity.avatarMediaId] is
+     * where the full photo is fetched from when it names another attachment. A server without the field, or an older
+     * group it says null for, still shows the sealed photo.
+     */
     private suspend fun groupPhoto(chat: ChatEntity): String? {
         if (photos == null || chat.kind != MessagingWire.Group) return null
         val ref = groupKeys.openGroupMeta(chat.chatId, chat.sealedMeta, chat.metaVersion)?.photo ?: return null
-        return photos.localPath(ref)
+        return photos.localPath(ref, chat.avatarMediaId)
     }
 
     override suspend fun refresh(): AppResult<Unit> = when (val result = remote.chats()) {
@@ -132,7 +138,8 @@ class ChatsRepositoryImpl(
 
     /**
      * M8 for the photo: [image] is encrypted and uploaded into the group's own attachments, then the name and a small
-     * reference to it (with its thumbnail) are sealed again. Null removes the photo. Online-only, admins only.
+     * reference to it (with its thumbnail) are sealed again, and the same PATCH names the attachment as the group's
+     * `avatarMediaId` so the server keeps it. Null removes the photo (`avatarMediaId: null`). Online-only, admins only.
      */
     override suspend fun setGroupPhoto(chatId: String, image: com.circaso.core.platform.GroupPhotoImage?): AppResult<Chat> {
         val key = groupKeys.latestMetaKey(chatId) ?: return AppResult.Failure(AppError.Unexpected(null))
@@ -147,7 +154,8 @@ class ChatsRepositoryImpl(
             }
         }
         val sealed = groupKeys.sealMetaWithin(key, name, photo) ?: return AppResult.Failure(groupInvalid())
-        return patchWithRetry(chatId) { version -> UpdateGroupRequest(sealedMeta = sealed, version = version) }
+        val avatar = if (photo == null) AvatarChange.Clear else AvatarChange.set(photo.id)
+        return patchWithRetry(chatId) { version -> UpdateGroupRequest(sealedMeta = sealed, version = version, avatarMediaId = avatar) }
             .also { r -> if (r is AppResult.Success) { groupKeys.rememberMetaKey(chatId, r.value.metaVersion, key); photos?.notifyChanged() } }
     }
 
@@ -224,11 +232,17 @@ class ChatsRepositoryImpl(
         afterSomeoneLeft(chatId, iRemovedThem = byUserId == me)
     }
 
-    /** `chat.updated`: a newer version means reload (name, settings, roles). */
-    suspend fun onChatUpdated(chatId: String, version: Int) {
+    /**
+     * `chat.updated`: a newer version means reload (name, photo, settings, roles). [avatarMediaId] is the frame's
+     * photo id when it carries the key (null inside means "no photo"); a different one than stored reloads too.
+     */
+    suspend fun onChatUpdated(chatId: String, version: Int, avatarMediaId: Avatar? = null) {
         val current = dao.chat(chatId)
-        if (current == null || current.version < version) refreshChat(chatId)
+        if (current == null || current.version < version || (avatarMediaId != null && avatarMediaId.id != current.avatarMediaId)) refreshChat(chatId)
     }
+
+    /** A frame's `avatarMediaId` when the key is there ([id] null: the group has no photo). */
+    data class Avatar(val id: String?)
 
     /**
      * A new sender key for me, and, when I am the one who should (the admin who removed them, or the owner after a
@@ -269,6 +283,7 @@ class ChatsRepositoryImpl(
             readUpToOrderAt = previous?.readUpToOrderAt ?: 0L,
             updatedAt = previous?.updatedAt ?: now(),
             viaSpaceId = dto.viaSpaceId ?: previous?.viaSpaceId,
+            avatarMediaId = dto.avatarMediaId,
         )
         dao.upsertChat(entity)
         val members = dto.members.map { ChatMemberEntity(dto.chatId, it.user.userId, it.role, it.user.displayName, it.user.handle, it.user.avatarUrl, it.joinedAt) }

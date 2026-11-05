@@ -756,7 +756,10 @@ class MessagingFrameHandler(
             }
             "member.added" -> chats.onMemberAdded(d.str("chatId") ?: return, (d["userIds"] as? kotlinx.serialization.json.JsonArray).orEmpty().mapNotNull { (it as? kotlinx.serialization.json.JsonPrimitive)?.content })
             "member.removed" -> chats.onMemberRemoved(d.str("chatId") ?: return, d.str("userId") ?: return, d.str("byUserId"))
-            "chat.updated" -> chats.onChatUpdated(d.str("chatId") ?: return, d.int("version") ?: return)
+            "chat.updated" -> chats.onChatUpdated(
+                d.str("chatId") ?: return, d.int("version") ?: return,
+                if ("avatarMediaId" in d) ChatsRepositoryImpl.Avatar(d.str("avatarMediaId")) else null,
+            )
         }
     }
 

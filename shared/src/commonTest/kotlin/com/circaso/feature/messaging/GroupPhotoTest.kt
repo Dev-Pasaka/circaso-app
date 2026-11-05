@@ -8,7 +8,10 @@ import com.circaso.core.platform.MediaFiles
 import com.circaso.feature.messaging.data.keys.KeysRepositoryImpl
 import com.circaso.feature.messaging.data.keys.SignedKeyUpload
 import com.circaso.feature.messaging.data.local.SealedRecordStore
+import com.circaso.core.common.ErrorMessages
+import com.circaso.feature.messaging.data.remote.AvatarChange
 import com.circaso.feature.messaging.data.remote.ChatDto
+import com.circaso.feature.messaging.data.remote.UpdateGroupRequest
 import com.circaso.feature.messaging.data.remote.ChatMemberDto
 import com.circaso.feature.messaging.data.remote.ChatProfileDto
 import com.circaso.feature.messaging.data.remote.MessagingWire
@@ -39,6 +42,8 @@ import io.ktor.http.HttpStatusCode
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
+import kotlinx.serialization.json.JsonNull
+import kotlinx.serialization.json.JsonPrimitive
 import kotlin.io.encoding.Base64
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -70,17 +75,28 @@ class GroupPhotoTest {
 
     private var version = 1
     private var metaVersion = 1
+    /** What the fake server keeps as the group's photo: M8 sets it, clears it, or (key left out) keeps it. */
+    private var serverAvatar: String? = null
     private fun group(sealed: String?) = ChatDto(
         "g1", MessagingWire.Group, sealed, metaVersion,
         listOf(ChatMemberDto(ChatProfileDto(me, "Me"), MessagingWire.Owner, "t"), ChatMemberDto(ChatProfileDto("a", "Amina"), MessagingWire.Member, "t")),
         version = version,
+        avatarMediaId = serverAvatar,
     )
+
+    private fun applyAvatar(req: UpdateGroupRequest) {
+        when (val a = req.avatarMediaId) {
+            null -> Unit
+            JsonNull -> serverAvatar = null
+            else -> serverAvatar = (a as JsonPrimitive).content
+        }
+    }
 
     private fun image(thumbBytes: Int = 1_400) = GroupPhotoImage(ByteArray(200_000) { (it % 251).toByte() }, 1024, 1024, ByteArray(thumbBytes) { 7 })
 
     private suspend fun createGroup() {
         remote.createGroupResult = { req, _ -> AppResult.Success(group(req.sealedMeta)) }
-        remote.updateGroupResult = { _, req -> version++; metaVersion++; AppResult.Success(group(req.sealedMeta)) }
+        remote.updateGroupResult = { _, req -> version++; metaVersion++; applyAvatar(req); AppResult.Success(group(req.sealedMeta)) }
         assertIs<AppResult.Success<*>>(chats.createGroup(GroupDraft("Holiday Fund", listOf("a")), "k1"))
     }
 
@@ -156,6 +172,128 @@ class GroupPhotoTest {
         repeat(200) { if (shown != "/files/gphoto-att-1") { kotlinx.coroutines.delay(10); shown = other.chat("g1").first()!!.avatarUrl } }
         assertEquals("/files/gphoto-att-1", shown)
     }
+
+    // ---- avatarMediaId (M8, backend PR #47)
+
+    @Test fun theRequestSendsTheIdANullOrNothing() {
+        val set = json.encodeToString(UpdateGroupRequest.serializer(), UpdateGroupRequest(sealedMeta = "s", version = 3, avatarMediaId = AvatarChange.set("att-7")))
+        assertTrue("\"avatarMediaId\":\"att-7\"" in set, set)
+        val clear = json.encodeToString(UpdateGroupRequest.serializer(), UpdateGroupRequest(sealedMeta = "s", version = 3, avatarMediaId = AvatarChange.Clear))
+        assertTrue("\"avatarMediaId\":null" in clear, "explicitNulls = false must not drop the clearing null: $clear")
+        val keep = json.encodeToString(UpdateGroupRequest.serializer(), UpdateGroupRequest(sealedMeta = "s", version = 3, avatarMediaId = AvatarChange.Keep))
+        assertTrue("avatarMediaId" !in keep, keep)
+        // Every other optional stays out as before.
+        assertTrue("settings" !in keep && "null" !in keep, keep)
+    }
+
+    @Test fun aChatFromAServerWithoutTheFieldDecodes() {
+        val body = """{"chatId":"g1","kind":"GROUP","metaVersion":1,"members":[],"version":1}"""
+        assertNull(json.decodeFromString(ChatDto.serializer(), body).avatarMediaId)
+        val withIt = """{"chatId":"g1","kind":"GROUP","metaVersion":1,"members":[],"version":1,"avatarMediaId":"att-3"}"""
+        assertEquals("att-3", json.decodeFromString(ChatDto.serializer(), withIt).avatarMediaId)
+        val nulled = """{"chatId":"g1","kind":"GROUP","metaVersion":1,"members":[],"version":1,"avatarMediaId":null}"""
+        assertNull(json.decodeFromString(ChatDto.serializer(), nulled).avatarMediaId)
+    }
+
+    @Test fun settingReplacingAndClearingNameTheAttachmentInTheSamePatch() = runSuspending {
+        createGroup()
+        chats.setGroupPhoto("g1", image())
+        val first = remote.updates.last().second
+        assertEquals(JsonPrimitive("att-1"), first.avatarMediaId)
+        assertNotNull(first.sealedMeta, "the reference and the id travel together")
+        assertEquals("att-1", chatsDao.chat("g1")!!.avatarMediaId, "kept with the chat")
+
+        chats.setGroupPhoto("g1", image())
+        assertEquals(JsonPrimitive("att-2"), remote.updates.last().second.avatarMediaId)
+        assertEquals("att-2", chatsDao.chat("g1")!!.avatarMediaId)
+        assertEquals("/files/gphoto-att-2", chats.chat("g1").first()!!.avatarUrl)
+
+        chats.setGroupPhoto("g1", null)
+        assertEquals(JsonNull, remote.updates.last().second.avatarMediaId)
+        assertNull(chatsDao.chat("g1")!!.avatarMediaId)
+        assertNull(chats.chat("g1").first()!!.avatarUrl)
+    }
+
+    @Test fun aRenameLeavesTheServersPhotoAlone() = runSuspending {
+        createGroup()
+        chats.setGroupPhoto("g1", image())
+        chats.rename("g1", "Holiday Fund 2027")
+        assertNull(remote.updates.last().second.avatarMediaId, "the key is left out: keep")
+        assertEquals("att-1", chatsDao.chat("g1")!!.avatarMediaId)
+    }
+
+    @Test fun aVersionConflictRetriesWithTheSamePhoto() = runSuspending {
+        createGroup()
+        var conflicted = false
+        val normal = remote.updateGroupResult
+        remote.updateGroupResult = { id, req ->
+            if (!conflicted) { conflicted = true; version++; AppResult.Failure(AppError.Api("messaging.version_conflict", 409, null, null, emptyMap())) }
+            else normal(id, req)
+        }
+        remote.chats = listOf(group(chatsDao.chat("g1")!!.sealedMeta).copy(version = version + 1))
+        assertIs<AppResult.Success<*>>(chats.setGroupPhoto("g1", image()))
+        val (a, b) = remote.updates.takeLast(2).map { it.second }
+        assertEquals(a.avatarMediaId, b.avatarMediaId)
+        assertEquals(a.version + 1, b.version, "the retry carries the fresh version")
+        assertEquals("att-1", chatsDao.chat("g1")!!.avatarMediaId)
+    }
+
+    @Test fun aPhotoTheServerRefusesSaysToTryAnother() = runSuspending {
+        createGroup()
+        remote.updateGroupResult = { _, _ -> AppResult.Failure(AppError.Api("messaging.avatar_invalid", 400, "req-1", null, emptyMap())) }
+        val error = (chats.setGroupPhoto("g1", image()) as AppResult.Failure).error
+        assertEquals("messaging.avatar_invalid", (error as AppError.Api).code)
+        assertEquals("Couldn't use that photo. Try another one.", ErrorMessages.forError(error))
+        assertNull(chats.chat("g1").first()!!.avatarUrl, "nothing changed")
+    }
+
+    @Test fun aServerThatIgnoresTheFieldStillGetsThePhoto() = runSuspending {
+        createGroup()
+        // An older server: answers without avatarMediaId whatever was sent.
+        remote.updateGroupResult = { _, req -> version++; metaVersion++; AppResult.Success(group(req.sealedMeta).copy(avatarMediaId = null)) }
+        assertIs<AppResult.Success<*>>(chats.setGroupPhoto("g1", image()))
+        assertNull(chatsDao.chat("g1")!!.avatarMediaId)
+        assertEquals("/files/gphoto-att-1", chats.chat("g1").first()!!.avatarUrl, "the sealed photo is shown")
+    }
+
+    @Test fun anOlderGroupTheServerSaysNullForKeepsItsThumbnail() = runSuspending {
+        createGroup()
+        chats.setGroupPhoto("g1", image())
+        files.clear()
+        attachments.downloadResult = AppResult.Failure(AppError.Api("messaging.attachment_not_found", 404, null, null, emptyMap()))
+        chats.store(group(chatsDao.chat("g1")!!.sealedMeta).copy(avatarMediaId = null))
+        assertEquals("/files/gthumb-att-1", chats.chat("g1").first()!!.avatarUrl)
+    }
+
+    @Test fun anotherAttachmentFromTheServerIsTriedFirstThenTheSealedOne() = runSuspending {
+        createGroup()
+        chats.setGroupPhoto("g1", image())
+        files.clear()
+        // The server names another attachment (an older app changed the photo without the field): its size isn't the
+        // sealed one, so it is not downloaded and the sealed attachment is fetched instead.
+        attachments.sizes["att-other"] = 10L
+        chats.store(group(chatsDao.chat("g1")!!.sealedMeta).copy(avatarMediaId = "att-other"))
+        attachments.downloads.clear()
+        val sealedBlob = crypto.aesGcmSeal(ByteArray(32) { it.toByte() }, image().full)
+        val otherPhotos = GroupPhotos(attachments, HttpClient(MockEngine { respond(sealedBlob, HttpStatusCode.OK) }), crypto, files, CoroutineScope(Dispatchers.Unconfined))
+        val other = ChatsRepositoryImpl(chatsDao, FakeMessagesDao(), remote, groupKeys, sessions, { me }, photos = otherPhotos)
+        other.chat("g1").first()
+        var shown: String? = null
+        repeat(200) { if (shown != "/files/gphoto-att-1") { kotlinx.coroutines.delay(10); shown = other.chat("g1").first()!!.avatarUrl } }
+        assertEquals("/files/gphoto-att-1", shown)
+        assertEquals(listOf("att-other", "att-1"), attachments.downloads.distinct())
+    }
+
+    @Test fun aChatUpdatedFrameWithAnotherPhotoReloadsTheChat() = runSuspending {
+        createGroup()
+        chats.setGroupPhoto("g1", image())
+        val stored = chatsDao.chat("g1")!!
+        serverAvatar = null
+        remote.chats = listOf(group(stored.sealedMeta))
+        // Same version, but the frame says the photo is gone: reload.
+        chats.onChatUpdated("g1", stored.version, ChatsRepositoryImpl.Avatar(null))
+        assertNull(chatsDao.chat("g1")!!.avatarMediaId)
+    }
 }
 
 private class FakeAttachments : AttachmentsRemote {
@@ -163,13 +301,19 @@ private class FakeAttachments : AttachmentsRemote {
     val completed = mutableListOf<String>()
     var createResult: AppResult<NewAttachmentResponse>? = null
     var downloadUrl = "https://r2/x"
+    var downloadResult: AppResult<AttachmentDownloadResponse>? = null
+    val sizes = mutableMapOf<String, Long>()
+    val downloads = mutableListOf<String>()
     override suspend fun create(chatId: String, sizeBytes: Long, kind: String): AppResult<NewAttachmentResponse> {
         createResult?.let { return it }
         created += Triple(chatId, sizeBytes, kind)
         return AppResult.Success(NewAttachmentResponse("att-${created.size}", "https://r2/upload"))
     }
     override suspend fun complete(attachmentId: String): AppResult<AttachmentReadyResponse> { completed += attachmentId; return AppResult.Success(AttachmentReadyResponse(attachmentId)) }
-    override suspend fun download(attachmentId: String) = AppResult.Success(AttachmentDownloadResponse(downloadUrl))
+    override suspend fun download(attachmentId: String): AppResult<AttachmentDownloadResponse> {
+        downloads += attachmentId
+        return downloadResult ?: AppResult.Success(AttachmentDownloadResponse(downloadUrl, sizeBytes = sizes[attachmentId]))
+    }
 }
 
 private class MemoryFiles : MediaFiles {

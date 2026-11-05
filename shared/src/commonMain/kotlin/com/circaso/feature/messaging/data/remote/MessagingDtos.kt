@@ -1,6 +1,9 @@
 package com.circaso.feature.messaging.data.remote
 
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonNull
+import kotlinx.serialization.json.JsonPrimitive
 
 /*
  * Named exactly as the integration guide's schema appendix (section 11). Keys and ciphertext are standard base64.
@@ -58,12 +61,38 @@ data class ChatDto(
     val notAdded: List<String>? = null,
     /** Set by a server that had Spaces (archived 2026-11-05): such a chat is an ordinary chat on the phone now. */
     val viaSpaceId: String? = null,
+    /**
+     * The group's current photo as the server keeps it (backend PR #47): the attachment id the last photo change named,
+     * kept past the usual 30 days. Null for none, for a direct chat, and from a server older than the field.
+     */
+    val avatarMediaId: String? = null,
 )
 
 @Serializable data class ChatsResponse(val chats: List<ChatDto>)
 @Serializable data class OpenDirectChatRequest(val userId: String)
 @Serializable data class CreateGroupRequest(val sealedMeta: String, val memberIds: List<String>? = null)
-@Serializable data class UpdateGroupRequest(val sealedMeta: String? = null, val settings: ChatSettingsDto? = null, val version: Int)
+/**
+ * M8. [avatarMediaId] has three meanings, so it is a [JsonElement]: Kotlin null leaves the key out (keep the photo; the
+ * client's `explicitNulls = false` drops it), [JsonNull] sends `null` (clear it), a string sets it. Build it with
+ * [AvatarChange]. An older server ignores the key.
+ */
+@Serializable
+data class UpdateGroupRequest(
+    val sealedMeta: String? = null,
+    val settings: ChatSettingsDto? = null,
+    val version: Int,
+    val avatarMediaId: JsonElement? = null,
+)
+
+/** The values [UpdateGroupRequest.avatarMediaId] takes. */
+object AvatarChange {
+    /** The field is left out: the server keeps the group's photo. */
+    val Keep: JsonElement? = null
+    /** `"avatarMediaId": null`: the group has no photo any more. */
+    val Clear: JsonElement = JsonNull
+    /** `"avatarMediaId": "<id>"`: the group's own image attachment, uploaded and confirmed (AT1, PUT, AT2). */
+    fun set(attachmentId: String): JsonElement = JsonPrimitive(attachmentId)
+}
 @Serializable data class AddMembersRequest(val memberIds: List<String>)
 @Serializable data class MemberRemovedResponse(val removed: Boolean)
 @Serializable data class SetRoleRequest(val role: String)
