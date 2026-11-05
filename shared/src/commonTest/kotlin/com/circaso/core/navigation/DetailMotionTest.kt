@@ -9,7 +9,7 @@ import kotlin.test.assertTrue
 
 class DetailMotionTest {
     @Test
-    fun `opening, going deeper, swapping and backing out read as push, swap and pop`() {
+    fun `opening going deeper swapping and backing out read as push swap and pop`() {
         val motion = DetailMotion()
         assertEquals(DetailChange.Swap, motion.next(0).kind) // first frame: nothing to animate from
         assertEquals(DetailChange.Push, motion.next(1).kind) // a chat opens beside the list
@@ -20,7 +20,7 @@ class DetailMotionTest {
     }
 
     @Test
-    fun `each pop draws below the screen it uncovers, however many in a row`() {
+    fun `each pop draws below the screen it uncovers however many in a row`() {
         val motion = DetailMotion()
         motion.next(0)
         val a = motion.next(1)
@@ -34,7 +34,7 @@ class DetailMotionTest {
     }
 
     @Test
-    fun `split view needs an expanded, not short, window`() {
+    fun `split view needs an expanded not short window`() {
         assertTrue(WindowLayout(1180.dp, 820.dp).twoPane) // 11" iPad landscape
         assertFalse(WindowLayout(820.dp, 1180.dp).twoPane) // 11" iPad portrait: detail would be phone-narrow
         assertFalse(WindowLayout(915.dp, 412.dp).twoPane) // phone on its side

@@ -20,7 +20,7 @@ class WalletSearchTest {
     )
 
     @Test
-    fun `a payment is found by name, handle, note, coin, network or amount`() {
+    fun `a payment is found by name handle note coin network or amount`() {
         listOf("amina", "@amina", "WANJIRU", "lunch", "usdc", "base", "25.5", "0xa11").forEach { q ->
             assertTrue(toAmina.matches(q), q)
         }
@@ -29,7 +29,7 @@ class WalletSearchTest {
     }
 
     @Test
-    fun `assets list the most valuable first, then whatever is held over nothing`() {
+    fun `assets list the most valuable first then whatever is held over nothing`() {
         val chain = WalletChain(
             "ETH-SEPOLIA", "0xabc", "LIVE",
             listOf(

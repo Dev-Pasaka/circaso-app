@@ -20,7 +20,7 @@ class MomentsStateTest {
     private fun pending(state: PendingState) = PendingMoment("l", MomentKind.Image, state, null, 0)
 
     @Test
-    fun `my ring shows add, seen, posting, waiting and failed`() {
+    fun `my ring shows add seen posting waiting and failed`() {
         assertEquals(MyRing.Add, MomentsUiState().myRing)
         assertEquals(MyRing.Seen, MomentsUiState(myMoments = listOf(moment("m", true, mine = true))).myRing)
         assertEquals(MyRing.Posting, MomentsUiState(pending = listOf(pending(PendingState.Posting))).myRing)
@@ -29,7 +29,7 @@ class MomentsStateTest {
     }
 
     @Test
-    fun `skeletons only before the first answer, and empty only after it`() {
+    fun `skeletons only before the first answer and empty only after it`() {
         assertTrue(MomentsUiState().loading)
         assertFalse(MomentsUiState(refreshed = true).loading)
         assertFalse(MomentsUiState().empty)
@@ -42,7 +42,7 @@ class MomentsStateTest {
         MomentRing(id, "Person $id", null, listOf(moment("m-$id", viewed).copy(posterId = id, postedAt = at)), muted = muted)
 
     @Test
-    fun `the Moments chip sorts people into Recent, Viewed and Muted, newest first`() {
+    fun `the Moments chip sorts people into Recent Viewed and Muted newest first`() {
         val s = MomentsUiState(
             rings = listOf(ring("old-new", false, 10), ring("seen", true, 30), ring("new", false, 50), ring("muted-new", false, 60, muted = true), ring("seen-old", true, 5)),
         )
@@ -63,7 +63,7 @@ class MomentsStateTest {
     }
 
     @Test
-    fun `my moment row counts the people who saw it, not every view`() {
+    fun `my moment row counts the people who saw it not every view`() {
         val mine = listOf(moment("1", true, mine = true).copy(viewCount = 4, postedAt = 100), moment("2", true, mine = true).copy(viewCount = 6, postedAt = 200))
         val s = MomentsUiState(myMoments = mine)
         assertEquals(6, s.myViews)

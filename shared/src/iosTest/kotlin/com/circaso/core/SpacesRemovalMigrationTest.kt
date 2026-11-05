@@ -20,6 +20,7 @@ import kotlin.test.assertTrue
  * The version-19 tables are created from the exported schema (`shared/schemas/.../19.json`), so Room sees a real
  * version-19 file and runs the same migration a phone does.
  */
+@OptIn(kotlinx.cinterop.ExperimentalForeignApi::class)
 class SpacesRemovalMigrationTest {
     @Test
     fun anInstallWithSpacesUpgradesAndKeepsEverythingElse() = runBlocking {
