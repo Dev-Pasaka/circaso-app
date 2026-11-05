@@ -98,51 +98,54 @@ internal fun ChatMoneyCard(
         s.spaceId != null -> "Pay $group"
         else -> "Send to $first"
     }
-    // Slim (Pasaka, 2026-11-05): only what decides the payment. The amount in the person's currency and in the coin, the
-    // one fee on the same line, Paying from, and Send. Who it goes to is the chat itself; the network is what `@` picked;
-    // the note is the text they typed. Problems show only when there is one.
+    // A slim summary over the composer (Pasaka, 2026-11-05): how much in the person's currency, the coin and the one fee
+    // under it, and Paying from. Who it goes to is the chat; the network is what `@` picked; the note is what was typed.
+    // The composer's arrow is Pay (straight to the PIN), so a `#` card has no button of its own; a payout card, which
+    // isn't tied to the composer, carries a small one on its right. Problems show only when there is one.
+    val ownButton = onClose != null
     val shape = CircasoShapes.md
     Column(
         modifier.fillMaxWidth().padding(horizontal = CircasoSpacing.s3).padding(bottom = CircasoSpacing.s2)
             .then(if (maxHeight != androidx.compose.ui.unit.Dp.Unspecified) Modifier.heightIn(max = maxHeight) else Modifier)
-            // Solid, not glass: on Android the glass has no blur, so the chat behind read through it.
-            .shadow(8.dp, shape, ambientColor = androidx.compose.ui.graphics.Color.Black.copy(alpha = 0.2f), spotColor = androidx.compose.ui.graphics.Color.Black.copy(alpha = 0.2f))
+            .shadow(4.dp, shape, ambientColor = androidx.compose.ui.graphics.Color.Black.copy(alpha = 0.18f), spotColor = androidx.compose.ui.graphics.Color.Black.copy(alpha = 0.18f))
             .clip(shape).background(c.surfaceRaised)
-            .then(if (c.isHighContrast) Modifier.border(1.dp, c.separator, shape) else Modifier)
-            .padding(horizontal = CircasoSpacing.s3, vertical = CircasoSpacing.s2),
+            .border(1.dp, c.separator, shape)
+            .padding(start = CircasoSpacing.s4, end = CircasoSpacing.s2, top = CircasoSpacing.s2, bottom = CircasoSpacing.s2),
         verticalArrangement = Arrangement.spacedBy(CircasoSpacing.s2),
     ) {
+        // Top: how much, and which wallet it leaves. Below, on its own line with room to breathe: the coin and the fee.
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(CircasoSpacing.s2)) {
-            Column(Modifier.weight(1f).semantics(mergeDescendants = true) {
-                heading()
-                contentDescription = listOfNotNull(title, amount, s.usdcText.takeIf { s.fiatText != null }, "the amount the admins approved".takeIf { s.payout }).joinToString(", ")
-            }) {
-                BasicText(
-                    amount ?: "Type an amount after #",
-                    style = (if (amount != null) t.title3 else t.callout).copy(color = if (amount != null) c.ink else c.inkSecondary, fontWeight = FontWeight.SemiBold, fontFeatureSettings = "tnum"),
-                    maxLines = 1, overflow = TextOverflow.Ellipsis,
+            BasicText(
+                amount ?: "Type an amount after #",
+                Modifier.weight(1f).semantics {
+                    heading()
+                    contentDescription = listOfNotNull(title, amount, s.usdcText.takeIf { s.fiatText != null }, "the amount the admins approved".takeIf { s.payout }).joinToString(", ")
+                },
+                style = (if (amount != null) t.headline else t.subhead).copy(color = if (amount != null) c.ink else c.inkSecondary, fontWeight = FontWeight.SemiBold, fontFeatureSettings = "tnum"),
+                maxLines = 1, overflow = TextOverflow.Ellipsis,
+            )
+            if (s.showPayingFrom) PayingFromChip(s.payingFrom, if (s.canSwitch && !signing) onChoose else null)
+            if (ownButton) {
+                CircasoButton(
+                    text = if (signing) "Waiting…" else if (s.failure != null) "Try Again" else "Pay",
+                    onClick = onPay, size = ButtonSize.Small, enabled = s.canPay, busy = signing,
                 )
-                if (amount != null) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        val coin = listOfNotNull(s.usdcText.takeIf { s.fiatText != null }, "approved".takeIf { s.payout }).joinToString(" · ")
-                        if (coin.isNotEmpty()) BasicText("$coin · ", style = t.footnote.copy(color = c.inkSecondary, fontFeatureSettings = "tnum"), maxLines = 1)
-                        BasicText("Fee ", style = t.footnote.copy(color = c.inkSecondary))
-                        com.circaso.feature.wallet.presentation.FeeValue(s, onRetryQuote, t.footnote)
-                    }
-                }
+                if (!signing) CircasoIconButton(CircasoIcon.Close, "Close", onClose!!)
             }
-            if (s.showPayingFrom) {
-                Box(Modifier.defaultMinSize(minHeight = CircasoSizes.controlMd), contentAlignment = Alignment.Center) {
-                    PayingFromChip(s.payingFrom, if (s.canSwitch && !signing) onChoose else null)
-                }
+        }
+        // Below, with room to breathe: just the fee, in the person's currency ("Fee KES 5.17", or "No fee").
+        if (amount != null) {
+            Row(Modifier.fillMaxWidth().padding(end = CircasoSpacing.s2), verticalAlignment = Alignment.CenterVertically) {
+                val quiet = t.caption1.copy(color = c.inkSecondary, fontFeatureSettings = "tnum")
+                val charged = (s.fee as? com.circaso.feature.wallet.presentation.PayFee.Quoted)?.let { !MinorUnits.isZero(it.amountMinor) } ?: false
+                if (charged) BasicText("Fee ", style = quiet)
+                com.circaso.feature.wallet.presentation.FeeValue(s, onRetryQuote, quiet, compact = true)
             }
-            if (onClose != null && !signing) CircasoIconButton(CircasoIcon.Close, "Close", onClose)
         }
         // Only when something needs saying; scrolls if it ever outgrows the room above the composer.
         val (line, tone) = statusLine(s, first)
-        val anything = s.failure != null || s.feeChange != null || s.block != null || line != null
-        if (anything) {
-            Column(Modifier.fillMaxWidth().weight(1f, fill = false).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(CircasoSpacing.s2)) {
+        if (s.failure != null || s.feeChange != null || s.block != null || line != null) {
+            Column(Modifier.fillMaxWidth().weight(1f, fill = false).verticalScroll(rememberScrollState()).padding(end = CircasoSpacing.s2), verticalArrangement = Arrangement.spacedBy(CircasoSpacing.s2)) {
                 // GW19 / G2: refused before it reached the chain. Nothing was taken; a payout's approval stands.
                 s.failure?.let { f ->
                     com.circaso.designsystem.chrome.Banner(
@@ -162,11 +165,17 @@ internal fun ChatMoneyCard(
                 }
             }
         }
-        CircasoButton(
-            text = payLabel(s, amount, com.circaso.feature.wallet.presentation.buttonTotal(s)),
-            onClick = onPay, size = ButtonSize.Medium, block = true, enabled = s.canPay, busy = signing,
-        )
     }
+}
+
+/** "3.869969 USDC" as "3.87 USDC": dollar coins read as money on the card; other coins keep their digits. */
+private fun coinShort(text: String?): String? {
+    if (text == null) return null
+    val parts = text.split(' ')
+    if (parts.size != 2 || parts[1] !in setOf("USDC", "EURC", "USDT")) return text
+    val v = parts[0].replace(",", "").toDoubleOrNull() ?: return text
+    val cents = kotlin.math.round(v * 100).toLong()
+    return "${cents / 100}.${(cents % 100).toString().padStart(2, '0')} ${parts[1]}"
 }
 
 /** The card's button, and the composer arrow's spoken label while a payment is in the field. */

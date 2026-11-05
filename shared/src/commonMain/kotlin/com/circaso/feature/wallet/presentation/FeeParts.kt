@@ -101,7 +101,7 @@ private fun verb(s: PayUiState) = if (s.toGroup || s.payout || s.contribution) "
  * otherwise the fee and its rate or "minimum", dimmed while a newer answer is on its way). [onRetry] asks W17 again.
  */
 @Composable
-internal fun FeeValue(s: PayUiState, onRetry: () -> Unit, style: TextStyle, modifier: Modifier = Modifier) {
+internal fun FeeValue(s: PayUiState, onRetry: () -> Unit, style: TextStyle, modifier: Modifier = Modifier, compact: Boolean = false) {
     val c = CircasoTheme.colors
     val fee = s.fee
     val shown = when {
@@ -123,7 +123,7 @@ internal fun FeeValue(s: PayUiState, onRetry: () -> Unit, style: TextStyle, modi
             ) { BasicText("Try Again", style = CircasoTheme.typography.subhead.copy(color = c.action, fontWeight = FontWeight.SemiBold)) }
             "none" -> BasicText("—", style = style.copy(color = c.inkSecondary))
             else -> BasicText(
-                s.feeText,
+                if (compact) s.feeShort else s.feeText,
                 style = style.copy(color = if (s.feeStale) c.inkSecondary else c.ink, textAlign = TextAlign.End, fontFeatureSettings = "tnum"),
             )
         }

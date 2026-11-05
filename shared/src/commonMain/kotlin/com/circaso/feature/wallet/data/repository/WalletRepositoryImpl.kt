@@ -537,9 +537,9 @@ class WalletRepositoryImpl(
          * contract wallets took 1 min 43 s on testnet (2026-11-05), past the old 60 s, so a space was left "failed" though
          * its wallet was made; the answer still lands at once (frame or the 3 s check) when it's quicker.
          */
-        // Back to 60 s until the server syncs wallets on its own (fix/fast-wallet-setup): today only a new set-up
-        // call makes it ask Circle, so a longer wait only delays the Finish Wallet Setup that completes it.
-        const val AwaitMillis = 60_000L
+        // The server now syncs on Circle's notification and on these polls (backend PR #36), so a wallet is ready
+        // seconds after the PIN; 2 minutes is the margin for a slow testnet, not the usual wait.
+        const val AwaitMillis = 120_000L
         const val PollMillis = 3_000L
         /** History rows older than this don't add cards to chats (a new phone isn't flooded with old money). */
         const val ChatCardsWithinMillis = 30L * 24 * 60 * 60 * 1000

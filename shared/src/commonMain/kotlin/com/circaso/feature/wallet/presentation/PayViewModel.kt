@@ -268,6 +268,10 @@ data class PayUiState(
      * The fee row's words (GW9b, GW13, GW13b, GW13d): "No fee", "Working it out", "KES 2.50 · 0.5%", "KES 5 · minimum",
      * and for a payout request, whose fee is set when it is paid, "about KES 50 · 1%, set when paid" (GW9c).
      */
+    /** The fee alone, in the person's currency ("KES 5.17"), for the chat's slim card; "No fee" when none is taken. */
+    val feeShort: String
+        get() = (fee as? PayFee.Quoted)?.takeIf { !MinorUnits.isZero(it.amountMinor) }?.let { moneyText(it.amountMinor) } ?: feeText
+
     val feeText: String
         get() = when (val f = fee) {
             PayFee.None -> "No fee"
