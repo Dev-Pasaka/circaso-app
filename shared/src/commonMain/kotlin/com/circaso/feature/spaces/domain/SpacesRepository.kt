@@ -100,7 +100,7 @@ interface SpacesRepository {
     // ---- Reports (SR3, SR4)
     suspend fun report(spaceId: String, postId: String?, reason: ReportReason, detail: String?): AppResult<String>
     suspend fun reports(spaceId: String, open: Boolean, cursor: String? = null): AppResult<Page<ReportGroup>>
-    suspend fun resolve(spaceId: String, postId: String, action: ReportAction, muteDuration: MuteDuration? = null): AppResult<ReportGroup>
+    suspend fun resolve(spaceId: String, postId: String, action: ReportAction, muteDuration: MuteDuration? = null): AppResult<Unit>
 
     /** A `spaces` realtime frame; `resync` reloads mine and invites. */
     suspend fun onFrame(type: String, data: kotlinx.serialization.json.JsonObject?)

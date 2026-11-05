@@ -337,6 +337,8 @@ fun AppNavigation(forceUpdate: Boolean, home: @Composable () -> Unit) {
                 val threadViewModel = koinViewModel<ThreadViewModel>(key = route.chatId, parameters = { parametersOf(route.chatId) })
                 val thread by threadViewModel.state.collectAsState()
                 val peer = thread.chat?.peerId
+                // Spaces SH2: a private chat that came through a space (its owner and one person), labelled on both sides.
+                val viaSpace = com.circaso.feature.spaces.presentation.chat.rememberViaSpace(thread.chat?.viaSpaceId, thread.myUserId)
                 val goal = thread.chama?.goal
                 // Group wallets (GW9a2, GW9): a group whose wallet is active takes contributions into it; its signer pays payouts from it.
                 val groupMoney = thread.groupMoney
@@ -376,7 +378,14 @@ fun AppNavigation(forceUpdate: Boolean, home: @Composable () -> Unit) {
                     focusLocalId = route.focusLocalId,
                     onOpenLocation = { m -> backStack.add(LocationMapRoute(route.chatId, m.localId)) },
                     // C3: `#500` pays without leaving the chat; the chat's money card is the review. One per chat, reset after each payment.
+                    viaSpace = viaSpace,
+                    onPayBlocked = { viaSpace?.let { spacesNav.joinSpace(it.spaceId) } },
                     quickPay = when {
+                        // SH2b: in the private chat with a space's owner, `#2000` pays the space's wallet (not the owner's own).
+                        viaSpace != null && !viaSpace.iAmOwner -> koinViewModel<com.circaso.feature.wallet.presentation.PayViewModel>(
+                            key = "quickpay-space-${route.chatId}-${viaSpace.spaceName}",
+                            parameters = { parametersOf(PayIntent(chatId = route.chatId, displayName = viaSpace.spaceName, spaceId = viaSpace.spaceId, inChat = true)) },
+                        )
                         peer != null -> koinViewModel<com.circaso.feature.wallet.presentation.PayViewModel>(
                             key = "quickpay-${route.chatId}",
                             parameters = { parametersOf(PayIntent(userId = peer, chatId = route.chatId, displayName = thread.chat?.title, inChat = true)) },

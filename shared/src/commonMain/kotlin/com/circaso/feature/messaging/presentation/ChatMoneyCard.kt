@@ -77,7 +77,13 @@ internal fun ChatMoneyCard(
     onRetryQuote: () -> Unit = {},
     /** GW14 / GW20's "… Instead": the most that fits, with its fee. */
     onUseMax: () -> Unit = {},
+    /** Spaces SH2e: why this payment can't be made yet ("Only people who follow … can pay it"); no quote, no fee row. */
+    blocked: String? = null,
+    /** SH2e: what the button does instead of Pay ("Follow to Pay", "Join to Pay"). */
+    blockedAction: String? = null,
+    onBlocked: () -> Unit = {},
 ) {
+    if (blocked != null) { SpacePayBlockedCard(s, blocked, blockedAction, onBlocked, modifier); return }
     val c = CircasoTheme.colors
     val t = CircasoTheme.typography
     val payee = s.payee
@@ -89,6 +95,7 @@ internal fun ChatMoneyCard(
         s.requestPayout -> "Request Payout from ${s.walletName}"
         s.groupPayout || s.payout -> "Pay Payout to $first"
         s.toGroup || s.contribution -> "Add to ${if (s.toGroup) group else s.goalName ?: group}"
+        s.spaceId != null -> "Pay $group"
         else -> "Send to $first"
     }
     Column(
@@ -155,7 +162,7 @@ internal fun ChatMoneyCard(
                     // §7b's one fee (GW13*): worked out by W17 for exactly this payment; a request's is "about", set when paid.
                     CardRowContent("Fee") { com.circaso.feature.wallet.presentation.FeeValue(s, onRetryQuote, t.footnote) }
                     com.circaso.feature.wallet.presentation.totalValue(s)?.let { CardRow("Total", it) }
-                    CardRow(if (s.toGroup) "$group receives" else "$first receives", amount)
+                    CardRow(if (s.toGroup || s.spaceId != null) "$group receives" else "$first receives", amount)
                 }
             }
             // GW9a2/GW9d: where the group's target will stand once this lands.
@@ -197,7 +204,7 @@ internal fun payLabel(s: PayUiState, amount: String? = s.fiatText ?: s.usdcText,
     s.step == PayStep.Signing -> "Waiting for your PIN…"
     s.failure != null -> "Try Again"
     s.requestPayout -> if (amount != null) "Request $amount Payout" else "Request Payout"
-    s.toGroup || s.contribution || s.payout -> if (total != null) "Pay $total" else "Pay"
+    s.toGroup || s.contribution || s.payout || s.spaceId != null -> if (total != null) "Pay $total" else "Pay"
     else -> if (total != null) "Send $total" else "Send"
 }
 

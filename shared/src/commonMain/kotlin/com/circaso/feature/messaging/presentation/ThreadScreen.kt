@@ -146,6 +146,10 @@ fun ThreadScreen(
     onMoneyPromptHandled: () -> Unit = {},
     focusLocalId: Long? = null,
     onOpenMoment: (posterId: String?, momentId: String) -> Unit = { _, _ -> },
+    /** Spaces SH2: this is the private chat with a space's owner (header label, first line, `#` pays the space). */
+    viaSpace: com.circaso.feature.spaces.presentation.chat.ViaSpace? = null,
+    /** SH2e: Follow to Pay / Join to Pay on the money card, for someone not in the space. */
+    onPayBlocked: () -> Unit = {},
 ) {
     val state by viewModel.state.collectAsState()
     val pay = quickPay?.let { vm ->
@@ -174,6 +178,7 @@ fun ThreadScreen(
         payout = paying, onPayoutClose = onPayoutClose, moneyPrompt = moneyPrompt, onMoneyPromptHandled = onMoneyPromptHandled,
         notice = if (payoutBusy) "This payout is already on its way." else null, onNoticeShown = { payoutBusy = false },
         onLoadOlder = viewModel::onLoadOlder, onSavePeer = viewModel::onSavePeer, onOpenMoment = onOpenMoment, onReactTo = viewModel::onReactTo,
+        viaSpace = viaSpace, onPayBlocked = onPayBlocked,
         media = viewModel.media?.let { m ->
             ThreadMediaActions(
                 canShareLocation = m.canShareLocation, onPhoto = viewModel::onSendPhoto, onLocation = viewModel::onSendLocation,
@@ -245,6 +250,8 @@ fun ThreadContent(
     onReactTo: (messageId: String, emoji: String?) -> Unit = { _, _ -> },
     /** A reply's quoted moment was tapped: open it ([posterId] null for my own). */
     onOpenMoment: (posterId: String?, momentId: String) -> Unit = { _, _ -> },
+    viaSpace: com.circaso.feature.spaces.presentation.chat.ViaSpace? = null,
+    onPayBlocked: () -> Unit = {},
 ) {
     val c = CircasoTheme.colors
     var toastPayError by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf<String?>(null) }
@@ -451,9 +458,12 @@ fun ThreadContent(
         topBar = {
             ThreadHeader(
                 title = state.chat?.title ?: "Chat",
-                subtitle = state.subtitle,
+                subtitle = viaSpace?.subtitle ?: state.subtitle,
                 onBack = onBack,
-                avatar = { Avatar(state.chat?.title ?: "", size = CircasoSizes.avatarMd, imageUrl = state.chat?.avatarUrl) },
+                avatar = {
+                    if (viaSpace != null) com.circaso.feature.spaces.presentation.chat.ViaSpaceAvatar(state.chat?.title ?: "", state.chat?.avatarUrl, viaSpace)
+                    else Avatar(state.chat?.title ?: "", size = CircasoSizes.avatarMd, imageUrl = state.chat?.avatarUrl)
+                },
                 // WhatsApp's header: back, who it is (tap for their profile, with video call and Send money), and Call.
                 onTitle = onInfo,
                 trailingCount = if (onCall != null && state.isGroup) 2 else 1,
@@ -677,6 +687,8 @@ fun ThreadContent(
                     }
                     }
                 }
+                // SH2: the private chat with a space's owner says first who can read it.
+                if (viaSpace != null) item(key = "via-space") { SystemLine(viaSpace.firstLine) }
             }
             // Back to the latest, once the person has scrolled up through older messages.
             androidx.compose.animation.AnimatedVisibility(
@@ -712,13 +724,13 @@ fun ThreadContent(
                         else -> onDraft(text)
                     }
                 },
-                placeholder = if ((chama != null || state.groupMoney != null) && state.canContribute) "Message, or #amount to add" else if (!state.isGroup && !state.isSupport && onPay != null) "Message, or #amount to send" else "Message",
+                placeholder = if (viaSpace != null && !viaSpace.iAmOwner && payable) "Message, or #amount to pay" else if ((chama != null || state.groupMoney != null) && state.canContribute) "Message, or #amount to add" else if (!state.isGroup && !state.isSupport && onPay != null) "Message, or #amount to send" else "Message",
                 onAttach = if (media != null) ({ attaching = true }) else null,
                 focusRequester = composerFocus,
                 sendLabel = if (paying) quickPay?.state?.let { q -> payLabel(q) + (q.payee?.displayName?.takeIf { !q.toGroup && q.failure == null && q.step != com.circaso.feature.wallet.presentation.PayStep.Signing }?.let { " to $it" } ?: "") } ?: "Send" else "Send",
                 showSend = paying || media == null || state.draft.isNotBlank(),
                 trailing = if (payChip == null && media != null && state.draft.isBlank()) ({ VoiceButton(state.recording, media.onVoiceStart, media.onVoiceEnd) }) else null,
-                canSend = if (paying) quickPay?.state?.canPay == true else state.canSend,
+                canSend = if (paying) quickPay?.state?.canPay == true && viaSpace?.payBlocked == null else state.canSend,
                 // The composer's arrow is the card's Pay: straight to the PIN, nothing in between.
                 onSend = if (paying) ({ quickPay?.onPay?.invoke(); Unit }) else onSend,
                 chip = payChip,
@@ -747,7 +759,7 @@ fun ThreadContent(
                         paying && quickPay != null,
                         enter = if (CircasoTheme.reduceMotion) fadeIn(tween(CircasoMotion.QuickMs)) else fadeIn(tween(CircasoMotion.QuickMs)) + androidx.compose.animation.slideInVertically(tween(CircasoMotion.QuickMs)) { it / 2 },
                         exit = fadeOut(tween(CircasoMotion.QuickMs / 2)),
-                    ) { quickPay?.let { q -> ChatMoneyCard(q.state, q.onPay, { q.onChoosing(true) }, cardMotion, maxHeight = cardMax, onRetryQuote = q.onRetryQuote, onUseMax = q.onUseMax) } }
+                    ) { quickPay?.let { q -> ChatMoneyCard(q.state, q.onPay, { q.onChoosing(true) }, cardMotion, maxHeight = cardMax, onRetryQuote = q.onRetryQuote, onUseMax = q.onUseMax, blocked = viaSpace?.payBlocked, blockedAction = viaSpace?.payBlockedAction, onBlocked = onPayBlocked) } }
                     // An approved request's Pay (D5/GW9): the same card, the amount and payee locked by the approval.
                     AnimatedVisibility(
                         payout != null,
