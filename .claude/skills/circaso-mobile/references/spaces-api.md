@@ -226,6 +226,7 @@ owner sends directly.
   `quoteId` on W4; the fee is charged on top in the same signature, the space receives exactly `amount`. A payment
   *from* a space wallet is priced the same way (sender SPACE). Spaces have no daily cap (§7a). W17 runs the same
   space checks as W4 (`wallet.space_not_member`, `wallet.space_payment_invalid`, …).
+- **`payment.received`** for a space wallet carries `ownerType: "SPACE"` and `spaceName` (group wallets `ownerType: "GROUP"`); its push names the space.
 - **W5** and the events gain `fromSpaceId`, `toSpaceId`, `spacePaymentId`. Frames for a space wallet carry `walletId`:
   `transfer.updated` and `payment.received` go to the owner; `wallet.ready` to the owner and admins.
 - **I14** (delete account) is refused with `wallet.group_funds_remaining` while a space wallet you sign for holds money
@@ -266,7 +267,7 @@ Phones offline get these from replay on reconnect (`resync` beyond 7 days: read 
 
 | `kind` | When | Text |
 | --- | --- | --- |
-| `space.post` | a new post, to members whose `notifications` is `ALL` (or `MENTIONS` when it replies to them or is by the team) | "{space}" / "{author}: {first 80 characters, or Photo/Video/Voice note}" |
+| `space.post` | a new post, to members whose `notifications` is `ALL` (or `MENTIONS` when it replies to them or is by the team) | "{space}" / public spaces: "{author}: {first 80 characters, or Photo/Video/Voice note}"; members-only and invite-only: "New post in {space}" |
 | `space.invited` | SP18 | "{inviter} invited you to {space}" |
 | `space.request` | SP14, to the owner and admins | "{name} asked to join {space}" |
 | `space.joined` | membership confirmed, request accepted | "You're in {space}" / "Welcome to {space}" |

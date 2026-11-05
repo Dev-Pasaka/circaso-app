@@ -177,6 +177,19 @@ to the space **publicly** (in the space chat) or **privately** (one-to-one in th
 - ~~Q19~~ **Decided:** the owner sets one-time, monthly or yearly; renewals are paid manually by the member after a
   reminder, never deducted.
 
+### Decided 2026-11-05 (phase 3 backend, PR #33; premium standard under Pasaka's delegation)
+- **Becoming members-only keeps everyone already in**, free and for good (`complimentary`); new members pay.
+- **The membership receipt card is posted by the payer's app** into the private chat once the payment confirms (the
+  server can't write into an end-to-end encrypted chat); the renewal reminder is a push, a frame and the banner.
+- **A ban works both ways**: the banned person can't message the owner, and the owner can't message them, in the
+  private chat via that space.
+- **Space handles are their own namespace** (`circaso.app/s/{handle}`), separate from people's @usernames.
+- **Admins' member search** matches names over at most 5,000 members (enough for now; an index when spaces grow).
+- **Lock-screen privacy**: a post's push shows its text only for public spaces; members-only and invite-only spaces
+  push "New post in {space}".
+- **Money into a space wallet** is pushed naming the space ("Amina paid Sneaker Drop", "Sneaker Drop received
+  money"), never "a group wallet".
+
 ### Space chat is not end-to-end encrypted (decided 2026-11-03)
 Anyone can join a public space, so encrypting it end to end would protect nothing and would break search, moderation
 and large membership. Space posts are **encrypted in transit and at rest on the server, not end to end**, and the
