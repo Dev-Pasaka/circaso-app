@@ -17,6 +17,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.foundation.layout.heightIn
@@ -46,23 +48,42 @@ import com.circaso.designsystem.theme.CircasoSizes
 import com.circaso.designsystem.theme.CircasoSpacing
 import com.circaso.designsystem.theme.CircasoTheme
 
-/** [onVoice] opens the live conversation (A11); null where this phone can only record clips, and the mic records one instead. */
+/**
+ * [onVoice] opens the live conversation (A11); null where this phone can only record clips, and the mic records one
+ * instead. [onVoiceSettings] opens Asha's voice picker from her menu (Settings → Voice).
+ */
 @Composable
-fun AshaScreen(viewModel: AshaViewModel, onBack: () -> Unit, onVoice: (() -> Unit)? = null) {
+fun AshaScreen(viewModel: AshaViewModel, onBack: () -> Unit, onVoice: (() -> Unit)? = null, onVoiceSettings: (() -> Unit)? = null) {
     val state by viewModel.state.collectAsState()
     DisposableEffect(viewModel) { onDispose { viewModel.onCancelRecording() } }
     AshaContent(
         state, onBack, viewModel::onDraft, viewModel::onSend, viewModel::onClearRequested, viewModel::onClearConfirmed, viewModel::onClearDismissed,
         onMic = viewModel::onMic, onSpeak = viewModel::onSpeak, onSuggestion = viewModel::onSuggestion, onVoice = onVoice,
-        onHistory = viewModel::onHistory, onNewChat = viewModel::onNewChat, onOpenConversation = viewModel::onOpenConversation,
-        onDeleteConversation = viewModel::onDeleteConversation, reactions = viewModel.reactions,
+        onMenu = viewModel::onMenu,
+        menu = AshaMenuActions(
+            onClose = { viewModel.onMenu(false) },
+            onBack = viewModel::onSheetBack,
+            onPage = viewModel::onSheet,
+            onNewChat = viewModel::onNewChat,
+            onOpen = viewModel::onOpenConversation,
+            onRequestDelete = viewModel::onRequestDelete,
+            onCancelDelete = viewModel::onCancelDelete,
+            onConfirmDelete = viewModel::onConfirmDelete,
+            onRetryUsage = viewModel::onRetryUsage,
+            onVoiceSettings = onVoiceSettings?.let { open -> { viewModel.onMenu(false); open() } },
+            onDeleteAll = { viewModel.onMenu(false); viewModel.onClearRequested() },
+        ),
     )
 }
 
 /** Suggestions the design shows above the composer (F1); the money ones arrive with the wallet. */
 private val Suggestions = listOf("What can you help me with?", "Who did I chat with this week?", "How does Circaso keep my chats private?")
 
-/** Asha's chat (design F1): her mark in the header, the thread, suggestion chips over the composer, the mic for voice. Stateless so it can be previewed. */
+/**
+ * Asha's chat (design F1): Back, her mark and name in the middle, and the menu (⋮ / ellipsis) on the right, which opens
+ * the sheet with New chat, Recent chats, Usage & credits and Settings. Then the thread, suggestion chips over the
+ * composer, and the mic for voice. Stateless so it can be previewed.
+ */
 @Composable
 fun AshaContent(
     state: AshaUiState,
@@ -76,12 +97,8 @@ fun AshaContent(
     onSpeak: (String) -> Unit = {},
     onSuggestion: (String) -> Unit = {},
     onVoice: (() -> Unit)? = null,
-    onHistory: (Boolean) -> Unit = {},
-    onNewChat: () -> Unit = {},
-    onOpenConversation: (String) -> Unit = {},
-    onDeleteConversation: (String) -> Unit = {},
-    /** One-shot mascot reactions (the server's `reaction` tags). */
-    reactions: kotlinx.coroutines.flow.Flow<com.circaso.feature.assistant.domain.AshaReaction> = kotlinx.coroutines.flow.emptyFlow(),
+    onMenu: (Boolean) -> Unit = {},
+    menu: AshaMenuActions = AshaMenuActions(),
 ) {
     val c = CircasoTheme.colors
     val t = CircasoTheme.typography
@@ -91,19 +108,19 @@ fun AshaContent(
                 title = "Asha",
                 subtitle = state.conversationTitle ?: "Reads your activity · can't move money",
                 onBack = onBack,
-                // Her animated head (asha.riv, `framing` = icon) at the header size; her mark if the file can't be drawn.
-                avatar = { AshaAvatar(state.mascot, AshaAvatarVariant.Icon, Modifier.size(CircasoSizes.avatarSm), reactions) { AshaMark(size = CircasoSizes.avatarSm) } },
-                trailing = {
-                    // Past conversations, and a fresh one (as Claude): each keeps its own context.
-                    CircasoIconButton(CircasoIcon.Clock, "Past conversations", { onHistory(true) })
-                    CircasoIconButton(CircasoIcon.Plus, "New conversation", onNewChat, enabled = state.online)
-                },
+                avatar = { AshaMark(size = CircasoSizes.avatarSm) },
+                // Everything else about Asha (new chat, recents, usage, settings) lives in her menu.
+                trailing = { AshaMenuButton({ onMenu(true) }) },
+                trailingCount = 1,
             )
         },
         banner = { ConnectionBanner(showing = "You can read past answers") },
         overlay = {
-            CircasoSheet(state.showHistory, { onHistory(false) }, label = "Conversations") {
-                ConversationsSheet(state, onNew = onNewChat, onOpen = onOpenConversation, onDelete = onDeleteConversation, onClearAll = { onHistory(false); onClearRequested() })
+            CircasoSheet(state.sheet != null, { onMenu(false) }, label = "Asha menu") {
+                // The last page stays while the sheet slides away, so it doesn't jump back to the menu as it closes.
+                val last = remember { mutableStateOf(AshaSheet.Menu) }
+                androidx.compose.runtime.SideEffect { state.sheet?.let { last.value = it } }
+                AshaMenuSheetContent(state, state.sheet ?: last.value, menu)
             }
             ConfirmSheet(
                 visible = state.confirmClear, title = "Delete all conversations?",
@@ -206,44 +223,3 @@ private fun BubbleView(b: Bubble, speaking: Boolean, canSpeak: Boolean, onSpeak:
 }
 
 private fun clock(seconds: Int) = "${seconds / 60}:${(seconds % 60).toString().padStart(2, '0')}"
-
-/** Past conversations, newest first: open one, delete one, or start fresh. */
-@Composable
-private fun ConversationsSheet(
-    state: AshaUiState,
-    onNew: () -> Unit,
-    onOpen: (String) -> Unit,
-    onDelete: (String) -> Unit,
-    onClearAll: () -> Unit,
-) {
-    val c = CircasoTheme.colors
-    val t = CircasoTheme.typography
-    val current = state.currentConversation ?: state.conversations.firstOrNull()?.id
-    BasicText("Conversations", style = t.title2.copy(color = c.ink))
-    com.circaso.designsystem.components.CircasoButton("New Conversation", onNew, size = com.circaso.designsystem.components.ButtonSize.Large, block = true, enabled = state.online)
-    if (state.conversations.isEmpty()) {
-        BasicText("Your conversations with Asha will show here.", style = t.footnote.copy(color = c.inkSecondary))
-    } else {
-        androidx.compose.foundation.lazy.LazyColumn(Modifier.fillMaxWidth().heightIn(max = 420.dp)) {
-            items(state.conversations, key = { it.id }) { conv ->
-                Row(
-                    Modifier.fillMaxWidth().clip(com.circaso.designsystem.theme.CircasoShapes.md)
-                        .background(if (conv.id == current) c.fill else androidx.compose.ui.graphics.Color.Transparent)
-                        .pressable(role = androidx.compose.ui.semantics.Role.Button, onClick = { onOpen(conv.id) })
-                        .padding(start = CircasoSpacing.s3, top = CircasoSpacing.s2, bottom = CircasoSpacing.s2),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Column(Modifier.weight(1f)) {
-                        BasicText(conv.title, style = t.body.copy(color = c.ink), maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
-                        conv.lastMessageAt?.let { at ->
-                            val ms = runCatching { kotlin.time.Instant.parse(at).toEpochMilliseconds() }.getOrNull()
-                            ms?.let { BasicText(com.circaso.core.platform.chatListTime(it, com.circaso.core.sync.nowMillis()), style = t.caption1.copy(color = c.inkSecondary)) }
-                        }
-                    }
-                    CircasoIconButton(CircasoIcon.Delete, "Delete ${conv.title}", { onDelete(conv.id) })
-                }
-            }
-        }
-        com.circaso.designsystem.components.CircasoButton("Delete All Conversations", onClearAll, style = com.circaso.designsystem.components.ButtonStyle.Plain, size = com.circaso.designsystem.components.ButtonSize.Medium, block = true)
-    }
-}

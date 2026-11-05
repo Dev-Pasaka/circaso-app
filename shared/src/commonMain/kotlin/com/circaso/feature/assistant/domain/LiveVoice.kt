@@ -40,7 +40,7 @@ sealed interface LiveVoiceEvent {
     data class ToolRequest(val turnId: String, val callId: String, val name: String, val argumentsJson: String) : LiveVoiceEvent
 
     /** What Asha is doing ("Checking your transactions…"); null once that tool is done. */
-    data class Status(val label: String?, val tags: AshaTags? = null) : LiveVoiceEvent
+    data class Status(val label: String?) : LiveVoiceEvent
 
     /** The phone is running a tool for Asha. */
     data class UsingTool(val name: String) : LiveVoiceEvent

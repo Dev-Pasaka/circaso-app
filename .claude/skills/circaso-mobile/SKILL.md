@@ -18,8 +18,8 @@ premium feel and optimisation of chats, groups, chamas and wallets, with **no ne
 | Need | Open |
 | --- | --- |
 | Project status: decisions, built, pending, bugs, open questions (2026-11-03) | `references/project-status.md` |
-| Asha next: settings inside Asha, the animated mascot (Rive; scenes, moods, activities), support and tickets through Asha (decided 2026-11-04) | `references/asha-next.md` |
-| Asha and Robbie mascots: personalities, sass rules, moods, reactions, per-scene acting, triggers (2026-11-04) | `references/asha-mascot-personality.md` |
+| Asha next: settings inside Asha (her menu sheet), the mascot (removed 2026-11-05; read the top note), voice mode transcript, support and tickets through Asha | `references/asha-next.md` |
+| Asha and Robbie mascots (history: the mascot was removed 2026-11-05; the sass and tone notes may still guide the backend's personality work) | `references/asha-mascot-personality.md` |
 | Spaces plan, **stopped 2026-11-05** (why, what was removed, restore from `archive/spaces-v1`); still the record for Moments, group wallets, fees and limits | `references/spaces-plan.md` |
 | How to call the backend: headers, tokens, device key, flows, every endpoint, encrypted chats and messages, realtime, Asha, request/response types, build order (updated 2026-10-28; read its "Changed on" notes in section 1 first) | `references/mobile-integration.md` |
 | What a screen says and does: copy, buttons, components, states, per flow; design decisions and open questions | `references/design-spec.md` (99 KB; read the contents table, then only the section you need; section 15 has decisions) |

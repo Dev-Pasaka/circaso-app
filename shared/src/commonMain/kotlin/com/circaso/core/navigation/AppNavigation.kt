@@ -247,7 +247,6 @@ fun AppNavigation(forceUpdate: Boolean, home: @Composable () -> Unit) {
                             onSecretMenu = { backStack.add(GalleryRoute) },
                             onNeedsAttention = { backStack.add(NeedsAttentionRoute) },
                             onCurrency = { backStack.add(CurrencyRoute) },
-                            onAshaVoice = { backStack.add(AshaVoiceRoute) },
                             onMoneySound = youViewModel::onMoneySound,
                             onMomentsPrivacy = { backStack.add(MomentsPrivacyRoute) },
                         ),
@@ -300,7 +299,12 @@ fun AppNavigation(forceUpdate: Boolean, home: @Composable () -> Unit) {
             entry<AshaRoute> {
                 // The mic opens the live conversation where the phone can encode Opus; elsewhere it records a clip (A3).
                 val live = koinInject<LiveMicrophone>().supported
-                AshaScreen(koinViewModel(), onBack = ::pop, onVoice = if (live) ({ if (backStack.lastOrNull() != VoiceRoute) backStack.add(VoiceRoute) }) else null)
+                AshaScreen(
+                    koinViewModel(), onBack = ::pop,
+                    onVoice = if (live) ({ if (backStack.lastOrNull() != VoiceRoute) backStack.add(VoiceRoute) }) else null,
+                    // Asha's settings live in her menu (asha-next.md part A), pushed on top of her chat.
+                    onVoiceSettings = { if (backStack.lastOrNull() != AshaVoiceRoute) backStack.add(AshaVoiceRoute) },
+                )
             }
             entry<VoiceRoute>(metadata = Panes.FullScreen) { VoiceScreen(koinViewModel(), onBack = ::pop) }
             entry<ChatRoute> { route ->

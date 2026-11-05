@@ -318,6 +318,17 @@ class VoiceViewModelTest {
 
             repo.session.fromServer.emit(LiveVoiceEvent.ReplyDone(msg("m2", "ASHA", "About 500 shillings."), spoken = false))
             assertEquals(1, refreshes, "the saved answer reaches the chat through the history")
+            val turn = vm.state.value.turns.single()
+            assertEquals("What did I spend?", turn.question, "the spoken question is the person's bubble")
+            assertEquals(listOf("About 500 shillings."), turn.reply, "her answer is hers")
+            assertTrue(turn.done); assertTrue(turn.interrupted)
+
+            repo.session.fromServer.emit(LiveVoiceEvent.Transcript("and yester", false))
+            assertEquals("and yester", vm.state.value.heard, "the next question shows live under the transcript")
+            repo.session.fromServer.emit(LiveVoiceEvent.Turn("And yesterday?"))
+            repo.session.fromServer.emit(LiveVoiceEvent.Reply("Nothing yesterday."))
+            assertEquals(listOf("What did I spend?", "And yesterday?"), vm.state.value.turns.map { it.question })
+            assertEquals(listOf("Nothing yesterday."), vm.state.value.reply)
 
             repo.session.fromServer.emit(LiveVoiceEvent.Closing("silence", null, null))
             assertEquals(VoicePhase.Ended, vm.state.value.phase)
@@ -412,5 +423,5 @@ private object NoAsha : AshaRepository {
     override suspend fun deleteAll() = Unit
     override suspend fun transcribe(audio: ByteArray, contentType: String, durationSeconds: Int): AppResult<String> = AppResult.Success("")
     override suspend fun speak(text: String, language: String?): AppResult<ByteArray> = AppResult.Success(ByteArray(0))
-    override suspend fun usage(): AppResult<com.circaso.feature.assistant.domain.AshaUsage> = AppResult.Success(com.circaso.feature.assistant.domain.AshaUsage("free", 0, 0, 0, 0, ""))
+    override suspend fun usage(): AppResult<com.circaso.feature.assistant.domain.AshaUsage> = AppResult.Success(com.circaso.feature.assistant.domain.AshaUsage("free", com.circaso.feature.assistant.domain.UsageMeter(0, 0), com.circaso.feature.assistant.domain.UsageMeter(0, 0), null))
 }

@@ -37,8 +37,6 @@ val assistantModule = module {
     viewModel { com.circaso.feature.assistant.presentation.AshaVoiceViewModel(get(), get(), get()) }
     single { get<CircasoDatabase>().ashaDao() }
     single<AshaRemote> { KtorAshaRemote(get(), get(), get(), get(), get()) }
-    // The mascot's look from the chosen voice (asha-next.md part B).
-    single<com.circaso.feature.assistant.domain.AshaLookSource> { com.circaso.feature.assistant.data.repository.AshaLookRepository(get(), get()) }
     // Replaced when messaging exists and chats can be searched on the phone.
     single<DeviceToolRunner> { NoChatsToolRunner }
     single { AshaDeleteMessageHandler(get()) } bind OutboxHandler::class

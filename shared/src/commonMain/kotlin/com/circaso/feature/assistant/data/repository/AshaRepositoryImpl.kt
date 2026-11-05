@@ -21,6 +21,8 @@ import com.circaso.feature.assistant.domain.AshaEvent
 import com.circaso.feature.assistant.domain.AshaMessage
 import com.circaso.feature.assistant.domain.AshaRepository
 import com.circaso.feature.assistant.domain.AshaUsage
+import com.circaso.feature.assistant.domain.UsageMeter
+import com.circaso.feature.assistant.data.remote.UsageResponse
 import com.circaso.feature.assistant.domain.AskedFrom
 import com.circaso.feature.assistant.domain.ReadNote
 import com.circaso.feature.assistant.domain.Snippet
@@ -134,14 +136,9 @@ class AshaRepositoryImpl(
             "tool_request" -> json.decodeFromString(ToolRequestData.serializer(), data).let {
                 AshaEvent.ToolRequest(it.turnId, it.callId, it.name, (it.arguments ?: JsonNull).toString())
             }
-            "tool_status" -> json.parseToJsonElement(data).jsonObject.let { o ->
-                AshaEvent.Status(o["label"]?.jsonPrimitive?.contentOrNull, com.circaso.feature.assistant.data.remote.AshaTagsParser.parse(o))
-            }
-            // The mascot's tags may ride on tool_done too; its body was never read before, so a bare one stays quiet.
-            "tool_done" -> AshaEvent.Status(null, runCatching { com.circaso.feature.assistant.data.remote.AshaTagsParser.parse(json.parseToJsonElement(data).jsonObject) }.getOrNull())
-            // Backend PR #32: a `mascot` event on every turn (before the first text, when the hints change, and last
-            // with activity done), so turns that use no tool still drive the mascot.
-            "mascot" -> AshaEvent.Status(null, runCatching { com.circaso.feature.assistant.data.remote.AshaTagsParser.parse(json.parseToJsonElement(data).jsonObject) }.getOrNull())
+            "tool_status" -> json.parseToJsonElement(data).jsonObject.let { o -> AshaEvent.Status(o["label"]?.jsonPrimitive?.contentOrNull) }
+            "tool_done" -> AshaEvent.Status(null)
+            // `mascot` frames (backend PR #32) are still sent; the mascot is gone, so they fall through to `else`.
             "done" -> AshaEvent.Done(json.decodeFromString(DoneData.serializer(), data).message.toDomain())
             else -> null
         }
@@ -173,8 +170,7 @@ class AshaRepositoryImpl(
 
     override suspend fun speak(text: String, language: String?): AppResult<ByteArray> = remote.speech(SpeechRequest(text, language, voice()))
 
-    override suspend fun usage(): AppResult<AshaUsage> =
-        remote.usage().map { AshaUsage(it.plan, it.textTurnsUsed, it.textTurnsLeft, it.voiceSecondsUsed, it.voiceSecondsLeft, it.resetsAt) }
+    override suspend fun usage(): AppResult<AshaUsage> = remote.usage().map { it.toDomain() }
 
     private companion object {
         const val PageSize = 50
@@ -200,6 +196,19 @@ internal fun ChatMessageDto.toDomain() = AshaMessage(
     at = at,
     conversationId = conversationId,
 )
+
+/** Either shape of A7 (see [UsageResponse]); the day shape's limit is used + left. */
+internal fun UsageResponse.toDomain(): AshaUsage {
+    fun legacy(used: Int?, left: Int?) = UsageMeter(used ?: 0, if (used != null && left != null) used + left else null)
+    return AshaUsage(
+        plan = plan,
+        messages = messages?.let { UsageMeter(it.used, it.limit) } ?: legacy(textTurnsUsed, textTurnsLeft),
+        voiceSeconds = voiceSeconds?.let { UsageMeter(it.used, it.limit) } ?: legacy(voiceSecondsUsed, voiceSecondsLeft),
+        resetsAt = resetsAt,
+        periodStart = periodStart,
+        periodEnd = periodEnd,
+    )
+}
 
 internal fun ConversationDto.toDomain() = AshaConversation(conversationId, title, lastMessageAt ?: updatedAt ?: createdAt)
 

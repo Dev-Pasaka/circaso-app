@@ -11,7 +11,6 @@
 		C0A1B2C3D4E5F60718293B01 /* LibSignalClient in Frameworks */ = {isa = PBXBuildFile; productRef = C0A1B2C3D4E5F60718293B02 /* LibSignalClient */; };
 		C0A1B2C3D4E5F60718293B11 /* LibSignalFfi in Frameworks */ = {isa = PBXBuildFile; productRef = C0A1B2C3D4E5F60718293B12 /* LibSignalFfi */; };
 		C0A1B2C3D4E5F60718293C01 /* WebRTC in Frameworks */ = {isa = PBXBuildFile; productRef = C0A1B2C3D4E5F60718293C02 /* WebRTC */; };
-		C0A1B2C3D4E5F60718293D01 /* RiveRuntime in Frameworks */ = {isa = PBXBuildFile; productRef = C0A1B2C3D4E5F60718293D02 /* RiveRuntime */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -55,7 +54,6 @@
 				C0A1B2C3D4E5F60718293B01 /* LibSignalClient in Frameworks */,
 				C0A1B2C3D4E5F60718293C01 /* WebRTC in Frameworks */,
 				C0A1B2C3D4E5F60718293B11 /* LibSignalFfi in Frameworks */,
-				C0A1B2C3D4E5F60718293D01 /* RiveRuntime in Frameworks */,
 				55038463E913CD1A325EC074 /* Pods_iosApp.framework in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -126,7 +124,6 @@
 				C0A1B2C3D4E5F60718293B02 /* LibSignalClient */,
 				C0A1B2C3D4E5F60718293C02 /* WebRTC */,
 				C0A1B2C3D4E5F60718293B12 /* LibSignalFfi */,
-				C0A1B2C3D4E5F60718293D02 /* RiveRuntime */,
 			);
 			productName = iosApp;
 			productReference = A989B60CBCD9B518FC11BE8E /* Circaso.app */;
@@ -160,7 +157,6 @@
 				C0A1B2C3D4E5F60718293B03 /* XCRemoteSwiftPackageReference "libsignal" */,
 				C0A1B2C3D4E5F60718293C03 /* XCLocalSwiftPackageReference "Packages/WebRTC" */,
 				C0A1B2C3D4E5F60718293B13 /* XCLocalSwiftPackageReference "Packages/LibSignalFfi" */,
-				C0A1B2C3D4E5F60718293D03 /* XCRemoteSwiftPackageReference "rive-ios" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 77477D273AB4BF57A6AFB595 /* Products */;
@@ -506,14 +502,6 @@
 				version = 0.106.1;
 			};
 		};
-		C0A1B2C3D4E5F60718293D03 /* XCRemoteSwiftPackageReference "rive-ios" */ = {
-			isa = XCRemoteSwiftPackageReference;
-			repositoryURL = "https://github.com/rive-app/rive-ios";
-			requirement = {
-				kind = exactVersion;
-				version = 6.29.0;
-			};
-		};
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
@@ -531,11 +519,6 @@
 			isa = XCSwiftPackageProductDependency;
 			package = C0A1B2C3D4E5F60718293C03 /* XCLocalSwiftPackageReference "Packages/WebRTC" */;
 			productName = WebRTC;
-		};
-		C0A1B2C3D4E5F60718293D02 /* RiveRuntime */ = {
-			isa = XCSwiftPackageProductDependency;
-			package = C0A1B2C3D4E5F60718293D03 /* XCRemoteSwiftPackageReference "rive-ios" */;
-			productName = RiveRuntime;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

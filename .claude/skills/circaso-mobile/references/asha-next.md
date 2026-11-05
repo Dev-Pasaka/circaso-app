@@ -1,5 +1,47 @@
 # Asha next: her own space, an animated mascot, and support (decided 2026-11-04)
 
+> **Changed 2026-11-05 (Pasaka): the mascot is removed entirely.** Part B below is history: no Rive, no octopus, no
+> scenes, moods or reactions in the app. Asha is her silver mark. What replaced it, built on branch
+> `worktree-agent-a6c163bf4b4121d2b`:
+>
+> - **Removed:** `AshaMascot.kt`, `AshaShowcase.kt`, `AshaMoneyReactions.kt`, `AshaTagsParser.kt`,
+>   `AshaLookRepository.kt`, `AshaAvatar.kt`, `core/platform/RiveAnimation` (common, Android, iOS), `RiveImpl.swift`
+>   and its registration in `iOSApp.swift`, `files/asha.riv`, `design/asha/` (Rive sources and stills), the
+>   `app.rive:rive-android` 11.16.0 dependency, the `rive-ios` 6.29.0 Swift package (project and `Package.resolved`),
+>   the `asha.voiceGender` preference and `AshaMascotTest`. The server's `mascot` SSE event and socket frame, and the
+>   mascot fields on `tool_status` / `tool_done`, are still sent (backend PR #32) and are ignored like any unknown
+>   field; `tool_status`'s `label` still shows.
+> - **Header:** Back, Asha's mark and name in the middle (the open conversation's title under it), and a menu
+>   button on the right in the platform's idiom (vertical ⋮ on Android, an ellipsis in a circle on iOS; same 36 dp
+>   fill circle as Back). The Clock and Plus buttons are gone.
+> - **Menu sheet** (`AshaMenuSheet.kt`, the design-system `CircasoSheet`), three pages in one sheet, sliding
+>   between them (fade only with reduced motion); Back inside a sub-page returns to the menu:
+>   - *Menu:* New chat (the one emphasised row; needs a connection), Recent chats (the latest four with relative
+>     times, the open one marked, See All when there are more), Usage & credits (plan, reset, two thin meters),
+>     Settings (Voice → the voice picker pushed inside Asha; Delete all conversations → the existing confirm sheet),
+>     and the "can't move money" line.
+>   - *Recent chats:* every conversation (C1), tap opens; long-press (or the screen reader's Delete action) turns
+>     the row into its own Delete / Cancel confirmation, then C4. Online only; offline the list still opens chats.
+>   - *Usage & credits:* plan, period (`periodStart`–`periodEnd`), "Resets in …", messages and voice minutes as
+>     used / limit with a meter (warning colour from 85 %, critical when used up), "No limit on this plan" for a null
+>     limit. A 404 (envelope or not) is the calm "Usage isn't available yet"; offline says it needs a connection and
+>     keeps a figure already shown; other failures offer Try Again. The app reads both A7 shapes: the period shape
+>     the backend is adding (`messages`/`voiceSeconds` as `{used, limit}`) and the day shape it shipped with
+>     (`textTurnsUsed`/`Left`, `voiceSecondsUsed`/`Left`). No credit buying: that waits for billing.
+> - **You tab:** the "Asha's voice" row is gone; voice lives in Asha's menu (part A done).
+> - **Voice mode** (`VoiceScreen.kt`, `AshaLogo.kt`): the call is a chat transcript. Each `turn` is the person's
+>   bubble, each `reply` sentence is appended to Asha's bubble as it arrives (markdown through `AshaAnswer`),
+>   `reply_done` closes it (the saved text when no sentence came), talking over her marks it "You talked over this",
+>   and the live `transcript` shows as a faded bubble ("Hearing you…") until the turn is taken. Rules in
+>   `VoiceTranscript` (pure, tested); the latest 40 turns are kept. Above it `AshaVoiceLogo`: the mark breathing, with
+>   three rippling wave rings driven by the real level (microphone while listening, her playback while speaking;
+>   both platforms report levels); between her words a slow synthetic swell keeps the waves alive. States:
+>   connecting (one pulsing ring), listening, thinking (an arc circling), speaking, muted (still, mic-off badge),
+>   error/offline (critical, offline badge), ended (still). Reduced motion: no waves or breathing, a still ring, a
+>   state badge and a state pill in words. The logo is 208 dp until something is said, then 132 dp. Barge-in,
+>   mute, end and every ending are unchanged.
+> - **Open:** credits (buy more) when billing exists; the backend may still drop the `mascot` frames (harmless).
+
 Pasaka's direction for Asha after phase 2. Read this before any Asha work. Decisions here are final; what is marked
 **open** still needs Pasaka. Related: `project-status.md` (Asha sections), `app-architecture.md` ("Asha live voice"),
 `mobile-integration.md` (Asha endpoints), memory note `project-asha-avatar-rive`.
@@ -22,7 +64,7 @@ separate from the money features). So everything about Asha lives inside Asha's 
 
 ---
 
-## B. The mascot: Asha you can see working
+## B. The mascot: Asha you can see working (REMOVED 2026-11-05, kept as history)
 
 ### Look
 
