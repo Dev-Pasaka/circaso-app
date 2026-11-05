@@ -67,7 +67,7 @@ interface SpacesRemote {
     // Reports
     suspend fun report(spaceId: String, request: ReportRequest, idempotencyKey: String): AppResult<ReportIdDto>
     suspend fun reports(spaceId: String, state: String, cursor: String? = null): AppResult<ReportsPage>
-    suspend fun resolve(spaceId: String, postId: String, request: ResolveRequest, idempotencyKey: String): AppResult<ReportGroupDto>
+    suspend fun resolve(spaceId: String, postId: String, request: ResolveRequest, idempotencyKey: String): AppResult<ResolvedDto>
 }
 
 /**
@@ -147,7 +147,7 @@ class KtorSpacesRemote(private val api: CircasoApi, private val flag: SpacesFlag
         method = HttpMethod.Get; url("/v1/spaces/$spaceId/reports"); parameter("state", state); cursor?.let { parameter("cursor", it) }
     }
     override suspend fun resolve(spaceId: String, postId: String, request: ResolveRequest, idempotencyKey: String) =
-        sp<ReportGroupDto> { write(HttpMethod.Post, "/v1/spaces/$spaceId/reports/$postId/resolve", idempotencyKey); json(request) }
+        sp<ResolvedDto> { write(HttpMethod.Post, "/v1/spaces/$spaceId/reports/$postId/resolve", idempotencyKey); json(request) }
 
     /** What an SP route's answer says about the server. */
     private fun learn(result: AppResult<*>) {

@@ -475,13 +475,17 @@ class SpacesRepositoryImpl(
         return remote.reports(spaceId, if (open) "OPEN" else "DONE", cursor).map { p -> Page(p.reports.map { it.toDomain(own) }, p.next) }
     }
 
-    override suspend fun resolve(spaceId: String, postId: String, action: ReportAction, muteDuration: MuteDuration?): AppResult<ReportGroup> {
-        val own = ownUserId()
-        return remote.resolve(spaceId, postId, ResolveRequest(action.wire, muteDuration?.wire), newIdempotencyKey()).map { g ->
-            if (action == ReportAction.RemovePost) dao.postById(spaceId, postId)?.let { row -> dao.savePosts(listOf(row.copy(json = json.encodeToString(PostDto.serializer(), g.post)))) }
-            g.toDomain(own)
+    override suspend fun resolve(spaceId: String, postId: String, action: ReportAction, muteDuration: MuteDuration?): AppResult<Unit> =
+        remote.resolve(spaceId, postId, ResolveRequest(action.wire, muteDuration?.wire), newIdempotencyKey()).map {
+            // SP37 answers only { resolved }: a removed post becomes the moderator's tombstone here, as SP30 would leave it.
+            if (action == ReportAction.RemovePost) dao.postById(spaceId, postId)?.let { row ->
+                decode<PostDto>(row.json)?.let { p ->
+                    val gone = p.copy(text = null, media = emptyList(), removed = RemovedMarkDto("MODERATOR", Instant.fromEpochMilliseconds(now()).toString()))
+                    dao.savePosts(listOf(row.copy(json = json.encodeToString(PostDto.serializer(), gone))))
+                }
+            }
+            Unit
         }
-    }
 
     // ---------------------------------------------------------------- realtime
 

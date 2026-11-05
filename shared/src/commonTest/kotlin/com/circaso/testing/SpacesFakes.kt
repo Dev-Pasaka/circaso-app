@@ -104,7 +104,7 @@ class FakeSpacesRemote : SpacesRemote {
     var removePostAnswer: (String) -> AppResult<PostDto>? = { null }
     var reportAnswer: AppResult<ReportIdDto> = AppResult.Success(ReportIdDto("rep-1"))
     var reportsAnswer: AppResult<ReportsPage> = AppResult.Success(ReportsPage())
-    var resolveAnswer: AppResult<ReportGroupDto>? = null
+    var resolveAnswer: AppResult<ResolvedDto> = AppResult.Success(ResolvedDto())
     var simple: AppResult<Unit> = AppResult.Success(Unit)
 
     override suspend fun handleAvailability(handle: String) = this.handle(handle).also { calls += "handle:$handle" }
@@ -146,7 +146,7 @@ class FakeSpacesRemote : SpacesRemote {
     override suspend fun completeMedia(mediaId: String, idempotencyKey: String): AppResult<SpaceMediaDoneDto> = unset()
     override suspend fun report(spaceId: String, request: ReportRequest, idempotencyKey: String) = reportAnswer.also { calls += "report:${request.postId.orEmpty()}:${request.reason}" }
     override suspend fun reports(spaceId: String, state: String, cursor: String?) = reportsAnswer.also { calls += "reports:$state" }
-    override suspend fun resolve(spaceId: String, postId: String, request: ResolveRequest, idempotencyKey: String): AppResult<ReportGroupDto> { calls += "resolve:$postId:${request.action}"; return resolveAnswer ?: unset() }
+    override suspend fun resolve(spaceId: String, postId: String, request: ResolveRequest, idempotencyKey: String): AppResult<ResolvedDto> { calls += "resolve:$postId:${request.action}"; return resolveAnswer }
 }
 
 /** Sample answers, named as the canvas's spaces. */

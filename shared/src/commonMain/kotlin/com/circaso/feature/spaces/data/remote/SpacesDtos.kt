@@ -221,3 +221,5 @@ import kotlinx.serialization.Serializable
 )
 @Serializable data class ReportsPage(val reports: List<ReportGroupDto> = emptyList(), val next: String? = null)
 @Serializable data class ResolveRequest(val action: String, val muteDuration: String? = null)
+/** SP37 answers only that it was done (contract d1d63c6); SP36 holds the record. */
+@Serializable data class ResolvedDto(val resolved: Boolean = true)
