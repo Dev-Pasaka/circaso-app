@@ -71,17 +71,18 @@ val walletModule = module {
     factory { com.circaso.feature.wallet.domain.RefreshWalletOfUseCase(get()) }
     factory { com.circaso.feature.wallet.domain.ObserveWalletActivityUseCase(get()) }
     factory { com.circaso.feature.wallet.domain.RefreshWalletActivityUseCase(get()) }
+    factory { com.circaso.feature.wallet.domain.LoadActivityPageUseCase(get()) }
     factory { com.circaso.feature.wallet.domain.GetGroupWalletUseCase(get()) }
     factory { com.circaso.feature.wallet.domain.StartGroupWalletUseCase(get()) }
     factory { com.circaso.feature.wallet.domain.AwaitGroupWalletUseCase(get()) }
     factory { com.circaso.feature.wallet.domain.EnableWalletBiometricsUseCase(get()) }
     factory { com.circaso.feature.wallet.domain.AddWalletNetworksUseCase(get()) }
     viewModel { com.circaso.feature.account.presentation.BiometricApprovalViewModel(get(), get(), get(), get()) }
-    viewModel { WalletViewModel(get(), get(), get(), get(), get(), get(), get(), getChains = get(), addMissingChains = get(), groupWallets = get(), sources = get(), groupReader = get(), privacy = get(),
+    viewModel { WalletViewModel(get(), get(), get(), get(), get(), get(), getChains = get(), addMissingChains = get(), groupWallets = get(), sources = get(), groupReader = get(), privacy = get(),
         choices = get<com.circaso.core.datastore.AppPreferences>().let { p -> com.circaso.feature.wallet.presentation.WalletChoiceStore.of(p::text, p::setText) }) }
     single { com.circaso.feature.wallet.presentation.BalancePrivacy() }
     viewModel { com.circaso.feature.wallet.presentation.CurrencyViewModel(get(), get()) }
-    viewModel { (blockchain: String?, symbol: String?, walletId: String?) -> ActivityViewModel(get(), get(), blockchain, symbol, walletId, get(), get()) }
+    viewModel { (blockchain: String?, symbol: String?, walletId: String?) -> ActivityViewModel(get(), get(), blockchain, symbol, walletId, get(), get(), get(), loadPage = get(), connection = get()) }
     viewModel { (blockchain: String, walletId: String?) -> com.circaso.feature.wallet.presentation.NetworkAssetsViewModel(get(), blockchain, walletId, get()) }
     viewModel { (transferId: String) -> TransferViewModel(transferId, get(), get(), get(), get()) }
     viewModel { NetworksViewModel(get(), get(), get()) }

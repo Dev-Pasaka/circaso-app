@@ -79,6 +79,12 @@ interface WalletRepository {
 
     suspend fun refreshActivity(walletId: String): AppResult<Unit>
 
+    /**
+     * W6 one page at a time for the Transactions list: [walletId] null is the person's own, [cursor] null the latest
+     * page. The rows join the phone's copy (which the list observes); returns the next page's cursor, null at the end.
+     */
+    suspend fun loadActivityPage(walletId: String?, cursor: String?): AppResult<String?> = AppResult.Success(null)
+
     /** W15: a group's wallet as the server's rows say (members). */
     suspend fun groupWallet(chatId: String): AppResult<GroupWallet>
 

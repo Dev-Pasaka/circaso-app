@@ -70,6 +70,7 @@ import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
@@ -138,6 +139,8 @@ class WalletSwitchTest {
     private lateinit var connection: ConnectionState
     private val monitor = SwitchMonitor()
     private val listings = MutableStateFlow(listOf(personalListing, groupListing))
+    /** The phone's saved list not read yet: W16's flow holds back until this turns false. */
+    private val listHeld = MutableStateFlow(false)
     private val chat = MutableStateFlow<Chat?>(kilimani)
     private val moneyReads = mutableListOf<String>()
     private val decisions = mutableListOf<List<Any?>>()
@@ -146,7 +149,7 @@ class WalletSwitchTest {
         when (name) {
             "getWallet" -> flowOf(aWallet("500000000"))
             "getTransfers" -> flowOf(emptyList<Transfer>())
-            "getWallets" -> listings
+            "getWallets" -> listHeld.flatMapLatest { held -> if (held) kotlinx.coroutines.flow.emptyFlow() else listings }
             "walletOf" -> flowOf(if (args[0] == "gw-1") aWallet("100000000", "gw-1") else aWallet("500000000"))
             "activity" -> flowOf(listOf(contribution))
             "refresh" -> AppResult.Success(aWallet("500000000"))
@@ -183,7 +186,7 @@ class WalletSwitchTest {
             ObserveWalletActivityUseCase(walletRepo), RefreshWalletActivityUseCase(walletRepo), DecideChamaRequestUseCase(chamas), auth = null,
         )
         return WalletViewModel(
-            ObserveWalletUseCase(walletRepo), RefreshWalletUseCase(walletRepo), CreateWalletUseCase(walletRepo), ObserveTransfersUseCase(walletRepo),
+            ObserveWalletUseCase(walletRepo), RefreshWalletUseCase(walletRepo), CreateWalletUseCase(walletRepo),
             connection, ObserveProfileUseCase(stub<ProfileRepository>()), impl, groupWallets = flag, sources = sources, groupReader = reader, choices = choices,
         )
     }
@@ -248,7 +251,7 @@ class WalletSwitchTest {
         assertTrue(vm.state.value.selected.personal)
     }
 
-    @Test fun aGroupWalletThatGoesAwayLeavesTheCalmEmptyState() = runTest(dispatcher) {
+    @Test fun aGroupWalletThatGoesAwayHidesTheControlAndShowsPersonal() = runTest(dispatcher) {
         val vm = vm()
         keep(vm)
         vm.onSelectWallet(vm.state.value.wallets[1])
@@ -256,11 +259,28 @@ class WalletSwitchTest {
         listings.value = listOf(personalListing)
         val s = vm.state.value
         assertNull(s.selectedWalletId)
-        assertTrue(s.showSwitcher, "Personal | Groups stays")
-        assertEquals(WalletMode.Groups, s.mode)
-        assertTrue(s.groupsEmpty)
+        assertFalse(s.showSwitcher, "nothing to switch to: no Personal | Groups")
+        assertFalse(s.showingGroups)
+        assertTrue(s.selected.personal, "the person's own wallet, not an empty Groups page")
+        assertEquals(WalletMode.Personal, s.mode, "back to Personal, so a later group wallet never turns the tab by itself")
         assertFalse(s.switching, "nothing left to switch to")
         assertNull(s.group)
+        listings.value = listOf(personalListing, groupListing)
+        assertTrue(vm.state.value.selected.personal, "a group wallet arriving later doesn't take the tab to Groups")
+        assertTrue(vm.state.value.showSwitcher, "the control comes back, on Personal")
+    }
+
+    @Test fun personalAfterTheLastGroupWalletWentIsRememberedForTheNextLaunch() = runTest(dispatcher) {
+        val store = WalletChoiceStore.memory(SavedWalletChoice(WalletMode.Groups, "gw-1"))
+        val vm = vm(choices = store)
+        keep(vm)
+        assertEquals(WalletMode.Groups, vm.state.value.mode)
+        listings.value = listOf(personalListing)
+        assertEquals(WalletMode.Personal, store.walletChoice.first().mode, "Personal is saved, not just shown")
+        listings.value = listOf(personalListing, groupListing)
+        val next = vm(choices = store)
+        keep(next)
+        assertTrue(next.state.value.selected.personal, "the next launch opens on Personal, though a group wallet is back")
     }
 
     @Test fun groupsShowsTheFirstGroupAndPersonalGoesBackKeepingTheGroup() = runTest(dispatcher) {
@@ -318,13 +338,15 @@ class WalletSwitchTest {
         assertEquals("gw-1", vm.state.value.selectedWalletId)
     }
 
-    @Test fun withNoGroupWalletGroupsIsTheEmptyStateAndTheMenuStaysShut() = runTest(dispatcher) {
+    @Test fun withNoGroupWalletThereIsNoControlAndTheMenuStaysShut() = runTest(dispatcher) {
         listings.value = listOf(personalListing)
         val vm = vm()
         keep(vm)
+        assertFalse(vm.state.value.showSwitcher, "no group wallet: the control is hidden entirely")
         vm.onMode(WalletMode.Groups)
         val s = vm.state.value
-        assertTrue(s.groupsEmpty)
+        assertFalse(s.showingGroups)
+        assertTrue(s.selected.personal)
         assertNull(s.group)
         vm.onSwitching(true)
         vm.onAllGroups(true)
@@ -332,17 +354,15 @@ class WalletSwitchTest {
         assertFalse(vm.state.value.allGroups)
     }
 
-    @Test fun groupsSaysNoneYetOnlyOnceTheListIsKnown() = runTest(dispatcher) {
-        listings.value = emptyList()
+    @Test fun theTabWaitsForTheSavedListBeforeDrawing() = runTest(dispatcher) {
+        listHeld.value = true
         val vm = vm()
         keep(vm)
-        vm.onMode(WalletMode.Groups)
-        assertTrue(vm.state.value.groupsEmpty)
-        // The stub's W16 answers with the (empty) list, so after the read the phone knows there are none.
-        assertTrue(vm.state.value.groupsKnown, "W16 read this run")
-        val unread = com.circaso.feature.wallet.presentation.WalletUiState(groupsEnabled = true, mode = WalletMode.Groups)
-        assertTrue(unread.groupsEmpty)
-        assertFalse(unread.groupsKnown, "nothing saved and nothing read: never \"No group wallets yet\"")
+        assertFalse(vm.state.value.walletsLoaded, "before the saved list is read the tab draws nothing, so the control never pops in")
+        assertFalse(vm.state.value.showSwitcher)
+        listHeld.value = false
+        assertTrue(vm.state.value.walletsLoaded)
+        assertTrue(vm.state.value.showSwitcher)
     }
 
     @Test fun theTabWaitsForTheRememberedSide() = runTest(dispatcher) {
@@ -356,7 +376,7 @@ class WalletSwitchTest {
         val vm = vm(GroupWalletsFlag.off(), WalletChoiceStore.memory(SavedWalletChoice(WalletMode.Groups, "gw-1")))
         keep(vm)
         assertTrue(vm.state.value.selected.personal)
-        assertFalse(vm.state.value.groupsEmpty)
+        assertFalse(vm.state.value.showingGroups)
         assertNull(vm.state.value.group)
     }
 
@@ -417,7 +437,7 @@ class WalletSwitchTest {
             ObserveChatsUseCase(chats), ObserveChatUseCase(chats), ObserveGroupMoneyUseCase(failing), RefreshGroupMoneyUseCase(failing), CreateChamaRequestUseCase(failing),
         )
         val vm = WalletViewModel(
-            ObserveWalletUseCase(walletRepo), RefreshWalletUseCase(walletRepo), CreateWalletUseCase(walletRepo), ObserveTransfersUseCase(walletRepo),
+            ObserveWalletUseCase(walletRepo), RefreshWalletUseCase(walletRepo), CreateWalletUseCase(walletRepo),
             connection, ObserveProfileUseCase(stub<ProfileRepository>()), impl, groupWallets = GroupWalletsFlag.on(), sources = sources, groupReader = reader,
         )
         keep(vm)

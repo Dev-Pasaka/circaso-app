@@ -50,9 +50,13 @@ interface WalletChoiceStore {
  */
 internal fun WalletUiState.reselected(): WalletUiState {
     val groups = groupWallets
+    // The person's last group wallet went away (the list is known and holds none): back to Personal for good, so a
+    // group wallet that arrives later never turns the tab to Groups without a tap (Pasaka, 2026-11-06). The group
+    // itself stays remembered for when they choose Groups again.
+    val mode = if (groupsEnabled && wallets.isNotEmpty() && groups.isEmpty()) WalletMode.Personal else mode
     val id = if (mode == WalletMode.Personal || !groupsEnabled) null
     else (groups.firstOrNull { it.walletId == lastGroupWalletId } ?: groups.firstOrNull())?.walletId
-    return copy(selectedWalletId = id, switching = switching && id != null, allGroups = allGroups && groupsEnabled && groups.isNotEmpty())
+    return copy(mode = mode, selectedWalletId = id, switching = switching && id != null, allGroups = allGroups && groupsEnabled && groups.isNotEmpty())
 }
 
 /** How many groups the overflow menu lists before "All Group Wallets…" opens the searchable list. */

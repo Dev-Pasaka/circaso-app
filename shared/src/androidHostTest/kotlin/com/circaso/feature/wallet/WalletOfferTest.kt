@@ -67,7 +67,7 @@ class WalletOfferTest {
         val profiles = quiet<ProfileRepository>()
         val impl = WalletRepositoryImpl(quiet<WalletRemote>(), quiet<WalletDao>(), signer = { error("unused") }, currency = { null }, json = Json)
         return WalletViewModel(
-            ObserveWalletUseCase(wallets), RefreshWalletUseCase(wallets), CreateWalletUseCase(wallets), ObserveTransfersUseCase(wallets),
+            ObserveWalletUseCase(wallets), RefreshWalletUseCase(wallets), CreateWalletUseCase(wallets),
             ConnectionState(Online(), NetworkHealth(), CoroutineScope(dispatcher), offlineDelayMs = 0), ObserveProfileUseCase(profiles), impl,
         )
     }

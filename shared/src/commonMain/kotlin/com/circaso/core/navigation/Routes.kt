@@ -150,9 +150,9 @@ data object HelpRoute : Route
 @Serializable
 data class LostAccessRoute(val phone: String? = null) : Route
 
-/** Every payment this phone knows (design E7). */
+/** Every payment of one wallet (design E7), from View Transactions on the Wallet tab ([walletId] null: the personal wallet). */
 @Serializable
-data object ActivityRoute : Route
+data class ActivityRoute(val walletId: String? = null) : Route
 
 /** Asha's voice: pick one, hear it first. */
 @Serializable

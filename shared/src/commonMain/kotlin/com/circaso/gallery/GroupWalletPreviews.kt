@@ -175,10 +175,6 @@ private fun tabState(group: GroupWalletUiState, three: Boolean = false, member: 
     ) else emptyList()
     return WalletUiState(
         wallet = personalWallet(),
-        recent = listOf(
-            Transfer("p1", TransferDirection.In, TransferState.Confirmed, "BASE-SEPOLIA", "", null, "", Amount("USDC", "15500000", "15.50"), null, null, null, null, "Amina Wanjiku", "lunch", nowMillis() - 5_400_000, 0),
-            Transfer("p2", TransferDirection.Out, TransferState.Confirmed, "BASE-SEPOLIA", "", null, "", Amount("USDC", "3870000", "3.87"), null, null, null, null, "Mum", null, nowMillis() - 90_000_000, 0),
-        ),
         wallets = listOf(NamedWallet.Personal, kili) + more,
         group = group,
         balances = mapOf(null to personalWallet(), "gw-1" to gwWallet(), "gw-2" to gwWallet("38760000", "gw-2")),
@@ -209,7 +205,9 @@ internal fun WalletGroupsPreview(name: String, gwState: GroupWalletUiState, gwAc
         "wallet-groups-all" -> TabPreview(manyGroups(groups).copy(allGroups = true), gwActions)
         "wallet-groups-offline" -> TabPreview(groups.copy(online = false, group = gwState.copy(online = false)), gwActions)
         "wallet-groups-loading" -> TabPreview(groups.copy(group = GroupWalletUiState(chat = kilimani, money = gwMoney())), gwActions)
+        // No group wallet: no Personal | Groups control at all, just the person's wallet.
         "wallet-groups-empty" -> TabPreview(groups.copy(wallets = listOf(NamedWallet.Personal), selectedWalletId = null, lastGroupWalletId = null, group = null))
+        "wallet-groups-personal" -> TabPreview(groups.copy(mode = WalletMode.Personal, selectedWalletId = null, group = null), gwActions)
         else -> return false
     }
     return true
@@ -231,6 +229,7 @@ private fun TabPreview(start: WalletUiState, gwActions: GroupWalletActions = Gro
                 onSwitching = { open -> state = state.copy(switching = open && state.selectedWalletId != null) },
                 onSelectWallet = { w -> state = state.copy(selectedWalletId = w.walletId, switching = false, allGroups = false) },
                 onAllGroups = { open -> state = state.copy(allGroups = open, switching = false) },
+                onMode = { m -> state = state.copy(mode = m, selectedWalletId = if (m == WalletMode.Groups) state.lastGroupWalletId ?: state.groupWallets.firstOrNull()?.walletId else null, switching = false) },
                 onCreate = {}, onRefresh = {}, onReceive = {}, onComing = {},
                 groupMenu = GroupMenuActions({}, {}, onPay = {}, onSendToWallet = {}),
             )

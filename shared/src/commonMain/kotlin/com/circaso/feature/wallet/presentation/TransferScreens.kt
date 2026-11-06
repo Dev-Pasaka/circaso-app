@@ -22,6 +22,9 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.selectableGroup
+import androidx.compose.ui.semantics.heading
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
 import com.circaso.designsystem.components.RowChevron
 import com.circaso.designsystem.components.CircasoIconImage
@@ -29,6 +32,7 @@ import com.circaso.designsystem.theme.CircasoMotion
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.foundation.background
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.graphicsLayer
@@ -228,56 +232,230 @@ internal fun receiptTarget(t: Transfer, fiat: FiatValue?): com.circaso.feature.s
     return com.circaso.feature.share.domain.ShareTarget.Receipt(t.transferId, preview, currency = fiat?.currency?.takeIf { MinorUnits.isDollar(t.amount.asset) })
 }
 
-/** Design E7. */
+/** Design E7: Transactions, opened from View Transactions on the Wallet tab (and per network, per asset). */
 @Composable
 fun ActivityScreen(viewModel: ActivityViewModel, onBack: () -> Unit, onOpen: (String) -> Unit) {
     val state by viewModel.state.collectAsState()
+    ActivityContent(
+        state, onBack, onOpen, viewModel::onFilter, viewModel::onQuery,
+        onRange = viewModel::onRange, onRefresh = { viewModel.refresh(fromPull = it) }, onLoadMore = viewModel::loadMore,
+        onRetryMore = viewModel::retryMore,
+    )
+}
+
+/**
+ * The list without its view model (previews): an asset's statement head when it is one, search, the filter chips,
+ * then the payments by day, older pages read as it nears the end. Before the list is known it shows the rows' shape;
+ * with nothing at all it says why once, centred (nothing yet, offline, or a failed read with Try Again); a filter or
+ * search with no match says that, under the chips. The nav bar's menu filters by date (E7's calendar button).
+ */
+@Composable
+fun ActivityContent(
+    state: ActivityUiState,
+    onBack: () -> Unit,
+    onOpen: (String) -> Unit,
+    onFilter: (ActivityFilter) -> Unit,
+    onQuery: (String) -> Unit,
+    onRange: (ActivityRange) -> Unit = {},
+    /** Read the latest page again; true for a pull (the spinner shows), false for Try Again. */
+    onRefresh: (Boolean) -> Unit = {},
+    onLoadMore: () -> Unit = {},
+    onRetryMore: () -> Unit = {},
+) {
     val c = CircasoTheme.colors
     val t = CircasoTheme.typography
     val now = nowMillis()
     val network = state.blockchain?.let { chainName(it).substringBefore(" (") }
     val title = when {
         state.symbol != null -> "${state.symbol} on $network"
-        network != null -> "Activity on $network"
-        else -> "Activity"
+        network != null -> "Transactions on $network"
+        else -> "Transactions"
     }
-    CircasoScaffold(topBar = { CircasoNavBar(title = title, onBack = onBack) }) { padding ->
-        LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = padding.calculateBottomPadding() + CircasoSpacing.s4)) {
-            // An asset's statement opens on what is held, then every payment in it on that network.
-            state.symbol?.let { symbol ->
-                item(key = "asset-head") {
-                    val held = state.held
-                    val amount = held?.let { MinorUnits.toDisplay(it.amountMinor, it.decimals) } ?: "0"
-                    val worth = held?.fiatAmount?.let { f -> state.fiat?.currency?.let { cur -> formatFiat(cur, f) } }
-                    val sent = state.transfers.count { it.direction == TransferDirection.Out && it.settled }
-                    val received = state.transfers.count { it.direction == TransferDirection.In && it.settled }
-                    Column(
-                        Modifier.fillMaxWidth().padding(CircasoSpacing.s4),
-                        horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(CircasoSpacing.s2),
-                    ) {
-                        CoinDisc(symbol, Modifier.size(CircasoSizes.avatarLg))
-                        AmountDisplay(symbol, amount, sub = worth ?: chainName(state.blockchain.orEmpty()), size = AmountSize.Medium)
-                        BasicText("$received received · $sent sent", style = t.footnote.copy(color = c.inkSecondary))
-                    }
+    // Nothing on this list at all (not a filter's empty answer): no search or chips to play with, just the reason.
+    val none = state.loaded && state.transfers.isEmpty() && state.symbol == null
+    var dates by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(false) }
+    CircasoScaffold(
+        topBar = {
+            CircasoNavBar(title = title, onBack = onBack, trailing = {
+                if (!none) NativeMoreMenu(
+                    title = "Show Payments From",
+                    sections = listOf(ActivityRange.entries.map { NativeMenuItem(it.name, it.label, checked = it == state.range) }),
+                    expanded = dates, onExpandedChange = { dates = it },
+                    onSelect = { id -> dates = false; ActivityRange.entries.firstOrNull { it.name == id }?.let(onRange) },
+                    contentDescription = "Filter by date",
+                )
+            })
+        },
+    ) { padding ->
+        val bottom = padding.calculateBottomPadding() + CircasoSpacing.s4
+        val pull = androidx.compose.material3.pulltorefresh.rememberPullToRefreshState()
+        @OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
+        androidx.compose.material3.pulltorefresh.PullToRefreshBox(
+            isRefreshing = state.refreshing, onRefresh = { onRefresh(true) }, state = pull, modifier = Modifier.fillMaxSize(),
+            indicator = {
+                androidx.compose.material3.pulltorefresh.PullToRefreshDefaults.Indicator(
+                    state = pull, isRefreshing = state.refreshing, modifier = Modifier.align(Alignment.TopCenter), containerColor = c.surfaceRaised, color = c.ink,
+                )
+            },
+        ) {
+            // The empty state and the list cross-fade rather than swapping in one frame.
+            androidx.compose.animation.Crossfade(none, animationSpec = androidx.compose.animation.core.tween(CircasoMotion.BaseMs), label = "activity") { empty ->
+                if (empty) ActivityEmpty(state, network, bottom, onRetry = { onRefresh(false) })
+                else ActivityList(state, now, bottom, onOpen, onFilter, onQuery, onRange, onLoadMore, onRetryMore)
+            }
+        }
+    }
+}
+
+/** Nothing on the list at all: why, centred, in the tab's empty-state shape. Scrolls, so a pull still works. */
+@Composable
+private fun ActivityEmpty(state: ActivityUiState, network: String?, bottom: androidx.compose.ui.unit.Dp, onRetry: () -> Unit) {
+    val c = CircasoTheme.colors
+    val t = CircasoTheme.typography
+    val (heading, body) = when {
+        !state.online -> "You’re offline" to "Your payments show here once they’ve been read with a connection."
+        state.error != null -> "Couldn’t load your transactions" to state.error
+        else -> "No transactions yet" to when {
+            state.groupWallet -> "Contributions and payouts show here. Members add money with # in the group chat."
+            network != null -> "Payments on $network show here."
+            else -> "Money you send and receive shows here, and in the chat you sent it in."
+        }
+    }
+    Column(
+        Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = CircasoSpacing.s8).padding(bottom = bottom),
+        verticalArrangement = Arrangement.spacedBy(CircasoSpacing.s3, Alignment.CenterVertically),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        androidx.compose.foundation.layout.Box(
+            Modifier.size(CircasoSizes.avatarLg).clip(com.circaso.designsystem.theme.CircasoShapes.circle).background(c.fill),
+            contentAlignment = Alignment.Center,
+        ) { CircasoIconImage(CircasoIcon.Clock, c.inkSecondary, Modifier.size(CircasoSizes.avatarLg / 2)) }
+        Spacer(Modifier.size(CircasoSpacing.s1))
+        BasicText(heading, Modifier.semantics { heading() }, style = t.title3.copy(color = c.ink, textAlign = TextAlign.Center))
+        BasicText(body, style = t.body.copy(color = c.inkSecondary, textAlign = TextAlign.Center))
+        if (state.online && state.error != null) {
+            state.errorRef?.let { BasicText("Ref $it", style = t.footnote.copy(color = c.inkTertiary, textAlign = TextAlign.Center)) }
+            CircasoButton("Try Again", onRetry, style = ButtonStyle.Secondary)
+        }
+    }
+}
+
+@Composable
+private fun ActivityList(
+    state: ActivityUiState,
+    now: Long,
+    bottom: androidx.compose.ui.unit.Dp,
+    onOpen: (String) -> Unit,
+    onFilter: (ActivityFilter) -> Unit,
+    onQuery: (String) -> Unit,
+    onRange: (ActivityRange) -> Unit,
+    onLoadMore: () -> Unit,
+    onRetryMore: () -> Unit,
+) {
+    val c = CircasoTheme.colors
+    val t = CircasoTheme.typography
+    val list = androidx.compose.foundation.lazy.rememberLazyListState()
+    val shown = state.shown
+    // Near the end of what is shown, read the next older page (once per arrival there, not every frame).
+    val more by androidx.compose.runtime.rememberUpdatedState(state.hasMore && state.loaded)
+    androidx.compose.runtime.LaunchedEffect(list) {
+        androidx.compose.runtime.snapshotFlow {
+            val info = list.layoutInfo
+            (info.visibleItemsInfo.lastOrNull()?.index ?: 0) >= info.totalItemsCount - 4
+        }.distinctUntilChanged().collect { near -> if (near && more) onLoadMore() }
+    }
+    androidx.compose.runtime.LaunchedEffect(state.hasMore, state.loadingMore, state.moreFailed, state.online) {
+        // A filter that hides most rows can leave the end in view: keep reading while it is and there is more. A
+        // failed page stops this until Try Again (or the connection returns), so it never reads in a loop.
+        val info = list.layoutInfo
+        if (state.hasMore && !state.loadingMore && !state.moreFailed && state.online && state.loaded && (info.visibleItemsInfo.lastOrNull()?.index ?: 0) >= info.totalItemsCount - 4) onLoadMore()
+    }
+    LazyColumn(Modifier.fillMaxSize(), state = list, contentPadding = PaddingValues(bottom = bottom)) {
+        // An asset's statement opens on what is held, then every payment in it on that network.
+        state.symbol?.let { symbol ->
+            item(key = "asset-head") {
+                val held = state.held
+                val amount = if (state.hidden) "••••" else held?.let { MinorUnits.toDisplay(it.amountMinor, it.decimals) } ?: "0"
+                val worth = held?.fiatAmount?.takeIf { !state.hidden }?.let { f -> state.fiat?.currency?.let { cur -> formatFiat(cur, f) } }
+                val sent = state.transfers.count { it.direction == TransferDirection.Out && it.settled }
+                val received = state.transfers.count { it.direction == TransferDirection.In && it.settled }
+                Column(
+                    Modifier.fillMaxWidth().padding(CircasoSpacing.s4),
+                    horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(CircasoSpacing.s2),
+                ) {
+                    CoinDisc(symbol, Modifier.size(CircasoSizes.avatarLg))
+                    AmountDisplay(symbol, amount, sub = worth ?: chainName(state.blockchain.orEmpty()), size = AmountSize.Medium)
+                    if (state.loaded) BasicText("$received received · $sent sent", style = t.footnote.copy(color = c.inkSecondary))
                 }
             }
-            item(key = "search") {
-                SearchPill(state.query, viewModel::onQuery, "Search payments", Modifier.padding(start = CircasoSpacing.s4, end = CircasoSpacing.s4, top = CircasoSpacing.s2))
-            }
-            item {
-                LazyRow(contentPadding = PaddingValues(horizontal = CircasoSpacing.s4, vertical = CircasoSpacing.s2), horizontalArrangement = Arrangement.spacedBy(CircasoSpacing.s2)) {
-                    items(ActivityFilter.entries) { f -> SuggestionChip(if (f == state.filter) "● ${f.label}" else f.label, { viewModel.onFilter(f) }) }
+        }
+        item(key = "search") {
+            SearchPill(state.query, onQuery, "Search people, notes, amounts", Modifier.padding(start = CircasoSpacing.s4, end = CircasoSpacing.s4, top = CircasoSpacing.s2))
+        }
+        item(key = "filters") {
+            LazyRow(
+                Modifier.semantics { selectableGroup() },
+                contentPadding = PaddingValues(horizontal = CircasoSpacing.s4, vertical = CircasoSpacing.s2),
+                horizontalArrangement = Arrangement.spacedBy(CircasoSpacing.s2),
+            ) {
+                // A date range in use shows first, picked; tapping it clears it.
+                if (state.range != ActivityRange.Any) item(key = "range") {
+                    SuggestionChip(
+                        state.range.label + "  ✕", { onRange(ActivityRange.Any) }, selected = true,
+                        modifier = Modifier.semantics { contentDescription = "${state.range.label}, clear date filter" },
+                    )
                 }
+                items(state.filters, key = { it.name }) { f -> SuggestionChip(f.label, { onFilter(f) }, selected = f == state.filter) }
             }
-            if (state.shown.isEmpty()) item { BasicText(if (state.query.isNotBlank()) "No payments match \"${state.query.trim()}\"." else if (state.symbol != null) "No ${state.symbol} payments on this network yet." else if (network != null) "No payments on $network yet." else "Nothing here yet. Payments you send and receive will show here.", style = t.footnote.copy(color = c.inkSecondary), modifier = Modifier.padding(CircasoSpacing.s4)) }
-            val shown = state.shown
-            shown.forEachIndexed { i, transfer ->
-                val previous = shown.getOrNull(i - 1)
-                if (previous == null || localDayIndex(previous.createdAt) != localDayIndex(transfer.createdAt)) item { SectionHeader(threadDayLabel(transfer.createdAt, now), Modifier.padding(top = CircasoSpacing.s2)) }
-                item(key = transfer.transferId) {
-                    TransferRow(transfer, state.fiat, hidden = false, meta = formatLocalTime(transfer.createdAt, LocalTimeStyle.Clock), onClick = { onOpen(transfer.transferId) })
-                    RowDivider(Modifier.padding(start = 72.dp))
-                }
+        }
+        // A read that failed while payments are saved: say so once, under the chips, and keep the saved rows.
+        if (state.loaded && state.error != null && state.transfers.isNotEmpty() && state.online) item(key = "stale") {
+            BasicText(
+                "Couldn’t refresh. Showing saved payments." + (state.errorRef?.let { " Ref $it" } ?: ""),
+                style = t.footnote.copy(color = c.inkSecondary, textAlign = TextAlign.Center),
+                modifier = Modifier.fillMaxWidth().padding(horizontal = CircasoSpacing.s4, vertical = CircasoSpacing.s2)
+                    .semantics { liveRegion = androidx.compose.ui.semantics.LiveRegionMode.Polite },
+            )
+        }
+        if (!state.loaded) {
+            item(key = "loading") { com.circaso.designsystem.components.SkeletonPeopleRows(count = 5) }
+            return@LazyColumn
+        }
+        if (shown.isEmpty() && !state.loadingMore) item(key = "no-match") {
+            BasicText(
+                when {
+                    state.query.isNotBlank() -> "No payments match “${state.query.trim()}”."
+                    state.range != ActivityRange.Any && state.filter == ActivityFilter.All -> if (state.range == ActivityRange.Today) "No payments today." else "No payments in the ${state.range.label.lowercase()}."
+                    state.symbol != null && state.filter == ActivityFilter.All -> "No ${state.symbol} payments on this network yet."
+                    state.filter == ActivityFilter.Sent -> "Nothing sent yet."
+                    state.filter == ActivityFilter.Received -> "Nothing received yet."
+                    state.filter == ActivityFilter.Groups -> "No payments to or from a group yet."
+                    else -> "No payments yet."
+                },
+                style = t.footnote.copy(color = c.inkSecondary, textAlign = TextAlign.Center),
+                modifier = Modifier.fillMaxWidth().padding(horizontal = CircasoSpacing.s4, vertical = CircasoSpacing.s6),
+            )
+        }
+        shown.forEachIndexed { i, transfer ->
+            val previous = shown.getOrNull(i - 1)
+            if (previous == null || localDayIndex(previous.createdAt) != localDayIndex(transfer.createdAt)) {
+                item(key = "day-" + transfer.transferId) { SectionHeader(threadDayLabel(transfer.createdAt, now), Modifier.padding(top = CircasoSpacing.s2)) }
+            }
+            item(key = transfer.transferId) {
+                // Who and what it was: a group wallet's Contribution / Payout (GW16), the person's own to a group too.
+                val (row, kind) = transfer.listRow(state.groupWallet)
+                TransferRow(row, state.fiat, hidden = state.hidden, meta = formatLocalTime(transfer.createdAt, LocalTimeStyle.Clock), onClick = { onOpen(transfer.transferId) }, kind = kind)
+                RowDivider(Modifier.padding(start = 72.dp))
+            }
+        }
+        if (state.loadingMore) item(key = "more") { com.circaso.designsystem.components.SkeletonPeopleRows(count = 1) }
+        else if (state.moreFailed && state.hasMore) item(key = "more-failed") {
+            Column(
+                Modifier.fillMaxWidth().padding(horizontal = CircasoSpacing.s4, vertical = CircasoSpacing.s4),
+                horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(CircasoSpacing.s2),
+            ) {
+                BasicText("Couldn’t load older payments.", style = t.footnote.copy(color = c.inkSecondary, textAlign = TextAlign.Center))
+                CircasoButton("Try Again", onRetryMore, style = ButtonStyle.Secondary)
             }
         }
     }

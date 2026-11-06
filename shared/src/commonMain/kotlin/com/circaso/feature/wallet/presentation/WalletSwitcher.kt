@@ -32,6 +32,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.foundation.selection.selectable
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.Role
@@ -60,12 +62,14 @@ import com.circaso.feature.chama.presentation.amountText
 import com.circaso.feature.wallet.domain.Wallet
 import com.circaso.feature.wallet.domain.WalletStatus
 
-// The segmented control is compact, not a full-width bar: two short words, centred, like the system's own
-// view switchers. It widens with Dynamic Type up to the screen. No scale token is this size; named here.
-private val ModeControlWidth = 232.dp
-// A segment's height inside the 3 dp track: 38 + 3 + 3 = the 44 dp touch target.
-private val SegmentHeight = 38.dp
-private val TrackInset = 3.dp
+// The control's measures (Pasaka, 2026-11-06: the 232 x 44 dp bar was too big). The track is 32 dp to look at,
+// like iOS's compact segmented control; the touch target around it is the full 44 dp, and both grow with Dynamic Type.
+private val TouchHeight = CircasoSizes.controlMd
+private val TrackHeight = 32.dp
+private val TrackInset = 2.dp
+private val SegmentPadding = 14.dp
+// The narrowest a segment gets, so the two short words still read as a control and not as two words.
+private val SegmentMinWidth = 76.dp
 
 /** The overflow menu's actions that leave the tab: the group's chat and its info (members, approvals, its wallet). */
 class GroupMenuActions(
@@ -90,53 +94,68 @@ internal fun shortWalletName(name: String): String {
 }
 
 /**
- * Personal | Groups at the top of the Wallet tab (Pasaka, 2026-11-05). A track on `fill` with the chosen side lifted
- * on `fillSelected`; the lift slides across on a soft spring (reduced motion: it moves at once). Each side reads out
- * as "Wallet: Personal" / "Wallet: Groups", selected or not.
+ * Personal | Groups at the top of the Wallet tab: a compact segmented control, centred, sized to its two words
+ * (Pasaka, 2026-11-06). The track (`fill`) and the lifted side (`fillSelected`, with a hairline shadow in light
+ * themes) are drawn behind the labels, so the lift slides by drawing alone and never re-measures anything; the touch
+ * target is the full 44 dp row. Reduced motion: the lift moves at once. Right to left, Personal is on the right and
+ * the lift follows. Each side reads out as "Wallet: Personal" / "Wallet: Groups", a tab, selected or not.
  */
 @Composable
 fun WalletModeControl(groups: Boolean, onMode: (WalletMode) -> Unit, modifier: Modifier = Modifier) {
     val c = CircasoTheme.colors
     val t = CircasoTheme.typography
     val still = CircasoTheme.reduceMotion
+    // Critically damped: it glides to the side and stops, never past it; a second tap mid-slide turns it round.
     val at by animateFloatAsState(
         if (groups) 1f else 0f,
-        if (still) snap() else spring(dampingRatio = 0.86f, stiffness = Spring.StiffnessMediumLow),
+        if (still) snap() else spring(dampingRatio = 1f, stiffness = Spring.StiffnessMedium),
         label = "segment",
     )
-    val width = ModeControlWidth * LocalDensity.current.fontScale.coerceIn(1f, 1.6f)
-    val rtl = if (androidx.compose.ui.platform.LocalLayoutDirection.current == androidx.compose.ui.unit.LayoutDirection.Rtl) -1f else 1f
-    Box(
-        modifier.widthIn(max = width).fillMaxWidth().clip(CircasoShapes.pill).background(c.fill).padding(TrackInset)
-            .semantics { selectableGroup() },
+    val density = LocalDensity.current
+    val scale = density.fontScale.coerceIn(1f, 1.6f)
+    val rtl = androidx.compose.ui.platform.LocalLayoutDirection.current == androidx.compose.ui.unit.LayoutDirection.Rtl
+    val track = c.fill
+    val lift = c.fillSelected
+    val shadow = if (c.isDark || c.isHighContrast) null else c.ink.copy(alpha = 0.08f)
+    val edge = if (c.isHighContrast) c.ink else null
+    Row(
+        modifier.width(androidx.compose.foundation.layout.IntrinsicSize.Max).heightIn(min = TouchHeight * scale)
+            .semantics { selectableGroup() }
+            .drawBehind {
+                val trackH = (TrackHeight * scale).toPx().coerceAtMost(size.height)
+                val top = (size.height - trackH) / 2f
+                val radius = androidx.compose.ui.geometry.CornerRadius(trackH / 2f)
+                drawRoundRect(track, androidx.compose.ui.geometry.Offset(0f, top), androidx.compose.ui.geometry.Size(size.width, trackH), radius)
+                val inset = TrackInset.toPx()
+                val half = size.width / 2f
+                // Physical x: in RTL Personal (0) is the right half.
+                val x = (if (rtl) 1f - at else at) * half + inset
+                val liftSize = androidx.compose.ui.geometry.Size(half - inset * 2, trackH - inset * 2)
+                val liftRadius = androidx.compose.ui.geometry.CornerRadius(liftSize.height / 2f)
+                val liftAt = androidx.compose.ui.geometry.Offset(x, top + inset)
+                shadow?.let { drawRoundRect(it, liftAt + androidx.compose.ui.geometry.Offset(0f, 1.dp.toPx()), liftSize, liftRadius) }
+                drawRoundRect(lift, liftAt, liftSize, liftRadius)
+                edge?.let { drawRoundRect(it, liftAt, liftSize, liftRadius, style = androidx.compose.ui.graphics.drawscope.Stroke(1.dp.toPx())) }
+            },
+        verticalAlignment = Alignment.CenterVertically,
     ) {
-        // The lift: half the track, moved by a transform so sliding never re-measures the row.
-        Box(Modifier.matchParentSize()) {
+        listOf(WalletMode.Personal to "Personal", WalletMode.Groups to "Groups").forEach { (mode, label) ->
+            val on = (mode == WalletMode.Groups) == groups
             Box(
-                Modifier.fillMaxWidth(0.5f).fillMaxHeight()
-                    .graphicsLayer { translationX = at * size.width * rtl }
-                    .clip(CircasoShapes.pill).background(c.fillSelected),
-            )
-        }
-        Row(Modifier.fillMaxWidth()) {
-            listOf(WalletMode.Personal to "Personal", WalletMode.Groups to "Groups").forEach { (mode, label) ->
-                val on = (mode == WalletMode.Groups) == groups
-                Box(
-                    Modifier.weight(1f).heightIn(min = SegmentHeight).clip(CircasoShapes.pill)
-                        .pressable(role = Role.Tab, onClick = { if (!on) onMode(mode) })
-                        .semantics(mergeDescendants = true) {
-                            role = Role.Tab
-                            selected = on
-                            contentDescription = "Wallet: $label"
-                        },
-                    contentAlignment = Alignment.Center,
-                ) {
-                    BasicText(
-                        label, Modifier.padding(horizontal = CircasoSpacing.s2, vertical = CircasoSpacing.s1),
-                        style = t.subhead.copy(color = c.ink, fontWeight = if (on) FontWeight.SemiBold else FontWeight.Medium, textAlign = TextAlign.Center),
-                        maxLines = 1, overflow = TextOverflow.Ellipsis,
+                Modifier.weight(1f).widthIn(min = SegmentMinWidth).heightIn(min = TouchHeight * scale)
+                    // The lift sliding across is the feedback: no ripple or press scale over the 44 dp target.
+                    .selectable(
+                        selected = on, role = Role.Tab, interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() },
+                        indication = null, onClick = { if (!on) onMode(mode) },
                     )
-                }
+                    .semantics(mergeDescendants = true) { contentDescription = "Wallet: $label" },
+                contentAlignment = Alignment.Center,
+            ) {
+                BasicText(
+                    label, Modifier.padding(horizontal = SegmentPadding),
+                    style = t.footnote.copy(color = if (on) c.ink else c.inkSecondary, fontWeight = FontWeight.SemiBold, textAlign = TextAlign.Center),
+                    maxLines = 1,
+                )
             }
         }
     }
@@ -235,37 +254,6 @@ fun GroupWalletHeader(
                 }
             },
             contentDescription = "More group wallet options",
-        )
-    }
-}
-
-/**
- * Groups with no group wallet yet: what one is, and where it comes from (a group chat's info, by an admin), in the
- * calm shape of the tab's other states. Nothing to tap: group wallets are made inside a group, never here.
- */
-@Composable
-fun GroupWalletsEmpty(bottom: androidx.compose.ui.unit.Dp, modifier: Modifier = Modifier) {
-    val c = CircasoTheme.colors
-    val t = CircasoTheme.typography
-    // Scrolls, so the largest text sizes on a small phone never cut the copy off (and the tab's pull still works).
-    Column(
-        modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = CircasoSpacing.s8).padding(bottom = bottom),
-        verticalArrangement = Arrangement.spacedBy(CircasoSpacing.s3, Alignment.CenterVertically),
-        horizontalAlignment = Alignment.CenterHorizontally,
-    ) {
-        Box(Modifier.size(CircasoSizes.avatarLg).clip(CircasoShapes.circle).background(c.fill), contentAlignment = Alignment.Center) {
-            CircasoIconImage(CircasoIcon.People, c.inkSecondary, Modifier.size(28.dp))
-        }
-        Spacer(Modifier.size(CircasoSpacing.s1))
-        BasicText("No group wallets yet", Modifier.semantics { heading() }, style = t.title3.copy(color = c.ink, textAlign = TextAlign.Center))
-        BasicText(
-            if (com.circaso.core.flags.GroupPayoutApprovals.Enabled) "A group wallet holds money for a group, like a chama or a trip fund. Members add to it, and payouts need the group's approval."
-            else "A group wallet holds money for a group, like a chama or a trip fund. Members add to it, and only the group's owner sends from it. Everyone sees every payment.",
-            style = t.body.copy(color = c.inkSecondary, textAlign = TextAlign.Center),
-        )
-        BasicText(
-            "To start one, open a group chat, tap its name, and add a wallet. Only a group admin can.",
-            style = t.footnote.copy(color = c.inkSecondary, textAlign = TextAlign.Center),
         )
     }
 }

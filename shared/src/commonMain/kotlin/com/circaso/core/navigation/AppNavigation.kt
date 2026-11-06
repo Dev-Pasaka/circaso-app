@@ -524,7 +524,7 @@ fun AppNavigation(forceUpdate: Boolean, home: @Composable () -> Unit) {
             }
             entry<TransferRoute> { route -> TransferScreen(koinViewModel<TransferViewModel>(key = route.transferId, parameters = { parametersOf(route.transferId) }), onBack = ::pop) }
             entry<NetworksRoute> { NetworksScreen(koinViewModel(), onBack = ::pop) }
-            entry<ActivityRoute> { ActivityScreen(koinViewModel(parameters = { parametersOf(null, null, null) }), onBack = ::pop, onOpen = { id -> backStack.add(TransferRoute(id)) }) }
+            entry<ActivityRoute> { route -> ActivityScreen(koinViewModel(key = "activity-all-" + route.walletId, parameters = { parametersOf(null, null, route.walletId) }), onBack = ::pop, onOpen = { id -> backStack.add(TransferRoute(id)) }) }
             entry<AshaVoiceRoute> { com.circaso.feature.assistant.presentation.AshaVoiceScreen(koinViewModel(), onBack = ::pop) }
             entry<CurrencyRoute> { com.circaso.feature.wallet.presentation.CurrencyScreen(koinViewModel(), onBack = ::pop) }
             entry<AssetActivityRoute> { route ->
@@ -642,7 +642,7 @@ internal fun walletActions(walletId: String?, open: (Route) -> Unit) = WalletAct
     onPay = { open(PayRoute()) },
     onSendToWallet = { open(SendToWalletRoute(walletId)) },
     onTransfer = { id -> open(TransferRoute(id)) },
-    onActivity = { open(ActivityRoute) },
+    onActivity = { open(ActivityRoute(walletId)) },
     onNetworks = { open(NetworksRoute) },
     onAsset = { chain, symbol -> open(AssetActivityRoute(chain, symbol, walletId)) },
     onAssets = { chain -> open(NetworkAssetsRoute(chain, walletId)) },
