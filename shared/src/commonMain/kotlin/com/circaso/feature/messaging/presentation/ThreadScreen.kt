@@ -884,7 +884,13 @@ private fun PaymentMessage(
                 // The person's currency large (You → Currency), the coin amount in the foot (design C4: "KES 500", "3.88 USDC").
                 // No + or −: "Sent" and "Received" already say which way it went (the user, 2026-10-31).
                 amount = shownFiat ?: usdc,
-                note = if (kind == "Contribution" && (chama != null || groupName != null)) "${if (m.outgoing) "You" else m.senderName.substringBefore(' ')} added to ${chama?.goal?.name ?: groupName}" else m.note,
+                // A contribution names who added to what, then keeps what they typed (Pasaka, 2026-11-06: it was dropped).
+                note = if (kind == "Contribution" && (chama != null || groupName != null)) {
+                    listOfNotNull(
+                        "${if (m.outgoing) "You" else m.senderName.substringBefore(' ')} added to ${chama?.goal?.name ?: groupName}",
+                        com.circaso.feature.wallet.presentation.cardNoteTyped(m.note).takeIf { it.isNotBlank() },
+                    ).joinToString(" · ")
+                } else m.note,
                 foot = (if (shownFiat != null) "$usdc · " else "") + formatLocalTime(m.orderAt, LocalTimeStyle.Clock) + when { failed -> " · card not sent"; waiting -> " · sending card"; else -> "" },
                 // Money on chain is never dimmed or greyed because its encrypted card is still going out or didn't
                 // (a card the wallet added on a new phone, then sent): the foot says that; the look follows the money.
