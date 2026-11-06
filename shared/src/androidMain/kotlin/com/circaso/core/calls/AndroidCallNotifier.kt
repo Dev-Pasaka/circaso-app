@@ -30,17 +30,18 @@ class AndroidCallNotifier(private val context: Context) {
         }
     }
 
-    fun ringing(callId: String, title: String, video: Boolean) {
+    /** [title] and [text] come worded from `PushNotices.incomingCall`: "Incoming call" alone with Notification privacy on. */
+    fun ringing(callId: String, title: String, text: String) {
         if (!manager.areNotificationsEnabled()) return
         val open = context.packageManager.getLaunchIntentForPackage(context.packageName)?.apply {
-            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP)
             putExtra(ExtraCallId, callId)
         }
         val tap = open?.let { PendingIntent.getActivity(context, callId.hashCode(), it, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE) }
         val n = NotificationCompat.Builder(context, ChannelId)
             .setSmallIcon(com.circaso.shared.R.drawable.ic_stat_circaso)
             .setContentTitle(title)
-            .setContentText(if (video) "Circaso video call" else "Circaso voice call")
+            .setContentText(text)
             .setCategory(NotificationCompat.CATEGORY_CALL)
             .setPriority(NotificationCompat.PRIORITY_MAX)
             .setOngoing(true)

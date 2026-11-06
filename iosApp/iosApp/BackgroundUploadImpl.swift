@@ -1,6 +1,7 @@
 import Foundation
 import Shared
 import UIKit
+import UserNotifications
 
 /// Uploads that outlive the app (see BackgroundUploads.kt): photos, videos, voice notes, moments and profile photos
 /// go up through a background URL session, which iOS finishes even when Circaso is suspended or closed.
@@ -78,8 +79,27 @@ final class BackgroundUploadImpl: NSObject, BackgroundUploadProvider, URLSession
     }
 }
 
-/// The one UIKit hook SwiftUI doesn't offer: iOS waking Circaso because background uploads finished.
-final class AppDelegate: NSObject, UIApplicationDelegate {
+/// The UIKit hooks SwiftUI doesn't offer: iOS waking Circaso because background uploads finished, and notification taps.
+final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCenterDelegate {
+    /// Set before launch finishes, so a tap that started Circaso (cold) is delivered too.
+    func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil) -> Bool {
+        UNUserNotificationCenter.current().delegate = self
+        return true
+    }
+
+    /// Tapped, cold, in the background or on screen: open where it points (NotificationTaps → the navigation).
+    func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse, withCompletionHandler completionHandler: @escaping () -> Void) {
+        if response.actionIdentifier == UNNotificationDefaultActionIdentifier {
+            _ = NotificationTaps_iosKt.openNotification(userInfo: response.notification.request.content.userInfo)
+        }
+        completionHandler()
+    }
+
+    /// On screen: still show it (the app decides what to post; a chat on screen never posts one).
+    func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification, withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void) {
+        completionHandler([.banner, .list, .sound])
+    }
+
     func application(_ application: UIApplication, handleEventsForBackgroundURLSession identifier: String, completionHandler: @escaping () -> Void) {
         if identifier == BackgroundUploadImpl.identifier {
             BackgroundUploadImpl.shared.finishedEvents = completionHandler

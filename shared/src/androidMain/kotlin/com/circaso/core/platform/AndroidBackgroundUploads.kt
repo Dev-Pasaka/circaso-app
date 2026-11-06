@@ -89,7 +89,7 @@ class AndroidBackgroundUploads(private val context: Context) : BackgroundUploads
         }
     }
 
-    override fun failed(kind: UploadKind) {
+    override fun failed(kind: UploadKind, chatId: String?, localId: Long?) {
         if (onScreen()) return // the screen already shows it, with Send Again
         val notifications = NotificationManagerCompat.from(context)
         if (!notifications.areNotificationsEnabled()) return
@@ -98,7 +98,7 @@ class AndroidBackgroundUploads(private val context: Context) : BackgroundUploads
             .setSmallIcon(com.circaso.shared.R.drawable.ic_stat_circaso)
             .setContentTitle(kind.failed)
             .setContentText("Open Circaso to send it again.")
-            .setContentIntent(openApp(context, 21))
+            .setContentIntent(AndroidChatNotifications.tapIntent(context, FailedId + kind.ordinal, kind.failedDestination(chatId, localId)))
             .setAutoCancel(true)
             .build()
         runCatching { notifications.notify(FailedId + kind.ordinal, n) }

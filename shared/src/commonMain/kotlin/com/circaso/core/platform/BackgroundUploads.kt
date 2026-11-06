@@ -59,8 +59,11 @@ interface BackgroundUploads {
      */
     suspend fun finished(url: String): Boolean = false
 
-    /** An upload stopped for good (the person must send it again): told when Circaso isn't on screen. */
-    fun failed(kind: UploadKind) {}
+    /**
+     * An upload stopped for good (the person must send it again): told when Circaso isn't on screen. A chat's photo,
+     * video or voice note names its [chatId] and row ([localId]), so the tap opens the chat at it.
+     */
+    fun failed(kind: UploadKind, chatId: String? = null, localId: Long? = null) {}
 }
 
 object NoBackgroundUploads : BackgroundUploads {
@@ -90,4 +93,12 @@ suspend fun BackgroundUploads.putFile(
     } catch (_: Throwable) {
         false
     }
+}
+
+/** Where tapping an "it didn't send" notification lands: the chat at the message, my moments, or my profile. */
+fun UploadKind.failedDestination(chatId: String?, localId: Long?): com.circaso.core.notifications.NotificationDestination = when {
+    this == UploadKind.Moment -> com.circaso.core.notifications.NotificationDestination.Moment(null)
+    this == UploadKind.ProfilePhoto -> com.circaso.core.notifications.NotificationDestination.Profile
+    chatId != null -> com.circaso.core.notifications.NotificationDestination.Chat(chatId, localId = localId)
+    else -> com.circaso.core.notifications.NotificationDestination.Inbox
 }

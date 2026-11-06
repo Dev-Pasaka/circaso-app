@@ -97,6 +97,8 @@ class FakeMessagesDao(private val chats: FakeChatsDao? = null) : MessagesDao {
     override suspend fun byMessageId(messageId: String) = rows.value.firstOrNull { it.messageId == messageId }
     override suspend fun byClientMessageId(clientMessageId: String) = rows.value.firstOrNull { it.clientMessageId == clientMessageId }
     override suspend fun newestIncoming(chatId: String) = rows.value.filter { it.chatId == chatId && !it.outgoing && it.kind != MessageKind.System && it.messageId != null }.maxByOrNull { it.orderAt }
+    override suspend fun paymentCardLocalId(chatId: String, transferId: String) = rows.value.filter { it.chatId == chatId && it.kind == MessageKind.Payment && it.transferId == transferId }.minOfOrNull { it.localId }
+    override suspend fun lastCallLocalId(chatId: String) = rows.value.filter { it.chatId == chatId && it.kind == MessageKind.Call }.maxWithOrNull(compareBy({ it.orderAt }, { it.localId }))?.localId
     override suspend fun newestIncomingOrderAt(chatId: String) = rows.value.filter { it.chatId == chatId && !it.outgoing && it.kind != MessageKind.System }.maxOfOrNull { it.orderAt }
     override suspend fun outgoingAwaitingReceipt(chatId: String) = rows.value.filter { it.chatId == chatId && it.outgoing && it.messageId != null && it.status in setOf("sent", "delivered") }
     override suspend fun liveShare(chatId: String, senderId: String, liveId: String) =

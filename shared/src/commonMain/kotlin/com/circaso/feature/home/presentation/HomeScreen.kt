@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.text.BasicText
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
@@ -54,6 +55,13 @@ fun HomeScreen(
     var selected by rememberSaveable { mutableStateOf(initialTab) }
     // A tab index saved by an older build (four tabs, Spaces second) can't point past the end.
     val tab = Tab.entries.getOrElse(selected) { Tab.Chats }
+    // A tapped notification can ask for a tab (a "set up your wallet" one opens Wallet); taken once.
+    val wantedTab by com.circaso.core.notifications.HomeTabRequests.wanted.collectAsState()
+    androidx.compose.runtime.LaunchedEffect(wantedTab) {
+        val wanted = wantedTab ?: return@LaunchedEffect
+        selected = Tab.valueOf(wanted.name).ordinal
+        com.circaso.core.notifications.HomeTabRequests.wanted.value = null
+    }
     // Back from Wallet or You goes to Chats first; Back from Chats asks before leaving (the user, 2026-10-31), so a
     // stray swipe never closes the app. Only Android has a Back that leaves; iOS apps don't close themselves.
     var confirmExit by rememberSaveable { mutableStateOf(false) }

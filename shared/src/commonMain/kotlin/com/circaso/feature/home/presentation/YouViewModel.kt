@@ -31,6 +31,8 @@ data class YouUiState(
     val failedLoaded: Boolean = false,
     /** The coins sound when money arrives (You → Money sound). */
     val moneySound: Boolean = true,
+    /** Notification privacy (You → Notification privacy): off by default. */
+    val notificationPrivacy: Boolean = false,
 )
 
 /** The You tab (design F2). Reads from the phone, refreshes quietly in the background, never blocks on the network. */
@@ -59,12 +61,21 @@ class YouViewModel(
         }
     }
 
+    /** Notification privacy: money, chats and calls are worded without names, amounts or what was said. */
+    fun onNotificationPrivacy(on: Boolean) {
+        val p = prefs ?: return
+        // The navigation mirrors it for iOS's notification extension whenever the flag changes.
+        viewModelScope.launch { p.setFlag(com.circaso.core.datastore.AppPreferences.NotificationPrivacy, on) }
+    }
+
     private val local = MutableStateFlow(YouUiState())
 
     private val soundOff = prefs?.flag(com.circaso.core.datastore.AppPreferences.MoneySoundOff) ?: kotlinx.coroutines.flow.flowOf(false)
+    private val privacy = prefs?.flag(com.circaso.core.datastore.AppPreferences.NotificationPrivacy) ?: kotlinx.coroutines.flow.flowOf(false)
+    private val notificationPrefs = combine(soundOff, privacy) { off, private -> off to private }
 
-    val state: StateFlow<YouUiState> = combine(observeProfile(), observeOverview(), local, outbox.failed(), soundOff) { profile, overview, ui, failed, off ->
-        ui.copy(profile = profile, maskedPhone = overview?.maskedPhone, failed = failed.map(FailedChangeText::from), failedLoaded = true, moneySound = !off)
+    val state: StateFlow<YouUiState> = combine(observeProfile(), observeOverview(), local, outbox.failed(), notificationPrefs) { profile, overview, ui, failed, (off, private) ->
+        ui.copy(profile = profile, maskedPhone = overview?.maskedPhone, failed = failed.map(FailedChangeText::from), failedLoaded = true, moneySound = !off, notificationPrivacy = private)
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), YouUiState())
 
     init {

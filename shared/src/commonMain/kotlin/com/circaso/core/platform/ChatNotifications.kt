@@ -13,6 +13,9 @@ interface ChatNotifications {
 
     fun show(chatId: String, title: String, text: String, messageId: String?)
     fun clear(chatId: String)
+
+    /** Notification privacy was just turned on: take down the ones already showing names, amounts or messages. */
+    fun clearShown() {}
 }
 
 object NoChatNotifications : ChatNotifications {

@@ -332,7 +332,7 @@ class ChatSendHandler(
         } else null
         if (kind == null) return sendNow(item, job)
         return uploads.keep(kind, recipient(first.chatId)) { sendNow(item, job) }.also {
-            if (dao.byLocalId(job.localId)?.status == MessageStatus.Failed) uploads.failed(kind)
+            dao.byLocalId(job.localId)?.takeIf { it.status == MessageStatus.Failed }?.let { uploads.failed(kind, it.chatId, it.localId) }
         }
     }
 
