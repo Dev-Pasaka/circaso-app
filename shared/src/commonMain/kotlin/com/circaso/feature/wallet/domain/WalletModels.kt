@@ -32,10 +32,17 @@ data class WalletChain(val blockchain: String, val address: String, val state: S
     val usdc: Asset? get() = assets.firstOrNull { it.symbol == Wallet.Usdc }
 }
 
-data class Asset(val symbol: String, val tokenAddress: String, val decimals: Int, val amountMinor: String, val amount: String, val fiatAmount: String?)
-data class AssetTotal(val symbol: String, val decimals: Int, val amountMinor: String, val amount: String)
+/**
+ * One coin on one chain. [usdPrice] is one whole unit in US dollars from the server's price feed (CoinGecko, kept about a
+ * minute): for showing it and for turning an amount typed in the person's money into it, never for a payment or a fee.
+ */
+data class Asset(val symbol: String, val tokenAddress: String, val decimals: Int, val amountMinor: String, val amount: String, val fiatAmount: String?, val usdPrice: String? = null) {
+    /** One whole unit in US dollars: 1 for a dollar coin even when the server sent none, else the feed's; null when unpriced. */
+    val dollarPrice: String? get() = if (MinorUnits.isDollar(symbol)) "1" else usdPrice?.takeIf { p -> decimalParts(p)?.let { !MinorUnits.isZero(it.first) } == true }
+}
+data class AssetTotal(val symbol: String, val decimals: Int, val amountMinor: String, val amount: String, val usdPrice: String? = null)
 
-/** The fiat side of the balance: USDC = 1 USD at [rate] (USD → [currency]); `partial` when something held has no price. */
+/** The fiat side of the balance: [rate] is USD → [currency], each coin at its `usdPrice`; `partial` when something held has no price. */
 data class FiatValue(val currency: String, val amount: String, val rate: String, val asOf: String, val partial: Boolean)
 
 /** W12: a chain the wallet is on, is joining, or could join. */
@@ -202,7 +209,7 @@ object MinorUnits {
         return out.reverse().toString().ifEmpty { "0" }
     }
 
-    /** Only US dollar coins have a rate to the local currency (USDC = USDT = 1 USD). */
+    /** US dollar coins are one dollar each (USDC = USDT = 1 USD), whatever the price feed says. */
     fun isDollar(symbol: String) = symbol.uppercase() in setOf("USDC", "USDT")
 
     /** a < b on minor-unit strings. */
@@ -213,6 +220,29 @@ object MinorUnits {
 
     /** Thousands grouping with a thin space-free comma, as the design writes amounts. */
     fun group(whole: String): String = whole.reversed().chunked(3).joinToString(",").reversed()
+}
+
+/**
+ * A coin amount short enough for one line (what is signed is always the exact amount). Dollar coins round half up to
+ * the cent like money; other coins round down by default, so the line never shows more of the coin than is sent:
+ * dollar and euro coins to the cent ("3.87 USDC"), other coins to 6 decimals from one whole coin up ("1.234568 SOL")
+ * and to 4 significant digits below it ("0.001105 ETH").
+ */
+fun coinShort(minor: String, decimals: Int, symbol: String, roundDown: Boolean = !MinorUnits.isDollar(symbol)): String {
+    val digits = minor.trim().trimStart('0').ifEmpty { "0" }
+    val cents = MinorUnits.isDollar(symbol) || symbol.uppercase() == "EURC"
+    val keep = when {
+        cents -> 2
+        digits.length > decimals -> 6
+        else -> (decimals - digits.length) + 4 // the zeros after the point, then 4 significant digits
+    }.coerceAtMost(decimals)
+    val drop = decimals - keep
+    val rounded = if (drop == 0) digits else {
+        val padded = digits.padStart(drop + 1, '0')
+        val kept = padded.dropLast(drop).trimStart('0').ifEmpty { "0" }
+        if (!roundDown && padded[padded.length - drop] >= '5') MinorUnits.add(kept, "1") else kept
+    }
+    return MinorUnits.toDisplay(rounded, keep, minFraction = if (cents) 2 else 0) + " " + symbol
 }
 
 /** Fiat the way the design writes it: "KES 32,180", "KES 15.50"; decimals shown only when they carry something. */
@@ -243,6 +273,64 @@ fun fiatToUsdcMinor(fiatText: String, rate: String): String? {
     if (MinorUnits.isZero(r)) return null
     // cents * 10^10 / rateMicro → minor units: (cents/100) / (r/10^6) * 10^6 = cents * 10^10 / r
     return bigDivide(fiatCents + "0000000000", r)
+}
+
+/**
+ * A plain non-negative decimal as its digits and scale: "3512.27" → ("351227", 2), "129" → ("129", 0); null for anything
+ * else (a sign, an exponent, two points). The digits have no leading zeros ("0" for zero).
+ */
+internal fun decimalParts(text: String): Pair<String, Int>? {
+    val t = text.trim()
+    if (!Regex("""\d+(\.\d+)?""").matches(t) || t.length > 60) return null
+    val frac = t.substringAfter('.', "")
+    return (t.substringBefore('.') + frac).trimStart('0').ifEmpty { "0" } to frac.length
+}
+
+/** [a] × [b] exactly, as a plain decimal ("3500" × "129.25" → "452375"); null when either isn't a plain decimal. */
+fun multiplyDecimal(a: String, b: String): String? {
+    val (x, sx) = decimalParts(a) ?: return null
+    val (y, sy) = decimalParts(b) ?: return null
+    return MinorUnits.toDisplay(bigMultiply(x, y), sx + sy, minFraction = 0).replace(",", "")
+}
+
+/**
+ * What one whole coin is in the person's money: its US dollar price × the wallet's rate (USD → local). Null when the
+ * coin has no price. Display and typing only: what moves is always the coin amount.
+ */
+fun unitFiatRate(asset: Asset?, usdRate: String?): String? {
+    val price = asset?.dollarPrice ?: if (asset == null) "1" else return null
+    return usdRate?.let { multiplyDecimal(price, it) }?.takeIf { r -> decimalParts(r)?.let { !MinorUnits.isZero(it.first) } == true }
+}
+
+/**
+ * A coin amount ([amountMinor] with [decimals]) in the person's money at [unitRate] (one whole coin's local value), to
+ * the nearest cent, as "452.38" (no grouping). [usdcToFiat] is this with 6 decimals and the dollar rate.
+ */
+fun coinToFiat(amountMinor: String, decimals: Int, unitRate: String, roundDown: Boolean = false): String? {
+    val (rate, scale) = decimalParts(unitRate) ?: return null
+    val minor = amountMinor.trim().trimStart('0').ifEmpty { "0" }
+    if (minor.any { !it.isDigit() }) return null
+    val product = bigMultiply(minor, rate)
+    // product has decimals + scale fraction digits; cents keep 2 of them.
+    val drop = decimals + scale - 2
+    val cents = if (drop <= 0) product + "0".repeat(-drop) else {
+        val padded = product.padStart(drop + 1, '0')
+        val kept = padded.dropLast(drop).trimStart('0').ifEmpty { "0" }
+        if (!roundDown && padded[padded.length - drop] >= '5') MinorUnits.add(kept, "1") else kept
+    }
+    return MinorUnits.toDisplay(cents, 2, minFraction = 2).replace(",", "")
+}
+
+/**
+ * An amount typed in the person's money ([fiatText], up to 2 decimals) as minor units of a coin with [decimals] at
+ * [unitRate], rounded down so it never stands for more than was typed. Null when it isn't an amount or there's no rate.
+ */
+fun fiatToCoinMinor(fiatText: String, unitRate: String, decimals: Int): String? {
+    val cents = MinorUnits.fromDisplay(fiatText, 2) ?: return null
+    val (rate, scale) = decimalParts(unitRate) ?: return null
+    if (MinorUnits.isZero(rate)) return null
+    // (cents / 100) / (rate / 10^scale) × 10^decimals = cents × 10^(scale + decimals) / (rate × 100)
+    return bigDivide(cents + "0".repeat(scale + decimals), rate + "00")
 }
 
 internal fun bigMultiply(a: String, b: String): String {

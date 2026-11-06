@@ -86,7 +86,8 @@ val walletModule = module {
     viewModel { NetworksViewModel(get(), get(), get()) }
     viewModel { (intent: PayIntent) ->
         val profiles = get<com.circaso.feature.profile.domain.ProfileRepository>()
-        PayViewModel(intent, get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), scanner = get(), findHandle = { profiles.findByHandle(it) }, groupWallets = get(), wallets = get(), observeTransfer = get(), quotePayment = get())
+        val refreshWallet = get<RefreshWalletUseCase>()
+        PayViewModel(intent, get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), scanner = get(), findHandle = { profiles.findByHandle(it) }, groupWallets = get(), wallets = get(), observeTransfer = get(), quotePayment = get(), refreshWallet = { refreshWallet() })
     }
     factory {
         com.circaso.feature.wallet.presentation.GroupWalletSources(

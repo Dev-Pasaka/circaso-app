@@ -42,8 +42,8 @@ import com.circaso.designsystem.theme.CircasoSizes
 import com.circaso.designsystem.theme.CircasoSpacing
 import com.circaso.designsystem.theme.CircasoTheme
 import com.circaso.feature.wallet.domain.MinorUnits
-import com.circaso.feature.wallet.domain.fiatToUsdcMinor
-import com.circaso.feature.wallet.domain.usdcToFiat
+import com.circaso.feature.wallet.domain.coinToFiat
+import com.circaso.feature.wallet.domain.fiatToCoinMinor
 import kotlin.time.Instant
 
 // Phase 2F's fee and limit lines (spaces-plan §7a, §7b; frames GW13, GW13b–d, GW14, GW14b, GW20), shared by the chat's
@@ -73,10 +73,10 @@ private fun buttonTime(iso: String?): String? = clockOf(iso)?.let { t -> if (t.s
  * stands for no more than [maxMinor] (so an offer never promises a cent more than fits), else in the coin.
  */
 internal fun fittedAmount(s: PayUiState, maxMinor: String): String? {
-    val rate = s.rate
-    if (!(s.inFiat && rate != null && s.tagged == null)) return MinorUnits.toDisplay(maxMinor, s.tagged?.second?.decimals ?: 6).replace(",", "")
-    var fiat = usdcToFiat(maxMinor, rate) ?: return null
-    while (fiatToUsdcMinor(fiat, rate)?.let { MinorUnits.lessThan(maxMinor, it) } == true) {
+    val rate = s.unitRate
+    if (!(s.inFiat && rate != null)) return MinorUnits.toDisplay(maxMinor, s.decimals).replace(",", "")
+    var fiat = coinToFiat(maxMinor, s.decimals, rate) ?: return null
+    while (fiatToCoinMinor(fiat, rate, s.decimals)?.let { MinorUnits.lessThan(maxMinor, it) } == true) {
         val cents = MinorUnits.fromDisplay(fiat, 2)?.toLongOrNull() ?: return null
         if (cents <= 0) return null
         fiat = MinorUnits.toDisplay((cents - 1).toString(), 2, minFraction = 2).replace(",", "")
@@ -87,8 +87,7 @@ internal fun fittedAmount(s: PayUiState, maxMinor: String): String? {
 /** [fittedAmount] in words: "KES 18,149", "499.75 USDC". */
 private fun fittedText(s: PayUiState, maxMinor: String): String? {
     val amount = fittedAmount(s, maxMinor) ?: return null
-    val rate = s.rate
-    return if (s.inFiat && rate != null && s.tagged == null && s.currency != null) {
+    return if (s.inFiat && s.unitRate != null && s.currency != null) {
         "${s.currency} ${fiatDisplay(MinorUnits.fromDisplay(amount, 2) ?: "0")}"
     } else "${MinorUnits.group(amount.substringBefore('.'))}${amount.substringAfter('.', "").let { if (it.isEmpty()) "" else ".$it" }} ${s.asset}"
 }
@@ -167,10 +166,11 @@ internal fun feeFootnote(s: PayUiState, now: Long = nowMillis()): String {
     if (s.blocked) return ref.orEmpty()
     val charged = fee is PayFee.Quoted && !MinorUnits.isZero(fee.amountMinor)
     val minimum = charged && (fee as PayFee.Quoted).minimum
-    val rate = s.rate?.takeIf { s.tagged == null && s.currency != null }?.let { "1 USDC = ${s.currency} ${formatRate(it)}" }
+    val rate = rateLine(s)
     val held = (fee as? PayFee.Quoted)?.expiresAt
         ?.takeIf { charged && !s.requestPayout && !s.feeStale && (millisOf(it) ?: 0) > now }
-        ?.let { clockOf(it, now) }?.let { "fee and rate held until $it" }
+        // The frame's words for a dollar coin; a coin's market price is never held, so for one only the fee is.
+        ?.let { clockOf(it, now) }?.let { if (MinorUnits.isDollar(s.asset)) "fee and rate held until $it" else "fee held until $it" }
     return listOfNotNull(
         ref,
         "Small payments have a minimum fee that covers the network cost.".takeIf { minimum },

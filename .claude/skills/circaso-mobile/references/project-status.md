@@ -67,6 +67,12 @@ Media3 1.4.1, multiplatform-markdown-renderer 0.46.0.
 - D-M1 Circle user-controlled wallets: the server makes challenges, the person signs with a PIN in Circle's SDK; the
   server never holds keys. Testnet on dev (Base Sepolia default, USDC). Circle's own social login removed.
 - D-M2 Amounts are decimal strings, never floats. Fiat is the phone's region currency (USDC = 1 USD), credited "Rates by Exchange Rate API".
+- D-M10 **Any priced coin in the person's money** (Pasaka, 2026-11-06; backend PR #48, CoinGecko): W1's assets carry
+  `usdPrice` (dollar coins are 1 even without it). `#500 @eth` stays KES 500, turned into ETH at usdPrice × the wallet's
+  rate with string math, rounded down; the card shows the coin as its sub-line ("0.001105 ETH · Fee KES 4.52"); typing
+  in the coin still works; a coin with no price falls back to coin units. Prices are display and typing only, never a
+  payment or fee. Credit "Prices by CoinGecko" with the rate line. Code: `unitFiatRate`, `coinToFiat`,
+  `fiatToCoinMinor`, `coinShort` in `WalletModels.kt`; `PayUiState.unitRate`.
 - D-M3 Pay from chats: **money starts and ends in the chat** (Pasaka, 2026-11-04): `#500 @usdc for lunch` makes the
   chat's money card, which is the whole review (who, amount in currency and coin, network, Paying from, the note,
   the fee, what they receive); Pay goes straight to the Circle PIN. No review page, no note field. The card in the

@@ -137,6 +137,14 @@ private fun payState(base: PayUiState) = base.copy(
     balances = mapOf(null to gwWallet("141180000", null), "gw-1" to gwWallet()), memberNames = kilimani.members.associate { it.userId to it.displayName },
 )
 
+/** [base] paying in ETH (priced at [price] dollars, or unpriced) with a fee quoted in ETH. */
+private fun ethPay(base: PayUiState, price: String? = "3500"): PayUiState {
+    val w = base.wallet ?: return base
+    val eth = Asset("ETH", "", 18, "120000000000000000", "0.12", null, price)
+    val chains = w.chains.mapIndexed { i, c -> if (i == 0) c.copy(assets = c.assets + eth) else c }
+    return base.copy(wallet = w.copy(chains = chains, fetchedAt = nowMillis()), assetTag = "eth", fee = PayFee.Quoted("10000000000000", 50))
+}
+
 private val kilimaniWallet = NamedWallet("gw-1", "g1", "Kilimani Chama", null, WalletOwnerType.Group, true, WalletStatus.Active, "me")
 
 @Composable
@@ -372,6 +380,14 @@ internal fun ChatMoneyPreview(name: String): Boolean {
         "chat-pay-failed" -> ChatPreview(direct, mumPay.copy(failure = PayFailure("your wallet", "Something went wrong while signing. Nothing was sent.", "req_N2sX8c")))
         "chat-pay-offline" -> ChatPreview(direct.copy(online = false), mumPay.copy(online = false))
         "chat-pay-personal-only" -> ChatPreview(direct, mumPay.copy(choices = listOf(NamedWallet.Personal), groupWallets = false))
+        // Any priced coin in the person's money (2026-11-06): "#500 @eth" is KES 500 with the ETH under it.
+        "chat-pay-eth" -> ChatPreview(direct.copy(draft = "#500 @eth for lunch tomorrow"), ethPay(mumPay))
+        "chat-pay-eth-large" -> androidx.compose.runtime.CompositionLocalProvider(
+            androidx.compose.ui.platform.LocalDensity provides androidx.compose.ui.unit.Density(androidx.compose.ui.platform.LocalDensity.current.density, fontScale = 2f),
+        ) { ChatPreview(direct.copy(draft = "#500 @eth for lunch tomorrow"), ethPay(mumPay)) }
+        "chat-pay-eth-quoting" -> ChatPreview(direct.copy(draft = "#500 @eth"), ethPay(mumPay).copy(fee = PayFee.Quoting))
+        "chat-pay-eth-no-price" -> ChatPreview(direct.copy(draft = "#500 @eth"), ethPay(mumPay, price = null).copy(typedInFiat = true))
+        "chat-pay-eth-old-price" -> ChatPreview(direct.copy(draft = "#500 @eth"), ethPay(mumPay).copy(pricesFresh = false))
         // GW9a2/GW9d: a contribution, with where the target will stand.
         "chat-contribute" -> ChatPreview(group, contribute)
         // GW9 from the D5 card: an approved payout paid from the chat.
