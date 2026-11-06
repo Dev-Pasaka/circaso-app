@@ -84,7 +84,8 @@ object ErrorMessages {
         "wallet.group_wallets_unavailable" to "Group wallets aren't available on this server yet. Nothing was sent.",
         "wallet.group_not_found" to "You're not in this group any more.",
         "wallet.not_group_owner" to "Only the group's owner can set up its wallet.",
-        "wallet.not_signer" to "Only the person who set this wallet's PIN can send from it.",
+        // 2026-11-06: only the group's owner moves its money; everyone else adds to it.
+        "wallet.not_signer" to "Only the group's owner can send from its wallet. You can still add to it.",
         "wallet.signer_left" to "The person who signs for this wallet has left the group. Nothing can be sent from it until they're back.",
         "wallet.payout_required" to "Money leaves a group wallet only for a payout the admins approved.",
         "wallet.payout_not_approved" to "This payout isn't approved, or it's already paid.",

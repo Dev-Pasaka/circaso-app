@@ -68,7 +68,14 @@ private val SegmentHeight = 38.dp
 private val TrackInset = 3.dp
 
 /** The overflow menu's actions that leave the tab: the group's chat and its info (members, approvals, its wallet). */
-class GroupMenuActions(val onOpenChat: (chatId: String) -> Unit, val onGroupInfo: (chatId: String) -> Unit)
+class GroupMenuActions(
+    val onOpenChat: (chatId: String) -> Unit,
+    val onGroupInfo: (chatId: String) -> Unit,
+    /** The owner only (2026-11-06): pay anyone, themselves included, straight from the group wallet. */
+    val onPay: ((walletId: String) -> Unit)? = null,
+    /** The owner only: send from the group wallet to an outside address (design E5). */
+    val onSendToWallet: ((walletId: String) -> Unit)? = null,
+)
 
 /**
  * The name the corner shows: the whole name when it is short, else its first two words, else its first word
@@ -140,8 +147,8 @@ internal fun walletLine(w: NamedWallet, locked: Boolean): String = when {
     w.personal -> "Your own money"
     locked -> "Locked · its signer left"
     w.status == WalletStatus.SettingUp -> "Being set up"
-    w.canSign -> "You send, after approval"
-    else -> "View only · payouts need approval"
+    w.canSign -> if (com.circaso.core.flags.GroupPayoutApprovals.Enabled) "You send, after approval" else "Only you send from it"
+    else -> if (com.circaso.core.flags.GroupPayoutApprovals.Enabled) "View only · payouts need approval" else "You add to it · the owner sends"
 }
 
 /** A wallet's last balance as the menu shows it, or null when the phone hasn't read it. */
@@ -205,9 +212,15 @@ fun GroupWalletHeader(
             NativeMenuItem("chat", "Open Group Chat", icon = NativeMenuIcon.Chat),
             NativeMenuItem("info", "Group Info", icon = NativeMenuIcon.Info),
         ) else emptyList()
+        // 2026-11-06: only the owner moves the group's money, so only they see these; a locked or unready wallet offers none.
+        val spend = w.walletId?.takeIf { menu != null && w.canSign && w.status == WalletStatus.Active && !locked }
+        val money = if (spend != null) listOfNotNull(
+            menu?.onPay?.let { NativeMenuItem("pay", "Pay from ${shortWalletName(w.name)}", icon = NativeMenuIcon.Send) },
+            menu?.onSendToWallet?.let { NativeMenuItem("external", "Send to a Wallet", subtitle = "An exchange or another wallet", icon = NativeMenuIcon.External) },
+        ) else emptyList()
         NativeMoreMenu(
             title = "Group Wallets",
-            sections = listOf(wallets, actions).filter { it.isNotEmpty() },
+            sections = listOf(wallets, money, actions).filter { it.isNotEmpty() },
             expanded = state.switching,
             onExpandedChange = onSwitching,
             onSelect = { id ->
@@ -217,6 +230,8 @@ fun GroupWalletHeader(
                     id == "all" -> onAllGroups(true)
                     id == "chat" -> chat?.let { menu?.onOpenChat?.invoke(it) }
                     id == "info" -> chat?.let { menu?.onGroupInfo?.invoke(it) }
+                    id == "pay" -> spend?.let { menu?.onPay?.invoke(it) }
+                    id == "external" -> spend?.let { menu?.onSendToWallet?.invoke(it) }
                 }
             },
             contentDescription = "More group wallet options",
@@ -244,7 +259,8 @@ fun GroupWalletsEmpty(bottom: androidx.compose.ui.unit.Dp, modifier: Modifier = 
         Spacer(Modifier.size(CircasoSpacing.s1))
         BasicText("No group wallets yet", Modifier.semantics { heading() }, style = t.title3.copy(color = c.ink, textAlign = TextAlign.Center))
         BasicText(
-            "A group wallet holds money for a group, like a chama or a trip fund. Members add to it, and payouts need the group's approval.",
+            if (com.circaso.core.flags.GroupPayoutApprovals.Enabled) "A group wallet holds money for a group, like a chama or a trip fund. Members add to it, and payouts need the group's approval."
+            else "A group wallet holds money for a group, like a chama or a trip fund. Members add to it, and only the group's owner sends from it. Everyone sees every payment.",
             style = t.body.copy(color = c.inkSecondary, textAlign = TextAlign.Center),
         )
         BasicText(

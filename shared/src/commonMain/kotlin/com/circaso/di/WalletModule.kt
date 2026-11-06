@@ -1,5 +1,6 @@
 package com.circaso.di
 
+import kotlinx.coroutines.flow.map
 import com.circaso.core.database.CircasoDatabase
 import com.circaso.core.platform.localCurrencyCode
 import com.circaso.feature.wallet.data.remote.KtorWalletRemote
@@ -86,12 +87,13 @@ val walletModule = module {
     viewModel { NetworksViewModel(get(), get(), get()) }
     viewModel { (intent: PayIntent) ->
         val profiles = get<com.circaso.feature.profile.domain.ProfileRepository>()
-        PayViewModel(intent, get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), scanner = get(), findHandle = { profiles.findByHandle(it) }, groupWallets = get(), wallets = get(), observeTransfer = get(), quotePayment = get())
+        PayViewModel(intent, get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), scanner = get(), findHandle = { profiles.findByHandle(it) }, groupWallets = get(), wallets = get(), observeTransfer = get(), quotePayment = get(),
+            observeMe = profiles.profile.map { p -> p?.let { com.circaso.feature.contacts.domain.Person(it.userId, it.displayName, it.handle, it.avatarUrl, it.about) } })
     }
     factory {
         com.circaso.feature.wallet.presentation.GroupWalletSources(
             get(), get(), get(), get(), get(), get(), get(), get(), get(),
         )
     }
-    viewModel { SendToWalletViewModel(get(), get(), get(), get(), scanner = get()) }
+    viewModel { (fromWalletId: String?) -> SendToWalletViewModel(get(), get(), get(), get(), scanner = get(), fromWalletId = fromWalletId, wallets = get(), quotePayment = get(), sendCard = get()) }
 }

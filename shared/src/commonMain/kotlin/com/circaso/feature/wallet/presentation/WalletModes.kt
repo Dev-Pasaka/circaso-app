@@ -90,7 +90,7 @@ data class NativeMenuItem(
 )
 
 /** The few action glyphs the menu uses: drawn by Circaso on Android, SF Symbols on iOS. */
-enum class NativeMenuIcon { Chat, Info, List }
+enum class NativeMenuIcon { Chat, Info, List, Send, External }
 
 /**
  * The platform's own overflow button and menu. Android: a vertical three-dot button (Material "more vert") and an

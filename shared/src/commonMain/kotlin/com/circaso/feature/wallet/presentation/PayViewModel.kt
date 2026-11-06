@@ -184,6 +184,10 @@ data class PayUiState(
     val requested: com.circaso.feature.chama.domain.ChamaRequest? = null,
     /** When the wallets' balances were read, for "as of" offline. */
     val asOf: String? = null,
+    /** Payout requests and approvals (parked 2026-11-06): off, the group wallet's owner pays directly. */
+    val approvals: Boolean = com.circaso.core.flags.GroupPayoutApprovals.Enabled,
+    /** The person themselves, so a group wallet's owner can pay its money to their own wallet (2026-11-06). */
+    val me: Person? = null,
     /** §7b's fee line, from W17 (phase 2F). */
     val fee: PayFee = PayFee.None,
     /** The fee shown was asked for an earlier version of this payment; the new answer is on its way and Pay waits. */
@@ -197,14 +201,18 @@ data class PayUiState(
     val fromGroupWallet get() = !payingFrom.personal
     /** GW9: an approved payout, paid from the group wallet with its PIN. */
     val groupPayout get() = groupWallets && requestId != null && fromGroupWallet
-    /** GW9c: from a group wallet without an approved request: the review becomes Request Payout (CH4). */
-    val requestPayout get() = groupWallets && requestId == null && fromGroupWallet
+    /** GW9c: from a group wallet without an approved request, while approvals are on: Request Payout (CH4). */
+    val requestPayout get() = groupWallets && approvals && requestId == null && fromGroupWallet
+    /** 2026-11-06: the group wallet's owner (its only signer) pays from it directly, no request, no approvals. */
+    val directPayout get() = groupWallets && !approvals && requestId == null && fromGroupWallet
+    /** The owner paying the group's money to their own wallet. */
+    val toSelf get() = me != null && payee?.userId == me.userId
     /** Pay into a group wallet. */
     val toGroup get() = groupId != null
     /** Show GW9b's chip: the person has other wallets, or this one is a group's. */
     val showPayingFrom get() = groupWallets && (choices.size > 1 || fromGroupWallet)
     /** The chip opens GW10: there is something to switch to, and nothing fixes the wallet (a payout, a contribution). */
-    val canSwitch get() = showPayingFrom && choices.size > 1 && requestId == null && !toGroup && step == PayStep.Amount
+    val canSwitch get() = showPayingFrom && choices.size > 1 && requestId == null && !toGroup && !toSelf && step == PayStep.Amount
     /** The approved request being paid. */
     val payoutRequest get() = requestId?.let { id -> groupMoney?.openRequests?.firstOrNull { it.requestId == id } }
     /** The wallet's name as the approval says it ("Approve from Kilimani Chama"). */
@@ -309,7 +317,7 @@ data class PayUiState(
     val onHold: Boolean get() = wallet?.holdUntil != null
     val canPay: Boolean get() = online && !onHold && payee != null && payChain != null && problem == null && !checking && !assetMissing && amountMinor?.let { !MinorUnits.isZero(it) } == true && !overBalance && step == PayStep.Amount && (feeSettled || requestPayout) && !blocked &&
         // A request needs the group's own chat to post in; a payout needs the request it pays.
-        (!requestPayout || payingFrom.chatId != null)
+        (!requestPayout || payingFrom.chatId != null) && !(toSelf && !fromGroupWallet)
     val filteredContacts get() = contacts.filter { query.isBlank() || it.displayName.contains(query, true) || it.handle?.contains(query.trimStart('@'), true) == true }
 
     /** 0..1 of the goal once this contribution lands. */
@@ -357,6 +365,10 @@ class PayViewModel(
     private val quoteDelayMillis: Long = QuoteDelayMillis,
     /** The clock the quote's hold and the limit's time are measured against (tests move it). */
     private val now: () -> Long = { com.circaso.core.sync.nowMillis() },
+    /** The person themselves (their profile), for "Your wallet" when a group wallet's owner pays out (2026-11-06). */
+    observeMe: kotlinx.coroutines.flow.Flow<Person?> = flowOf(null),
+    /** Payout requests and approvals (parked 2026-11-06, [com.circaso.core.flags.GroupPayoutApprovals]). */
+    approvals: Boolean = com.circaso.core.flags.GroupPayoutApprovals.Enabled,
 ) : ViewModel() {
     private val userId = intent.userId
     private val chatId = intent.chatId
@@ -367,7 +379,7 @@ class PayViewModel(
             amountText = intent.amount?.filter { it.isDigit() || it == '.' }.orEmpty(), goalName = intent.goalName, requestId = intent.requestId,
             // A request's amount is exact USDC (CH3); a `#500` shortcut is in the person's currency.
             inFiat = !intent.payout,
-            groupId = intent.groupId, note = intent.note.orEmpty(),
+            groupId = intent.groupId, note = intent.note.orEmpty(), approvals = approvals,
         ),
     )
     /** The wallet chosen to pay from: the intent's group wallet, or one picked in GW10; null is Personal. */
@@ -408,9 +420,9 @@ class PayViewModel(
 
     val state: StateFlow<PayUiState> = combine(
         local, observeWallet(), observeContacts(), connection.status,
-        combine(if (intent.goalName != null && chatId != null) observeChama(chatId) else flowOf(null), groupSide) { ch, g -> ch to g },
+        combine(if (intent.goalName != null && chatId != null) observeChama(chatId) else flowOf(null), groupSide, observeMe) { ch, g, m -> Triple(ch, g, m) },
     ) { ui, personal, contacts, c, sides ->
-        val (chama, group) = sides
+        val (chama, group, me) = sides
         val people = contacts.map { it.person }
         // The money leaves the chosen wallet: its chains and balance, and its fiat rate (the server prices each one).
         val wallet = if (group.sourceIsGroup) group.source else personal
@@ -432,6 +444,7 @@ class PayViewModel(
             balances = group.balances,
             groupMoney = group.money,
             memberNames = group.names,
+            me = me,
         )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), local.value)
 
@@ -457,7 +470,7 @@ class PayViewModel(
         idempotencyKey = newIdempotencyKey()
         staleFee()
         local.update { it.copy(choosing = false, blockchain = null, failure = null) }
-        state.value.payee?.userId?.takeIf { it.isNotEmpty() }?.let { check(it, null) }
+        state.value.payee?.userId?.takeIf { it.isNotEmpty() && it != state.value.me?.userId }?.let { check(it, null) }
     }
 
     init {
@@ -605,7 +618,8 @@ class PayViewModel(
 
     fun onPick(person: Person) {
         local.update { it.copy(payee = person, step = PayStep.Amount, problem = null, reminded = null, error = null) }
-        check(person.userId, state.value.blockchain)
+        // The owner's own wallet (the group's money to themselves) isn't W9's question; W4 answers for it.
+        if (person.userId != state.value.me?.userId) check(person.userId, state.value.blockchain)
     }
 
     /** Back from the amount: to the person picker when that's where the payment started; false means leave Pay. */
@@ -697,6 +711,8 @@ class PayViewModel(
         val s = state.value
         // The fee may have gone stale this instant (the amount just changed): never sign the old quote for it.
         if (!s.canPay || (local.value.feeStale && !s.requestPayout)) return
+        // "You" is only the group's money to the owner; never a fee-paying transfer from their own wallet to itself.
+        if (s.toSelf && !s.fromGroupWallet) return
         val payee = s.payee ?: return
         val chain = s.payChain ?: return
         val minor = s.amountMinor ?: return
@@ -708,6 +724,8 @@ class PayViewModel(
             // The card says what the money was for: "Added to Holiday Fund", "Paid from Holiday Fund", or the note alone.
             val note = when {
                 s.toGroup -> listOfNotNull("Added to ${s.groupMoney?.goal?.name ?: payee.displayName}", typed).joinToString(" · ")
+                // 2026-11-06: the group chat's card says where the group's money went ("Paid from Diani to Pasaka").
+                s.directPayout -> payoutNote(s.walletName, payee.displayName, address?.takeIf { payee.userId.isEmpty() }, typed)
                 s.groupPayout -> listOfNotNull("Paid from ${s.walletName}", typed).joinToString(" · ")
                 s.contribution -> listOfNotNull("Added to ${s.goalName}", typed).joinToString(" · ")
                 s.payout -> listOfNotNull("Paid from ${s.goalName ?: "the group"}", typed).joinToString(" · ")
@@ -718,7 +736,8 @@ class PayViewModel(
             val subject = if (s.fromGroupWallet) s.payingFrom.subject else if (s.choices.size > 1) NamedWallet.Personal.subject else com.circaso.feature.wallet.domain.SignSubject.Personal
             val request = PaymentRequest(
                 blockchain = chain, toUserId = payee.userId.takeIf { it.isNotEmpty() && toAddress == null && !s.toGroup }, toAddress = toAddress, amountMinor = minor,
-                asset = s.asset, chatId = chatId, note = note, counterpartName = payee.displayName ?: group,
+                // A direct payout belongs to the group's chat, wherever it was started (W4 reads reach and membership there).
+                asset = s.asset, chatId = if (s.directPayout) s.payingFrom.chatId ?: chatId else chatId, note = note, counterpartName = payee.displayName ?: group,
                 toGroupId = s.groupId, fromWalletId = s.payingFrom.walletId, payoutRequestId = s.requestId.takeIf { s.groupPayout }, subject = subject,
                 quoteId = (s.fee as? PayFee.Quoted)?.quoteId,
             )
@@ -726,10 +745,12 @@ class PayViewModel(
                 is AppResult.Success -> {
                     idempotencyKey = newIdempotencyKey()
                     val transfer = r.value
-                    val target = chatId ?: if (toAddress == null && !s.toGroup) (openDirectChat(payee.userId) as? AppResult.Success)?.value?.chatId else null
-                    if (target != null) sendCard(target, PaymentCard(transfer.transferId, transfer.amount.amountMinor, transfer.amount.asset, transfer.blockchain, note))
+                    val card = PaymentCard(transfer.transferId, transfer.amount.amountMinor, transfer.amount.asset, transfer.blockchain, note)
+                    val target = if (s.directPayout) sendPayoutCards(s, payee, toAddress, card)
+                    else (chatId ?: if (toAddress == null && !s.toGroup) (openDirectChat(payee.userId) as? AppResult.Success)?.value?.chatId else null)
+                        ?.also { sendCard(it, card) }
                     val follow = observeTransfer
-                    if ((s.groupPayout || s.toGroup) && follow != null && !transfer.settled && !intent.inChat) {
+                    if ((s.groupPayout || s.directPayout || s.toGroup) && follow != null && !transfer.settled && !intent.inChat) {
                         // GW17: signed, not yet on chain. The review stays, named; nothing says paid until the server does.
                         local.update { it.copy(step = PayStep.Sending, result = transfer, chatId = it.chatId ?: target) }
                         followTransfer(follow, transfer.transferId, s)
@@ -748,6 +769,21 @@ class PayViewModel(
                 }
             }
         }
+    }
+
+    /**
+     * Every payment out of a group wallet shows in the group's chat (Pasaka, 2026-11-06), like contributions coming in.
+     * Someone outside the group also gets it in the chat with them (the chat this started in, or a direct one); a
+     * member sees it in the group, and the owner paying themselves needs no second card. Returns the group's chat.
+     */
+    private suspend fun sendPayoutCards(s: PayUiState, payee: Person, toAddress: String?, card: PaymentCard): String? {
+        val group = s.payingFrom.chatId
+        group?.let { sendCard(it, card) }
+        val person = payee.userId.takeIf { it.isNotEmpty() && toAddress == null && !s.toSelf && it !in s.memberNames }
+        val theirs = chatId?.takeIf { it != group } ?: person?.let { (openDirectChat(it) as? AppResult.Success)?.value?.chatId }
+        // Their own chat says where it came from, not "to Mum" back to Mum: "From Diani vacation · Bus fare".
+        theirs?.takeIf { it != group }?.let { sendCard(it, card.copy(note = listOfNotNull("From ${s.walletName}", cardNoteTyped(card.note).takeIf { n -> n.isNotEmpty() }).joinToString(" · "))) }
+        return group ?: theirs
     }
 
     /** GW9c: from a group wallet, ask the admins (CH4) in that group's chat; the signer pays it once approved. */
@@ -923,9 +959,37 @@ internal fun com.circaso.feature.wallet.domain.PaymentQuote.blockOf(): PayBlock?
 
 internal fun cardNoteTyped(note: String?): String {
     val n = note?.trim().orEmpty()
-    if (!n.startsWith("Added to ") && !n.startsWith("Paid from ")) return n
+    if (!n.startsWith("Added to ") && !n.startsWith("Paid from ") && !n.startsWith("Sent from ")) return n
     return n.substringAfter(" · ", "")
 }
+
+/**
+ * A direct payout's card note (2026-11-06): "Paid from Diani vacation to Pasaka", "Sent from Diani vacation to
+ * 0x12…ab4", then what the owner typed. Written once, so it reads the same to every member and to the payee.
+ */
+internal fun payoutNote(wallet: String, payeeName: String?, address: String?, typed: String?): String {
+    val head = if (address != null) "Sent from $wallet to ${shortAddress(address)}" else "Paid from $wallet to ${payeeName ?: "them"}"
+    return listOfNotNull(head, typed).joinToString(" · ")
+}
+
+/**
+ * GW18's card from a payout note: the head over the amount ("Paid from Diani vacation", "Sent from Diani vacation") and
+ * the rest under it ("to Pasaka · Bus fare", "to 0x12…ab4"); null when the note isn't a payout. [wallet] is the group's
+ * name, so a name with " to " in it still splits in the right place.
+ */
+internal fun payoutHeadAndRest(note: String?, wallet: String?): Pair<String, String?>? {
+    if (!isGroupPayoutNote(note)) return null
+    val n = note!!.trim()
+    val first = n.substringBefore(" · ")
+    val typed = n.substringAfter(" · ", "").takeIf { it.isNotBlank() }
+    val verb = first.substringBefore(" from ") + " from "
+    val head = wallet?.let { verb + it }?.takeIf { first.startsWith(it) } ?: first.substringBefore(" to ")
+    val to = first.removePrefix(head).trim().takeIf { it.isNotEmpty() }
+    return head to listOfNotNull(to, typed).joinToString(" · ").takeIf { it.isNotEmpty() }
+}
+
+/** A card the group wallet's owner sent out of the group's money: "Paid from …" (a payout) or "Sent from …" (an address). */
+internal fun isGroupPayoutNote(note: String?): Boolean = note?.startsWith("Paid from ") == true || note?.startsWith("Sent from ") == true
 
 private data class GroupSide(
     val on: Boolean = false,

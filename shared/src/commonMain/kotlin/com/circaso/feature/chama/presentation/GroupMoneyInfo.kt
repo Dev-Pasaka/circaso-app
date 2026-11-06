@@ -175,6 +175,10 @@ class GroupMoneyActions(
     val onChangePin: () -> Unit,
     val onApprovals: () -> Unit,
     val onRetry: () -> Unit,
+    /** The owner only (2026-11-06): pay anyone, themselves included, straight from the group wallet. */
+    val onPay: ((walletId: String) -> Unit)? = null,
+    /** The owner only: send from the group wallet to an outside address (design E5). */
+    val onSendToWallet: ((walletId: String) -> Unit)? = null,
 )
 
 /**
@@ -219,9 +223,24 @@ fun ColumnScope.GroupMoneyRows(info: GroupInfoMoney, chat: Chat?, myUserId: Stri
             val who = if (money.isSigner) "only you can send" else "only ${signerName(chat, money)} can send"
             val walletSub = when {
                 locked -> "Locked. ${signerName(chat, money)} signs for it and has left the group; nothing can be sent until they’re back."
-                else -> listOfNotNull(balance, "$who, after ${policyWords(money.approvalPolicy)}").joinToString(" · ")
+                com.circaso.core.flags.GroupPayoutApprovals.Enabled -> listOfNotNull(balance, "$who, after ${policyWords(money.approvalPolicy)}").joinToString(" · ")
+                else -> listOfNotNull(balance, who).joinToString(" · ")
             }
             ListRow("Group Wallet", sub = walletSub, leading = { RowIcon(if (locked) CircasoIcon.Lock else CircasoIcon.Wallet, if (locked) c.warning else c.ink) }, trailing = { RowChevron() }, onClick = actions.onOpenWallet)
+            // 2026-11-06: the owner moves the group's money straight from here; nobody else sees these rows.
+            val walletId = money.wallet?.walletId
+            if (money.isSigner && !locked && walletId != null) {
+                actions.onPay?.let { pay ->
+                    RowDivider(Modifier.padding(start = 64.dp))
+                    ListRow("Pay from $name", sub = sub("Anyone, or your own wallet. The group sees it in the chat"), leading = { RowIcon(CircasoIcon.ArrowUp, dim = off) }, trailing = { RowChevron() },
+                        onClick = if (online && !busy) ({ pay(walletId) }) else null)
+                }
+                actions.onSendToWallet?.let { send ->
+                    RowDivider(Modifier.padding(start = 64.dp))
+                    ListRow("Send to a Wallet", sub = sub("An exchange or another wallet, on its network"), leading = { RowIcon(CircasoIcon.Forward, dim = off) }, trailing = { RowChevron() },
+                        onClick = if (online && !busy) ({ send(walletId) }) else null)
+                }
+            }
             if (money.goal != null || money.isAdmin) RowDivider(Modifier.padding(start = 64.dp))
             if (money.goal != null) {
                 ListRow("Target", sub = targetLine(money, info.balance?.fiat), leading = { RowIcon(CircasoIcon.Target) }, trailing = { RowChevron() },
@@ -230,12 +249,15 @@ fun ColumnScope.GroupMoneyRows(info: GroupInfoMoney, chat: Chat?, myUserId: Stri
                 ListRow("Add a Target", sub = sub("Save towards a goal together"), leading = { RowIcon(CircasoIcon.Target, dim = off) }, trailing = { RowChevron() },
                     onClick = if (online && !busy) actions.onTarget else null)
             }
-            if (money.goal != null || money.isAdmin) RowDivider(Modifier.padding(start = 64.dp))
-            ListRow(
-                "Who approves payouts", leading = { RowIcon(CircasoIcon.People) },
-                trailing = { RowValue(if (money.approvalPolicy == ApprovalPolicy.AnyAdmin) "Any admin" else "2 admins") },
-                onClick = if (money.isOwner && online && !busy) actions.onApprovals else null,
-            )
+            // Approvals are parked (2026-11-06): the row comes back with them.
+            if (com.circaso.core.flags.GroupPayoutApprovals.Enabled) {
+                if (money.goal != null || money.isAdmin) RowDivider(Modifier.padding(start = 64.dp))
+                ListRow(
+                    "Who approves payouts", leading = { RowIcon(CircasoIcon.People) },
+                    trailing = { RowValue(if (money.approvalPolicy == ApprovalPolicy.AnyAdmin) "Any admin" else "2 admins") },
+                    onClick = if (money.isOwner && online && !busy) actions.onApprovals else null,
+                )
+            }
             if (money.isSigner) {
                 SectionHeader("$name wallet security", Modifier.padding(top = CircasoSpacing.s4))
                 info.biometricLabel?.let { label ->
@@ -309,7 +331,11 @@ fun ColumnScope.LeaveBlockedContent(chat: Chat?, balance: String?, onPayout: () 
             "$name’s wallet holds ${balance ?: "money"}, and only you can send from it. If you left, nobody could move that money until you came back.",
             style = t.subhead.copy(color = c.inkSecondary, textAlign = TextAlign.Center),
         )
-        BasicText("Pay it out first: ask for a payout, and once the admins approve it, pay it with the wallet’s PIN. Handing the wallet to someone else is coming.", style = t.footnote.copy(color = c.inkSecondary, textAlign = TextAlign.Center))
+        BasicText(
+            if (com.circaso.core.flags.GroupPayoutApprovals.Enabled) "Pay it out first: ask for a payout, and once the admins approve it, pay it with the wallet’s PIN. Handing the wallet to someone else is coming."
+            else "Pay it out first, to members, to yourself or to an outside wallet, with the wallet’s PIN. Handing the wallet to someone else is coming.",
+            style = t.footnote.copy(color = c.inkSecondary, textAlign = TextAlign.Center),
+        )
     }
     CircasoButton("Open the Group Wallet", onPayout, size = ButtonSize.Large, block = true)
     CircasoButton("Not Now", onClose, style = ButtonStyle.Plain, size = ButtonSize.Large, block = true)

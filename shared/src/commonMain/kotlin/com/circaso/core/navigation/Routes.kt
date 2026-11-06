@@ -122,9 +122,9 @@ data class GroupWalletRoute(val chatId: String) : Route
 @Serializable
 data class TargetRoute(val chatId: String, val walletReady: Boolean = false) : Route
 
-/** Send to an outside wallet address (design E5). */
+/** Send to an outside wallet address (design E5); from a group wallet its owner signs for ([fromWalletId], 2026-11-06). */
 @Serializable
-data object SendToWalletRoute : Route
+data class SendToWalletRoute(val fromWalletId: String? = null) : Route
 
 /** One payment (design C7). */
 @Serializable

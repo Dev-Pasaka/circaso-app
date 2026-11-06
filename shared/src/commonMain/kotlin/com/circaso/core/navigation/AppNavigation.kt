@@ -52,6 +52,7 @@ import com.circaso.feature.wallet.presentation.NetworksScreen
 import com.circaso.feature.wallet.presentation.PayScreen
 import com.circaso.feature.wallet.presentation.PayViewModel
 import com.circaso.feature.wallet.presentation.SendToWalletScreen
+import com.circaso.feature.wallet.presentation.SendToWalletViewModel
 import com.circaso.feature.wallet.presentation.TransferScreen
 import com.circaso.feature.wallet.presentation.TransferViewModel
 import com.circaso.feature.wallet.presentation.WalletActions
@@ -225,7 +226,10 @@ fun AppNavigation(forceUpdate: Boolean, home: @Composable () -> Unit) {
                             walletViewModel, bottomPadding,
                             actions = { walletId -> walletActions(walletId, backStack::add) },
                             groupActions = { key, gw -> groupWalletActions(key, gw, backStack::add) },
-                            groupMenu = com.circaso.feature.wallet.presentation.GroupMenuActions(onOpenChat = ::openChatFromList, onGroupInfo = { backStack.add(ChatInfoRoute(it)) }),
+                            groupMenu = com.circaso.feature.wallet.presentation.GroupMenuActions(
+                                onOpenChat = ::openChatFromList, onGroupInfo = { backStack.add(ChatInfoRoute(it)) },
+                                onPay = { wid -> backStack.add(PayRoute(fromWalletId = wid)) }, onSendToWallet = { wid -> backStack.add(SendToWalletRoute(wid)) },
+                            ),
                         )
                     },
                     walletActions = { WalletTitleActions(walletViewModel) },
@@ -423,6 +427,8 @@ fun AppNavigation(forceUpdate: Boolean, home: @Composable () -> Unit) {
                     infoViewModel, onBack = ::pop, onLeft = { pop(); pop() }, onGroupWallet = { backStack.add(if (info.money.enabled) GroupWalletRoute(route.chatId) else ChamaRoute(route.chatId)) },
                     onSetUpWallet = { thenTarget -> backStack.add(GroupWalletSetupRoute(route.chatId, thenTarget = thenTarget)) },
                     onTarget = { backStack.add(TargetRoute(route.chatId)) },
+                    onPayFromWallet = { wid -> backStack.add(PayRoute(fromWalletId = wid)) },
+                    onSendToWallet = { wid -> backStack.add(SendToWalletRoute(wid)) },
                     onCall = if (calls.available) ({ video -> calls.start(route.chatId, video) }) else null,
                     // Money starts in the chat: Pay goes back to it with `#` in the composer, ready for the amount.
                     onPay = if (peer != null) ({
@@ -459,9 +465,17 @@ fun AppNavigation(forceUpdate: Boolean, home: @Composable () -> Unit) {
                     onBack = ::pop,
                     onOpenTransfer = { id -> backStack.add(TransferRoute(id)) },
                     onOpenChat = if (route.chatId == null) ({ id -> pop(); openChatFromList(id) }) else null,
+                    // The picker's "A Wallet Address" (not in a frame; added 2026-11-06 so withdrawing to an outside
+                    // wallet is findable from Send, personal or group): E5 from the same wallet, Back returns here.
+                    onToAddress = { from -> backStack.add(SendToWalletRoute(from)) },
                 )
             }
-            entry<SendToWalletRoute>(metadata = Panes.FullScreen) { SendToWalletScreen(koinViewModel(), onBack = ::pop, onOpenTransfer = { id -> pop(); backStack.add(TransferRoute(id)) }) }
+            entry<SendToWalletRoute>(metadata = Panes.FullScreen) { route ->
+                SendToWalletScreen(
+                    koinViewModel<SendToWalletViewModel>(key = "send-to-wallet-${route.fromWalletId}", parameters = { parametersOf(route.fromWalletId) }),
+                    onBack = ::pop, onOpenTransfer = { id -> pop(); backStack.add(TransferRoute(id)) },
+                )
+            }
             entry<TransferRoute> { route -> TransferScreen(koinViewModel<TransferViewModel>(key = route.transferId, parameters = { parametersOf(route.transferId) }), onBack = ::pop) }
             entry<NetworksRoute> { NetworksScreen(koinViewModel(), onBack = ::pop) }
             entry<ActivityRoute> { ActivityScreen(koinViewModel(parameters = { parametersOf(null, null, null) }), onBack = ::pop, onOpen = { id -> backStack.add(TransferRoute(id)) }) }
@@ -561,7 +575,7 @@ private fun androidx.compose.foundation.layout.BoxScope.CallLayer(backStack: Mut
  */
 internal fun walletActions(walletId: String?, open: (Route) -> Unit) = WalletActions(
     onPay = { open(PayRoute()) },
-    onSendToWallet = { open(SendToWalletRoute) },
+    onSendToWallet = { open(SendToWalletRoute(walletId)) },
     onTransfer = { id -> open(TransferRoute(id)) },
     onActivity = { open(ActivityRoute) },
     onNetworks = { open(NetworksRoute) },
@@ -573,7 +587,8 @@ internal fun walletActions(walletId: String?, open: (Route) -> Unit) = WalletAct
 internal fun groupWalletActions(chatId: String, state: com.circaso.feature.chama.presentation.GroupWalletUiState, open: (Route) -> Unit) =
     com.circaso.feature.chama.presentation.GroupWalletActions(
         onAdd = { open(PayRoute(groupId = chatId, chatId = chatId, displayName = state.chat?.title, goalName = state.money?.goal?.name)) },
-        onPayout = { state.walletId?.let { open(PayRoute(chatId = chatId, fromWalletId = it)) } },
+        // 2026-11-06: the owner pays straight from the group wallet (with approvals on, this would be Request Payout).
+        onPayout = { state.walletId?.let { open(if (com.circaso.core.flags.GroupPayoutApprovals.Enabled) PayRoute(chatId = chatId, fromWalletId = it) else PayRoute(fromWalletId = it)) } },
         onPayRequest = { r -> open(payRequestRoute(chatId, state.money?.goal?.name, r, state::memberName, fromWalletId = state.walletId)) },
         onOpenTransfer = { id -> open(TransferRoute(id)) },
         onTarget = { open(TargetRoute(chatId)) },
