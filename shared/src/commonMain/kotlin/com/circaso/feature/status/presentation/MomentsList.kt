@@ -153,8 +153,7 @@ internal fun momentTime(at: Long, now: Long): String {
 }
 
 /**
- * A ring around an avatar, drawn just outside it so a ringed photo is the same size as every other one in the list
- * (the chat list and the Moments list line up). Unseen is the action colour, seen a quiet one.
+ * A ring around an avatar, drawn just outside it so a ringed photo is the same size as every other one in its list. Unseen is the action colour, seen a quiet one.
  */
 fun Modifier.momentRing(style: RingStyle, colors: com.circaso.designsystem.theme.CircasoColors): Modifier =
     if (style == RingStyle.None) this else drawBehind {
@@ -172,7 +171,10 @@ private fun SectionLabel(text: String, modifier: Modifier) {
     )
 }
 
-/** The row frame every moments row shares: the chat row's inset and height, so switching chips doesn't jump. */
+/**
+ * The row frame every moments row shares: the chat row's inset. Departure (Pasaka, 2026-11-06): the photos are a step
+ * larger than the chat list's ([MomentAvatar]), as in WhatsApp's Updates, so these rows are 8 dp taller.
+ */
 @Composable
 private fun MomentRowFrame(
     modifier: Modifier,
@@ -215,10 +217,10 @@ private fun MyMomentRow(state: MomentsUiState, actions: MomentsActions, now: Lon
         label = "My moment, $sub",
         onClick = if (ring == MyRing.Seen) actions.onOpenMine else actions.onCompose,
         leading = {
-            Box(Modifier.size(CircasoSizes.avatarMd)) {
-                Avatar(state.myName.ifBlank { "Me" }, Modifier.momentRing(if (ring == MyRing.Seen) RingStyle.Seen else RingStyle.None, c), imageUrl = state.myAvatarUrl)
+            Box(Modifier.size(MomentAvatar)) {
+                Avatar(state.myName.ifBlank { "Me" }, Modifier.momentRing(if (ring == MyRing.Seen) RingStyle.Seen else RingStyle.None, c), size = MomentAvatar, imageUrl = state.myAvatarUrl)
                 when (ring) {
-                    MyRing.Posting -> PostingArc(state.postingProgress)
+                    MyRing.Posting -> PostingArc(state.postingProgress, MomentAvatar)
                     MyRing.Waiting -> Badge(c.fillStrong) { CircasoIconImage(CircasoIcon.Clock, c.ink, Modifier.size(BadgeGlyph)) }
                     MyRing.Failed -> Badge(c.critical) { CircasoIconImage(CircasoIcon.Warning, c.bg, Modifier.size(BadgeGlyph)) }
                     // Its own target (Pasaka, 2026-11-03): the plus always opens the camera, even when the row opens my moments.
@@ -248,7 +250,7 @@ private fun RingRow(ring: MomentRing, style: RingStyle, now: Long, modifier: Mod
         modifier,
         label = "${ring.name}, $what, $time" + if (count > 1) ", $count moments" else "",
         onClick = onClick,
-        leading = { Avatar(ring.name, Modifier.momentRing(style, c).alpha(if (dimmed) 0.5f else 1f), imageUrl = ring.avatarUrl) },
+        leading = { Avatar(ring.name, Modifier.momentRing(style, c).alpha(if (dimmed) 0.5f else 1f), size = MomentAvatar, imageUrl = ring.avatarUrl) },
     ) {
         BasicText(ring.name, style = t.body.copy(color = if (dimmed) c.inkSecondary else c.ink), maxLines = 1, overflow = TextOverflow.Ellipsis)
         BasicText(time, style = t.subhead.copy(color = c.inkSecondary), maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -306,23 +308,34 @@ private fun postError(code: String?) = when (code) {
     else -> "Your moment didn’t post."
 }
 
-/** My moment's badge: an 18 dp disc with a 2 dp edge in the page colour, its centre on the avatar's lower right. */
-private val BadgeDisc = 18.dp
-private val BadgeEdge = 2.dp
-private val BadgeOffset = 13.dp
-private val BadgeGlyph = 11.dp
+/** Every row's photo in the Moments list. */
+private val MomentAvatar = CircasoSizes.avatarMl
+
+/**
+ * My moment's badge (Pasaka, 2026-11-06; S1's .mo-add): a 22 dp coloured disc with a 2.5 dp edge in the page colour
+ * outside it, its centre ON the avatar's circle at the lower right (45°), so it sits half over the photo and half
+ * outside it, never wholly inside. The 44 dp touch box is aligned to the avatar's corner, so the disc's centre moves
+ * out by r·cos45° − (avatar − 44) / 2. The box itself stays [BadgeTouchInset] further in, so the row's clip never cuts
+ * the bottom of the target; the disc is moved back by the same amount inside it.
+ */
+private val BadgeDisc = 22.dp
+private val BadgeEdge = 2.5.dp
+private val BadgeOffset = MomentAvatar / 2 * (kotlin.math.sqrt(2f) / 2) - (MomentAvatar - CircasoSizes.controlMd) / 2
+private val BadgeTouchInset = 3.dp
+private val BadgeGlyph = 13.dp
 
 @Composable
 private fun BoxScope.Badge(color: Color, onClick: (() -> Unit)? = null, label: String? = null, content: @Composable BoxScope.() -> Unit) {
     val c = CircasoTheme.colors
     // Always the same 44 dp box at the same place, so the disc never shifts between states; tappable only for the +.
     Box(
-        Modifier.align(Alignment.BottomEnd).offset(BadgeOffset, BadgeOffset).size(CircasoSizes.controlMd).clip(CircasoShapes.circle)
+        Modifier.align(Alignment.BottomEnd).offset(BadgeOffset - BadgeTouchInset, BadgeOffset - BadgeTouchInset).size(CircasoSizes.controlMd).clip(CircasoShapes.circle)
             .then(if (onClick != null) Modifier.pressable(role = Role.Button, onClick = onClick).semantics { label?.let { contentDescription = it } } else Modifier),
         contentAlignment = Alignment.Center,
     ) {
         Box(
-            Modifier.size(BadgeDisc).border(BadgeEdge, c.bg, CircasoShapes.circle).padding(BadgeEdge).clip(CircasoShapes.circle).background(color),
+            Modifier.offset(BadgeTouchInset, BadgeTouchInset).size(BadgeDisc + BadgeEdge * 2).background(c.bg, CircasoShapes.circle)
+                .padding(BadgeEdge).clip(CircasoShapes.circle).background(color),
             contentAlignment = Alignment.Center,
             content = content,
         )
@@ -334,7 +347,7 @@ private fun BoxScope.Badge(color: Color, onClick: (() -> Unit)? = null, label: S
  * the top. Before any byte has gone (or for a text moment) the arc turns slowly, so it never looks stuck.
  */
 @Composable
-private fun PostingArc(progress: Float?, size: Dp = CircasoSizes.avatarMd) {
+private fun PostingArc(progress: Float?, size: Dp = MomentAvatar) {
     val c = CircasoTheme.colors
     val reduce = CircasoTheme.reduceMotion
     val angle = if (reduce || progress != null) 0f else rememberInfiniteTransition().animateFloat(0f, 360f, infiniteRepeatable(tween(CircasoMotion.MomentMs * 2, easing = LinearEasing), RepeatMode.Restart)).value
@@ -367,7 +380,7 @@ private fun SkeletonRow(modifier: Modifier, announce: Boolean) {
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(CircasoSpacing.s3),
     ) {
-        Box(Modifier.size(CircasoSizes.avatarMd).clip(CircasoShapes.circle).background(c.fill))
+        Box(Modifier.size(MomentAvatar).clip(CircasoShapes.circle).background(c.fill))
         Column(verticalArrangement = Arrangement.spacedBy(CircasoSpacing.s2)) {
             Box(Modifier.size(120.dp, 12.dp).clip(CircasoShapes.xs).background(c.fill))
             Box(Modifier.size(72.dp, 10.dp).clip(CircasoShapes.xs).background(c.fill))

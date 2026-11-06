@@ -40,6 +40,8 @@ object CircasoSizes {
     val brandMarkSm = 30.dp
     val avatarSm = 28.dp
     val avatarMd = 44.dp
+    /** The Moments list's photos (2026-11-06): a step above a chat row's, as the rings are what that list is about. */
+    val avatarMl = 52.dp
     val avatarLg = 64.dp
     val avatarXl = 96.dp
     /** The You tab's centred photo. */

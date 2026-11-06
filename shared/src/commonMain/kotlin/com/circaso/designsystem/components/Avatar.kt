@@ -41,7 +41,9 @@ fun Avatar(name: String, modifier: Modifier = Modifier, size: Dp = CircasoSizes.
             // One file on disk; in memory one copy per size drawn, so a small chat-list avatar is never stretched
             // into the large profile photo or the full-screen view (it looked soft).
             AsyncImage(
-                model = ImageRequest.Builder(LocalPlatformContext.current).data(imageUrl).memoryCacheKey("$key@${size.value.toInt()}").diskCacheKey(key).crossfade(true).build(),
+                model = ImageRequest.Builder(LocalPlatformContext.current).data(imageUrl).memoryCacheKey("$key@${size.value.toInt()}")
+                    // While this size decodes, the chat list's copy stands in, so switching lists never flashes a photo in.
+                    .placeholderMemoryCacheKey("$key@${CircasoSizes.avatarMd.value.toInt()}").diskCacheKey(key).crossfade(true).build(),
                 contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.size(size),
             )
         }
