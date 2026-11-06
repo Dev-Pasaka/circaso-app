@@ -797,7 +797,10 @@ class PayViewModel(
     }
 
     /** [PayUiState.typingFiat] from the person's latest choices in [local], the price from the derived state. */
-    private fun typingFiatNow(s: PayUiState): Boolean = local.value.let { l -> l.typedInFiat ?: (l.inFiat && s.coinPriced) }
+    private fun typingFiatNow(s: PayUiState): Boolean = local.value.let { l ->
+        // The coin from [local] too: a coin changed a moment ago (the call sheet's chooser) isn't in [s] yet.
+        l.typedInFiat ?: (l.inFiat && s.copy(assetTag = l.assetTag).coinPriced)
+    }
 
     fun onNote(text: String) = local.update { it.copy(note = text.take(140)) }
 
@@ -992,7 +995,7 @@ class PayViewModel(
         staleFee()
         val decimals = state.value.wallet?.chains.orEmpty().flatMap { it.assets }.firstOrNull { it.symbol.equals(asset, true) }?.decimals ?: 6
         local.update {
-            it.copy(step = PayStep.Amount, inFiat = false, amountText = MinorUnits.toDisplay(amountMinor, decimals).replace(",", ""), assetTag = tag, failure = null, error = null)
+            it.copy(step = PayStep.Amount, inFiat = false, typedInFiat = false, amountText = MinorUnits.toDisplay(amountMinor, decimals).replace(",", ""), assetTag = tag, failure = null, error = null)
         }
         if (coinChanged) state.value.payee?.userId?.takeIf { it.isNotEmpty() }?.let { check(it, state.value.payChain) }
     }
