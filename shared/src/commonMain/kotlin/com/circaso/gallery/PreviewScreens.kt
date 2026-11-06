@@ -513,7 +513,7 @@ private fun sampleTransfers() = listOf(
 @Composable
 private fun CallPreview(call: com.circaso.feature.calls.CallUi, money: String?, chama: Chama? = null) {
     androidx.compose.foundation.layout.Box(androidx.compose.ui.Modifier.fillMaxSize()) {
-        CallOverlay(call, com.circaso.feature.calls.presentation.CallActions({}, {}, {}, {}, {}, {}, {}, {}, {}, {}, if (chama != null) ({ _ -> }) else null), money, chama, sampleWallet().fiat)
+        CallOverlay(call, com.circaso.feature.calls.presentation.CallActions({}, {}, {}, {}, {}, {}, {}, {}, {}, {}, null), money, chama, sampleWallet().fiat)
     }
 }
 

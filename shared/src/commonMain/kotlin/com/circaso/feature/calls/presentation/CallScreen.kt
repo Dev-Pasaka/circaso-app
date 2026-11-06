@@ -31,7 +31,16 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.text.BasicText
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
+import androidx.compose.animation.animateContentSize
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.material3.minimumInteractiveComponentSize
+import androidx.compose.ui.semantics.selected
+import androidx.compose.ui.unit.sp
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -114,8 +123,11 @@ class CallActions(
     val onMessage: () -> Unit,
     /** H1/H2/H3's "Send money": the call stays on, minimised, while Pay is open. */
     val onSendMoney: (() -> Unit)?,
-    /** H5: add to the group's goal during the call; the amount in the person's currency. */
-    val onContribute: ((String?) -> Unit)?,
+    /**
+     * H5: add to the group's goal during the call. Gives the PayViewModel made for this call's group (its wallet, or the
+     * treasurer in the chama model), the one the sheet drives straight to the PIN; null when nothing can be added here.
+     */
+    val contribute: (@Composable () -> com.circaso.feature.wallet.presentation.PayViewModel)?,
     /** H4's "Add people": ring the group's members who aren't on the call (CL9). */
     val onAddPeople: () -> Unit = {},
 )
@@ -147,6 +159,15 @@ fun BoxScope.CallOverlay(call: CallUi?, actions: CallActions, money: String?, ch
 @Composable
 private fun CallSurface(call: CallUi, actions: CallActions, money: String?, chama: Chama?, fiat: FiatValue?) {
     var contributing by remember { mutableStateOf(false) }
+    // After the PIN: "Your KES 1,000 is on its way to Holiday Fund" on the call for a few seconds, then the goal moves.
+    var landed by remember { mutableStateOf<String?>(null) }
+    // Keyed on each landing, so a second contribution of the same amount keeps it up its full time.
+    var landings by remember { mutableIntStateOf(0) }
+    LaunchedEffect(landings) { if (landed != null) { delay(LandedMillis); landed = null } }
+    val payModel = if (chama != null && call.group) actions.contribute?.invoke() else null
+    val contribution = payModel?.let { vm -> remember(vm) { CallContribution(vm) } }
+    val payState = payModel?.state?.collectAsState()?.value
+    val choice = contribution?.choice?.collectAsState()?.value
     Box(
         Modifier.fillMaxSize().background(CallColors.Bg)
             // Nothing under the call surface takes a tap; no ripple, nothing for a screen reader to announce.
@@ -163,15 +184,37 @@ private fun CallSurface(call: CallUi, actions: CallActions, money: String?, cham
             Box(Modifier.fillMaxSize()) {
                 when (l) {
                     0 -> Incoming(call, actions)
-                    1 -> GroupCall(call, actions, chama, fiat, onContribute = if (chama != null && actions.onContribute != null) ({ contributing = true }) else null)
+                    1 -> GroupCall(call, actions, chama, fiat, landed, onContribute = if (contribution != null) ({ contribution.open(); contributing = true }) else null)
                     2 -> VideoCall(call, actions, money)
                     else -> VoiceCall(call, actions, money)
                 }
             }
         }
-        if (chama != null) ContributeSheet(contributing, chama, fiat, onClose = { contributing = false }) { amount -> contributing = false; actions.onContribute?.invoke(amount) }
+        if (chama != null && contribution != null && payState != null) {
+            // The wallet loads (or changes) while the sheet is open: the default coin follows it until one is chosen.
+            LaunchedEffect(payState.wallet) { if (contributing) contribution.onWallet() }
+            // Signed: the sheet closes, the call says it's on its way, and PayViewModel is ready for the next one.
+            LaunchedEffect(payState.step) {
+                if (payState.step == com.circaso.feature.wallet.presentation.PayStep.Done && contributing) {
+                    landed = amountWords(choice, payState.wallet?.fiat)?.let { "Your $it is on its way to ${chama.goal.name}" } ?: "On its way to ${chama.goal.name}"
+                    landings++
+                    contributing = false
+                    contribution.close()
+                }
+            }
+            // Worked out again only when the choice or the payment changes, not on every tick of the call's timer.
+            val ui = remember(choice, payState) { contributeUi(choice, payState, nowMillis(), treasurerName = payState.payee?.displayName.takeIf { !payState.toGroup }) }
+            // H5's sheet is dark over the black call in every theme (the frame is data-theme="dark"); high contrast is kept.
+            val highContrast = com.circaso.designsystem.platform.rememberIsHighContrast()
+            androidx.compose.runtime.CompositionLocalProvider(com.circaso.designsystem.theme.LocalCircasoColors provides com.circaso.designsystem.theme.circasoColors(dark = true, highContrast = highContrast)) {
+                ContributeSheet(contributing, chama, fiat, ui, payState, contribution, onRetryQuote = payModel::onRetryQuote, onClose = { contributing = false; contribution.close() })
+            }
+        }
     }
 }
+
+/** How long "on its way" stays on the call. */
+private const val LandedMillis = 4_000L
 
 /** Design H1. */
 @Composable
@@ -292,7 +335,7 @@ private fun BoxScope.VideoCall(call: CallUi, actions: CallActions, money: String
 
 /** Design H4: everyone in a grid, the goal live under them. */
 @Composable
-private fun GroupCall(call: CallUi, actions: CallActions, chama: Chama?, fiat: FiatValue?, onContribute: (() -> Unit)?) {
+private fun GroupCall(call: CallUi, actions: CallActions, chama: Chama?, fiat: FiatValue?, landed: String?, onContribute: (() -> Unit)?) {
     val t = CircasoTheme.typography
     val onCall = call.joined.size + 1
     Column(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing).padding(horizontal = CircasoSpacing.s4, vertical = CircasoSpacing.s4), verticalArrangement = Arrangement.spacedBy(CircasoSpacing.s3)) {
@@ -308,9 +351,23 @@ private fun GroupCall(call: CallUi, actions: CallActions, chama: Chama?, fiat: F
         }
         val tiles = call.people.filter { it.joined || it.ringing }
         // Two across on a phone; more as the screen widens (on its side, tablets), each tile about a phone's half.
-        LazyVerticalGrid(GridCells.Adaptive(minSize = 150.dp), Modifier.weight(1f).readableWidth(com.circaso.designsystem.adaptive.WindowLayout.WideContentWidth), horizontalArrangement = Arrangement.spacedBy(CircasoSpacing.s2), verticalArrangement = Arrangement.spacedBy(CircasoSpacing.s2)) {
-            items(tiles, key = { it.userId }) { p -> Tile(p) }
-            item(key = "me") { MeTile(call) }
+        Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.BottomCenter) {
+            LazyVerticalGrid(GridCells.Adaptive(minSize = 150.dp), Modifier.fillMaxSize().readableWidth(com.circaso.designsystem.adaptive.WindowLayout.WideContentWidth), horizontalArrangement = Arrangement.spacedBy(CircasoSpacing.s2), verticalArrangement = Arrangement.spacedBy(CircasoSpacing.s2)) {
+                items(tiles, key = { it.userId }) { p -> Tile(p) }
+                item(key = "me") { MeTile(call) }
+            }
+            // H5 after the PIN: a short line that the contribution is on its way, over the grid's lower edge just above
+            // the live goal (a transform only, so the video tiles aren't measured again each frame).
+            val reduce = CircasoTheme.reduceMotion
+            androidx.compose.animation.AnimatedVisibility(
+                landed != null, Modifier.padding(bottom = CircasoSpacing.s2),
+                enter = fadeIn(tween(CircasoMotion.BaseMs)) + if (reduce) androidx.compose.animation.EnterTransition.None else androidx.compose.animation.slideInVertically(tween(CircasoMotion.BaseMs)) { it / 2 },
+                exit = fadeOut(tween(CircasoMotion.QuickMs)),
+            ) {
+                // The text stays while it fades out, after [landed] has gone.
+                val last = remember { arrayOf("") }
+                Landed(landed?.also { last[0] = it } ?: last[0])
+            }
         }
         if (chama != null) LiveGoal(chama, fiat)
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
@@ -377,39 +434,189 @@ private fun LiveGoal(chama: Chama, fiat: FiatValue?) {
 }
 
 /**
- * Design H5: the goal, preset amounts with the chosen one shown large, and "Contribute KES 1,000". The payment itself
- * is the usual Pay screen (PIN in the Circle SDK), with the call minimised to its pill meanwhile.
+ * Design H5: the goal, the coin, preset amounts with the chosen one shown large, and "Contribute KES 1,000", which goes
+ * straight to the PIN (the Circle SDK) with the fee quoted under it. Always into this call's group. The payment is the
+ * chat's PayViewModel driven through [CallContribution]; after the PIN the sheet closes and the call shows it landing.
  */
 @Composable
-private fun BoxScope.ContributeSheet(visible: Boolean, chama: Chama, fiat: FiatValue?, onClose: () -> Unit, onPick: (String?) -> Unit) {
+private fun BoxScope.ContributeSheet(
+    visible: Boolean,
+    chama: Chama,
+    fiat: FiatValue?,
+    ui: ContributeUi,
+    pay: com.circaso.feature.wallet.presentation.PayUiState,
+    model: CallContribution,
+    onRetryQuote: () -> Unit,
+    onClose: () -> Unit,
+) {
     val t = CircasoTheme.typography
     val c = CircasoTheme.colors
-    // Presets in the person's money: about KES 500 / 1,000 / 2,500, or 5 / 10 / 25 USDC without a rate.
-    val presets = if (fiat != null) listOf("500", "1000", "2500") else listOf("5", "10", "25")
-    var chosen by remember(visible) { mutableStateOf(presets[1]) }
-    CircasoSheet(visible, onClose, label = "Contribute to ${chama.goal.name}") {
+    var choosingCoin by remember(visible) { mutableStateOf(false) }
+    // Folds in and out like FeeProblems; a plain fade under reduce motion.
+    val reduce = CircasoTheme.reduceMotion
+    val enter = if (reduce) fadeIn(tween(CircasoMotion.QuickMs)) else fadeIn(tween(CircasoMotion.BaseMs)) + androidx.compose.animation.expandVertically(tween(CircasoMotion.BaseMs))
+    val exit = if (reduce) fadeOut(tween(CircasoMotion.QuickMs)) else fadeOut(tween(CircasoMotion.QuickMs)) + androidx.compose.animation.shrinkVertically(tween(CircasoMotion.QuickMs))
+    // While the PIN is up the sheet stays: closing it wouldn't stop the payment, and the person should see it through.
+    val close = { if (!ui.signing) onClose() }
+    CircasoSheet(visible, close, label = "Contribute to ${chama.goal.name}") {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(CircasoSpacing.s3)) {
             Avatar(chama.goal.name, size = CircasoSizes.avatarMd)
             Column(Modifier.weight(1f)) {
                 BasicText("Contribute to ${chama.goal.name}", style = t.headline.copy(color = c.ink))
                 BasicText("Everyone on the call sees it land", style = t.footnote.copy(color = c.inkSecondary))
             }
-            com.circaso.designsystem.components.CircasoIconButton(CircasoIcon.Close, "Close", onClose)
+            com.circaso.designsystem.components.CircasoIconButton(CircasoIcon.Close, "Close", close, enabled = !ui.signing)
         }
         val left = ((chama.goal.targetMinor.toLongOrNull() ?: 0L) - (chama.contributedMinor.toLongOrNull() ?: 0L)).coerceAtLeast(0L)
         GoalProgress(amountText(chama.contributedMinor, fiat), amountNumber(chama.goal.targetMinor, fiat), chama.progress, meta = if (left > 0) "${amountText(left.toString(), fiat)} to go" else "Goal reached", label = "${chama.goal.name} progress")
-        val number = com.circaso.feature.wallet.domain.MinorUnits.group(chosen)
-        val usdc = fiat?.let { com.circaso.feature.wallet.domain.fiatToUsdcMinor(chosen, it.rate) }?.let { com.circaso.feature.wallet.domain.MinorUnits.toDisplay(it, 6) + " USDC" }
-        com.circaso.designsystem.components.AmountDisplay(fiat?.currency ?: "USDC", number, sub = usdc, size = com.circaso.designsystem.components.AmountSize.Hero)
+        Column(Modifier.fillMaxWidth().padding(vertical = 6.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(CircasoSpacing.s1)) {
+            // A preset or a coin moves the amount rather than swapping it: up and in, a plain fade under reduce motion.
+            androidx.compose.animation.AnimatedContent(
+                ui.heroCurrency to ui.heroNumber,
+                transitionSpec = {
+                    if (reduce) fadeIn(tween(CircasoMotion.QuickMs)) togetherWith fadeOut(tween(CircasoMotion.QuickMs))
+                    else (fadeIn(tween(CircasoMotion.BaseMs)) + androidx.compose.animation.slideInVertically(tween(CircasoMotion.BaseMs)) { it / 3 }) togetherWith
+                        (fadeOut(tween(CircasoMotion.QuickMs)) + androidx.compose.animation.slideOutVertically(tween(CircasoMotion.QuickMs)) { -it / 3 })
+                },
+                contentAlignment = Alignment.Center,
+                label = "hero",
+            ) { (currency, number) ->
+                com.circaso.designsystem.components.AmountDisplay(currency, number, size = com.circaso.designsystem.components.AmountSize.Hero)
+            }
+            CoinLine(ui, choosingCoin, enabled = !ui.signing) { choosingCoin = !choosingCoin }
+        }
+        // The coin chooser: every coin they hold, the most valuable first; picking one folds it away.
+        AnimatedVisibility(choosingCoin && ui.coins.size > 1, enter = enter, exit = exit) {
+            @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+            androidx.compose.foundation.layout.FlowRow(
+                Modifier.fillMaxWidth().semantics { contentDescription = "Coins you can contribute" },
+                horizontalArrangement = Arrangement.spacedBy(CircasoSpacing.s2, Alignment.CenterHorizontally), verticalArrangement = Arrangement.spacedBy(CircasoSpacing.s2),
+            ) {
+                ui.coins.forEach { coin ->
+                    AmountChip(coin.symbol, coin.symbol == ui.coin?.symbol, enabled = !ui.signing) { model.onCoin(coin.symbol); choosingCoin = false }
+                }
+            }
+        }
         @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
         androidx.compose.foundation.layout.FlowRow(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(CircasoSpacing.s2, Alignment.CenterHorizontally), verticalArrangement = Arrangement.spacedBy(CircasoSpacing.s2)) {
-            presets.forEach { a -> com.circaso.designsystem.components.SuggestionChip(com.circaso.feature.wallet.domain.MinorUnits.group(a), { chosen = a }, selected = chosen == a) }
-            com.circaso.designsystem.components.SuggestionChip("Other", { onPick(null) }, selected = false)
+            val custom = ui.choice?.custom == true
+            ui.presets.forEach { a -> AmountChip(presetText(a), !custom && ui.choice?.amount == a, enabled = !ui.signing) { model.onPreset(a) } }
+            AmountChip("Other", custom, enabled = !ui.signing) { model.onOther() }
         }
-        com.circaso.designsystem.components.CircasoButton(
-            "Contribute ${fiat?.currency?.let { "$it " } ?: ""}$number" + if (fiat == null) " USDC" else "",
-            { onPick(chosen) }, size = com.circaso.designsystem.components.ButtonSize.Large, block = true,
-        )
+        AnimatedVisibility(ui.choice?.custom == true, enter = enter, exit = exit) {
+            val typed = ui.choice?.takeIf { it.custom }
+            val last = remember { arrayOfNulls<ContributeChoice>(1) }
+            val shown = typed?.also { last[0] = it } ?: last[0] ?: return@AnimatedVisibility
+            val focus = remember { androidx.compose.ui.focus.FocusRequester() }
+            LaunchedEffect(Unit) { runCatching { focus.requestFocus() } }
+            com.circaso.designsystem.components.CircasoTextField(
+                shown.amount, model::onCustom,
+                label = "Amount in ${if (shown.unit == ContributeUnit.Fiat) fiat?.currency ?: "USDC" else shown.coin}",
+                modifier = Modifier.fillMaxWidth().focusRequester(focus),
+                placeholder = "0",
+                enabled = !ui.signing,
+                keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.Decimal),
+            )
+        }
+        // A failed fee adds its Try Again: the space grows smoothly instead of the sheet jumping.
+        Column(Modifier.fillMaxWidth().animateContentSize(tween(if (reduce) 0 else CircasoMotion.QuickMs)), verticalArrangement = Arrangement.spacedBy(CircasoSpacing.s2)) {
+            com.circaso.designsystem.components.CircasoButton(
+                ui.button, { model.contribute() }, size = com.circaso.designsystem.components.ButtonSize.Large, block = true,
+                enabled = ui.enabled || ui.signing, busy = ui.signing,
+            )
+            FeeLine(ui.fee, onRetryQuote)
+        }
+        // GW13c / GW14 / GW14b / GW20, as the chat's card shows them: a changed fee, a limit, not enough with the fee.
+        com.circaso.feature.wallet.presentation.FeeProblems(pay, model::onUseMax)
+        AnimatedVisibility(ui.status != null, enter = enter, exit = exit) {
+            // The line stays while it folds away.
+            val last = remember { arrayOfNulls<Pair<String, ContributeTone>>(1) }
+            val (line, tone) = ui.status?.also { last[0] = it } ?: last[0] ?: return@AnimatedVisibility
+            BasicText(
+                line,
+                Modifier.fillMaxWidth().semantics { liveRegion = androidx.compose.ui.semantics.LiveRegionMode.Polite },
+                style = t.footnote.copy(
+                    color = when (tone) { ContributeTone.Critical -> c.critical; ContributeTone.Warning -> c.warning; ContributeTone.Quiet -> c.inkSecondary },
+                    textAlign = TextAlign.Center,
+                ),
+            )
+        }
+    }
+}
+
+/** "2500" → "2,500"; "0.025" as it is. */
+private fun presetText(a: String): String =
+    com.circaso.feature.wallet.domain.MinorUnits.group(a.substringBefore('.')) + if ('.' in a) "." + a.substringAfter('.') else ""
+
+/**
+ * Under the hero: the coin amount ("7.75 USDC"). With more than one coin held it is the coin chooser too, a quiet pill
+ * with a chevron (44 dp to hit).
+ */
+@Composable
+private fun CoinLine(ui: ContributeUi, open: Boolean, enabled: Boolean, onToggle: () -> Unit) {
+    val t = CircasoTheme.typography
+    val c = CircasoTheme.colors
+    val text = ui.sub ?: ui.coin?.symbol ?: "USDC"
+    if (ui.coins.size <= 1) {
+        BasicText(text, style = t.footnote.copy(color = c.inkSecondary, textAlign = TextAlign.Center, fontFeatureSettings = "tnum"))
+        return
+    }
+    val turn by androidx.compose.animation.core.animateFloatAsState(if (open) 180f else 0f, tween(if (CircasoTheme.reduceMotion) 0 else CircasoMotion.QuickMs), label = "chevron")
+    Row(
+        Modifier.minimumInteractiveComponentSize().clip(CircasoShapes.pill).background(c.fill)
+            .pressable(enabled = enabled, role = Role.Button, onClick = onToggle)
+            .semantics(mergeDescendants = true) {
+                contentDescription = "$text. Paying in ${ui.coin?.symbol ?: "USDC"}. Change coin"
+                stateDescription = if (open) "Coins shown" else "Coins hidden"
+            }
+            .padding(horizontal = CircasoSpacing.s3, vertical = 6.dp),
+        horizontalArrangement = Arrangement.spacedBy(CircasoSpacing.s1), verticalAlignment = Alignment.CenterVertically,
+    ) {
+        BasicText(text, style = t.footnote.copy(color = c.ink, fontFeatureSettings = "tnum"))
+        CircasoIconImage(CircasoIcon.ChevronDown, c.inkSecondary, Modifier.size(14.dp).rotate(turn))
+    }
+}
+
+/** Design `.amt-chip`: 44 dp, rounded 16/20 SemiBold; the chosen one on the action colour. A radio among its set. */
+@Composable
+private fun AmountChip(text: String, selected: Boolean, enabled: Boolean, onClick: () -> Unit) {
+    val t = CircasoTheme.typography
+    val c = CircasoTheme.colors
+    Box(
+        Modifier.heightIn(min = 44.dp).clip(CircasoShapes.pill).background(if (selected) c.action else c.fill)
+            .pressable(enabled = enabled, role = Role.RadioButton, onClick = onClick)
+            .semantics { this.selected = selected }
+            .padding(horizontal = 18.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        BasicText(text, style = t.callout.copy(color = if (selected) c.onAction else c.ink, fontWeight = FontWeight.SemiBold, lineHeight = 20.sp, fontFeatureSettings = "tnum"), maxLines = 1)
+    }
+}
+
+/** The small line under Contribute: the one fee, a spinner while it is worked out, Try Again when it couldn't be. */
+@Composable
+private fun FeeLine(fee: ContributeFee, onRetry: () -> Unit) {
+    val t = CircasoTheme.typography
+    val c = CircasoTheme.colors
+    val quiet = t.footnote.copy(color = c.inkSecondary, textAlign = TextAlign.Center, fontFeatureSettings = "tnum")
+    androidx.compose.animation.Crossfade(fee, Modifier.fillMaxWidth(), animationSpec = tween(if (CircasoTheme.reduceMotion) 0 else CircasoMotion.QuickMs), label = "fee") { f ->
+        Row(Modifier.fillMaxWidth().semantics(mergeDescendants = true) {}, horizontalArrangement = Arrangement.spacedBy(CircasoSpacing.s2, Alignment.CenterHorizontally), verticalAlignment = Alignment.CenterVertically) {
+            when (f) {
+                // Holds the line's height at any text size.
+                ContributeFee.Hidden -> BasicText(" ", style = quiet)
+                ContributeFee.Working -> {
+                    com.circaso.designsystem.components.Spinner(c.inkSecondary, Modifier.size(14.dp))
+                    BasicText("Working out the fee", style = quiet)
+                }
+                is ContributeFee.Shown -> BasicText(f.text, style = quiet)
+                is ContributeFee.Failed -> {
+                    BasicText(f.text, style = quiet)
+                    if (f.retry) Box(Modifier.heightIn(min = 44.dp).pressable(role = Role.Button, onClick = onRetry), contentAlignment = Alignment.Center) {
+                        BasicText("Try Again", style = t.footnote.copy(color = c.action, fontWeight = FontWeight.SemiBold))
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -460,6 +667,22 @@ private fun elapsedText(since: Long?): String {
     val m = (s % 3600) / 60
     val sec = s % 60
     return if (h > 0) "$h:${m.toString().padStart(2, '0')}:${sec.toString().padStart(2, '0')}" else "${m.toString().padStart(2, '0')}:${sec.toString().padStart(2, '0')}"
+}
+
+/** "Your KES 1,000 is on its way to Holiday Fund": the money's colours, announced once. */
+@Composable
+private fun Landed(text: String) {
+    val t = CircasoTheme.typography
+    val c = CircasoTheme.colors
+    Row(
+        Modifier.clip(CircasoShapes.pill).background(c.money)
+            .semantics(mergeDescendants = true) { liveRegion = androidx.compose.ui.semantics.LiveRegionMode.Polite }
+            .padding(horizontal = CircasoSpacing.s4, vertical = CircasoSpacing.s2),
+        horizontalArrangement = Arrangement.spacedBy(CircasoSpacing.s2), verticalAlignment = Alignment.CenterVertically,
+    ) {
+        CircasoIconImage(CircasoIcon.Check, c.onMoney, Modifier.size(16.dp))
+        BasicText(text, style = t.footnote.copy(color = c.onMoney, fontWeight = FontWeight.SemiBold), maxLines = 2, overflow = TextOverflow.Ellipsis)
+    }
 }
 
 @Composable

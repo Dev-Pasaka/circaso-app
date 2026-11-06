@@ -623,8 +623,26 @@ private fun androidx.compose.foundation.layout.BoxScope.CallLayer(backStack: Mut
                 if (c.phase == com.circaso.feature.calls.CallPhase.Incoming) controller.decline() else controller.minimise(true)
                 backStack.add(PayRoute(userId = peer.userId, chatId = c.chatId, displayName = peer.name))
             }) else null,
-            onContribute = if (groupWalletsOn) groupMoney?.takeIf { it.walletActive }?.let { m -> { amount: String? -> controller.minimise(true); backStack.add(PayRoute(groupId = m.chatId, chatId = m.chatId, amount = amount, goalName = m.goal?.name)) } }
-                else chama?.goal?.let { g -> { amount: String? -> controller.minimise(true); backStack.add(PayRoute(userId = g.treasurerUserId, chatId = g.chatId, displayName = c?.people?.firstOrNull { it.userId == g.treasurerUserId }?.name, amount = amount, goalName = g.name)) } },
+            // H5: the call's own contribution, signed from its sheet (straight to the PIN). The same PayViewModel the
+            // chat's `#1000` card drives, always into this call's group: its wallet (GW9a2), or the treasurer (D3).
+            contribute = when {
+                groupWalletsOn -> groupMoney?.takeIf { it.walletActive }?.let { m ->
+                    @Composable {
+                        koinViewModel<com.circaso.feature.wallet.presentation.PayViewModel>(
+                            key = "call-contribute-group-${m.chatId}",
+                            parameters = { parametersOf(PayIntent(chatId = m.chatId, displayName = c?.title, groupId = m.chatId, goalName = m.goal?.name, inChat = true)) },
+                        )
+                    }
+                }
+                else -> chama?.goal?.takeIf { !(treasurerChama?.isTreasurer ?: false) }?.let { g ->
+                    @Composable {
+                        koinViewModel<com.circaso.feature.wallet.presentation.PayViewModel>(
+                            key = "call-contribute-chama-${g.chatId}",
+                            parameters = { parametersOf(PayIntent(userId = g.treasurerUserId, chatId = g.chatId, displayName = c?.people?.firstOrNull { it.userId == g.treasurerUserId }?.name, goalName = g.name, inChat = true)) },
+                        )
+                    }
+                }
+            },
         ),
         money = money,
         chama = chama,
