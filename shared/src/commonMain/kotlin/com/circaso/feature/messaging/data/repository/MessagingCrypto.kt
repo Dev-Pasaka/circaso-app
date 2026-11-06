@@ -245,6 +245,136 @@ class GroupKeys(
         return null
     }
 
+    /** True when [key] opens [sealedMeta]: a key that doesn't is never kept as that version's. */
+    private fun opens(key: ByteArray, sealedMeta: String): Boolean =
+        runCatching { crypto.aesGcmOpen(key, Base64.decode(sealedMeta), MetaAad) }.isSuccess
+
+    // ---- a group being created: its key is on disk before the request leaves
+
+    /**
+     * The key for the create attempt [idempotencyKey]: the one already kept for it (a retry must seal under the same
+     * key, since the server answers a retry with the group the first attempt made), else a new one, kept before it is
+     * used. Kept on disk, not in memory: a create whose answer is lost (a timeout, a dropped connection, the screen
+     * closed, the app killed) still made the group, and without this the creator's phone could never read its name.
+     */
+    suspend fun keyForCreate(idempotencyKey: String): ByteArray {
+        val chatId = PendingPrefix + idempotencyKey
+        chats.metaKey(chatId, 0)?.let { return store.openBytes(it.key, "meta:$chatId:0") }
+        chats.deletePendingMetaKeysBefore(now() - PendingKeepMillis)
+        val key = newMetaKey()
+        chats.upsertMetaKey(GroupMetaKeyEntity(chatId, 0, store.sealBytes(key, "meta:$chatId:0"), now()))
+        return key
+    }
+
+    /** The create [idempotencyKey] made [chatId]: its key becomes the group's own. */
+    suspend fun createdWith(idempotencyKey: String, chatId: String, metaVersion: Int, key: ByteArray) {
+        rememberMetaKey(chatId, metaVersion, key)
+        chats.deleteMetaKeys(PendingPrefix + idempotencyKey)
+    }
+
+    /**
+     * A group whose name this phone can't open may be one it created without hearing back: tries the keys of creates
+     * still waiting, and keeps the one that opens it as the group's. True when one did.
+     */
+    suspend fun adoptPendingKey(chatId: String, sealedMeta: String?, metaVersion: Int): Boolean {
+        if (sealedMeta == null) return false
+        for (row in chats.pendingMetaKeys()) {
+            val key = store.openBytes(row.key, "meta:${row.chatId}:0")
+            if (!opens(key, sealedMeta)) continue
+            rememberMetaKey(chatId, metaVersion, key)
+            chats.deleteMetaKeys(row.chatId)
+            return true
+        }
+        return false
+    }
+
+    // ---- a lost metadata key: ask the members, who hand it back over the 1:1 session
+
+    private class Ask(val first: Long, var last: Long)
+    private val asks = mutableMapOf<String, Ask>()
+    private val answered = mutableMapOf<String, Long>()
+    private val askLock = Mutex()
+
+    /** When this phone first asked for [chatId]'s key (this run), or null if it hasn't reached anyone yet. */
+    suspend fun askedSince(chatId: String): Long? = askLock.withLock { asks[chatId]?.first }
+
+    /**
+     * Asks the other members of [chatId] for the metadata key, as Moments' new phone asks posters for theirs: one
+     * `SENDER_KEY` message with a 1:1 copy for each ([members] pairs a user id with whether they are an admin; admins
+     * are asked first, at most [AskAtMost] people). At most once every [AskEveryMillis] per group. Online-only: a
+     * network failure is returned and not counted as an ask.
+     */
+    suspend fun askForMetaKey(chatId: String, members: List<Pair<String, Boolean>>, metaVersion: Int): AppResult<Unit> = askLock.withLock {
+        val me = ownUserId() ?: return@withLock AppResult.Failure(AppError.Unexpected(null))
+        val t = now()
+        asks[chatId]?.let { if (t - it.last < AskEveryMillis) return@withLock AppResult.Success(Unit) }
+        val others = members.filter { it.first != me }.sortedByDescending { it.second }.map { it.first }.take(AskAtMost)
+        val plaintext = ChatPayload.encode(ChatPayload(type = ChatPayload.MetaKeyRequest, metaVersion = metaVersion))
+        when (val sent = sendOneToOne(chatId, others, plaintext)) {
+            is AppResult.Failure -> return@withLock sent
+            is AppResult.Success -> Unit
+        }
+        // Asked (or there is no one who could answer): the wait before an admin may give the group a new key starts now.
+        asks[chatId]?.let { it.last = t } ?: run { asks[chatId] = Ask(t, t) }
+        AppResult.Success(Unit)
+    }
+
+    /**
+     * [requesterId] has no key for [chatId]'s name and asked me. Answered with my newest key, 1:1, when they are still
+     * a member and I hold one; at most once a minute per person and group. Nothing is answered to me or a stranger.
+     */
+    suspend fun answerMetaKeyRequest(chatId: String, requesterId: String) = askLock.withLock {
+        val me = ownUserId() ?: return@withLock
+        if (requesterId == me) return@withLock
+        val chat = chats.chat(chatId) ?: return@withLock
+        if (chat.left || chat.kind != MessagingWire.Group) return@withLock
+        if (chats.members(chatId).none { it.userId == requesterId }) return@withLock
+        val row = chats.latestMetaKey(chatId) ?: return@withLock
+        val t = now()
+        val seen = "$chatId:$requesterId"
+        answered[seen]?.let { if (t - it < AnswerEveryMillis) return@withLock }
+        val plaintext = ChatPayload.encode(metaKeyPayload(chatId, row))
+        if (sendOneToOne(chatId, listOf(requesterId), plaintext) is AppResult.Success) answered[seen] = t
+    }
+
+    /**
+     * Hands the newest metadata key to [memberIds] (except me), whether or not they already hold my sender key: after a
+     * new key replaced one that was lost, every member needs it, and [ensureDistributed] only reaches those missing my
+     * sender key. Best effort: a member it misses can ask, like any phone without the key.
+     */
+    suspend fun distributeMetaKey(chatId: String, memberIds: List<String>): AppResult<Unit> {
+        val me = ownUserId() ?: return AppResult.Failure(AppError.Unexpected(null))
+        val row = chats.latestMetaKey(chatId) ?: return AppResult.Failure(AppError.Unexpected(null))
+        return sendOneToOne(chatId, memberIds.filter { it != me }, ChatPayload.encode(metaKeyPayload(chatId, row)))
+    }
+
+    private suspend fun metaKeyPayload(chatId: String, row: GroupMetaKeyEntity) = ChatPayload(
+        type = ChatPayload.MetaKey,
+        metaKey = Base64.encode(store.openBytes(row.key, "meta:$chatId:${row.metaVersion}")),
+        metaVersion = row.metaVersion,
+    )
+
+    /**
+     * [plaintext] to each of [userIds] over their 1:1 session, as one `SENDER_KEY` message (the kind the server lets
+     * go to some members of a group). Someone without keys is skipped; a network failure stops it.
+     */
+    private suspend fun sendOneToOne(chatId: String, userIds: List<String>, plaintext: ByteArray): AppResult<Unit> {
+        val recipients = mutableListOf<RecipientDto>()
+        for (member in userIds) {
+            when (val sealed = sessions.seal(member, plaintext)) {
+                is AppResult.Success -> recipients += RecipientDto(member, Base64.encode(sealed.value.wire))
+                is AppResult.Failure -> if (sealed.error is AppError.Network) return sealed
+            }
+        }
+        if (recipients.isEmpty()) return AppResult.Success(Unit)
+        @OptIn(ExperimentalUuidApi::class)
+        val request = SendChatMessageRequest(clientMessageId = Uuid.random().toString(), kind = MessagingWire.KindSenderKey, recipients = recipients, pushable = false)
+        return when (val sent = remote.send(chatId, request, request.clientMessageId)) {
+            is AppResult.Success -> AppResult.Success(Unit)
+            is AppResult.Failure -> sent
+        }
+    }
+
     // ---- my sender key
 
     @OptIn(ExperimentalUuidApi::class)
@@ -329,7 +459,14 @@ class GroupKeys(
         }
         val metaKey = payload.metaKey
         val metaVersion = payload.metaVersion
-        if (metaKey != null && metaVersion != null) rememberMetaKey(chatId, metaVersion, Base64.decode(metaKey))
+        if (metaKey != null && metaVersion != null) {
+            val key = Base64.decode(metaKey)
+            // A key for the version this phone holds must open it; one for a version not seen yet can't be checked here.
+            val chat = chats.chat(chatId)
+            val sealed = chat?.sealedMeta
+            if (sealed != null && chat.metaVersion == metaVersion && !opens(key, sealed)) return@withLock
+            rememberMetaKey(chatId, metaVersion, key)
+        }
     }
 
     suspend fun openFromGroup(chatId: String, senderId: String, ciphertext: ByteArray): OpenedGroup = lock.withLock {
@@ -350,7 +487,17 @@ class GroupKeys(
 
     suspend fun forget(chatId: String) { store.deleteSenderKeys(chatId); chats.deleteDeliveries(chatId) }
 
-    private companion object {
-        val MetaAad = "circaso.group-meta.v1".encodeToByteArray()
+    companion object {
+        private val MetaAad = "circaso.group-meta.v1".encodeToByteArray()
+        /** Where a create attempt's key waits (`group_meta_key.chatId`) until the group it made is known. */
+        const val PendingPrefix = "pending:"
+        /** A create attempt's key is kept this long; a group it made turns up in the list long before. */
+        const val PendingKeepMillis = 30L * 24 * 60 * 60 * 1000
+        /** One ask per group this often at most. */
+        const val AskEveryMillis = 10L * 60 * 1000
+        /** How many members are asked at once (admins first): enough that someone online answers. */
+        const val AskAtMost = 20
+        /** One answer per person and group this often at most. */
+        const val AnswerEveryMillis = 60_000L
     }
 }

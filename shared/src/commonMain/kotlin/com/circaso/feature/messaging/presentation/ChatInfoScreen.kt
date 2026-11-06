@@ -155,10 +155,20 @@ fun ChatInfoScreen(
                 onConfirm = viewModel::onConfirm,
                 onDismiss = { viewModel.onAction(null) },
             )
-            CircasoSheet(visible = state.renaming, onDismiss = { viewModel.onRename(false) }, label = "Rename group") {
-                BasicText("Group name", style = t.title2.copy(color = c.ink))
+            CircasoSheet(visible = state.renaming, onDismiss = { viewModel.onRename(false) }, label = if (state.namingForPhoto) "Name the group" else "Rename group") {
+                BasicText(if (state.namingForPhoto) "Name the group" else "Group name", style = t.title2.copy(color = c.ink))
+                // This phone can't read the name (its key is lost): say why it's asked for, and what a new key costs.
+                val why = when {
+                    state.namingForPhoto && state.removingPhoto -> "This phone lost the group's key, so it can't read the name. Type it to remove the photo."
+                    state.namingForPhoto -> "This phone lost the group's key, so it can't read the name. Type it to save the new photo."
+                    state.nameUnknown -> "This phone lost the group's key, so it can't read the name. If the group gets a new key, its photo is removed too; you can add it again after."
+                    else -> null
+                }
+                why?.let { BasicText(it, style = t.body.copy(color = c.inkSecondary)) }
                 CircasoTextField(value = state.nameDraft, onValueChange = viewModel::onNameDraft, label = "Group name")
-                CircasoButton("Save", viewModel::onRenameConfirm, size = ButtonSize.Large, block = true, enabled = state.canChange && state.nameDraft.isNotBlank())
+                if (!state.online) BasicText("Changing the group needs a connection.", style = t.footnote.copy(color = c.inkTertiary))
+                val save = when { !state.namingForPhoto -> "Save"; state.removingPhoto -> "Remove Photo"; else -> "Save Photo" }
+                CircasoButton(save, viewModel::onRenameConfirm, size = ButtonSize.Large, block = true, enabled = state.canChange && state.nameDraft.isNotBlank())
                 CircasoButton("Cancel", { viewModel.onRename(false) }, style = ButtonStyle.Plain, size = ButtonSize.Large, block = true)
             }
             // Group wallets (GW7, CH9, §11.9, W8).

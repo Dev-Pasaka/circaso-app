@@ -447,6 +447,29 @@ override `-spaces=on|off|default`, Android `--es spaces off`). Architecture: `ap
 | iOS must ship Facebook's SDK (Circle's binary links it) | Switched off in Info.plist (no app id, no auto-init, no tracking). |
 | A confirmed payment showed no Received card: the receiver's phone couldn't open the E2E card after the sender signed in on a new phone (incident 2026-11-05) | **Fixed in the app** (2026-11-05, see "Recovery" below); the server half is backend PR #35 (**not merged or deployed**). |
 | Group sender keys were tracked per person, not per identity, so a member's new phone never got my key | **Fixed** 2026-11-05: any identity change forgets that person's deliveries in every group (`ChatsDao.deleteDeliveriesTo`); a group retry receipt hands the key over again too. |
+| Setting a group photo failed on Pasaka's phone (group `efee1e59-…`, made 2026-11-04 06:32 EAT): no `group_meta_key` row at all, so the name showed "Group" and rename/photo returned `Unexpected` before any request | **Fixed in the app** 2026-11-06, see "Lost group keys" below. No backend change. |
+
+### Lost group keys (2026-11-06)
+
+- **Cause (the only path the code has):** the creator's metadata key lived only in memory until `POST /v1/chats`
+  answered. A create the server committed but whose answer never reached the phone (20 s client timeout, dropped
+  connection, the view model's scope cancelled by leaving the screen, the app killed) left the group on the server
+  sealed under a key no phone had; it then came in with the chat list. The sealer and the DAO were ruled out (the same
+  sealer keeps the Signal identity, which survived; nothing deletes the row but sign-out). Confirm in the server logs:
+  that phone's `POST /v1/chats` around 2026-11-04 03:32 UTC, its duration and whether the client hung up.
+- **Fix:** the key is written under `pending:<idempotencyKey>` (metaVersion 0, same table, no migration) before the
+  request leaves; a retry, even after a restart, reuses it; success makes it the group's; a group that turns up
+  unreadable tries the waiting keys (`GroupKeys.adoptPendingKey`). Pending rows go after 30 days.
+- **Recovery for phones already without a key:** a group this phone can't name makes it ask the other members
+  (admins first, at most 20, once per 10 minutes per group, not within 10 minutes of joining) with a 1:1
+  `SENDER_KEY` message holding `ChatPayload` type `metaKeyRequest`, Moments-style. A member who holds the key and
+  still sees the asker in the group answers 1:1 with a `metaKey` payload (once a minute per person). A received key
+  for the version the phone holds must open it, or it is dropped. Older apps drop the request quietly.
+- **No answer:** after a minute, an admin's Rename or photo change gives the group a new key: sealed with the typed
+  name (the photo flow opens the name sheet as "Name the group" when it can't read the name), PATCHed as the next
+  meta version (`avatarMediaId` cleared unless a new photo goes with it), then sent to every member. Members and
+  admins inside the minute see `messaging.meta_key_missing` / `meta_key_asked`. Removing someone no longer seals
+  the placeholder "Group" as the name when the phone can't read it. Tests: `GroupMetaKeyRecoveryTest`.
 
 ### Recovery: money cards and retry receipts (2026-11-05)
 

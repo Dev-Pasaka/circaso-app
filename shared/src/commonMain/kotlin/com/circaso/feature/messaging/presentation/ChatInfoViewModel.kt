@@ -75,7 +75,16 @@ data class ChatInfoUiState(
     /** The new photo while it is being sent: shown under the spinner at once, so the change is visible. */
     val pendingPhoto: ByteArray? = null,
     val photoChoice: com.circaso.feature.profile.presentation.PhotoChoiceState = com.circaso.feature.profile.presentation.PhotoChoiceState(),
+    /**
+     * The name sheet is open for a photo change, not a rename: this phone lost the group's key and can't read its
+     * name, and a new key seals the name with the photo, so the admin types it.
+     */
+    val namingForPhoto: Boolean = false,
+    /** With [namingForPhoto]: the change waiting for the name removes the photo rather than setting one. */
+    val removingPhoto: Boolean = false,
 ) {
+    /** A group whose name this phone can't read: the name sheet starts empty and says why. */
+    val nameUnknown get() = isGroup && chat?.nameKnown == false
     /** Admins change the group's photo (M8); it needs a connection, like every change to the group. */
     val canChangePhoto get() = isGroup && amAdmin && photosAvailable && online && !photoBusy && !busy
     val hasGroupPhoto get() = isGroup && chat?.avatarUrl != null
@@ -141,9 +150,26 @@ class ChatInfoViewModel(
             val image = try { encoder.encode(picked.bytes) } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) { null }
             if (image == null) { _state.update { it.copy(photoBusy = false, message = "Couldn't use that photo. Try another one.") }; return@launch }
             _state.update { it.copy(pendingPhoto = image.full) }
-            val r = set(chatId, image)
-            _state.update { it.copy(photoBusy = false, pendingPhoto = null, message = if (r is AppResult.Failure) withRef(r.error) else "The group photo is updated.") }
+            sendPhoto(set, PhotoChange(image), name = null)
         }
+    }
+
+    /** A photo change waiting for the group's name (see [ChatInfoUiState.namingForPhoto]); [image] null removes it. */
+    private class PhotoChange(val image: com.circaso.core.platform.GroupPhotoImage?)
+    private var awaitingName: PhotoChange? = null
+
+    private suspend fun sendPhoto(set: com.circaso.feature.messaging.domain.SetGroupPhotoUseCase, change: PhotoChange, name: String?) {
+        val r = set(chatId, change.image, name)
+        val code = ((r as? AppResult.Failure)?.error as? com.circaso.core.common.AppError.Api)?.code
+        if (code == com.circaso.feature.messaging.domain.GroupKeyErrors.NameNeeded) {
+            // The photo stays in hand while the admin types the name; nothing was uploaded yet.
+            awaitingName = change
+            _state.update { it.copy(photoBusy = false, pendingPhoto = null, renaming = true, namingForPhoto = true, removingPhoto = change.image == null, nameDraft = "") }
+            return
+        }
+        awaitingName = null
+        val done = if (change.image == null) "The group photo is removed." else "The group photo is updated."
+        _state.update { it.copy(photoBusy = false, pendingPhoto = null, message = if (r is AppResult.Failure) withRef(r.error) else done) }
     }
 
     /** Remove Photo: the group goes back to its initials for everyone. */
@@ -152,10 +178,7 @@ class ChatInfoViewModel(
         val set = setGroupPhoto ?: return
         if (!_state.value.canChangePhoto || !_state.value.hasGroupPhoto) return
         _state.update { it.copy(photoBusy = true, message = null) }
-        viewModelScope.launch {
-            val r = set(chatId, null)
-            _state.update { it.copy(photoBusy = false, message = if (r is AppResult.Failure) withRef(r.error) else "The group photo is removed.") }
-        }
+        viewModelScope.launch { sendPhoto(set, PhotoChange(null), name = null) }
     }
 
     override fun onCleared() { photos?.closeCamera() }
@@ -252,12 +275,23 @@ class ChatInfoViewModel(
         }
     }
 
-    fun onRename(start: Boolean) = _state.update { it.copy(renaming = start, nameDraft = if (start) it.chat?.title.orEmpty() else "") }
+    fun onRename(start: Boolean) {
+        if (!start) awaitingName = null
+        // A name this phone can't read is not prefilled: "Group" is only the placeholder, not the group's name.
+        _state.update { it.copy(renaming = start, namingForPhoto = false, removingPhoto = false, nameDraft = if (start && !it.nameUnknown) it.chat?.title.orEmpty() else "") }
+    }
     fun onNameDraft(text: String) = _state.update { it.copy(nameDraft = text) }
     fun onRenameConfirm() {
         val name = _state.value.nameDraft.trim()
         if (name.isEmpty() || !_state.value.canChange) return
-        _state.update { it.copy(renaming = false, busy = true) }
+        val change = awaitingName
+        val set = setGroupPhoto
+        if (_state.value.namingForPhoto && change != null && set != null) {
+            _state.update { it.copy(renaming = false, namingForPhoto = false, removingPhoto = false, photoBusy = true, pendingPhoto = change.image?.full, message = null) }
+            viewModelScope.launch { sendPhoto(set, change, name) }
+            return
+        }
+        _state.update { it.copy(renaming = false, namingForPhoto = false, busy = true) }
         viewModelScope.launch {
             val r = rename(chatId, name)
             _state.update { it.copy(busy = false, message = (r as? AppResult.Failure)?.let { f -> ErrorMessages.forError(f.error) }) }

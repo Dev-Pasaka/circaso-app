@@ -24,6 +24,7 @@ import com.circaso.feature.messaging.domain.ChatSummary
 import com.circaso.feature.messaging.domain.ChatsRepository
 import com.circaso.feature.messaging.domain.GroupCreated
 import com.circaso.feature.messaging.domain.GroupDraft
+import com.circaso.feature.messaging.domain.GroupKeyErrors
 import com.circaso.feature.messaging.domain.MemberRole
 import com.circaso.feature.messaging.domain.SecurityCode
 import kotlinx.coroutines.flow.Flow
@@ -90,6 +91,8 @@ class ChatsRepositoryImpl(
             result.value.chats.forEach { store(it) }
             // A chat the server no longer lists is one this phone was removed from (or that was deleted).
             dao.chats().filter { it.chatId !in seen && !it.left }.forEach { dao.markLeft(it.chatId) }
+            // A group this phone can't name: ask the members for its key.
+            askForMissingKeys(result.value.chats.filter { it.kind == MessagingWire.Group }.map { it.chatId })
             AppResult.Success(Unit)
         }
     }
@@ -99,28 +102,22 @@ class ChatsRepositoryImpl(
             if ((result.error as? AppError.Api)?.code == "messaging.chat_not_found") dao.markLeft(chatId)
             result
         }
-        is AppResult.Success -> AppResult.Success(store(result.value))
+        is AppResult.Success -> AppResult.Success(store(result.value)).also { if (result.value.kind == MessagingWire.Group) askForMissingKeys(listOf(chatId)) }
     }
 
     override suspend fun openDirect(userId: String): AppResult<Chat> = remote.openDirect(userId).map { store(it) }
 
 
-    /**
-     * The metadata key per create attempt: a retry with the same idempotency key gets the group the first attempt made
-     * (sealed under the first key), so it must remember that key, not a fresh one.
-     */
-    private val createKeys = mutableMapOf<String, ByteArray>()
-
     override suspend fun createGroup(draft: GroupDraft, idempotencyKey: String): AppResult<GroupCreated> {
-        val key = createKeys.getOrPut(idempotencyKey) { groupKeys.newMetaKey() }
+        // On disk before the request leaves: if the answer is lost, the group still turns up in the list and opens.
+        val key = groupKeys.keyForCreate(idempotencyKey)
         val sealed = groupKeys.sealMetaWithin(key, draft.name, null) ?: return AppResult.Failure(groupInvalid())
         val request = CreateGroupRequest(sealedMeta = sealed, memberIds = draft.memberIds)
         return when (val result = remote.createGroup(request, idempotencyKey)) {
             is AppResult.Failure -> result
             is AppResult.Success -> {
                 val dto = result.value
-                createKeys.remove(idempotencyKey)
-                groupKeys.rememberMetaKey(dto.chatId, dto.metaVersion, key)
+                groupKeys.createdWith(idempotencyKey, dto.chatId, dto.metaVersion, key)
                 val chat = store(dto)
                 groupKeys.ensureDistributed(dto.chatId, chat.members.map { it.userId }) // best effort now; the first send makes sure
                 AppResult.Success(GroupCreated(chat, dto.notAdded.orEmpty()))
@@ -129,11 +126,10 @@ class ChatsRepositoryImpl(
     }
 
     override suspend fun rename(chatId: String, name: String): AppResult<Chat> {
-        val key = groupKeys.latestMetaKey(chatId) ?: return AppResult.Failure(AppError.Unexpected(null))
+        val key = groupKeys.latestMetaKey(chatId) ?: return withoutKey(chatId, name, photo = null)
         // A new name keeps the group's photo: both live in the one sealed value.
         val sealed = groupKeys.sealMetaWithin(key, name, currentPhoto(chatId)) ?: return AppResult.Failure(groupInvalid())
-        return patchWithRetry(chatId) { version -> UpdateGroupRequest(sealedMeta = sealed, version = version) }
-            .also { r -> if (r is AppResult.Success) { groupKeys.rememberMetaKey(chatId, r.value.metaVersion, key); photos?.notifyChanged() } }
+        return patchSealed(chatId, key) { version -> UpdateGroupRequest(sealedMeta = sealed, version = version) }
     }
 
     /**
@@ -141,41 +137,129 @@ class ChatsRepositoryImpl(
      * reference to it (with its thumbnail) are sealed again, and the same PATCH names the attachment as the group's
      * `avatarMediaId` so the server keeps it. Null removes the photo (`avatarMediaId: null`). Online-only, admins only.
      */
-    override suspend fun setGroupPhoto(chatId: String, image: com.circaso.core.platform.GroupPhotoImage?): AppResult<Chat> {
-        val key = groupKeys.latestMetaKey(chatId) ?: return AppResult.Failure(AppError.Unexpected(null))
-        val current = dao.chat(chatId) ?: return AppResult.Failure(AppError.Unexpected(null))
-        val name = groupKeys.openGroupMeta(chatId, current.sealedMeta, current.metaVersion)?.name ?: current.name
-            ?: return AppResult.Failure(AppError.Unexpected(null))
-        val photo = if (image == null) null else {
-            val uploader = photos ?: return AppResult.Failure(AppError.Unexpected(null))
-            when (val up = uploader.upload(chatId, image)) {
-                is AppResult.Success -> up.value
-                is AppResult.Failure -> return up
-            }
+    override suspend fun setGroupPhoto(chatId: String, image: com.circaso.core.platform.GroupPhotoImage?, name: String?): AppResult<Chat> {
+        val key = groupKeys.latestMetaKey(chatId)
+        if (key == null) {
+            // No key: ask the members, or (an admin, once they had their chance) give the group a new key. That seals
+            // the name too, so it must be typed; asked for before anything is uploaded.
+            if (!mayRekey(chatId)) return withoutKey(chatId, name, photo = null)
+            val typed = name?.trim()?.takeIf { it.isNotEmpty() } ?: return AppResult.Failure(groupNameNeeded())
+            val photo = if (image == null) null else when (val up = upload(chatId, image)) { is AppResult.Success -> up.value; is AppResult.Failure -> return up }
+            return withoutKey(chatId, typed, photo)
         }
-        val sealed = groupKeys.sealMetaWithin(key, name, photo) ?: return AppResult.Failure(groupInvalid())
+        val current = dao.chat(chatId) ?: return AppResult.Failure(AppError.Unexpected(null))
+        val currentName = groupKeys.openGroupMeta(chatId, current.sealedMeta, current.metaVersion)?.name ?: current.name
+            ?: name?.trim()?.takeIf { it.isNotEmpty() } ?: return AppResult.Failure(groupNameNeeded())
+        val photo = if (image == null) null else when (val up = upload(chatId, image)) { is AppResult.Success -> up.value; is AppResult.Failure -> return up }
+        val sealed = groupKeys.sealMetaWithin(key, currentName, photo) ?: return AppResult.Failure(groupInvalid())
         val avatar = if (photo == null) AvatarChange.Clear else AvatarChange.set(photo.id)
-        return patchWithRetry(chatId) { version -> UpdateGroupRequest(sealedMeta = sealed, version = version, avatarMediaId = avatar) }
-            .also { r -> if (r is AppResult.Success) { groupKeys.rememberMetaKey(chatId, r.value.metaVersion, key); photos?.notifyChanged() } }
+        return patchSealed(chatId, key) { version -> UpdateGroupRequest(sealedMeta = sealed, version = version, avatarMediaId = avatar) }
+    }
+
+    private suspend fun upload(chatId: String, image: com.circaso.core.platform.GroupPhotoImage): AppResult<GroupPhotoRef> {
+        val uploader = photos ?: return AppResult.Failure(AppError.Unexpected(null))
+        return uploader.upload(chatId, image)
+    }
+
+    // ---- a group whose metadata key this phone doesn't have
+
+    /**
+     * True when an admin may give [chatId] a new metadata key: this phone has asked the members and none has answered
+     * for [RekeyAfterMillis]. A member who still holds the old key loses nothing they can't read again: the new key
+     * reaches them right after.
+     */
+    private suspend fun mayRekey(chatId: String): Boolean {
+        val me = ownUserId() ?: return false
+        val myRole = dao.members(chatId).firstOrNull { it.userId == me }?.role
+        if (myRole != MessagingWire.Owner && myRole != MessagingWire.Admin) return false
+        val asked = groupKeys.askedSince(chatId) ?: return false
+        return now() - asked >= RekeyAfterMillis
+    }
+
+    /**
+     * A change to the group's name or photo on a phone without its key. Until an admin may re-key ([mayRekey]) this
+     * asks the members for the key and says so (`messaging.meta_key_missing`, or `messaging.meta_key_asked` for an
+     * admin, who can try again in a minute). Then a fresh key seals [name] (and [photo], else none: the old one can't
+     * be read here), goes up as the next meta version, and is handed to every member.
+     */
+    private suspend fun withoutKey(chatId: String, name: String?, photo: GroupPhotoRef?): AppResult<Chat> {
+        val chat = dao.chat(chatId) ?: return AppResult.Failure(AppError.Unexpected(null))
+        if (!mayRekey(chatId)) {
+            val members = dao.members(chatId)
+            when (val asked = groupKeys.askForMetaKey(chatId, members.map { it.userId to (it.role != MessagingWire.Member) }, chat.metaVersion)) {
+                is AppResult.Failure -> if (asked.error is AppError.Network) return asked
+                is AppResult.Success -> Unit
+            }
+            val me = ownUserId()
+            val admin = members.firstOrNull { it.userId == me }?.role.let { it == MessagingWire.Owner || it == MessagingWire.Admin }
+            return AppResult.Failure(localError(if (admin) GroupKeyErrors.Asked else GroupKeyErrors.Missing))
+        }
+        val typed = name?.trim()?.takeIf { it.isNotEmpty() } ?: return AppResult.Failure(groupNameNeeded())
+        val key = groupKeys.newMetaKey()
+        val sealed = groupKeys.sealMetaWithin(key, typed, photo) ?: return AppResult.Failure(groupInvalid())
+        // The server's photo goes with the old seal: kept only when a new one is set now.
+        val avatar = if (photo == null) AvatarChange.Clear else AvatarChange.set(photo.id)
+        val patched = patchSealed(chatId, key) { version -> UpdateGroupRequest(sealedMeta = sealed, version = version, avatarMediaId = avatar) }
+        if (patched is AppResult.Success) groupKeys.distributeMetaKey(chatId, patched.value.members.map { it.userId })
+        return patched
+    }
+
+    /**
+     * Asks the members for the key of each group stored without one (best effort, rate-limited per group), except where
+     * I joined in the last [KeyGraceMillis]: the key is on its way with the members' sender keys.
+     */
+    private suspend fun askForMissingKeys(chatIds: Collection<String>) {
+        if (chatIds.isEmpty()) return
+        val me = ownUserId() ?: return
+        for (chatId in chatIds) {
+            val chat = dao.chat(chatId) ?: continue
+            if (chat.left || chat.kind != MessagingWire.Group || chat.sealedMeta == null) continue
+            if (groupKeys.openGroupMeta(chatId, chat.sealedMeta, chat.metaVersion) != null) continue
+            val members = dao.members(chatId)
+            val joined = isoToMillis(members.firstOrNull { it.userId == me }?.joinedAt)
+            if (joined != null && now() - joined < KeyGraceMillis) continue
+            if (groupKeys.askForMetaKey(chatId, members.map { it.userId to (it.role != MessagingWire.Member) }, chat.metaVersion) is AppResult.Failure) return
+        }
     }
 
     private suspend fun currentPhoto(chatId: String): GroupPhotoRef? =
         dao.chat(chatId)?.let { groupKeys.openGroupMeta(chatId, it.sealedMeta, it.metaVersion)?.photo }
 
     private fun groupInvalid() = AppError.Api("messaging.group_invalid", 400, null, null, emptyMap())
+    private fun groupNameNeeded() = localError(GroupKeyErrors.NameNeeded)
+    /** An error made on this phone, worded by its code in [com.circaso.core.common.ErrorMessages] like the server's. */
+    private fun localError(code: String) = AppError.Api(code, 0, null, null, emptyMap())
 
     override suspend fun setMembersCanAdd(chatId: String, allowed: Boolean): AppResult<Chat> =
         patchWithRetry(chatId) { version -> UpdateGroupRequest(settings = ChatSettingsDto(allowed), version = version) }
 
+    /**
+     * A PATCH with a new seal under [key]: the key is kept for the version the server gives it before the chat is
+     * stored, so the stored chat opens with it (a new key would otherwise leave the name unread until the next load).
+     */
+    private suspend fun patchSealed(chatId: String, key: ByteArray, request: (version: Int) -> UpdateGroupRequest): AppResult<Chat> =
+        when (val r = patchDto(chatId, request)) {
+            is AppResult.Failure -> r
+            is AppResult.Success -> {
+                groupKeys.rememberMetaKey(chatId, r.value.metaVersion, key)
+                val chat = store(r.value)
+                photos?.notifyChanged()
+                AppResult.Success(chat)
+            }
+        }
+
+    private suspend fun patchWithRetry(chatId: String, request: (version: Int) -> UpdateGroupRequest): AppResult<Chat> =
+        patchDto(chatId, request).map { store(it) }
+
     /** `PATCH` carries the version last read; `messaging.version_conflict` means reload and try once more. */
-    private suspend fun patchWithRetry(chatId: String, request: (version: Int) -> UpdateGroupRequest): AppResult<Chat> {
+    private suspend fun patchDto(chatId: String, request: (version: Int) -> UpdateGroupRequest): AppResult<ChatDto> {
         val current = dao.chat(chatId) ?: return AppResult.Failure(AppError.Unexpected(null))
         val first = remote.updateGroup(chatId, request(current.version))
-        if (first is AppResult.Success) return AppResult.Success(store(first.value))
+        if (first is AppResult.Success) return first
         if (((first as AppResult.Failure).error as? AppError.Api)?.code != "messaging.version_conflict") return first
         val reloaded = refreshChat(chatId)
         if (reloaded is AppResult.Failure) return reloaded
-        return remote.updateGroup(chatId, request((reloaded as AppResult.Success).value.version)).map { store(it) }
+        return remote.updateGroup(chatId, request((reloaded as AppResult.Success).value.version))
     }
 
     override suspend fun addMembers(chatId: String, userIds: List<String>): AppResult<GroupCreated> =
@@ -253,13 +337,14 @@ class ChatsRepositoryImpl(
         val me = ownUserId()
         val chat = (refreshChat(chatId) as? AppResult.Success)?.value ?: return
         val amOwner = chat.myRole == MemberRole.Owner
-        if (iRemovedThem || amOwner) {
+        // Only with the name in hand: this phone without the group's key would otherwise seal the placeholder "Group" as
+        // its name for everyone. The key is asked for instead, and the next rename or photo change re-keys.
+        val name = dao.chat(chatId)?.name
+        if ((iRemovedThem || amOwner) && name != null) {
             val key = groupKeys.newMetaKey()
-            val name = chat.title
             // The photo's reference goes into the new seal too; whoever left can no longer fetch the file (AT3 is members only).
             val sealed = groupKeys.sealMetaWithin(key, name, currentPhoto(chatId)) ?: groupKeys.sealMeta(key, name)
-            val patched = patchWithRetry(chatId) { version -> UpdateGroupRequest(sealedMeta = sealed, version = version) }
-            if (patched is AppResult.Success) { groupKeys.rememberMetaKey(chatId, patched.value.metaVersion, key); photos?.notifyChanged() }
+            patchSealed(chatId, key) { version -> UpdateGroupRequest(sealedMeta = sealed, version = version) }
         }
         groupKeys.ensureDistributed(chatId, chat.members.map { it.userId }.filter { it != me })
     }
@@ -269,7 +354,12 @@ class ChatsRepositoryImpl(
     /** Saves a chat as the server describes it and returns it as the screens see it. */
     suspend fun store(dto: ChatDto): Chat {
         val previous = dao.chat(dto.chatId)
-        val name = if (dto.kind == MessagingWire.Group) groupKeys.openMeta(dto.chatId, dto.sealedMeta, dto.metaVersion) ?: previous?.name else null
+        val name = if (dto.kind != MessagingWire.Group) null else {
+            groupKeys.openMeta(dto.chatId, dto.sealedMeta, dto.metaVersion)
+                // A group this phone made whose create answer never arrived: the key kept for that attempt opens it.
+                ?: (if (groupKeys.adoptPendingKey(dto.chatId, dto.sealedMeta, dto.metaVersion)) groupKeys.openMeta(dto.chatId, dto.sealedMeta, dto.metaVersion) else null)
+                ?: previous?.name
+        }
         val entity = ChatEntity(
             chatId = dto.chatId,
             kind = dto.kind,
@@ -292,6 +382,13 @@ class ChatsRepositoryImpl(
         return entity.toDomain(members, ownUserId(), groupPhoto(entity))
     }
 
+    companion object {
+        /** How long the members have to answer before an admin's rename or photo change gives the group a new key. */
+        const val RekeyAfterMillis = 60_000L
+        /** Someone who joined this recently is sent the key with the members' sender keys: no need to ask yet. */
+        const val KeyGraceMillis = 10L * 60 * 1000
+    }
+
     private fun MemberRole.wire() = when (this) { MemberRole.Owner -> MessagingWire.Owner; MemberRole.Admin -> MessagingWire.Admin; MemberRole.Member -> MessagingWire.Member }
 }
 
@@ -310,6 +407,7 @@ internal fun ChatEntity.toDomain(members: List<ChatMemberEntity>, me: String?, g
         myRole = members.firstOrNull { it.userId == me }?.role?.toRole() ?: MemberRole.Member,
         peerId = if (direct) others.firstOrNull()?.userId else null,
         viaSpaceId = viaSpaceId,
+        nameKnown = direct || name != null,
     )
 }
 

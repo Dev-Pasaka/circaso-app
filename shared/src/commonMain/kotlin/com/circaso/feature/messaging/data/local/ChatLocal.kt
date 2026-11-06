@@ -190,6 +190,20 @@ interface ChatsDao {
     @Upsert
     suspend fun upsertMetaKey(key: GroupMetaKeyEntity)
 
+    /**
+     * Keys made for a group this phone is creating, kept under `pending:<idempotency key>` (metaVersion 0) from before
+     * the create call until the group's own row replaces them, so a create whose answer never reached this phone can
+     * still be opened when the group turns up in the list.
+     */
+    @Query("SELECT * FROM group_meta_key WHERE chatId LIKE 'pending:%'")
+    suspend fun pendingMetaKeys(): List<GroupMetaKeyEntity>
+
+    @Query("DELETE FROM group_meta_key WHERE chatId = :chatId")
+    suspend fun deleteMetaKeys(chatId: String)
+
+    @Query("DELETE FROM group_meta_key WHERE chatId LIKE 'pending:%' AND createdAt < :before")
+    suspend fun deletePendingMetaKeysBefore(before: Long)
+
     @Query("SELECT userId FROM sender_key_delivery WHERE chatId = :chatId AND distributionId = :distributionId")
     suspend fun deliveredTo(chatId: String, distributionId: String): List<String>
 
