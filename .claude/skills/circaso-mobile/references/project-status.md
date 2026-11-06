@@ -166,6 +166,12 @@ Media3 1.4.1, multiplatform-markdown-renderer 0.46.0.
 - D-UI9 Android splash icon is an `animated-vector`: Android 12+ draws a still icon into a 108 dp bitmap and stretches it
   to 192 dp (blurry); an Animatable icon is drawn live at full size (verified in AOSP `SplashscreenIconDrawableFactory`).
 - D-UI10 Circaso mark as the notification icon on Android (iOS uses the app icon).
+- D-UI11 (Pasaka, 2026-11-06) External pages open in the **in-app browser** (`core/web`), never by sending the person
+  out: block explorers and links in Asha's answers. Mail, phone, app-store, OS settings, maps and sign-in still go to the
+  system; `javascript:`, `data:`, `file:` and the like open nowhere. `openUrl` routes by `classifyLink`; text links go
+  through `LocalUriHandler` (provided in `App`). The transfer details screen already shows our own data, so the explorer
+  stays a web page (block number, gas and confirmations are not worth a native view). Design calls: `design-system.md`
+  → "In-app browser".
 
 ### Out of scope
 - Website (W1/W2) left out. Old first-launch screens A3–A8 superseded by the ID pages.

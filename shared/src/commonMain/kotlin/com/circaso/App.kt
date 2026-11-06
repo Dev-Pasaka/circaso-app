@@ -14,6 +14,13 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.tooling.preview.Preview
 import com.circaso.core.navigation.AppNavigation
+import com.circaso.core.web.InAppBrowser
+import com.circaso.core.web.InAppBrowserHost
+import com.circaso.core.platform.openUrl
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.ui.platform.LocalUriHandler
+import androidx.compose.ui.platform.UriHandler
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import com.circaso.core.network.NetworkEvents
 import com.circaso.designsystem.platform.rememberIsHighContrast
 import com.circaso.designsystem.theme.CircasoTheme
@@ -61,14 +68,29 @@ fun App() {
         }
         // Every screen knows the space it has (rotation, split screen, tablets): see designsystem/adaptive.
         com.circaso.designsystem.adaptive.ProvideWindowLayout {
-        AppNavigation(forceUpdate = outdated) {
-            ThemeGallery(
-                darkTheme = isDark,
-                highContrast = isHigh,
-                onToggleDark = { scope.launch { prefs.setDark(!isDark) } },
-                onToggleContrast = { scope.launch { prefs.setHighContrast(!isHigh) } },
-            )
-        }
+            // Links open the Circaso way (core/web): web pages in the in-app browser drawn over everything here, other
+            // apps' links (mail, phone, stores) in the system. Text links (Asha's answers) go through LocalUriHandler.
+            CompositionLocalProvider(LocalUriHandler provides CircasoUriHandler) {
+                val browsing by InAppBrowser.page.collectAsState()
+                Box(Modifier.fillMaxSize()) {
+                    // While a page is open, screen readers stay in the browser, not in the app underneath it.
+                    Box(Modifier.fillMaxSize().then(if (browsing != null) Modifier.clearAndSetSemantics {} else Modifier)) {
+                        AppNavigation(forceUpdate = outdated) {
+                            ThemeGallery(
+                                darkTheme = isDark,
+                                highContrast = isHigh,
+                                onToggleDark = { scope.launch { prefs.setDark(!isDark) } },
+                                onToggleContrast = { scope.launch { prefs.setHighContrast(!isHigh) } },
+                            )
+                        }
+                    }
+                    InAppBrowserHost()
+                }
+            }
         }
     }
+}
+
+private object CircasoUriHandler : UriHandler {
+    override fun openUri(uri: String) = openUrl(uri)
 }
