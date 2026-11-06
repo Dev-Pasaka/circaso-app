@@ -387,7 +387,10 @@ internal fun ChatMoneyPreview(name: String): Boolean {
         ) { ChatPreview(direct.copy(draft = "#500 @eth for lunch tomorrow"), ethPay(mumPay)) }
         "chat-pay-eth-quoting" -> ChatPreview(direct.copy(draft = "#500 @eth"), ethPay(mumPay).copy(fee = PayFee.Quoting))
         "chat-pay-eth-no-price" -> ChatPreview(direct.copy(draft = "#500 @eth"), ethPay(mumPay, price = null).copy(typedInFiat = true))
-        "chat-pay-eth-old-price" -> ChatPreview(direct.copy(draft = "#500 @eth"), ethPay(mumPay).copy(pricesFresh = false))
+        "chat-pay-eth-old-price" -> ChatPreview(direct.copy(draft = "#500 @eth"), ethPay(mumPay).copy(pricesFresh = false, priceRefresh = com.circaso.feature.wallet.presentation.PriceRefresh.Loading))
+        "chat-pay-eth-price-failed" -> ChatPreview(direct.copy(draft = "#500 @eth"), ethPay(mumPay).copy(pricesFresh = false, priceRefresh = com.circaso.feature.wallet.presentation.PriceRefresh.Failed("req_N2sX8c")))
+        // A coin with no price at all: typed in its own units, and the card says so.
+        "chat-pay-eth-coin-units" -> ChatPreview(direct.copy(draft = "#0.05 @eth"), ethPay(mumPay, price = null).copy(amountText = "0.05", typedInFiat = false))
         // GW9a2/GW9d: a contribution, with where the target will stand.
         "chat-contribute" -> ChatPreview(group, contribute)
         // GW9 from the D5 card: an approved payout paid from the chat.

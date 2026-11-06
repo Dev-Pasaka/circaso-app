@@ -20,6 +20,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.TextStyle
@@ -104,6 +105,8 @@ internal fun FeeValue(s: PayUiState, onRetry: () -> Unit, style: TextStyle, modi
     val c = CircasoTheme.colors
     val fee = s.fee
     val shown = when {
+        // No coin price yet: there is no amount in the coin, so no fee to say (never "No fee" under "KES 500").
+        s.priceWaiting -> "none"
         fee is PayFee.Quoting -> "working"
         fee is PayFee.Failed && fee.retryable -> "retry"
         fee is PayFee.Failed -> "none"
@@ -282,3 +285,55 @@ internal fun BlockNoteView(note: BlockNote, onAction: () -> Unit, modifier: Modi
         note.action?.let { CircasoButton(it, onAction, style = ButtonStyle.Secondary, size = ButtonSize.Medium, block = true, enabled = !stale) }
     }
 }
+
+/**
+ * Why Pay waits on a coin price, the same on the chat card and the Pay screen: a fresh one on its way (with the
+ * spinner), or none to be had (with the request reference when there is one) and a 44 dp Try Again. Nothing when the
+ * price isn't waited on.
+ */
+@Composable
+internal fun PriceWait(s: PayUiState, onRetry: () -> Unit, modifier: Modifier = Modifier, textAlign: TextAlign = TextAlign.Start) {
+    val c = CircasoTheme.colors
+    val t = CircasoTheme.typography
+    val spec = if (CircasoTheme.reduceMotion) 0 else CircasoMotion.QuickMs
+    val line = priceLine(s)
+    Column(modifier, horizontalAlignment = if (textAlign == TextAlign.Center) Alignment.CenterHorizontally else Alignment.Start) {
+        Crossfade(line, animationSpec = tween(spec), label = "price") { l ->
+            if (l != null) Row(
+                Modifier.semantics { liveRegion = LiveRegionMode.Polite },
+                horizontalArrangement = Arrangement.spacedBy(CircasoSpacing.s1), verticalAlignment = Alignment.CenterVertically,
+            ) {
+                if (l.second == PriceLineKind.Loading) Spinner(c.inkSecondary, Modifier.size(14.dp))
+                BasicText(l.first, style = t.footnote.copy(color = if (l.second == PriceLineKind.Loading) c.inkSecondary else c.warning, textAlign = textAlign))
+            }
+        }
+        AnimatedVisibility(
+            canRetryPrice(s),
+            enter = fadeIn(tween(spec)), exit = fadeOut(tween(if (CircasoTheme.reduceMotion) 0 else CircasoMotion.QuickMs / 2)),
+        ) {
+            Box(
+                Modifier.defaultMinSize(minHeight = CircasoSizes.controlMd)
+                    .semantics { contentDescription = "Try again to get the ${s.asset} price" }
+                    .pressable(role = Role.Button, onClick = onRetry),
+                contentAlignment = Alignment.CenterStart,
+            ) { BasicText("Try Again", style = t.subhead.copy(color = c.action, fontWeight = FontWeight.SemiBold)) }
+        }
+    }
+}
+
+internal enum class PriceLineKind { Loading, Problem }
+
+/** The words for [PriceWait]; null when Pay doesn't wait on a price. */
+internal fun priceLine(s: PayUiState): Pair<String, PriceLineKind>? {
+    if (!s.priceWaiting) return null
+    val amount = s.fiatText ?: "this amount"
+    return when (val r = s.priceRefresh) {
+        PriceRefresh.Loading -> "Getting the latest ${s.asset} price…" to PriceLineKind.Loading
+        is PriceRefresh.Failed ->
+            ("Couldn’t get the latest ${s.asset} price, so $amount can’t be worked out in ${s.asset} yet." + (r.reference?.let { " Ref $it" } ?: "")) to PriceLineKind.Problem
+        PriceRefresh.Idle -> "No ${s.asset} price right now, so $amount can’t be worked out in ${s.asset} yet." to PriceLineKind.Problem
+    }
+}
+
+/** Try Again is offered whenever Pay waits on a price and no fresh one is on its way (never offline: that line says why). */
+internal fun canRetryPrice(s: PayUiState): Boolean = s.priceWaiting && s.online && s.priceRefresh !is PriceRefresh.Loading

@@ -223,12 +223,12 @@ object MinorUnits {
 }
 
 /**
- * A coin amount short enough for one line (what is signed is always the exact amount). Dollar coins round half up to
- * the cent like money; other coins round down by default, so the line never shows more of the coin than is sent:
+ * A coin amount short enough for one line (what is signed is always the exact amount). Dollar and euro coins round
+ * half up to the cent like money; other coins round down by default, so the line never shows more of the coin than is sent:
  * dollar and euro coins to the cent ("3.87 USDC"), other coins to 6 decimals from one whole coin up ("1.234568 SOL")
  * and to 4 significant digits below it ("0.001105 ETH").
  */
-fun coinShort(minor: String, decimals: Int, symbol: String, roundDown: Boolean = !MinorUnits.isDollar(symbol)): String {
+fun coinShort(minor: String, decimals: Int, symbol: String, roundDown: Boolean = !(MinorUnits.isDollar(symbol) || symbol.uppercase() == "EURC")): String {
     val digits = minor.trim().trimStart('0').ifEmpty { "0" }
     val cents = MinorUnits.isDollar(symbol) || symbol.uppercase() == "EURC"
     val keep = when {

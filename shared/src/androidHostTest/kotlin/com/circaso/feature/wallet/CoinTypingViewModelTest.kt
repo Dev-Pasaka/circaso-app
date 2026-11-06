@@ -35,6 +35,11 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
+import kotlinx.coroutines.test.advanceTimeBy
+import com.circaso.core.common.AppError
+import com.circaso.feature.wallet.presentation.PriceRefresh
+import com.circaso.feature.messaging.presentation.coinUnitsFallback
+import kotlin.test.assertIs
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
@@ -58,7 +63,7 @@ private inline fun <reified T : Any> stub(noinline answer: (String, List<Any?>) 
         }
     } as T
 
-private class Online : ConnectivityMonitor { override val osStatus = MutableStateFlow(ConnectionStatus.Online) }
+private class CoinTypingOnline : ConnectivityMonitor { override val osStatus = MutableStateFlow(ConnectionStatus.Online) }
 
 /**
  * Typing money into a coin other than USDC (2026-11-06): the unit a number is typed in is fixed when it is typed, so
@@ -68,7 +73,9 @@ private class Online : ConnectivityMonitor { override val osStatus = MutableStat
 class CoinTypingViewModelTest {
     private val dispatcher = UnconfinedTestDispatcher()
     private val now = 1_000_000_000L
-    private val refreshes = mutableListOf<Long>()
+    private var clock = now
+    private val refreshes = mutableListOf<String?>()
+    private var refreshAnswer: AppResult<Unit> = AppResult.Success(Unit)
 
     private fun wallet(ethPrice: String?, fetchedAt: Long = now) = Wallet(
         WalletStatus.Active,
@@ -101,10 +108,10 @@ class CoinTypingViewModelTest {
         return PayViewModel(
             PayIntent(userId = "otieno", chatId = "c1", displayName = "Otieno", inChat = true),
             ObserveWalletUseCase(repo), CheckRecipientUseCase(repo), RemindRecipientUseCase(repo), PayUseCase(repo),
-            ObserveContactsUseCase(contacts), ConnectionState(Online(), NetworkHealth(), CoroutineScope(dispatcher), offlineDelayMs = 0),
+            ObserveContactsUseCase(contacts), ConnectionState(CoinTypingOnline(), NetworkHealth(), CoroutineScope(dispatcher), offlineDelayMs = 0),
             SendPaymentCardUseCase(stub<MessagesRepository> { _, _ -> null }), OpenDirectChatUseCase(stub<ChatsRepository> { _, _ -> null }),
             AttachChamaPaymentUseCase(chamas), ObserveChamaUseCase(chamas),
-            now = { now }, refreshWallet = { refreshes += now },
+            now = { clock }, refreshPrices = { id -> refreshes += id; refreshAnswer },
         )
     }
 
@@ -182,5 +189,58 @@ class CoinTypingViewModelTest {
         assertEquals("500.00", vm.state.value.amountText)
         vm.onAmount("500.001")
         assertEquals("500.00", vm.state.value.amountText, "two decimals while typing money")
+    }
+
+    @Test fun aPriceThatGrowsOldWhileTheCardIsOpenIsAskedForAgain() = runTest(dispatcher) {
+        val vm = vm()
+        backgroundScope.launch(dispatcher) { vm.state.collect { } }
+        vm.onAmount("500")
+        vm.onAssetTag("eth")
+        assertEquals(1, refreshes.size, "asked for once, when tagged")
+
+        clock = now + 6 * 60 * 1000
+        advanceTimeBy(5 * 60 * 1000 + 1)
+
+        assertFalse(vm.state.value.pricesFresh, "worked out again as time passes, not only when something else changes")
+        assertEquals(2, refreshes.size, "a fresh price is asked for once it grows old")
+        assertTrue(refreshes.all { it == null }, "the personal wallet (W1) when paying from it")
+    }
+
+    @Test fun aFailedRefreshSaysSoWithItsReferenceAndTryAgainAsksOnce() = runTest(dispatcher) {
+        wallets.value = wallet("3500", fetchedAt = now - 10 * 60 * 1000)
+        refreshAnswer = AppResult.Failure(AppError.Api("PRICE_UNAVAILABLE", 503, "req_42", null, emptyMap()))
+        val vm = vm()
+        backgroundScope.launch(dispatcher) { vm.state.collect { } }
+        vm.onAmount("500")
+        vm.onAssetTag("eth")
+
+        val failed = assertIs<PriceRefresh.Failed>(vm.state.value.priceRefresh, "never a \"getting…\" line with nothing on its way")
+        assertTrue(failed.reference.orEmpty().contains("req_42"))
+        assertTrue(vm.state.value.priceWaiting)
+
+        val before = refreshes.size
+        refreshAnswer = AppResult.Success(Unit)
+        vm.onRetryPrice()
+        assertEquals(before + 1, refreshes.size)
+        assertEquals(PriceRefresh.Idle, vm.state.value.priceRefresh)
+    }
+
+    @Test fun switchingUnitsWorksForACoinTypedInItsUnitsBeforeItHadAPrice() = runTest(dispatcher) {
+        wallets.value = wallet(null)
+        val vm = vm()
+        backgroundScope.launch(dispatcher) { vm.state.collect { } }
+        vm.onAmount("0.5")
+        vm.onAssetTag("eth")
+        assertTrue(coinUnitsFallback(vm.state.value), "the card says this is 0.5 ETH, not KES 0.50")
+
+        wallets.value = wallet("3500")
+        assertFalse(vm.state.value.typingFiat, "the typed number still means 0.5 ETH")
+        assertFalse(coinUnitsFallback(vm.state.value))
+
+        vm.onToggleUnit()
+        assertTrue(vm.state.value.typingFiat, "the switch goes to money, not to where it already is")
+        assertEquals("226187.50", vm.state.value.amountText, "0.5 ETH at KES 452,375")
+        val minor = vm.state.value.amountMinor!!
+        assertFalse(com.circaso.feature.wallet.domain.MinorUnits.lessThan("500000000000000000", minor), "never more than the 0.5 ETH it was")
     }
 }

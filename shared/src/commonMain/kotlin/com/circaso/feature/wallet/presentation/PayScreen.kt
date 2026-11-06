@@ -81,7 +81,7 @@ fun PayScreen(viewModel: PayViewModel, onBack: () -> Unit, onOpenTransfer: (Stri
     PayContent(
         state, onBack, viewModel::onQuery, viewModel::onPick, { if (!viewModel.onBackToPick()) onBack() }, viewModel::onAmount, viewModel::onToggleUnit, viewModel::onNote, viewModel::onChain, viewModel::onRemind, viewModel::onPay, viewModel::onErrorShown, onOpenTransfer, onOpenChat,
         onAttachAgain = viewModel::onAttachAgain, onScan = if (viewModel.canScan) viewModel::onScan else null, onChoosing = viewModel::onChoosing, onPayFrom = viewModel::onPayFrom,
-        onRetryQuote = viewModel::onRetryQuote, onUseMax = viewModel::onUseMax,
+        onRetryQuote = viewModel::onRetryQuote, onUseMax = viewModel::onUseMax, onRetryPrice = viewModel::onRetryPrice,
     )
 }
 
@@ -111,6 +111,8 @@ fun PayContent(
     onRetryQuote: () -> Unit = {},
     /** GW14 / GW20's "… Instead": the most that fits with its fee. */
     onUseMax: () -> Unit = {},
+    /** Try Again when a fresh coin price couldn’t be had. */
+    onRetryPrice: () -> Unit = {},
 ) {
     val c = CircasoTheme.colors
     val t = CircasoTheme.typography
@@ -145,7 +147,7 @@ fun PayContent(
     ) { padding ->
         when (state.step) {
             PayStep.Pick -> PickPerson(state, padding, onQuery, onPick)
-            PayStep.Amount, PayStep.Signing, PayStep.Sending -> AmountStep(state, padding, onAmount, onToggleUnit, onNote, onChain, onRemind, onPay, onChoosing, onRetryQuote, onUseMax)
+            PayStep.Amount, PayStep.Signing, PayStep.Sending -> AmountStep(state, padding, onAmount, onToggleUnit, onNote, onChain, onRemind, onPay, onChoosing, onRetryQuote, onUseMax, onRetryPrice)
             PayStep.Done -> DoneStep(state, padding, onBack, onOpenTransfer, onOpenChat, onAttachAgain)
         }
     }
@@ -170,7 +172,7 @@ private fun PickPerson(state: PayUiState, padding: PaddingValues, onQuery: (Stri
 
 /** Design C4: the person, the amount big, a note, from/fee/receives, then the button. The SDK takes over for C5. */
 @Composable
-private fun AmountStep(state: PayUiState, padding: PaddingValues, onAmount: (String) -> Unit, onToggleUnit: () -> Unit, onNote: (String) -> Unit, onChain: (String) -> Unit, onRemind: () -> Unit, onPay: () -> Unit, onChoosing: (Boolean) -> Unit = {}, onRetryQuote: () -> Unit = {}, onUseMax: () -> Unit = {}) {
+private fun AmountStep(state: PayUiState, padding: PaddingValues, onAmount: (String) -> Unit, onToggleUnit: () -> Unit, onNote: (String) -> Unit, onChain: (String) -> Unit, onRemind: () -> Unit, onPay: () -> Unit, onChoosing: (Boolean) -> Unit = {}, onRetryQuote: () -> Unit = {}, onUseMax: () -> Unit = {}, onRetryPrice: () -> Unit = {}) {
     val c = CircasoTheme.colors
     val t = CircasoTheme.typography
     val payee = state.payee
@@ -339,6 +341,8 @@ private fun AmountStep(state: PayUiState, padding: PaddingValues, onAmount: (Str
         }
         if (state.requestPayout) BasicText(if (state.payingFrom.canSign) "Admins approve in the group chat. Then you pay it with ${state.walletName}’s PIN." else "Admins approve in the group chat. Then ${state.signerName} pays it from ${state.walletName}’s wallet.", style = t.footnote.copy(color = c.inkSecondary, textAlign = TextAlign.Center))
         if (!state.online) BasicText("You need a connection to send money.", style = t.footnote.copy(color = c.inkSecondary))
+        // Typed in their money but no usable coin price yet: why Pay waits, with Try Again (the same as the chat card).
+        if (state.online && !state.onHold) PriceWait(state, onRetryPrice, textAlign = TextAlign.Center)
         if (state.onHold) BasicText("Sending is paused for a short while after your account was recovered. You can still receive money.", style = t.footnote.copy(color = c.warning, textAlign = TextAlign.Center))
     }
 }

@@ -150,7 +150,7 @@ fun ThreadScreen(
     val state by viewModel.state.collectAsState()
     val pay = quickPay?.let { vm ->
         val payState by vm.state.collectAsState()
-        QuickPay(payState, vm::onAmount, vm::onNote, vm::onPay, vm::onQuickReset, vm::onErrorShown, vm::onAssetTag, vm::onChoosing, vm::onPayFrom, vm::onRetryExact, vm::onRetryQuote, vm::onUseMax)
+        QuickPay(payState, vm::onAmount, vm::onNote, vm::onPay, vm::onQuickReset, vm::onErrorShown, vm::onAssetTag, vm::onChoosing, vm::onPayFrom, vm::onRetryExact, vm::onRetryQuote, vm::onUseMax, vm::onRetryPrice)
     }
     // Opening a request's Pay again: its card starts over only if its last payment didn't go (the approval still stands).
     // If that payment is on its way or confirmed, it isn't paid twice: say so and put the card away.
@@ -163,7 +163,7 @@ fun ThreadScreen(
     }
     val paying = payout?.let { vm ->
         val payState by vm.state.collectAsState()
-        QuickPay(payState, vm::onAmount, vm::onNote, vm::onPay, vm::onQuickReset, vm::onErrorShown, vm::onAssetTag, vm::onChoosing, vm::onPayFrom, vm::onRetryExact, vm::onRetryQuote, vm::onUseMax)
+        QuickPay(payState, vm::onAmount, vm::onNote, vm::onPay, vm::onQuickReset, vm::onErrorShown, vm::onAssetTag, vm::onChoosing, vm::onPayFrom, vm::onRetryExact, vm::onRetryQuote, vm::onUseMax, vm::onRetryPrice)
     }
     ThreadContent(
         state, onBack, onInfo, onAsha, viewModel::onDraft, viewModel::onSend, viewModel::onSelect, viewModel::onRetry, viewModel::onDiscard, viewModel::onDeleteForEveryone, viewModel::onMessageShown,
@@ -752,13 +752,13 @@ fun ThreadContent(
                         paying && quickPay != null,
                         enter = if (CircasoTheme.reduceMotion) fadeIn(tween(CircasoMotion.QuickMs)) else fadeIn(tween(CircasoMotion.QuickMs)) + androidx.compose.animation.slideInVertically(tween(CircasoMotion.QuickMs)) { it / 2 },
                         exit = fadeOut(tween(CircasoMotion.QuickMs / 2)),
-                    ) { quickPay?.let { q -> ChatMoneyCard(q.state, q.onPay, { q.onChoosing(true) }, cardMotion, maxHeight = cardMax(), onRetryQuote = q.onRetryQuote, onUseMax = q.onUseMax) } }
+                    ) { quickPay?.let { q -> ChatMoneyCard(q.state, q.onPay, { q.onChoosing(true) }, cardMotion, maxHeight = cardMax(), onRetryQuote = q.onRetryQuote, onUseMax = q.onUseMax, onRetryPrice = q.onRetryPrice) } }
                     // An approved request's Pay (D5/GW9): the same card, the amount and payee locked by the approval.
                     AnimatedVisibility(
                         payout != null,
                         enter = if (CircasoTheme.reduceMotion) fadeIn(tween(CircasoMotion.QuickMs)) else fadeIn(tween(CircasoMotion.QuickMs)) + androidx.compose.animation.slideInVertically(tween(CircasoMotion.QuickMs)) { it / 2 },
                         exit = fadeOut(tween(CircasoMotion.QuickMs / 2)),
-                    ) { payout?.let { q -> ChatMoneyCard(q.state, q.onPay, { q.onChoosing(true) }, cardMotion, onClose = onPayoutClose, maxHeight = cardMax(), onRetryQuote = q.onRetryQuote, onUseMax = q.onUseMax) } }
+                    ) { payout?.let { q -> ChatMoneyCard(q.state, q.onPay, { q.onChoosing(true) }, cardMotion, onClose = onPayoutClose, maxHeight = cardMax(), onRetryQuote = q.onRetryQuote, onUseMax = q.onUseMax, onRetryPrice = q.onRetryPrice) } }
                 },
                 above = {
                     // Support never takes money (so nobody pretending to be Circaso can ask for it): say so the moment
@@ -1087,6 +1087,8 @@ class QuickPay(
     val onRetryQuote: () -> Unit = {},
     /** GW14 / GW20's "… Instead". */
     val onUseMax: () -> Unit = {},
+    /** Try Again when a fresh coin price couldn't be had. */
+    val onRetryPrice: () -> Unit = {},
 )
 
 /** The amount while it is still being typed: "#5", "#12.", "#12.5" (no space yet). */

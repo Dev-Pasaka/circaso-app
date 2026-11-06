@@ -195,6 +195,8 @@ data class PayUiState(
     val typedInFiat: Boolean? = null,
     /** The wallet copy's prices are recent enough to turn money into a coin other than a dollar coin. */
     val pricesFresh: Boolean = true,
+    /** Asking for a fresh coin price (the wallet the money leaves from): what the card says while the price waits. */
+    val priceRefresh: PriceRefresh = PriceRefresh.Idle,
     /** The fee shown was asked for an earlier version of this payment; the new answer is on its way and Pay waits. */
     val feeStale: Boolean = false,
     /** GW13c: the fee rose since it was shown; said once, until the next quote. */
@@ -406,8 +408,11 @@ class PayViewModel(
     private val quoteDelayMillis: Long = QuoteDelayMillis,
     /** The clock the quote's hold and the limit's time are measured against (tests move it). */
     private val now: () -> Long = { com.circaso.core.sync.nowMillis() },
-    /** W1 again, for a fresh coin price when a coin other than a dollar coin is tagged; absent in tests and previews. */
-    private val refreshWallet: (suspend () -> Unit)? = null,
+    /**
+     * A fresh coin price for the wallet the money leaves from (null: W1, the personal wallet; else W16 for that group
+     * wallet), when a coin other than a dollar coin is tagged or its price grows old; absent in older tests and previews.
+     */
+    private val refreshPrices: (suspend (walletId: String?) -> AppResult<*>)? = null,
 ) : ViewModel() {
     private val userId = intent.userId
     private val chatId = intent.chatId
@@ -457,8 +462,11 @@ class PayViewModel(
                 }
             }
 
+    /** Bumped when the wallet copy's prices pass [PriceFreshMillis], so [PayUiState.pricesFresh] is worked out again. */
+    private val priceTick = MutableStateFlow(0)
+
     val state: StateFlow<PayUiState> = combine(
-        local, observeWallet(), observeContacts(), connection.status,
+        combine(local, priceTick) { ui, _ -> ui }, observeWallet(), observeContacts(), connection.status,
         combine(if (intent.goalName != null && chatId != null) observeChama(chatId) else flowOf(null), groupSide) { ch, g -> ch to g },
     ) { ui, personal, contacts, c, sides ->
         val (chama, group) = sides
@@ -517,11 +525,50 @@ class PayViewModel(
         // wallet is checked by W4 itself (members only).
         if (userId != null) check(userId, null)
         wallets?.let { w -> viewModelScope.launch { if (groupWallets.isOn) w.refresh(intent.fromWalletId, intent.groupId ?: intent.chatId) } }
+        viewModelScope.launch { keepPricesFresh() }
         quotePayment?.let { quote ->
             viewModelScope.launch { quoteAsTyped(quote) }
             viewModelScope.launch { keepQuoteForTheSamePayment() }
         }
     }
+
+    /**
+     * While a coin other than a dollar coin is tagged, its price is kept fresh: when the wallet copy's prices pass
+     * [PriceFreshMillis] (or the connection comes back with an old one) a fresh copy of the wallet the money leaves from
+     * is asked for. A failure is said on the card with Try Again; nothing loops (2026-11-06 design review).
+     */
+    private suspend fun keepPricesFresh() {
+        state.map { s ->
+            val wants = s.currency != null && s.tagged?.second?.let { !MinorUnits.isDollar(it.symbol) } == true
+            Triple(wants, s.wallet?.fetchedAt, s.online)
+        }
+            .distinctUntilChanged()
+            .collectLatest { (wants, fetchedAt, online) ->
+                if (!wants || fetchedAt == null || !online) return@collectLatest
+                val left = fetchedAt + PriceFreshMillis - now()
+                if (left > 0) {
+                    delay(left)
+                    priceTick.update { it + 1 }
+                }
+                if (fetchedAt + PriceFreshMillis - now() <= 0) refreshPrice()
+            }
+    }
+
+    private var priceJob: kotlinx.coroutines.Job? = null
+
+    /** Asks for a fresh coin price once (never while one is on its way, never offline: the offline line says why). */
+    private fun refreshPrice() {
+        val refresh = refreshPrices ?: return
+        if (priceJob?.isActive == true || !state.value.online) return
+        priceJob = viewModelScope.launch {
+            local.update { it.copy(priceRefresh = PriceRefresh.Loading) }
+            val r = refresh(fromId.value)
+            local.update { it.copy(priceRefresh = if (r is AppResult.Failure) PriceRefresh.Failed(ErrorMessages.reference(r.error)) else PriceRefresh.Idle) }
+        }
+    }
+
+    /** The card's Try Again when a fresh price couldn't be had. */
+    fun onRetryPrice() = refreshPrice()
 
     /**
      * Marked stale but nothing that decides the fee changed (in the chat, typing the note after "#500" passes the same
@@ -711,7 +758,8 @@ class PayViewModel(
         val clean = text.filter { it.isDigit() || it == '.' }
         if (clean.count { it == '.' } > 1) return
         val s = state.value
-        val inFiat = s.typedInFiat ?: s.fiatUnitNow
+        // The person's own choices from [local] (the derived state can lag a toggle made a moment ago).
+        val inFiat = typingFiatNow(s)
         val max = if (inFiat) 2 else s.decimals
         if (clean.substringAfter('.', "").length > max) return
         staleFee()
@@ -723,7 +771,8 @@ class PayViewModel(
         if (!s.canUseFiat || s.payout) return
         // Carry the value across so the number doesn't jump.
         val minor = s.amountMinor
-        val next = !s.inFiat
+        // From what the number is in now, not the default: a coin typed in its units before it had a price switches to money.
+        val next = !typingFiatNow(s)
         val text = when {
             minor == null || MinorUnits.isZero(minor) -> ""
             next -> s.unitRate?.let { coinToFiat(minor, s.decimals, it) } ?: ""
@@ -732,6 +781,9 @@ class PayViewModel(
         staleFee()
         local.update { it.copy(inFiat = next, amountText = text, typedInFiat = next) }
     }
+
+    /** [PayUiState.typingFiat] from the person's latest choices in [local], the price from the derived state. */
+    private fun typingFiatNow(s: PayUiState): Boolean = local.value.let { l -> l.typedInFiat ?: (l.inFiat && s.coinPriced) }
 
     fun onNote(text: String) = local.update { it.copy(note = text.take(140)) }
 
@@ -743,10 +795,9 @@ class PayViewModel(
         // prices). The person sees the change on the card at once; nothing changes it later behind their back.
         val next = state.value.copy(assetTag = tag)
         local.update { it.copy(assetTag = tag, typedInFiat = if (it.amountText.isEmpty()) null else next.fiatUnitNow) }
-        // A coin other than a dollar coin is worked out at its price: ask for a fresh one.
-        if (next.tagged?.second?.let { !MinorUnits.isDollar(it.symbol) } == true) {
-            refreshWallet?.let { r -> viewModelScope.launch { r() } }
-        }
+        // A coin other than a dollar coin is worked out at its price: ask for a fresh one at the moment it is tagged
+        // (keepPricesFresh asks again once that grows old).
+        if (next.tagged?.second?.let { !MinorUnits.isDollar(it.symbol) } == true) refreshPrice()
         state.value.payee?.userId?.takeIf { it.isNotEmpty() }?.let { check(it, state.value.payChain) }
     }
 
@@ -889,7 +940,7 @@ class PayViewModel(
                 // A payout's amount is the approved one (CH3), so it comes back with it; a `#` card starts empty.
                 step = PayStep.Amount, amountText = if (intent.payout) intent.amount?.filter { c -> c.isDigit() || c == '.' }.orEmpty() else "", note = "",
                 result = null, error = null, assetTag = null, failure = null, choosing = false, requested = null,
-                inFiat = !intent.payout, blockchain = null, typedInFiat = null,
+                inFiat = !intent.payout, blockchain = null, typedInFiat = null, priceRefresh = PriceRefresh.Idle,
             )
         }
     }
@@ -958,6 +1009,13 @@ class PayViewModel(
 
 /** GW13: the pause after the last keystroke before the fee is asked for. */
 const val QuoteDelayMillis = 400L
+
+/** Asking for a fresh coin price: [Failed] carries the request reference for support, when there is one. */
+sealed interface PriceRefresh {
+    data object Idle : PriceRefresh
+    data object Loading : PriceRefresh
+    data class Failed(val reference: String?) : PriceRefresh
+}
 
 /** How old the wallet's copy may be for its coin prices to turn money into ETH, SOL and the like (the server keeps them a minute). */
 const val PriceFreshMillis = 5L * 60 * 1000
