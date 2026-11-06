@@ -158,7 +158,7 @@ fun PreviewScreens(name: String) {
             initialTab = when (name) { "home-wallet" -> 1; "home-you" -> 2; else -> 0 },
             chats = { pad -> ChatsContent(ChatsUiState(chats = chatList, loaded = true), pad, {}, {}, {}, moments = momentsSlot(sampleMoments())) },
             chatsActions = {}, chatsBanner = {},
-            wallet = { pad -> WalletContent(WalletUiState(wallet = sampleWallet(), recent = sampleTransfers()), pad, noWalletActions, {}, {}, {}, {}) },
+            wallet = { pad -> WalletContent(WalletUiState(wallet = sampleWallet()), pad, noWalletActions, {}, {}, {}, {}) },
             walletActions = {},
             you = { pad -> PreviewScreens("you") },
         )
@@ -403,14 +403,14 @@ fun PreviewScreens(name: String) {
             WalletUiState(wallet = sampleWallet().copy(chains = sampleWallet().chains + listOf(
                 WalletChain("MATIC-AMOY", "0x19aa0000000000000000000000000000000077c1", "ACTIVE", listOf(Asset("USDC", "0xusdc2", 6, "500000000", "500", "64500.00")), true),
                 WalletChain("SOL-DEVNET", "So1AbCdEf0000000000000000000000000000002f9", "ACTIVE", listOf(Asset("USDC", "So1usdc", 6, "0", "0", "0.00")), true),
-            )), recent = sampleTransfers(), missingNetworks = listOf("ETH-SEPOLIA")),
+            )), missingNetworks = listOf("ETH-SEPOLIA")),
             PaddingValues(bottom = 90.dp), noWalletActions, {}, {}, {}, {},
         )
         "wallet-loading" -> WalletContent(WalletUiState(loading = true), PaddingValues(bottom = 90.dp), noWalletActions, {}, {}, {}, {})
-        "wallet" -> WalletContent(WalletUiState(wallet = sampleWallet(), recent = sampleTransfers()), PaddingValues(bottom = 90.dp), noWalletActions, {}, {}, {}, {})
+        "wallet" -> WalletContent(WalletUiState(wallet = sampleWallet()), PaddingValues(bottom = 90.dp), noWalletActions, {}, {}, {}, {})
         "wallet-create" -> WalletContent(WalletUiState(wallet = sampleWallet().copy(status = WalletStatus.None, chains = emptyList(), totals = emptyList()), setupRequestedBy = "Amina"), PaddingValues(bottom = 90.dp), noWalletActions, {}, {}, {}, {})
-        "wallet-offline" -> WalletContent(WalletUiState(wallet = sampleWallet(), recent = sampleTransfers(), online = false), PaddingValues(bottom = 90.dp), noWalletActions, {}, {}, {}, {})
-        "receive" -> WalletContent(WalletUiState(wallet = sampleWallet(), recent = sampleTransfers(), receiveSheet = true, handle = "pasaka"), PaddingValues(bottom = 90.dp), noWalletActions, {}, {}, {}, {})
+        "wallet-offline" -> WalletContent(WalletUiState(wallet = sampleWallet(), online = false), PaddingValues(bottom = 90.dp), noWalletActions, {}, {}, {}, {})
+        "receive" -> WalletContent(WalletUiState(wallet = sampleWallet(), receiveSheet = true, handle = "pasaka"), PaddingValues(bottom = 90.dp), noWalletActions, {}, {}, {}, {})
         "help" -> com.circaso.feature.support.presentation.HelpContent(
             com.circaso.feature.support.presentation.HelpUiState(topic = com.circaso.feature.support.Support.Topic.Payment, conversation = ChatSummary(supportChat, text(9, "s1", "It's on its way now. Anything else?", false, 60 * 20, sender = "sup", senderName = "Circaso Support"), 0)),
             {}, {}, {}, {}, null,
@@ -442,6 +442,23 @@ fun PreviewScreens(name: String) {
             null, sampleChama(),
         )
         "transfer" -> TransferContent(TransferUiState(transfer = sampleTransfers().first(), fiat = sampleWallet().fiat), {})
+        // Transactions (E7): the list, its shape while it is read, nothing yet, offline, a failed read, a date range.
+        "activity", "activity-loading", "activity-empty", "activity-offline", "activity-error", "activity-range", "activity-group" -> {
+            val base = com.circaso.feature.wallet.presentation.ActivityUiState(
+                transfers = sampleTransfers(), fiat = sampleWallet().fiat, loaded = true,
+                today = com.circaso.core.platform.localDayIndex(com.circaso.core.sync.nowMillis()),
+            )
+            val state = when (name) {
+                "activity-loading" -> base.copy(transfers = emptyList(), loaded = false)
+                "activity-empty" -> base.copy(transfers = emptyList())
+                "activity-offline" -> base.copy(transfers = emptyList(), online = false)
+                "activity-error" -> base.copy(transfers = emptyList(), error = com.circaso.core.common.ErrorMessages.SomethingWrong)
+                "activity-range" -> base.copy(range = com.circaso.feature.wallet.presentation.ActivityRange.Week)
+                "activity-group" -> base.copy(groupWallet = true)
+                else -> base
+            }
+            com.circaso.feature.wallet.presentation.ActivityContent(state, {}, {}, {}, {})
+        }
         else -> if (!GroupWalletPreview(name) && !ChatMoneyPreview(name) && !MomentsChatsPreview(name) && !AshaPreview(name)) BasicText("Unknown preview: $name")
     }
 }

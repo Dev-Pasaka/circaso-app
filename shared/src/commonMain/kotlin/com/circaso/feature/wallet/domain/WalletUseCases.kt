@@ -29,6 +29,8 @@ class RefreshWalletOfUseCase(private val wallet: WalletRepository) { suspend ope
 /** Read. */
 class ObserveWalletActivityUseCase(private val wallet: WalletRepository) { operator fun invoke(walletId: String) = wallet.activity(walletId) }
 class RefreshWalletActivityUseCase(private val wallet: WalletRepository) { suspend operator fun invoke(walletId: String) = wallet.refreshActivity(walletId) }
+/** Online-only: one page of W6 into the phone's copy; the next page's cursor. */
+class LoadActivityPageUseCase(private val wallet: WalletRepository) { suspend operator fun invoke(walletId: String?, cursor: String?) = wallet.loadActivityPage(walletId, cursor) }
 /** Online-only (W15). */
 class GetGroupWalletUseCase(private val wallet: WalletRepository) { suspend operator fun invoke(chatId: String) = wallet.groupWallet(chatId) }
 /** Online-only: W14 and the group wallet's PIN in the Circle SDK. */

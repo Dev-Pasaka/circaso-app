@@ -89,6 +89,47 @@ Media3 1.4.1, multiplatform-markdown-renderer 0.46.0.
   money and payments change, plus its caption, Add / Payout (Send for a space) / Receive / Target (admins), target
   progress and payout requests, all inside the same layout. `GroupWalletRoute` (group info, goal strip) pushes the
   same screen under a bar, without the switcher (the person came for that group). Flag off: no switcher at all.
+- D-M10 **Wallet tab polish (Pasaka, 2026-11-06; calls delegated, departures from the canvas recorded here):**
+  - *No payments preview on the tab.* E1's "Recent" list and its See All are gone for the personal and group wallets:
+    people see their payments in their chats. In their place one **View Transactions** row (the asset card's surface,
+    a clock in a 28 dp circle, the label, a chevron mirrored in RTL; 56 dp at least) opens the wallet's full list
+    (`ActivityRoute(walletId)`: the personal wallet's or the group's). It is always there for an active wallet, so it
+    never arrives late; the skeleton draws the asset card and this row. `WalletUiState.recent` and the tab's transfers
+    read are removed.
+  - *Transactions (E7) completed:* titled "Transactions" (E7 says "Activity"; renamed to match the row), filters as
+    selected chips (All, Sent, Received, **Groups** = money to and from group wallets, archived Spaces excluded;
+    personal wallet only), search "Search people, notes, amounts" (E7's copy), rows by day, Hide balances honoured.
+    Rows: a group wallet's say Contribution / Payout, named by person, "A group" or short address (the tab's GW16
+    naming, now shared as `Transfer.listRow`); the person's own payments to and from a group say Contribution / Payout
+    too (E7's "Holiday Fund · Contribution"). The page reads W6 itself as it opens (`LoadActivityPageUseCase`, pull to
+    refresh) and pages older rows by W6's cursor as the list nears its end (it stopped at 50 before). Until the list is
+    known (rows saved, or this read finished) it shows the rows' skeleton, never "nothing yet"; with nothing at all it
+    says why, centred: "No transactions yet", offline "Your payments show here once they've been read with a
+    connection", or a failed read with Try Again. E7's **date filter** is the nav bar's menu (the platform's own:
+    UIMenu / Material dropdown) with rolling ranges (Any Time, Today, Last 7 / 30 / 90 Days) instead of a calendar
+    picker; a range in use shows as the first chip, picked, and tapping it clears it. Not built: E7's **Added** chip
+    (adding money, E2, has no backend). Older pages: one read at a time, never offline; a failed one stops and the
+    footer says "Couldn't load older payments" with Try Again (it never re-reads in a loop). A failed refresh with
+    payments saved keeps them and says "Couldn't refresh. Showing saved payments." under the chips; errors carry the
+    support Ref.
+  - *Card fan, nothing below moves:* the fan (tap the front card) used to animate the deck's layout height on an
+    underdamped spring (damping 0.78), so the dots, actions, assets and everything under them were pushed down and
+    bounced on open and close. Now the deck's box is the front card's own box (`aspectRatio(CardRatio)`, as the
+    pager's page) for the whole motion; the open fan is scaled to fit inside it (`fit = cardHeight / (rise +
+    cardHeight + drop)`, about 0.58 instead of the earlier 0.7 that needed extra room: a departure from "30% smaller",
+    2026-10-31); turn, scale, lift and lean are drawn in `graphicsLayer` only, on a critically damped spring
+    (interruptible, no overshoot; gathering is stiffer than fanning out). Reduced motion: no turning, the front card stays
+    solid and the cards behind it fade in where they land (150 ms).
+  - *Personal | Groups is a compact segmented control* (it was a 232 x 44 dp bar): centred at the top, sized to its two
+    words, a 32 dp track in a 44 dp touch row (both grow with Dynamic Type), the lift drawn behind the labels and slid
+    by drawing (critically damped; at once with reduced motion), no ripple. Chosen over a Revolut-style "name +
+    chevron" title (it would hide a two-way choice behind a tap and duplicate the group ⋮ menu, which already switches
+    groups) and Monzo's account carousel (it costs a card's height); it is the Phone app's All | Missed pattern.
+    **Hidden entirely when the person has no group wallet** (the "No group wallets yet" page is removed); the tab waits
+    for the saved wallet list and the remembered side before drawing, so the control never pops in or flips sides. If
+    their last group wallet goes away the tab returns to Personal for good, so a later group wallet never turns it to
+    Groups without a tap; that Personal is saved too, so it holds across launches.
+
 - D-M5 Add money, KYC, cash out (E2, E3, E6) and business groups (D7): **honest "coming" sheets** until licensed partners
   are chosen; Cash out offers "Send to an Exchange". No fake flows.
 - D-M6 Money sound on payment received (in-app and as its own notification channel), can be turned off (You → Money sound).

@@ -53,6 +53,7 @@ import com.circaso.feature.wallet.domain.WalletStatus
 import com.circaso.feature.wallet.domain.chainName
 import com.circaso.feature.wallet.domain.shortAddress
 import com.circaso.feature.wallet.presentation.WalletActions
+import com.circaso.feature.wallet.presentation.listRow
 import com.circaso.feature.wallet.presentation.WalletContent
 import com.circaso.feature.wallet.presentation.WalletSheets
 import com.circaso.feature.wallet.presentation.WalletUiState
@@ -114,10 +115,8 @@ data class GroupWalletUiState(
 
     /** Payments as the group wallet lists them (GW16): who, and whether it was a contribution or a payout. */
     val rows: List<Pair<Transfer, String>> get() = activity.map { tr ->
-        val who = tr.counterpartName ?: tr.counterpartGroupChat?.let { "A group" }
-            ?: shortAddress(if (tr.outgoing) tr.toAddress else tr.from).ifEmpty { "Someone" }
-        val kind = if (tr.outgoing) "Payout" else "Contribution"
-        tr.copy(counterpartName = who) to kind
+        val (named, kind) = tr.listRow(groupWallet = true)
+        named to (kind ?: "Contribution")
     }
 }
 

@@ -134,11 +134,7 @@ class WalletRepositoryImpl(
         val page = (remote.transactions(limit = HistoryPage) as? AppResult.Success)?.value ?: return
         val recentSince = nowMillis() - ChatCardsWithinMillis
         page.transactions.forEach { row ->
-            val key = row.transferId ?: row.id
-            // Money in that a Circaso payment brought now names its transfer (2026-11-05): one row, not two.
-            if (row.direction == "IN" && row.transferId != null) dao.deleteIncoming(row.id)
-            val entity = row.toEntity(key, dao.transfer(key))
-            dao.upsert(entity)
+            val entity = saveHistoryRow(row)
             // A chat's payment that this phone has no card for (a new phone, an unreadable card): the card, from here.
             val chatId = row.chatId
             if (row.transferId != null && chatId != null && row.state == "CONFIRMED" && entity.createdAt >= recentSince) {
@@ -151,6 +147,23 @@ class WalletRepositoryImpl(
             }
         }
     }
+
+    /** One W6 row into the person's own history, merged with what frames already stored. */
+    private suspend fun saveHistoryRow(row: com.circaso.feature.wallet.data.remote.TransactionDto): TransferEntity {
+        val key = row.transferId ?: row.id
+        // Money in that a Circaso payment brought now names its transfer (2026-11-05): one row, not two.
+        if (row.direction == "IN" && row.transferId != null) dao.deleteIncoming(row.id)
+        val entity = row.toEntity(key, dao.transfer(key))
+        dao.upsert(entity)
+        return entity
+    }
+
+    override suspend fun loadActivityPage(walletId: String?, cursor: String?): AppResult<String?> =
+        remote.transactions(cursor = cursor, limit = HistoryPage, walletId = walletId).map { page ->
+            if (walletId != null) dao.saveActivity(page.transactions.map { it.toActivity(walletId) })
+            else page.transactions.forEach { saveHistoryRow(it) }
+            page.nextCursor
+        }
 
     private suspend fun save(response: WalletResponse): Wallet {
         val fetchedAt = nowMillis()

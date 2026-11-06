@@ -269,6 +269,11 @@ private val CardShape = androidx.compose.foundation.shape.RoundedCornerShape(22.
  * turned clockwise about the shared bottom centre, the rearmost by [FanAngle] and the rest evenly between. They start
  * piled exactly where the front card sat in the row, so opening reads as fanning them out and closing as gathering
  * them back; [onClosed] runs once they have settled together.
+ *
+ * The deck's layout box is the front card's own box, the same size as the pager's page, for the whole of the motion:
+ * the fan is scaled to fit inside it and every move (turn, scale, lift, lean) is drawn in `graphicsLayer`, so nothing
+ * below the cards moves while they fan out or gather (Pasaka, 2026-11-06). It used to animate its height on an
+ * underdamped spring, which pushed the dots, the actions and the list down and made them bounce.
  */
 @Composable
 private fun CardDeck(
@@ -286,27 +291,38 @@ private fun CardDeck(
         // Turned about its bottom centre, the rearmost card's bottom-right corner hangs this far below the front card.
         val turn = FanAngle * kotlin.math.PI.toFloat() / 180f
         val drop = maxWidth * FanBehindScale * 0.5f * kotlin.math.sin(turn)
-        // ...and its top-left corner rises this far above the front card's top: room is made above the fan for it,
-        // so nothing reaches past the top of the list (where it would be cut off under the status bar).
+        // ...and its top-left corner rises this far above the front card's top: each card is lowered by it, so the
+        // fan's top is the box's top and nothing reaches up under the status bar.
         val rise = ((maxWidth * 0.5f * kotlin.math.sin(turn) + cardHeight * kotlin.math.cos(turn)) * FanBehindScale - cardHeight).coerceAtLeast(0.dp)
-        // The open fan leans right of its pivot by this much; it slides left as it opens so the slices sit centred.
+        // The open fan, scaled about the box's top, is exactly the card's height: it fits the box it opened from.
+        val fit = (cardHeight / (rise + cardHeight + drop)).coerceAtMost(1f)
+        // The open fan leans right of its pivot by this much (at full size); it slides left as it opens so the slices
+        // sit centred.
         val lean = with(androidx.compose.ui.platform.LocalDensity.current) {
             ((cardHeight * kotlin.math.sin(turn) + maxWidth * 0.5f * kotlin.math.cos(turn) - maxWidth * 0.5f) * FanBehindScale / 2f).toPx()
         }
-        fun <T> motion() = if (still) tween<T>(CircasoMotion.BaseMs) else androidx.compose.animation.core.spring<T>(dampingRatio = DeckDamping, stiffness = DeckStiffness)
-        // Fanned, the whole hand shrinks so it barely needs more room than the card did, and springs back to full
-        // size as it closes: the actions below move a little, not a card's height (the user, 2026-10-31).
-        val shrink by androidx.compose.animation.core.animateFloatAsState(if (spread) FanShrink else 1f, motion(), label = "shrink")
-        val lift by androidx.compose.animation.core.animateDpAsState(if (spread) rise else 0.dp, motion(), label = "lift")
-        val height by androidx.compose.animation.core.animateDpAsState(
-            if (spread) (rise + cardHeight + drop) * FanShrink else cardHeight, motion(), label = "fan",
+        // Critically damped: interruptible (a tap mid-fan reverses from where the cards are, with their speed), and
+        // never past its target, so the fan never draws outside its box. Reduced motion: the fan appears in place
+        // with a short dissolve instead of turning.
+        fun <T> motion(): androidx.compose.animation.core.AnimationSpec<T> =
+            if (still) androidx.compose.animation.core.snap() else androidx.compose.animation.core.spring(dampingRatio = 1f, stiffness = if (spread) DeckStiffness else DeckGatherStiffness)
+        val shrink by androidx.compose.animation.core.animateFloatAsState(
+            if (spread) fit else 1f, motion(), label = "shrink",
             finishedListener = { if (!spread) onClosed() },
         )
+        val lift by androidx.compose.animation.core.animateDpAsState(if (spread) rise else 0.dp, motion(), label = "lift")
+        // Reduced motion: the front card stays solid and the cards behind it fade in where they land.
+        // Made fresh as the fan opens, already at 0, so the back cards never draw solid for a frame before fading in.
+        val dissolve = androidx.compose.runtime.remember(spread, still) { androidx.compose.animation.core.Animatable(if (still && spread) 0f else 1f) }
+        androidx.compose.runtime.LaunchedEffect(dissolve) { dissolve.animateTo(1f, tween(CircasoMotion.QuickMs)) }
+        // How open the fan is, 0 piled to 1 fanned, for the sideways lean.
+        val open = if (fit < 1f) ((1f - shrink) / (1f - fit)).coerceIn(0f, 1f) else 0f
         Box(
-            Modifier.fillMaxWidth().height(height).graphicsLayer {
+            // The box never changes size: the pager's page is the same card, measured the same way.
+            Modifier.fillMaxWidth().aspectRatio(CardRatio).graphicsLayer {
                 transformOrigin = androidx.compose.ui.graphics.TransformOrigin(0.5f, 0f)
                 scaleX = shrink; scaleY = shrink
-                translationX = -lean * ((1f - shrink) / (1f - FanShrink)).coerceIn(0f, 1.2f)
+                translationX = -lean * shrink * open
             },
         ) {
             val last = chains.lastIndex.coerceAtLeast(1)
@@ -325,6 +341,7 @@ private fun CardDeck(
                                 transformOrigin = androidx.compose.ui.graphics.TransformOrigin(0.5f, 1f)
                                 rotationZ = angle
                                 scaleX = scale; scaleY = scale
+                                if (!front) alpha = dissolve.value
                             }
                             .pressable(role = androidx.compose.ui.semantics.Role.Button) { onPick(chain.blockchain) },
                     )
@@ -337,11 +354,10 @@ private fun CardDeck(
 /** How far the rearmost card turns (the user, 2026-10-31). */
 private const val FanAngle = 45f
 private const val FanBehindScale = 0.94f
-/** The open fan is 30% smaller than the card (the user, 2026-10-31). */
-private const val FanShrink = 0.7f
-/** A little give as the cards land, like cards fanned in the hand, without wobbling. */
-private const val DeckDamping = 0.78f
+/** Quick enough to feel like a flick of the hand, settling without any wobble. */
 private const val DeckStiffness = 420f
+/** Gathering back is quicker than fanning out: the person is done looking. */
+private const val DeckGatherStiffness = 700f
 
 /**
  * Card art per network: deep, quiet gradients, so the stack reads like a wallet of real cards and each network is
