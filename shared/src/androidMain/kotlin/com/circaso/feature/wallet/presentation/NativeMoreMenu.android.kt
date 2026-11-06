@@ -110,4 +110,6 @@ private fun NativeMenuIcon.circaso() = when (this) {
     NativeMenuIcon.Chat -> CircasoIcon.Chat
     NativeMenuIcon.Info -> CircasoIcon.Info
     NativeMenuIcon.List -> CircasoIcon.People
+    NativeMenuIcon.Send -> CircasoIcon.ArrowUp
+    NativeMenuIcon.External -> CircasoIcon.Forward
 }

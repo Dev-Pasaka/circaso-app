@@ -104,7 +104,12 @@ private fun gwMoney(wallet: Boolean = true, active: Boolean = true, goal: Boolea
     openRequests = listOf(gwRequest()), isAdmin = true, isOwner = true, isSigner = signer, fetchedAt = nowMillis(),
 )
 
-private val noGroupMoneyActions = GroupMoneyActions({}, {}, {}, {}, {}, {}, {}, {})
+private fun gwDirectTransfer(state: TransferState, minor: String, address: String?) = Transfer(
+    "t-direct", TransferDirection.Out, state, "BASE-SEPOLIA", "0xgroup", if (address == null) "4" else null, address.orEmpty(), Amount("USDC", minor, ""),
+    null, "g1", null, null, if (address == null) "Achieng Odhiambo" else null, null, 0, 0,
+)
+
+private val noGroupMoneyActions = GroupMoneyActions({}, {}, {}, {}, {}, {}, {}, {}, onPay = {}, onSendToWallet = {})
 
 /** Group info's money rows on their own, as the frames draw them (GW6–GW8b), with an optional sheet over them. */
 @Composable
@@ -219,7 +224,7 @@ private fun TabPreview(start: WalletUiState, gwActions: GroupWalletActions = Gro
                 onSelectWallet = { w -> state = state.copy(selectedWalletId = w.walletId, switching = false, allGroups = false) },
                 onAllGroups = { open -> state = state.copy(allGroups = open, switching = false) },
                 onCreate = {}, onRefresh = {}, onReceive = {}, onComing = {},
-                groupMenu = GroupMenuActions({}, {}),
+                groupMenu = GroupMenuActions({}, {}, onPay = {}, onSendToWallet = {}),
             )
         },
         walletOverlay = {
@@ -299,6 +304,33 @@ internal fun GroupWalletPreview(name: String): Boolean {
         "gw-pay-signing" -> PayPreview(payState(PayUiState(payee = Person("", "Coast Bus", null, null, null), chatId = "g1", amountText = "92.879", inFiat = false, requestId = "r1", groupMoney = gwMoney(), step = PayStep.Signing)).copy(payingFrom = kilimaniWallet, wallet = gwWallet()))
         "gw-not-sent" -> PayPreview(payState(PayUiState(payee = Person("", "Coast Bus", null, null, null), chatId = "g1", amountText = "92.879", inFiat = false, requestId = "r1", groupMoney = gwMoney(), failure = PayFailure("Kilimani Chama", "Something went wrong while signing. Nothing was sent.", "req_N2sX8c"))).copy(payingFrom = kilimaniWallet, wallet = gwWallet()))
         "gw-request-payout" -> PayPreview(payState(PayUiState(payee = Person("2", "Otieno Ouma", null, null, null), chatId = "dm", amountText = "5000", note = "Venue deposit", groupMoney = gwMoney())).copy(payingFrom = kilimaniWallet, wallet = gwWallet()))
+        // 2026-11-06: the owner pays straight from the group wallet; the picker offers You, an address and the members.
+        "gw-pay-direct" -> PayPreview(payState(PayUiState(payee = Person("4", "Achieng Odhiambo", null, null, null), amountText = "1500", note = "Bus fare", groupMoney = gwMoney())).copy(payingFrom = kilimaniWallet, wallet = gwWallet()))
+        "gw-pay-direct-self" -> PayPreview(payState(PayUiState(payee = Person("me", "Pasaka Mutuku", null, null, null), me = Person("me", "Pasaka Mutuku", null, null, null), amountText = "2000", groupMoney = gwMoney())).copy(payingFrom = kilimaniWallet, wallet = gwWallet()))
+        "gw-pay-pick-owner" -> PayContent(payState(PayUiState(step = PayStep.Pick, me = Person("me", "Pasaka Mutuku", null, null, null), contacts = gwContacts().map { it.person } + Person("6", "Mum", null, null, null))).copy(payingFrom = kilimaniWallet, wallet = gwWallet()), {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, null, onToAddress = {})
+        "gw-send-to-wallet-group" -> com.circaso.feature.wallet.presentation.SendToWalletContent(
+            com.circaso.feature.wallet.presentation.SendToWalletUiState(step = com.circaso.feature.wallet.presentation.ExternalStep.Review, wallet = gwWallet(), blockchain = "BASE-SEPOLIA", address = "0x12ab0000000000000000000000000000004ab4", checkedAddress = "0x12ab0000000000000000000000000000004ab4", amountText = "150", note = "To Binance", from = kilimaniWallet, fee = PayFee.Quoted("750000", 50)),
+            {}, {}, {}, {}, {}, {}, {}, {}, {},
+        )
+        "gw-send-to-wallet-member" -> com.circaso.feature.wallet.presentation.SendToWalletContent(
+            com.circaso.feature.wallet.presentation.SendToWalletUiState(wallet = gwWallet(), blockchain = "BASE-SEPOLIA", from = kilimaniWallet.copy(canSign = false)),
+            {}, {}, {}, {}, {}, {}, {}, {}, {},
+        )
+        // Done after a direct payout: "On its way from …" until the chain has it, then "Paid from …".
+        "gw-pay-direct-done", "gw-pay-direct-paid" -> PayPreview(payState(PayUiState(
+            payee = Person("4", "Achieng Odhiambo", null, null, null), amountText = "1500", note = "Bus fare", groupMoney = gwMoney(), step = PayStep.Done,
+            result = gwDirectTransfer(if (name == "gw-pay-direct-paid") TransferState.Confirmed else TransferState.Submitted, "11627907", null),
+        )).copy(payingFrom = kilimaniWallet, wallet = gwWallet()))
+        "gw-send-to-wallet-group-done" -> com.circaso.feature.wallet.presentation.SendToWalletContent(
+            com.circaso.feature.wallet.presentation.SendToWalletUiState(step = com.circaso.feature.wallet.presentation.ExternalStep.Done, wallet = gwWallet(), blockchain = "BASE-SEPOLIA", amountText = "150", from = kilimaniWallet,
+                result = gwDirectTransfer(TransferState.Submitted, "150000000", "0x12ab0000000000000000000000000000004ab4")),
+            {}, {}, {}, {}, {}, {}, {}, {}, {},
+        )
+        "gw-send-to-wallet-group-failed" -> com.circaso.feature.wallet.presentation.SendToWalletContent(
+            com.circaso.feature.wallet.presentation.SendToWalletUiState(step = com.circaso.feature.wallet.presentation.ExternalStep.Review, wallet = gwWallet(), blockchain = "BASE-SEPOLIA", address = "0x12ab0000000000000000000000000000004ab4", checkedAddress = "0x12ab0000000000000000000000000000004ab4", amountText = "150", from = kilimaniWallet, fee = PayFee.Quoted("750000", 50),
+                failure = com.circaso.feature.wallet.presentation.PayFailure("Kilimani Chama", "Something went wrong while signing. Nothing was sent.", "req_N2sX8c")),
+            {}, {}, {}, {}, {}, {}, {}, {}, {},
+        )
         "gw-pay-personal" -> PayPreview(payState(PayUiState(payee = Person("6", "Mum", null, null, null), chatId = "dm", amountText = "500", note = "for lunch tomorrow")))
         "gw-pay-from" -> PayPreview(payState(PayUiState(payee = Person("6", "Mum", null, null, null), chatId = "dm", amountText = "500", note = "for lunch tomorrow", choosing = true)))
         // Phase 2F on the Pay screen (Wallet tab Send): the same fee line, GW13 to GW13d, GW20.

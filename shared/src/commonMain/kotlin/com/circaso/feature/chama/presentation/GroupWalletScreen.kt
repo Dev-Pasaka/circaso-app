@@ -102,7 +102,8 @@ data class GroupWalletUiState(
     val namedCaption: String get() = captionAfter(name)
 
     private fun captionAfter(lead: String): String {
-        val after = ", after approval"
+        // 2026-11-06: the owner sends directly; "after approval" only while approvals are switched back on.
+        val after = if (com.circaso.core.flags.GroupPayoutApprovals.Enabled) ", after approval" else ""
         return when {
             settingUp -> "$lead · being set up"
             locked -> "$lead · locked: $signerName signs for it and has left the group"

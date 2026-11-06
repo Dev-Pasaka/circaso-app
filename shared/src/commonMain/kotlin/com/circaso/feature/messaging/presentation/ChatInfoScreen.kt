@@ -75,6 +75,9 @@ fun ChatInfoScreen(
     onSetUpWallet: (thenTarget: Boolean) -> Unit = {},
     /** Group wallets: add or change the target (GW7b). */
     onTarget: () -> Unit = {},
+    /** The group wallet's owner (2026-11-06): pay from it, or send it to an outside address. */
+    onPayFromWallet: ((walletId: String) -> Unit)? = null,
+    onSendToWallet: ((walletId: String) -> Unit)? = null,
 ) {
     var viewing by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf<ByteArray?>(null) }
     val state by viewModel.state.collectAsState()
@@ -246,6 +249,7 @@ fun ChatInfoScreen(
                                     onTargetNeedsWallet = { viewModel.onMoneySheet(MoneySheet.TargetNeedsWallet) },
                                     onBiometrics = viewModel::onWalletBiometrics, onChangePin = { viewModel.onMoneySheet(MoneySheet.ChangePin) },
                                     onApprovals = { viewModel.onMoneySheet(MoneySheet.Approvals) }, onRetry = viewModel::onRetryMoney,
+                                    onPay = onPayFromWallet, onSendToWallet = onSendToWallet,
                                 ),
                             )
                         }

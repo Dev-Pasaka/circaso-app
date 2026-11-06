@@ -82,6 +82,12 @@ import com.circaso.feature.wallet.presentation.NamedWallet
 import com.circaso.feature.wallet.presentation.PayIntent
 import com.circaso.feature.wallet.presentation.PayStep
 import com.circaso.feature.wallet.presentation.PayViewModel
+import com.circaso.feature.wallet.presentation.cardNoteTyped
+import com.circaso.feature.wallet.presentation.isGroupPayoutNote
+import com.circaso.feature.wallet.presentation.payoutNote
+import com.circaso.feature.wallet.presentation.payoutHeadAndRest
+import com.circaso.feature.messaging.presentation.groupPayoutCard
+import com.circaso.feature.wallet.presentation.pickableMembers
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -173,19 +179,22 @@ class GroupWalletPayViewModelTest {
     private lateinit var connection: ConnectionState
     private val payments = mutableListOf<PaymentRequest>()
     private val cards = mutableListOf<Pair<String, PaymentCard>>()
+    private val payKeys = mutableListOf<String>()
     private val asked = mutableListOf<List<Any?>>()
     private val attaches = mutableListOf<Any?>()
+    private var memberOnly = false
     private var payAnswer: (PaymentRequest) -> AppResult<Transfer> = { r -> AppResult.Success(transfer("t${payments.size}", r.amountMinor)) }
 
     private val walletRepo = fake<WalletRepository> { name, args ->
         when (name) {
             "getWallet" -> flowOf(personal)
-            "getWallets" -> flowOf(listings)
+            "getWallets" -> flowOf(if (memberOnly) listings.map { it.copy(canSign = it.personal) } else listings)
             "walletOf" -> flowOf(if (args[0] == "gw-1") groupBalance else personal)
             "refreshWallets" -> AppResult.Success(listings)
+            "validateAddress" -> AppResult.Success((args[1] as String).lowercase())
             "refreshWallet" -> AppResult.Success(groupBalance)
             "recipient" -> AppResult.Success(Recipient(args[0] as String, RecipientStatus.CanReceive, listOf("BASE-SEPOLIA")))
-            "pay" -> { val r = args[0] as PaymentRequest; payments += r; payAnswer(r) }
+            "pay" -> { val r = args[0] as PaymentRequest; payments += r; payKeys += args[1] as String; payAnswer(r) }
             "transfer" -> followed
             else -> null
         }
@@ -216,11 +225,15 @@ class GroupWalletPayViewModelTest {
         ObserveChatsUseCase(chats), ObserveChatUseCase(chats), ObserveGroupMoneyUseCase(chamas), RefreshGroupMoneyUseCase(chamas), CreateChamaRequestUseCase(chamas),
     )
 
-    private fun vm(intent: PayIntent) = PayViewModel(
+    private val me = com.circaso.feature.contacts.domain.Person("me", "Pasaka Mutuku", "pasaka", null, null)
+    private val opened = mutableListOf<String>()
+
+    private fun vm(intent: PayIntent, approvals: Boolean = false) = PayViewModel(
         intent, ObserveWalletUseCase(walletRepo), CheckRecipientUseCase(walletRepo), RemindRecipientUseCase(walletRepo), PayUseCase(walletRepo),
         ObserveContactsUseCase(contacts), connection, SendPaymentCardUseCase(messages), OpenDirectChatUseCase(chats),
         AttachChamaPaymentUseCase(chamas), ObserveChamaUseCase(chamas), groupWallets = GroupWalletsFlag.on(), wallets = sources(),
         observeTransfer = com.circaso.feature.wallet.domain.ObserveTransferUseCase(walletRepo),
+        observeMe = flowOf(me), approvals = approvals,
     )
 
     private fun TestScope.keep(vm: PayViewModel) { backgroundScope.launch(dispatcher) { vm.state.collect { } } }
@@ -292,8 +305,8 @@ class GroupWalletPayViewModelTest {
         assertEquals(PayStep.Amount, vm.state.value.step)
     }
 
-    @Test fun payingFromTheGroupWalletInSomeonesChatAsksTheAdmins() = runTest(dispatcher) {
-        val vm = vm(PayIntent(userId = "otieno", chatId = "dm-otieno", displayName = "Otieno", amount = "5000"))
+    @Test fun withApprovalsOnPayingFromTheGroupWalletInSomeonesChatAsksTheAdmins() = runTest(dispatcher) {
+        val vm = vm(PayIntent(userId = "otieno", chatId = "dm-otieno", displayName = "Otieno", amount = "5000"), approvals = true)
         keep(vm)
         assertTrue(vm.state.value.canSwitch, "Personal and Kilimani Chama: GW9b's chip opens GW10")
         assertEquals(2, vm.state.value.choices.size)
@@ -367,7 +380,7 @@ class GroupWalletPayViewModelTest {
         vm.onChoosing(true)
         assertTrue(vm.state.value.choosing, "GW10 opens over the chat")
         vm.onPayFrom(vm.state.value.choices.first { !it.personal })
-        assertTrue(vm.state.value.requestPayout)
+        assertTrue(vm.state.value.directPayout)
         vm.onQuickReset()
         assertTrue(vm.state.value.payingFrom.personal)
     }
@@ -402,6 +415,141 @@ class GroupWalletPayViewModelTest {
         assertEquals("", com.circaso.feature.wallet.presentation.cardNoteTyped("Added to Holiday Fund"))
         assertEquals("for lunch", com.circaso.feature.wallet.presentation.cardNoteTyped("for lunch"))
         assertEquals("", com.circaso.feature.wallet.presentation.cardNoteTyped(null))
+    }
+
+    // ---- 2026-11-06: the group wallet's owner pays directly, and every payment out shows in the group's chat.
+
+    @Test fun theOwnerPaysAMemberStraightFromTheGroupWalletAndTheGroupSeesTheCard() = runTest(dispatcher) {
+        val vm = vm(PayIntent(userId = "achieng", displayName = "Achieng Odhiambo", amount = "12", fromWalletId = "gw-1"))
+        keep(vm)
+        vm.onToggleUnit()
+        vm.onAmount("12"); vm.onNote("bus fare")
+        val s = vm.state.value
+        assertTrue(s.directPayout); assertFalse(s.requestPayout); assertFalse(s.groupPayout)
+        assertTrue(s.canPay)
+        vm.onPay()
+        val p = payments.single()
+        assertEquals("gw-1", p.fromWalletId); assertNull(p.payoutRequestId); assertEquals("achieng", p.toUserId)
+        assertEquals("g1", p.chatId, "a group wallet's payment belongs to its chat")
+        assertEquals(SignSubject.group("gw-1", "Kilimani Chama"), p.subject)
+        assertEquals("Paid from Kilimani Chama to Achieng Odhiambo · bus fare", p.note)
+        assertEquals(listOf("g1"), cards.map { it.first }, "a member sees it in the group; no second card")
+        assertTrue(asked.isEmpty(), "no request, no approvals")
+        assertEquals(PayStep.Sending, vm.state.value.step, "GW17: Paid only once the chain has it")
+        followed.value = transfer("t1", "12000000").copy(state = TransferState.Confirmed)
+        assertEquals(PayStep.Done, vm.state.value.step)
+    }
+
+    @Test fun theOwnerPaysThemselvesFromTheGroupWallet() = runTest(dispatcher) {
+        val vm = vm(PayIntent(fromWalletId = "gw-1"))
+        keep(vm)
+        assertEquals(PayStep.Pick, vm.state.value.step)
+        assertEquals("me", vm.state.value.me?.userId, "You is offered first")
+        assertTrue(pickableMembers(vm.state.value).none { it.userId == "me" })
+        assertEquals(listOf("Achieng Odhiambo", "Otieno Ouma", "Wanjiru Kamau"), pickableMembers(vm.state.value).map { it.displayName })
+        vm.onPick(vm.state.value.me!!)
+        assertTrue(vm.state.value.toSelf)
+        assertNull(vm.state.value.problem, "no W9 check for your own wallet")
+        vm.onToggleUnit(); vm.onAmount("20")
+        vm.onPay()
+        val p = payments.single()
+        assertEquals("me", p.toUserId); assertEquals("gw-1", p.fromWalletId)
+        assertEquals("Paid from Kilimani Chama to Pasaka Mutuku", p.note)
+        assertEquals(listOf("g1"), cards.map { it.first })
+    }
+
+    @Test fun payingSomeoneOutsideTheGroupPutsTheCardInTheGroupAndInTheirChat() = runTest(dispatcher) {
+        val vm = vm(PayIntent(userId = "mum", chatId = "dm-mum", displayName = "Mum", amount = "500"))
+        keep(vm)
+        vm.onPayFrom(vm.state.value.choices.first { !it.personal })
+        assertTrue(vm.state.value.directPayout)
+        vm.onPay()
+        assertEquals("g1", payments.single().chatId)
+        assertEquals(listOf("g1", "dm-mum"), cards.map { it.first }, "the group sees where its money went; Mum sees it with the owner")
+        assertEquals("Paid from Kilimani Chama to Mum", cards[0].second.note)
+        assertEquals("From Kilimani Chama", cards[1].second.note, "Mum's own chat says where it came from")
+    }
+
+    private fun sendVm() = com.circaso.feature.wallet.presentation.SendToWalletViewModel(
+        ObserveWalletUseCase(walletRepo), com.circaso.feature.wallet.domain.ValidateAddressUseCase(walletRepo), PayUseCase(walletRepo), connection,
+        fromWalletId = "gw-1", wallets = sources(), sendCard = SendPaymentCardUseCase(messages),
+    )
+
+    @Test fun theOwnerWithdrawsFromTheGroupWalletToAnOutsideAddressAndTheGroupSeesIt() = runTest(dispatcher) {
+        val vm = sendVm()
+        backgroundScope.launch(dispatcher) { vm.state.collect { } }
+        val s0 = vm.state.value
+        assertTrue(s0.fromGroup); assertFalse(s0.notOwner); assertEquals("Kilimani Chama", s0.walletName)
+        vm.onAddress("0xAB12000000000000000000000000000000004AB4"); vm.onAmount("15"); vm.onNote("to Binance")
+        vm.onReview()
+        assertEquals(com.circaso.feature.wallet.presentation.ExternalStep.Review, vm.state.value.step)
+        vm.onConfirm()
+        val p = payments.single()
+        assertEquals("gw-1", p.fromWalletId); assertNull(p.toUserId); assertNull(p.payoutRequestId)
+        assertEquals("0xab12000000000000000000000000000000004ab4", p.toAddress)
+        assertEquals("g1", p.chatId)
+        assertEquals(SignSubject.group("gw-1", "Kilimani Chama"), p.subject)
+        val (chat, card) = cards.single()
+        assertEquals("g1", chat)
+        assertTrue(card.note!!.startsWith("Sent from Kilimani Chama to 0x"), card.note)
+        assertTrue(card.note!!.endsWith(" · to Binance"), card.note)
+        assertEquals(com.circaso.feature.wallet.presentation.ExternalStep.Done, vm.state.value.step)
+    }
+
+    @Test fun aWithdrawalThatFailedOnTheServerRetriesWithTheSameKey() = runTest(dispatcher) {
+        val keys = mutableListOf<String>()
+        var first = true
+        payAnswer = { r -> if (first) { first = false; AppResult.Failure(AppError.Api("service.unavailable", 503, "req_N2sX8c", null, emptyMap())) } else AppResult.Success(transfer("t1", r.amountMinor)) }
+        val vm = sendVm()
+        backgroundScope.launch(dispatcher) { vm.state.collect { } }
+        vm.onAddress("0xab12000000000000000000000000000000004ab4"); vm.onAmount("15")
+        vm.onReview(); vm.onConfirm()
+        assertNotNull(vm.state.value.failure, "Not sent, with what went wrong")
+        vm.onConfirm()
+        assertEquals(com.circaso.feature.wallet.presentation.ExternalStep.Done, vm.state.value.step)
+        assertEquals(2, payments.size)
+        assertEquals(1, payKeys.distinct().size, "a 503 may have gone through: Try Again must not send it twice")
+    }
+
+    @Test fun aMemberCannotSendFromTheGroupWallet() = runTest(dispatcher) {
+        memberOnly = true
+        val vm = sendVm()
+        backgroundScope.launch(dispatcher) { vm.state.collect { } }
+        assertTrue(vm.state.value.notOwner)
+        vm.onAddress("0xab12000000000000000000000000000000004ab4"); vm.onAmount("15")
+        assertFalse(vm.state.value.canReview)
+        vm.onReview(); vm.onConfirm()
+        assertTrue(payments.isEmpty()); assertTrue(cards.isEmpty())
+    }
+
+    @Test fun aGroupPayoutCardNoteSaysWhereTheMoneyWent() {
+        assertEquals("Sent from Diani vacation to 0x1234…34cdef · rent", payoutNote("Diani vacation", null, "0x1234567890abcdef1234567890abcdef1234cdef", "rent"))
+        assertEquals("Paid from Diani vacation to Pasaka", payoutNote("Diani vacation", "Pasaka", null, null))
+        assertEquals("rent", cardNoteTyped("Sent from Diani vacation to 0x1234…cdef · rent"))
+        assertTrue(isGroupPayoutNote("Sent from Diani vacation to 0x1234…cdef"))
+        assertTrue(isGroupPayoutNote("Paid from Diani vacation to Pasaka"))
+        assertFalse(isGroupPayoutNote("Added to Diani vacation"))
+    }
+
+    @Test fun onlyTheSignersCardReadsAsMoneyOutOfTheGroupWallet() {
+        fun card(sender: String, note: String) = com.circaso.feature.messaging.domain.Message.Payment(
+            1, "g1", 0, null, "m1", sender, sender, false, "t1", "1000000", "USDC", "BASE-SEPOLIA", note,
+            com.circaso.feature.messaging.domain.DeliveryState.Delivered, null,
+        )
+        assertTrue(groupPayoutCard(card("me", "Paid from Holiday Fund to Otieno"), money()), "the signer's card")
+        assertFalse(groupPayoutCard(card("otieno", "Paid from Holiday Fund to Pasaka"), money()), "a member typing the words gets an ordinary card")
+        assertFalse(groupPayoutCard(card("me", "Paid from Holiday Fund to Otieno"), null), "no group wallet, no payout card")
+        assertFalse(groupPayoutCard(card("me", "lunch"), money()))
+    }
+
+    @Test fun gw18TheChatCardSaysFromWhichWalletOverTheAmountAndToWhomUnderIt() {
+        val split = ::payoutHeadAndRest
+        assertEquals("Paid from Diani vacation" to "to Pasaka · Bus fare", split("Paid from Diani vacation to Pasaka · Bus fare", "Diani vacation"))
+        assertEquals("Sent from Diani vacation" to "to 0x1234…cdef", split("Sent from Diani vacation to 0x1234…cdef", "Diani vacation"))
+        assertEquals("Paid from Road to Lamu" to "to Mum", split("Paid from Road to Lamu to Mum", "Road to Lamu"), "a group name with \" to \" in it")
+        assertEquals("Paid from Kilimani Chama" to "bus", split("Paid from Kilimani Chama · bus", "Kilimani Chama"), "an approved request's older note")
+        assertEquals("Paid from Kilimani Chama" to null, split("Paid from Kilimani Chama", "Kilimani Chama"))
+        assertNull(split("Added to Diani vacation · fare", "Diani vacation"))
     }
 
     @Test fun personalStaysTheDefault() = runTest(dispatcher) {

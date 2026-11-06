@@ -201,6 +201,8 @@ fun GroupIntroContent(chat: Chat, chama: Chama, fiat: FiatValue?, myUserId: Stri
         BasicText(
             when {
                 // Group wallets: "held by Otieno" becomes "in the group wallet" (spaces-plan §7).
+                inGroupWallet && mine && !com.circaso.core.flags.GroupPayoutApprovals.Enabled -> "The money is in the group’s own wallet. Only you can send from it, and everyone sees every payment in the chat."
+                inGroupWallet && !com.circaso.core.flags.GroupPayoutApprovals.Enabled -> "The money is in the group’s own wallet. Only $treasurer can send from it, and everyone sees every payment in the chat. Contributing is always your choice."
                 inGroupWallet && mine -> "The money is in the group’s own wallet. Only you can send from it, and only what the admins approve. Everyone sees every payment."
                 inGroupWallet -> "The money is in the group’s own wallet. Only $treasurer can send from it, and only what the admins approve. Contributing is always your choice."
                 mine -> "You hold the group's money and pay out only what two admins approve. Everyone sees every contribution and payment."

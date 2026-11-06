@@ -694,8 +694,8 @@ private fun ActiveWallet(
 }
 
 /**
- * A group wallet's actions in the personal wallet's row: Add (contribute), Payout (a request), Receive and, for
- * admins, Target. Money never moves offline. On a locked wallet nothing can leave, so Add and Payout are off; Receive
+ * A group wallet's actions in the personal wallet's row: Add (contribute), Send (its owner only, straight from the
+ * group's money, 2026-11-06; Payout, a request, while approvals are on), Receive and, for admins, Target. Money never moves offline. On a locked wallet nothing can leave, so Add and Payout are off; Receive
  * stays to show the addresses, and its sheet warns not to send money in.
  *
  * A space's wallet says Payout too for now: its Send would be a payout request today (Pay turns any group
@@ -705,9 +705,12 @@ private fun ActiveWallet(
 private fun GroupActionsRow(g: com.circaso.feature.chama.presentation.GroupWalletUiState, actions: com.circaso.feature.chama.presentation.GroupWalletActions, onReceive: () -> Unit) {
     val live = g.active && g.online && !g.locked
     val admin = g.money?.isAdmin == true
-    Row(Modifier.fillMaxWidth().padding(horizontal = CircasoSpacing.s2), horizontalArrangement = if (admin) Arrangement.SpaceBetween else Arrangement.SpaceAround) {
+    val approvals = com.circaso.core.flags.GroupPayoutApprovals.Enabled
+    // Only the owner moves the group's money; members add to it (and, with approvals on, ask for a payout).
+    val sends = approvals || g.money?.isSigner == true
+    Row(Modifier.fillMaxWidth().padding(horizontal = CircasoSpacing.s2), horizontalArrangement = if (admin && sends) Arrangement.SpaceBetween else Arrangement.SpaceAround) {
         ActionButton(CircasoIcon.Plus, "Add", actions.onAdd, enabled = live)
-        ActionButton(CircasoIcon.ArrowUp, "Payout", actions.onPayout, enabled = live)
+        if (sends) ActionButton(CircasoIcon.ArrowUp, if (approvals) "Payout" else "Pay", actions.onPayout, enabled = live)
         ActionButton(CircasoIcon.ArrowDown, "Receive", onReceive, enabled = g.active)
         if (admin) ActionButton(CircasoIcon.Target, "Target", actions.onTarget, enabled = g.online)
     }

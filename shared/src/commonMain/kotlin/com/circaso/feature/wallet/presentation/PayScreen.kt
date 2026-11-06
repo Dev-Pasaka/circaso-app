@@ -68,6 +68,7 @@ import com.circaso.designsystem.theme.CircasoTheme
 import com.circaso.feature.wallet.domain.MinorUnits
 import com.circaso.feature.wallet.domain.RemindOutcome
 import com.circaso.feature.wallet.domain.chainName
+import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
 
@@ -76,12 +77,17 @@ import androidx.compose.ui.semantics.semantics
  * moment (C6). The card lands in the chat with them on the way out.
  */
 @Composable
-fun PayScreen(viewModel: PayViewModel, onBack: () -> Unit, onOpenTransfer: (String) -> Unit, onOpenChat: ((String) -> Unit)?) {
+fun PayScreen(
+    viewModel: PayViewModel, onBack: () -> Unit, onOpenTransfer: (String) -> Unit, onOpenChat: ((String) -> Unit)?,
+    /** Send to a wallet address instead (design E5), from the wallet being paid from ([String] null: personal). */
+    onToAddress: ((fromWalletId: String?) -> Unit)? = null,
+) {
     val state by viewModel.state.collectAsState()
     PayContent(
         state, onBack, viewModel::onQuery, viewModel::onPick, { if (!viewModel.onBackToPick()) onBack() }, viewModel::onAmount, viewModel::onToggleUnit, viewModel::onNote, viewModel::onChain, viewModel::onRemind, viewModel::onPay, viewModel::onErrorShown, onOpenTransfer, onOpenChat,
         onAttachAgain = viewModel::onAttachAgain, onScan = if (viewModel.canScan) viewModel::onScan else null, onChoosing = viewModel::onChoosing, onPayFrom = viewModel::onPayFrom,
         onRetryQuote = viewModel::onRetryQuote, onUseMax = viewModel::onUseMax,
+        onToAddress = onToAddress?.let { open -> { open(state.payingFrom.walletId) } },
     )
 }
 
@@ -111,6 +117,8 @@ fun PayContent(
     onRetryQuote: () -> Unit = {},
     /** GW14 / GW20's "… Instead": the most that fits with its fee. */
     onUseMax: () -> Unit = {},
+    /** The picker's "A Wallet Address" row: Send to a Wallet (E5) from the same wallet. */
+    onToAddress: (() -> Unit)? = null,
 ) {
     val c = CircasoTheme.colors
     val t = CircasoTheme.typography
@@ -120,6 +128,10 @@ fun PayContent(
         // Group wallets (GW9, GW9c, GW9d): the review says what kind of money this is.
         state.toGroup -> if (state.step == PayStep.Done) "Added" else "Contribute"
         state.groupPayout -> if (state.step == PayStep.Done && state.result?.settled == true) "Paid" else if (state.step == PayStep.Done) "Sent" else "Pay Payout"
+        state.directPayout && state.step == PayStep.Done -> if (state.result?.settled == true) "Paid" else "Sent"
+        state.directPayout && state.step == PayStep.Pick -> "Pay from ${shortWalletName(state.walletName)}"
+        state.directPayout && state.toSelf -> "Pay Yourself"
+        state.directPayout -> state.payee?.let { "Pay ${it.displayName.substringBefore(' ')}" } ?: "Pay"
         state.requestPayout -> if (state.step == PayStep.Done) "Requested" else "Request Payout"
         state.contribution -> if (state.step == PayStep.Done) "Added" else "Add to ${state.goalName}"
         state.payout -> when { state.step != PayStep.Done -> "Pay from the Group"; state.linked -> "Paid"; else -> "Sent" }
@@ -144,7 +156,7 @@ fun PayContent(
         },
     ) { padding ->
         when (state.step) {
-            PayStep.Pick -> PickPerson(state, padding, onQuery, onPick)
+            PayStep.Pick -> PickPerson(state, padding, onQuery, onPick, onToAddress)
             PayStep.Amount, PayStep.Signing, PayStep.Sending -> AmountStep(state, padding, onAmount, onToggleUnit, onNote, onChain, onRemind, onPay, onChoosing, onRetryQuote, onUseMax)
             PayStep.Done -> DoneStep(state, padding, onBack, onOpenTransfer, onOpenChat, onAttachAgain)
         }
@@ -152,19 +164,69 @@ fun PayContent(
 }
 
 @Composable
-private fun PickPerson(state: PayUiState, padding: PaddingValues, onQuery: (String) -> Unit, onPick: (com.circaso.feature.contacts.domain.Person) -> Unit) {
+private fun PickPerson(state: PayUiState, padding: PaddingValues, onQuery: (String) -> Unit, onPick: (com.circaso.feature.contacts.domain.Person) -> Unit, onToAddress: (() -> Unit)? = null) {
     val c = CircasoTheme.colors
     val t = CircasoTheme.typography
     LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = padding.calculateBottomPadding() + CircasoSpacing.s4)) {
         item {
             CircasoTextField(state.query, onQuery, label = "To", placeholder = "Name or @handle", modifier = Modifier.padding(horizontal = CircasoSpacing.s4, vertical = CircasoSpacing.s2))
         }
-        val people = state.filteredContacts
-        if (people.isEmpty()) item { BasicText(if (state.contacts.isEmpty()) "Connect with people from the You tab to pay them." else "Nobody matches.", style = t.footnote.copy(color = c.inkSecondary), modifier = Modifier.padding(CircasoSpacing.s4)) }
+        // 2026-11-06: the group wallet's owner pays anyone from it: themselves, the group's members, contacts, an address.
+        val me = state.me?.takeIf { m -> state.directPayout && state.query.trim().trimStart('@').let { q -> q.isEmpty() || m.displayName.contains(q, true) || m.handle?.contains(q, true) == true || "you".startsWith(q.lowercase()) } }
+        if (me != null) {
+            item(key = "me") {
+                ListRow("You", sub = "Your personal wallet", leading = { Avatar(me.displayName, size = CircasoSizes.avatarMd, imageUrl = me.avatarUrl) }, onClick = { onPick(me) })
+                RowDivider(Modifier.padding(start = 72.dp))
+            }
+        }
+        if (onToAddress != null && state.query.isBlank()) {
+            item(key = "address") {
+                ListRow(
+                    "A Wallet Address", sub = if (state.fromGroupWallet) "Send from ${state.walletName} to an outside wallet" else "Send to an exchange or another wallet",
+                    leading = { PickIcon(CircasoIcon.Forward) }, onClick = onToAddress,
+                )
+                RowDivider(Modifier.padding(start = 72.dp))
+            }
+        }
+        val members = if (state.directPayout) pickableMembers(state) else emptyList()
+        if (members.isNotEmpty()) {
+            item(key = "members-head") { PickHeader("In ${state.walletName}") }
+            items(members, key = { "member:" + it.userId }) { person ->
+                ListRow(person.displayName, sub = person.handle?.let { "@$it" }, leading = { Avatar(person.displayName, size = CircasoSizes.avatarMd, imageUrl = person.avatarUrl) }, onClick = { onPick(person) })
+                RowDivider(Modifier.padding(start = 72.dp))
+            }
+        }
+        val people = state.filteredContacts.filter { p -> members.none { it.userId == p.userId } && p.userId != state.me?.userId }
+        if (members.isNotEmpty() && people.isNotEmpty()) item(key = "contacts-head") { PickHeader("Contacts") }
+        if (people.isEmpty() && members.isEmpty()) item { BasicText(if (state.contacts.isEmpty()) "Connect with people from the You tab to pay them." else "Nobody matches.", style = t.footnote.copy(color = c.inkSecondary), modifier = Modifier.padding(CircasoSpacing.s4)) }
         items(people, key = { it.userId }) { person ->
             ListRow(person.displayName, sub = person.handle?.let { "@$it" }, leading = { Avatar(person.displayName, size = CircasoSizes.avatarMd, imageUrl = person.avatarUrl) }, onClick = { onPick(person) })
             RowDivider(Modifier.padding(start = 72.dp))
         }
+    }
+}
+
+/** The group's members the owner can pay from its wallet (2026-11-06), contacts or not, without the owner, as typed. */
+internal fun pickableMembers(state: PayUiState): List<com.circaso.feature.contacts.domain.Person> {
+    val q = state.query.trim().trimStart('@')
+    return state.memberNames.filterKeys { it != state.me?.userId }.map { (id, name) ->
+        state.contacts.firstOrNull { it.userId == id } ?: com.circaso.feature.contacts.domain.Person(id, name, null, null, null)
+    }.filter { q.isEmpty() || it.displayName.contains(q, true) || it.handle?.contains(q, true) == true }.sortedBy { it.displayName.lowercase() }
+}
+
+@Composable
+private fun PickHeader(text: String) {
+    BasicText(
+        text, style = CircasoTheme.typography.footnote.copy(color = CircasoTheme.colors.inkSecondary, fontWeight = FontWeight.SemiBold),
+        modifier = Modifier.padding(start = CircasoSpacing.s4, end = CircasoSpacing.s4, top = CircasoSpacing.s4, bottom = CircasoSpacing.s1).semantics { heading() },
+    )
+}
+
+/** A round glyph the size of an avatar, for picker rows that aren't a person. */
+@Composable
+private fun PickIcon(icon: CircasoIcon) {
+    Box(Modifier.size(CircasoSizes.avatarMd).clip(CircasoShapes.circle).background(CircasoTheme.colors.fill), contentAlignment = Alignment.Center) {
+        CircasoIconImage(icon, CircasoTheme.colors.ink, Modifier.size(20.dp))
     }
 }
 
@@ -180,7 +242,7 @@ private fun AmountStep(state: PayUiState, padding: PaddingValues, onAmount: (Str
         if (payee != null) {
             Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(CircasoSpacing.s2), modifier = Modifier.padding(top = CircasoSpacing.s2)) {
                 if (state.toGroup) WalletAvatar(payee.displayName, payee.avatarUrl, group = true) else Avatar(payee.displayName, size = CircasoSizes.avatarLg, imageUrl = payee.avatarUrl)
-                BasicText(payee.displayName, style = t.headline.copy(color = c.ink))
+                BasicText(if (state.toSelf && state.directPayout) "You" else payee.displayName, style = t.headline.copy(color = c.ink))
                 when {
                     // GW9d: into the group's own wallet, not anyone's personal one.
                     state.toGroup -> BasicText("the group’s own wallet", style = t.footnote.copy(color = c.inkSecondary))
@@ -192,6 +254,7 @@ private fun AmountStep(state: PayUiState, padding: PaddingValues, onAmount: (Str
                 }
                 when {
                     state.toGroup -> Unit
+                    state.toSelf && state.directPayout -> BasicText("your personal wallet", style = t.footnote.copy(color = c.inkSecondary))
                     state.groupPayout -> BasicText("approved by the group’s admins", style = t.footnote.copy(color = c.inkSecondary))
                     // Design D3: a contribution goes to the treasurer's wallet; design D5: a payout leaves it.
                     state.contribution -> BasicText("holds the money for ${state.goalName}", style = t.footnote.copy(color = c.inkSecondary))
@@ -281,7 +344,7 @@ private fun AmountStep(state: PayUiState, padding: PaddingValues, onAmount: (Str
             DetailRow("Fee", Modifier.semantics(mergeDescendants = true) {}) { FeeValue(state, onRetryQuote, t.subhead) }
             totalValue(state)?.let { RowDivider(); DetailRow("Total", it) }
             RowDivider()
-            DetailRow("${payee?.displayName?.substringBefore(' ') ?: "They"} receive${if (payee == null) "" else "s"}", state.usdcText ?: "—")
+            DetailRow(if (state.toSelf && state.directPayout) "You receive" else "${payee?.displayName?.substringBefore(' ') ?: "They"} receive${if (payee == null) "" else "s"}", state.usdcText ?: "—")
         }
         // GW9d: the target as it will stand once this lands.
         val groupGoal = state.groupMoney?.goal?.takeIf { state.toGroup }
@@ -324,8 +387,8 @@ private fun AmountStep(state: PayUiState, padding: PaddingValues, onAmount: (Str
                 state.requestPayout -> "Request Payout"
                 state.contribution && amount != null -> "Add $amount to ${state.goalName}"
                 state.contribution -> "Add to ${state.goalName}"
-                state.payout && amount != null -> "Pay $amount"
-                state.payout -> "Pay"
+                (state.payout || state.directPayout) && amount != null -> "Pay $amount"
+                state.payout || state.directPayout -> "Pay"
                 amount != null -> "Send $amount"
                 else -> "Send"
             },
@@ -374,7 +437,7 @@ private fun DoneStep(state: PayUiState, padding: PaddingValues, onDone: () -> Un
             when {
                 state.requestPayout -> "Payout requested"
                 state.toGroup -> "Added to ${state.payee?.displayName ?: "the group"}"
-                state.groupPayout -> if (state.result?.settled == true) "Paid from ${state.walletName}" else "On its way from ${state.walletName}"
+                state.groupPayout || state.directPayout -> if (state.result?.settled == true) "Paid from ${state.walletName}" else "On its way from ${state.walletName}"
                 state.contribution -> "Added to ${state.goalName}"; state.linked -> "Paid from the group"; state.payout -> "The money went"; else -> "On its way"
             },
             style = t.title2.copy(color = c.ink, textAlign = TextAlign.Center),
@@ -384,6 +447,8 @@ private fun DoneStep(state: PayUiState, padding: PaddingValues, onDone: () -> Un
                 state.requestPayout -> "The admins of ${state.walletName} decide in the group chat. Once it’s approved, " + if (state.payingFrom.canSign) "you pay it with ${state.walletName}’s PIN." else "${state.signerName} pays it from the group wallet."
                 state.toGroup -> "It’s in the group’s own wallet, and everyone in the group sees it. It settles on chain in a moment."
                 state.groupPayout -> "${state.payee?.displayName ?: "They"} will have it in a moment, and the request in the chat turns to Paid."
+                state.directPayout && state.toSelf -> (if (state.result?.settled == true) "It’s in your personal wallet." else "It’s on its way to your personal wallet.") + " Everyone in ${state.walletName} sees it in the group chat."
+                state.directPayout -> (if (state.result?.settled == true) "${state.payee?.displayName ?: "They"} has it." else "${state.payee?.displayName ?: "They"} will have it in a moment.") + " Everyone in ${state.walletName} sees it in the group chat."
                 state.contribution -> "Everyone in the group sees it on the goal. It settles on chain in a moment."
                 state.linked -> "${state.payee?.displayName ?: "They"} will have it in a moment, and the group sees the request as paid."
                 state.payout && state.attaching -> "${state.payee?.displayName ?: "They"} will have it in a moment. Linking it to the request…"
@@ -394,7 +459,7 @@ private fun DoneStep(state: PayUiState, padding: PaddingValues, onDone: () -> Un
         )
         if (transfer != null) {
             MoneyCard(
-                head = when { state.groupPayout && transfer.settled -> "Paid from ${state.walletName}"; state.groupPayout -> "From ${state.walletName}"; state.contribution -> "Contribution"; else -> "Sent" }, amount = state.fiatText ?: state.usdcText ?: "", foot = "${MinorUnits.toDisplay(transfer.amount.amountMinor, 6)} USDC · " + if (transfer.settled) "settled" else "on its way", outgoing = true,
+                head = when { (state.groupPayout || state.directPayout) && transfer.settled -> "Paid from ${state.walletName}"; state.groupPayout || state.directPayout -> "From ${state.walletName}"; state.contribution -> "Contribution"; else -> "Sent" }, amount = state.fiatText ?: state.usdcText ?: "", foot = "${MinorUnits.toDisplay(transfer.amount.amountMinor, 6)} USDC · " + if (transfer.settled) "settled" else "on its way", outgoing = true,
                 note = state.note.trim().takeIf { it.isNotEmpty() }, onClick = { onOpenTransfer(transfer.transferId) },
             )
         }
@@ -406,7 +471,8 @@ private fun DoneStep(state: PayUiState, padding: PaddingValues, onDone: () -> Un
         Spacer(Modifier.height(CircasoSpacing.s2))
         // Request Payout from someone's chat: the card waits in the group's own chat.
         val chat = if (state.requestPayout) state.payingFrom.chatId else state.chatId
-        if (chat != null && onOpenChat != null) CircasoButton(if (state.requestPayout) "Open ${state.walletName}" else "Open Chat", { onOpenChat(chat) }, size = ButtonSize.Large, block = true)
+        val groupChat = state.requestPayout || (state.directPayout && chat == state.payingFrom.chatId)
+        if (chat != null && onOpenChat != null) CircasoButton(if (groupChat) "Open ${state.walletName}" else "Open Chat", { onOpenChat(chat) }, size = ButtonSize.Large, block = true)
         CircasoButton("Done", onDone, style = if (chat != null && onOpenChat != null) ButtonStyle.Plain else ButtonStyle.Primary, size = ButtonSize.Large, block = true)
     }
 }

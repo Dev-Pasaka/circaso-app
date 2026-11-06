@@ -139,4 +139,6 @@ private fun NativeMenuIcon.symbol() = when (this) {
     NativeMenuIcon.Chat -> "bubble.left.and.bubble.right"
     NativeMenuIcon.Info -> "info.circle"
     NativeMenuIcon.List -> "person.3"
+    NativeMenuIcon.Send -> "arrow.up.circle"
+    NativeMenuIcon.External -> "arrow.up.right.square"
 }

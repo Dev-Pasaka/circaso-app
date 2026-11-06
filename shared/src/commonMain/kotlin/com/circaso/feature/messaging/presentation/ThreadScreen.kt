@@ -656,12 +656,12 @@ fun ThreadContent(
                                 else onOpenMoment(if (outgoing) state.chat?.peerId else null, q.momentId)
                             }) { onSelect(m) }
                         }
-                        is Message.Payment -> PaymentMessage(m, onOpen = { onOpenTransfer(m.transferId) }, moment = !m.outgoing && index == state.messages.lastIndex && now - m.orderAt < MoneyMomentMillis, onThanks = { onQuickReply("Asante!") }, chama = chama, fiat = state.fiat, groupName = state.chat?.title?.takeIf { state.groupMoney?.hasWallet == true },
+                        is Message.Payment -> PaymentMessage(m, onOpen = { onOpenTransfer(m.transferId) }, moment = !m.outgoing && !groupPayoutCard(m, state.groupMoney) && index == state.messages.lastIndex && now - m.orderAt < MoneyMomentMillis, onThanks = { onQuickReply("Asante!") }, chama = chama, fiat = state.fiat, groupName = state.chat?.title?.takeIf { state.groupMoney?.hasWallet == true }, groupPayout = groupPayoutCard(m, state.groupMoney),
                             react = reactUi(m.messageId), transfer = state.paymentStates[m.transferId], pendingPayment = state.paymentPending(m, now),
                             // Only a payment made just now is read out (not old cards a new phone's sync brings back).
                             announce = m.outgoing && m.localId == lastOutgoingPayment && now - m.orderAt < AnnounceWithinMillis,
                             // Only my own payment from here comes back to the card; a payout is paid again from its request.
-                            onRetry = if (m.outgoing && payable && m.note?.startsWith("Paid from") != true) ({ retryCard(m) }) else null)
+                            onRetry = if (m.outgoing && payable && !groupPayoutCard(m, state.groupMoney)) ({ retryCard(m) }) else null)
                         is Message.Deleted -> MessageColumn(m.outgoing) { ChatBubble("This message was deleted", m.outgoing, quiet = true) }
                         is Message.Unreadable -> MessageColumn(false) { ChatBubble("A message from ${m.senderName} this phone can't show", false, quiet = true) }
                         is Message.System -> SystemLine(m.text)
@@ -834,6 +834,16 @@ private fun failureText(code: String?): String = when (code) {
     else -> ErrorMessages.forError(AppError.Api(code, 400, null, null, emptyMap()))
 }
 
+/**
+ * A card for money out of the group's wallet (GW18, 2026-11-06): its note says "Paid from …" / "Sent from …" and it was
+ * sent by the wallet's signer, the only person who can move the group's money. Anyone else typing such a note gets an
+ * ordinary payment card, never one that looks like the group's record.
+ */
+internal fun groupPayoutCard(m: Message.Payment, money: com.circaso.feature.chama.domain.GroupMoney?): Boolean {
+    val signer = money?.wallet?.signerUserId ?: return false
+    return m.senderId == signer && com.circaso.feature.wallet.presentation.isGroupPayoutNote(m.note)
+}
+
 /** Design C3: `#500` followed by a space in the composer opens the Send sheet with 500 filled in. */
 internal fun amountShortcut(text: String): String? {
     val m = Regex("^#(\\d+(?:\\.\\d{1,2})?)\\s$").find(text) ?: return null
@@ -844,6 +854,8 @@ internal fun amountShortcut(text: String): String? {
 @Composable
 private fun PaymentMessage(
     m: Message.Payment, onOpen: () -> Unit, moment: Boolean = false, onThanks: () -> Unit = {}, chama: Chama? = null, fiat: FiatValue? = null, react: ReactUi? = null, groupName: String? = null,
+    /** Money out of the group's wallet: the note says so and the group wallet's signer sent the card ([groupPayoutCard]). */
+    groupPayout: Boolean = false,
     /** The payment itself as this phone knows it (null: not read yet, as before). */
     transfer: com.circaso.feature.wallet.domain.TransferState? = null,
     /** Not sent: put the same payment back on the chat's money card. */
@@ -863,9 +875,14 @@ private fun PaymentMessage(
     // Design D2/D3: in a group with a goal, money to the treasurer is a contribution and money from them is a payout;
     // the card reads it from the group's own copy, so the encrypted payload needs no goal field.
     val treasurer = chama?.goal?.treasurerUserId
+    // GW18: money out of the group's wallet reads "Paid from Diani vacation" over the amount, "to Pasaka · Bus fare" under it.
+    val payout = if (groupName != null && groupPayout) com.circaso.feature.wallet.presentation.payoutHeadAndRest(m.note, groupName) else null
     val kind = when {
-        // Group wallets (GW18): the card's own note says which way the money went; a group without a target names the group.
-        groupName != null -> if (m.note?.startsWith("Paid from") == true) "Paid from $groupName" else "Contribution"
+        // Group wallets (GW18): the card's own note says which way the money went. Money out of the group's wallet is a
+        // Payout whose note says from where to whom ("Paid from Diani to Pasaka", "Sent from Diani to 0x12…ab4",
+        // 2026-11-06); an approved request's older note ("Paid from Diani") reads the same way.
+        payout != null -> payout.first
+        groupName != null -> "Contribution"
         chama == null -> null
         m.senderId == treasurer -> "Paid from the group"
         else -> "Contribution"
@@ -890,11 +907,12 @@ private fun PaymentMessage(
                         "${if (m.outgoing) "You" else m.senderName.substringBefore(' ')} added to ${chama?.goal?.name ?: groupName}",
                         com.circaso.feature.wallet.presentation.cardNoteTyped(m.note).takeIf { it.isNotBlank() },
                     ).joinToString(" · ")
-                } else m.note,
+                } else if (payout != null) payout.second else m.note,
                 foot = (if (shownFiat != null) "$usdc · " else "") + formatLocalTime(m.orderAt, LocalTimeStyle.Clock) + when { failed -> " · card not sent"; waiting -> " · sending card"; else -> "" },
                 // Money on chain is never dimmed or greyed because its encrypted card is still going out or didn't
                 // (a card the wallet added on a new phone, then sent): the foot says that; the look follows the money.
-                outgoing = m.outgoing, pending = if (confirmed) inFlight else waiting || inFlight, failed = if (confirmed) notSent else failed || notSent,
+                // Someone else's payout from the group's wallet isn't money this member received: it's drawn as money sent.
+                outgoing = m.outgoing || payout != null, pending = if (confirmed) inFlight else waiting || inFlight, failed = if (confirmed) notSent else failed || notSent,
                 // A card that can't take a reaction yet (no message id: the wallet added it) opens its details on a long press.
                 onClick = onOpen, onLongClick = react?.onOpen ?: onOpen, symbol = m.asset, announce = announce,
             ) }
