@@ -834,12 +834,30 @@ class PayViewModel(
     }
 
     /**
+     * The call's contribute sheet (H5): exactly this amount of [asset], as the person's money turned into the coin. Like
+     * onAmount (the fee is asked again; the key stays), and the payee is checked again only when the coin changes.
+     */
+    fun onExactAmount(amountMinor: String, asset: String) {
+        if (state.value.payout) return
+        val tag = asset.lowercase().takeIf { it != "usdc" }
+        val coinChanged = local.value.assetTag != tag
+        staleFee()
+        val decimals = state.value.wallet?.chains.orEmpty().flatMap { it.assets }.firstOrNull { it.symbol.equals(asset, true) }?.decimals ?: 6
+        local.update {
+            it.copy(step = PayStep.Amount, inFiat = false, amountText = MinorUnits.toDisplay(amountMinor, decimals).replace(",", ""), assetTag = tag, failure = null, error = null)
+        }
+        if (coinChanged) state.value.payee?.userId?.takeIf { it.isNotEmpty() }?.let { check(it, state.value.payChain) }
+    }
+
+    /**
      * A card in the chat said Not sent (the chain refused it; nothing was taken): Try Again puts exactly that payment
      * back on the chat's money card, in its coin amount, so a rounding or a rate move can't change what is sent. It is
      * signed again with a fresh key; nothing repeats on its own.
      */
     fun onRetryExact(amountMinor: String, asset: String, note: String?) {
         idempotencyKey = newIdempotencyKey()
+        // As onAmount: the fee on the card was for the last amount, so nothing can sign it until it is asked again.
+        staleFee()
         val decimals = state.value.wallet?.chains.orEmpty().flatMap { it.assets }.firstOrNull { it.symbol.equals(asset, true) }?.decimals ?: 6
         local.update {
             it.copy(
