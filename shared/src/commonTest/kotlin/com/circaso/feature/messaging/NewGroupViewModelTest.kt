@@ -295,7 +295,7 @@ private class GroupChats : ChatsRepository {
         drafts += draft
         return AppResult.Success(GroupCreated(made("g1"), emptyList()))
     }
-    override suspend fun setGroupPhoto(chatId: String, image: GroupPhotoImage?): AppResult<Chat> { photos += chatId to image; return photoResult ?: AppResult.Success(made(chatId)) }
+    override suspend fun setGroupPhoto(chatId: String, image: GroupPhotoImage?, name: String?): AppResult<Chat> { photos += chatId to image; return photoResult ?: AppResult.Success(made(chatId)) }
     override suspend fun rename(chatId: String, name: String): AppResult<Chat> = AppResult.Success(made(chatId))
     override suspend fun setMembersCanAdd(chatId: String, allowed: Boolean): AppResult<Chat> = AppResult.Success(made(chatId))
     override suspend fun addMembers(chatId: String, userIds: List<String>): AppResult<GroupCreated> = AppResult.Success(GroupCreated(made(chatId), emptyList()))

@@ -137,6 +137,12 @@ data class ChatPayload(
         const val LiveStop = "liveStop"
         const val SenderKey = "senderKey"
         const val MetaKey = "metaKey"
+        /**
+         * "This phone has no key for this group's name": sent 1:1 (a `SENDER_KEY` message) to the other members, any of
+         * whom answers with a [MetaKey] payload. [metaVersion] is the version the asking phone sees. Never shown; an
+         * older phone that doesn't know it drops it quietly.
+         */
+        const val MetaKeyRequest = "metaKeyRequest"
         /** A moment's body for a new phone of someone in my audience (moments-api.md, key request). Never shown in a chat. */
         const val MomentBody = "momentBody"
         const val Control = "control"

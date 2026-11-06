@@ -21,6 +21,8 @@ data class Chat(
     val peerId: String?,
     /** A private chat with a space's owner (SH2, "Private · via {space}"), separate from any ordinary chat with them. */
     val viaSpaceId: String? = null,
+    /** False for a group whose name this phone can't read (no key for it): [title] is then only the placeholder. */
+    val nameKnown: Boolean = true,
 )
 
 /** One row of the chat list (design C1): the chat, its newest message and how many are unread. */

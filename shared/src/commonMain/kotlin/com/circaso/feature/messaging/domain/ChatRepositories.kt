@@ -21,8 +21,12 @@ interface ChatsRepository {
     suspend fun createGroup(draft: GroupDraft, idempotencyKey: String): AppResult<GroupCreated>
 
     suspend fun rename(chatId: String, name: String): AppResult<Chat>
-    /** M8: a new group photo (encrypted, uploaded, referenced in the sealed metadata), or null to remove it. */
-    suspend fun setGroupPhoto(chatId: String, image: com.circaso.core.platform.GroupPhotoImage?): AppResult<Chat> =
+    /**
+     * M8: a new group photo (encrypted, uploaded, referenced in the sealed metadata), or null to remove it. [name] is
+     * the group's name as the admin typed it, needed only when this phone can't read the current one (its key is lost:
+     * the code `messaging.group_name_needed` asks for it).
+     */
+    suspend fun setGroupPhoto(chatId: String, image: com.circaso.core.platform.GroupPhotoImage?, name: String? = null): AppResult<Chat> =
         AppResult.Failure(com.circaso.core.common.AppError.Unexpected(null))
     suspend fun setMembersCanAdd(chatId: String, allowed: Boolean): AppResult<Chat>
     suspend fun addMembers(chatId: String, userIds: List<String>): AppResult<GroupCreated>
@@ -32,6 +36,19 @@ interface ChatsRepository {
 
     /** The safety number between me and [userId], once we have each other's identity keys. */
     suspend fun securityCode(userId: String): SecurityCode?
+}
+
+/**
+ * Error codes made on the phone (not the server's) for a group whose metadata key this phone doesn't have; worded in
+ * [com.circaso.core.common.ErrorMessages] like any other code.
+ */
+object GroupKeyErrors {
+    /** The members are being asked for the key. */
+    const val Missing = "messaging.meta_key_missing"
+    /** The same, said to an admin, who may give the group a new key a minute after asking. */
+    const val Asked = "messaging.meta_key_asked"
+    /** A new key seals the name again and this phone can't read the current one: the admin types it. */
+    const val NameNeeded = "messaging.group_name_needed"
 }
 
 /**
