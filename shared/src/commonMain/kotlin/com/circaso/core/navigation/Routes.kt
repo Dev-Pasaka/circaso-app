@@ -174,6 +174,14 @@ data class NetworkActivityRoute(val blockchain: String, val walletId: String? = 
 @Serializable
 data class NetworkAssetsRoute(val blockchain: String, val walletId: String? = null) : Route
 
+/** A share link opened on this phone (`/s/{code}`, decision 2026-11-06): what its page shows, drawn natively. */
+@Serializable
+data class SharedLinkRoute(val code: String) : Route
+
+/** You → Shared links: the links I made, each one can be turned off. */
+@Serializable
+data object SharedLinksRoute : Route
+
 /** Debug only: a screen shown with sample data (`-preview=you` launch argument). */
 @Serializable
 data class PreviewRoute(val name: String) : Route
@@ -228,6 +236,8 @@ val routeSerializers = SerializersModule {
         subclass(GroupWalletSetupRoute::class)
         subclass(TargetRoute::class)
         subclass(GroupWalletRoute::class)
+        subclass(SharedLinkRoute::class)
+        subclass(SharedLinksRoute::class)
         subclass(PreviewRoute::class)
         subclass(GalleryRoute::class)
         subclass(ForceUpdateRoute::class)

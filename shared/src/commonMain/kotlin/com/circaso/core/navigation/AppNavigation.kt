@@ -1,5 +1,6 @@
 package com.circaso.core.navigation
 
+import com.circaso.feature.share.presentation.ShareLinkLayer
 import androidx.compose.foundation.layout.Box
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.filterNotNull
@@ -171,10 +172,32 @@ fun AppNavigation(forceUpdate: Boolean, home: @Composable () -> Unit) {
     val asha = if (state == AuthState.Active) AshaLauncher { if (backStack.lastOrNull() != AshaRoute) backStack.add(AshaRoute) } else null
     val announcements: SyncAnnouncements = koinInject()
     val toast = rememberToastState()
+    // Every share is a link (decision 2026-11-06): one layer over the whole app makes them and opens the share sheet.
+    val shareLinks: com.circaso.feature.share.presentation.ShareLinkViewModel = koinInject()
+    val shareLauncher = remember(shareLinks) { com.circaso.feature.share.presentation.ShareLinkLauncher(shareLinks::start) }
+    // A share link opened from outside (App Links, Universal Links, circaso://s/…) waits until someone is signed in.
+    val pendingLink by com.circaso.feature.share.domain.IncomingLinks.pending.collectAsState()
+    LaunchedEffect(state, pendingLink, forceUpdate) {
+        if (state == AuthState.Active && !forceUpdate && pendingLink != null) {
+            // Wait for the root swap above to land first, so the link opens over Home rather than being cleared by it,
+            // and is only taken once it can open (an effect restarted while waiting leaves it pending).
+            androidx.compose.runtime.snapshotFlow { backStack.firstOrNull() }.first { it == HomeRoute }
+            com.circaso.feature.share.domain.IncomingLinks.take()?.let { code -> backStack.add(SharedLinkRoute(code)) }
+        }
+    }
+    val shareUi by shareLinks.state.collectAsState()
+    val shareStatus = com.circaso.feature.share.presentation.ShareLinksStatus(
+        busy = shareUi.target?.kind?.takeIf { shareUi.creating && !shareUi.sheetOpen },
+        online = shareUi.online,
+    )
     LaunchedEffect(Unit) {
         announcements.sentAfterOffline.collect { n -> toast.show("Back online · $n ${if (n == 1) "change" else "changes"} sent") }
     }
-    CompositionLocalProvider(LocalAshaLauncher provides asha) {
+    CompositionLocalProvider(
+        LocalAshaLauncher provides asha,
+        com.circaso.feature.share.presentation.LocalShareLinks provides (if (state == AuthState.Active) shareLauncher else null),
+        com.circaso.feature.share.presentation.LocalShareLinksStatus provides shareStatus,
+    ) {
     Box {
     val twoPane = com.circaso.designsystem.adaptive.LocalWindowLayout.current.twoPane
     val still = com.circaso.designsystem.theme.CircasoTheme.reduceMotion
@@ -276,6 +299,7 @@ fun AppNavigation(forceUpdate: Boolean, home: @Composable () -> Unit) {
                             onMoneySound = youViewModel::onMoneySound,
                             onNotificationPrivacy = youViewModel::onNotificationPrivacy,
                             onMomentsPrivacy = { backStack.add(MomentsPrivacyRoute) },
+                            onSharedLinks = { backStack.add(SharedLinksRoute) },
                         ),
                         appVersion = info.appVersion,
                         bottomPadding = bottomPadding,
@@ -521,11 +545,30 @@ fun AppNavigation(forceUpdate: Boolean, home: @Composable () -> Unit) {
                     onBack = ::pop, onAsset = { chain, symbol -> backStack.add(AssetActivityRoute(chain, symbol, route.walletId)) },
                 )
             }
+            entry<SharedLinkRoute> { route ->
+                com.circaso.feature.share.presentation.SharedLinkScreen(
+                    koinViewModel(key = "shared-link-${route.code}", parameters = { parametersOf(route.code) }),
+                    onBack = ::pop,
+                ) { destination ->
+                    when (destination) {
+                        is com.circaso.feature.share.presentation.SharedLinkDestination.Transfer -> backStack.add(TransferRoute(destination.transferId))
+                        is com.circaso.feature.share.presentation.SharedLinkDestination.Chama -> backStack.add(ChamaRoute(destination.chatId))
+                        is com.circaso.feature.share.presentation.SharedLinkDestination.Chat -> { pop(); openChatFromList(destination.chatId) }
+                        is com.circaso.feature.share.presentation.SharedLinkDestination.Pay -> backStack.add(PayRoute(userId = destination.userId, displayName = destination.displayName))
+                        is com.circaso.feature.share.presentation.SharedLinkDestination.PayAddress -> backStack.add(PayRoute(address = destination.address, displayName = destination.displayName))
+                    }
+                }
+            }
+            entry<SharedLinksRoute> { com.circaso.feature.share.presentation.SharedLinksScreen(koinViewModel(), onBack = ::pop) }
             entry<PreviewRoute> { route -> PreviewScreens(route.name) }
             entry<GalleryRoute> { home() }
             entry<ForceUpdateRoute> { ForceUpdateScreen() }
         },
     )
+    }
+    if (state == AuthState.Active) {
+        val scope = androidx.compose.runtime.rememberCoroutineScope()
+        ShareLinkLayer(shareLinks) { text: String -> scope.launch { toast.show(text) } }
     }
     ToastHost(toast, Modifier.align(Alignment.TopCenter).statusBarsPadding().padding(top = 56.dp))
     // Calls (designs H1–H5) live above every screen: one can ring anywhere, and it keeps going while money is sent from it.

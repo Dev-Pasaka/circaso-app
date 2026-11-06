@@ -59,7 +59,6 @@ import com.circaso.feature.contacts.domain.ConnectVia
 import com.circaso.feature.contacts.domain.Connection
 import com.circaso.feature.contacts.domain.Contact
 import com.circaso.feature.contacts.domain.ContactsRepository
-import com.circaso.feature.contacts.domain.CreateInviteUseCase
 import com.circaso.feature.contacts.domain.Invite
 import com.circaso.feature.contacts.domain.ObserveContactsUseCase
 import com.circaso.feature.contacts.domain.Person
@@ -492,8 +491,9 @@ class FeatureViewModelsTest {
 
     private val contactsRepo = FakeContactsRepo()
     private val reader = FakeReader()
+    private val shareLinks = com.circaso.feature.messaging.FakeInviteShareLinks()
     private fun contactsVm() = ContactsViewModel(
-        ObserveContactsUseCase(contactsRepo), RefreshContactsUseCase(contactsRepo), ConnectUseCase(contactsRepo), CreateInviteUseCase(contactsRepo),
+        ObserveContactsUseCase(contactsRepo), RefreshContactsUseCase(contactsRepo), ConnectUseCase(contactsRepo), com.circaso.feature.share.domain.CreateShareLinkUseCase(shareLinks),
         RemoveContactUseCase(contactsRepo), BlockUseCase(contactsRepo), connection, reader, SyncPhoneBookUseCase(contactsRepo),
     )
 
@@ -584,7 +584,8 @@ class FeatureViewModelsTest {
     @Test fun anInviteGoesStraightToTheShareSheetOnce() = runTest(dispatcher) {
         val vm = contactsVm(); keep(vm.state)
         vm.onInvite()
-        assertTrue(vm.state.value.share!!.endsWith("https://circaso.com/i/t"))
+        assertTrue(vm.state.value.share!!.endsWith("https://sandbox.circaso.com/s/Ab3dEf7hJk9m"))
+        assertEquals(com.circaso.feature.share.domain.ShareKind.Invite, shareLinks.made.single().kind)
         vm.onShared()
         assertNull(vm.state.value.share)
     }

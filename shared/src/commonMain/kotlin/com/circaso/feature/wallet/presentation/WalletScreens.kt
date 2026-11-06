@@ -51,7 +51,6 @@ import androidx.compose.animation.togetherWith
 import com.circaso.feature.chama.presentation.GroupReceiveContent
 import com.circaso.core.platform.chatListTime
 import com.circaso.core.platform.formatLocalTime
-import com.circaso.core.platform.shareText
 import com.circaso.designsystem.chrome.CircasoSheet
 import com.circaso.designsystem.chrome.ToastHost
 import com.circaso.designsystem.chrome.rememberToastState
@@ -778,6 +777,8 @@ private fun ReceiveSheetContent(wallet: Wallet?, handle: String?, onClose: () ->
     val c = CircasoTheme.colors
     val t = CircasoTheme.typography
     val clipboard = LocalClipboardManager.current
+    val shareLinks = com.circaso.feature.share.presentation.LocalShareLinks.current
+    val shareStatus = com.circaso.feature.share.presentation.LocalShareLinksStatus.current
     val chains = wallet?.chainsReceiving.orEmpty()
     var tab by remember { mutableStateOf(0) }
     var chainIndex by remember { mutableStateOf(0) }
@@ -793,9 +794,14 @@ private fun ReceiveSheetContent(wallet: Wallet?, handle: String?, onClose: () ->
                 BasicText(if (h != null) "Anyone on Circaso can scan this or pay $h" else "People find you by your @handle. Set one from the You tab.", style = t.subhead.copy(color = c.inkSecondary, textAlign = TextAlign.Center))
             }
             if (h != null) Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(CircasoSpacing.s2)) {
-                CircasoButton("Share", { shareText("Pay me on Circaso: $h", "My Circaso handle") }, modifier = Modifier.weight(1f), size = ButtonSize.Large, block = true)
+                CircasoButton(
+                    "Share", { shareLinks?.share(com.circaso.feature.share.domain.ShareTarget.PayMe) }, modifier = Modifier.weight(1f), size = ButtonSize.Large, block = true,
+                    busy = shareStatus.busy == com.circaso.feature.share.domain.ShareKind.PayMe, enabled = shareStatus.online,
+                )
                 CircasoButton("Copy Handle", { clipboard.setText(AnnotatedString(h)) }, modifier = Modifier.weight(1f), style = ButtonStyle.Secondary, size = ButtonSize.Large, block = true)
             }
+            // Sharing makes a link on the server: say so before the tap rather than fail after it.
+            if (h != null && !shareStatus.online) BasicText("Sharing needs a connection. Copy Handle works offline.", style = t.footnote.copy(color = c.inkSecondary, textAlign = TextAlign.Center), modifier = Modifier.fillMaxWidth())
         } else {
             val chain = chains[chainIndex.coerceIn(0, chains.lastIndex)]
             if (chains.size > 1) SegmentedControl(chains.map { chainName(it.blockchain).substringBefore(" (") }, chainIndex, { chainIndex = it })
@@ -804,7 +810,7 @@ private fun ReceiveSheetContent(wallet: Wallet?, handle: String?, onClose: () ->
             BasicText(chain.address, style = t.callout.copy(color = c.ink), modifier = Modifier.fillMaxWidth())
             BasicText("Only send USDC on ${chainName(chain.blockchain)} to this address. Other coins or networks can't be recovered.", style = t.footnote.copy(color = c.warning))
             CircasoButton("Copy Address", { clipboard.setText(AnnotatedString(chain.address)) }, size = ButtonSize.Large, block = true)
-            CircasoButton("Share", { shareText(chain.address, "My USDC address on ${chainName(chain.blockchain)}") }, style = ButtonStyle.Secondary, size = ButtonSize.Large, block = true)
+            CircasoButton("Share", { onClose(); shareLinks?.share(com.circaso.feature.share.domain.ShareTarget.Address(chain.blockchain, "Your USDC address on ${chainName(chain.blockchain)}, with a warning to send only USDC on that network")) }, style = ButtonStyle.Secondary, size = ButtonSize.Large, block = true)
         }
     }
 }

@@ -41,7 +41,6 @@ import androidx.compose.ui.unit.dp
 import com.circaso.core.platform.LocalTimeStyle
 import com.circaso.core.platform.chatListTime
 import com.circaso.core.platform.formatLocalTime
-import com.circaso.core.platform.shareText
 import com.circaso.core.sync.nowMillis
 import com.circaso.designsystem.chrome.CircasoNavBar
 import com.circaso.designsystem.chrome.CircasoScaffold
@@ -114,6 +113,7 @@ fun ChamaContent(
     val chama = state.chama
     val chat = state.chat
     val amAdmin = chat?.myRole == MemberRole.Admin || chat?.myRole == MemberRole.Owner
+    val shareLinks = com.circaso.feature.share.presentation.LocalShareLinks.current
     CircasoScaffold(
         grouped = true,
         topBar = {
@@ -121,7 +121,7 @@ fun ChamaContent(
                 title = chat?.title ?: chama?.goal?.name ?: "Group wallet",
                 onBack = onBack,
                 trailing = {
-                    if (chama != null) CircasoIconButton(CircasoIcon.Share, "Export statement", { shareText(statement(state), "${chama.goal.name} statement") })
+                    if (chama != null) CircasoIconButton(CircasoIcon.Share, "Share statement", { statementTarget(state)?.let { shareLinks?.share(it) } })
                 },
             )
         },
@@ -406,21 +406,13 @@ private fun daysLeft(chama: Chama): String {
     return if (days > 0) " · $days days left" else ""
 }
 
-/** A plain-text statement of the goal, for "Export statement" (design D4's trailing action). */
-internal fun statement(state: ChamaUiState): String {
-    val chama = state.chama ?: return ""
-    val fiat = state.fiat
-    return buildString {
-        appendLine("${chama.goal.name} · ${state.chat?.title.orEmpty()}")
-        appendLine("Raised ${amountText(chama.contributedMinor, fiat)} of ${amountText(chama.goal.targetMinor, fiat)}")
-        appendLine("Paid out ${amountText(chama.paidOutMinor, fiat)} · Held ${amountText(chama.heldMinor, fiat)}")
-        appendLine()
-        state.ledger.forEach { e ->
-            val at = runCatching { formatLocalTime(Instant.parse(e.at).toEpochMilliseconds(), LocalTimeStyle.ShortDate) }.getOrDefault(e.at)
-            val who = if (e.direction == LedgerDirection.In) e.userId?.let(state.memberName) ?: "Someone" else e.request?.let { it.payeeUserId?.let(state.memberName) ?: it.payeeName ?: it.payeeAddress } ?: "Payment"
-            appendLine("$at  ${if (e.direction == LedgerDirection.In) "+" else "−"}${amountText(e.amountMinor, fiat)}  $who" + (e.request?.note?.let { " · $it" } ?: ""))
-        }
-        appendLine()
-        append("From Circaso")
-    }
+/**
+ * The goal's statement is shared as a link (decision 2026-11-06): the server builds the page from the group's ledger,
+ * so the preview only says what the page will show.
+ */
+internal fun statementTarget(state: ChamaUiState): com.circaso.feature.share.domain.ShareTarget.Statement? {
+    val chama = state.chama ?: return null
+    val chatId = state.chat?.chatId ?: chama.goal.chatId
+    val preview = "${chama.goal.name}: raised ${amountText(chama.contributedMinor, null)} of ${amountText(chama.goal.targetMinor, null)}, with every payment in and out"
+    return com.circaso.feature.share.domain.ShareTarget.Statement(chatId, preview, currency = state.fiat?.currency)
 }

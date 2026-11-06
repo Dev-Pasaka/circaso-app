@@ -37,7 +37,6 @@ import androidx.compose.ui.unit.dp
 import com.circaso.core.platform.LocalTimeStyle
 import com.circaso.core.platform.formatLocalTime
 import com.circaso.core.platform.localDayIndex
-import com.circaso.core.platform.shareText
 import com.circaso.core.platform.threadDayLabel
 import com.circaso.core.sync.nowMillis
 import com.circaso.designsystem.chrome.CircasoNavBar
@@ -87,8 +86,9 @@ fun TransferContent(state: TransferUiState, onBack: () -> Unit) {
     val t = CircasoTheme.typography
     val transfer = state.transfer
     val toast = rememberToastState()
+    val shareLinks = com.circaso.feature.share.presentation.LocalShareLinks.current
     CircasoScaffold(
-        topBar = { CircasoNavBar(title = "Payment", onBack = onBack, trailing = { if (transfer != null) CircasoIconButton(CircasoIcon.Share, "Share receipt", { shareText(receiptText(transfer, state.fiat), "Circaso payment") }) }) },
+        topBar = { CircasoNavBar(title = "Payment", onBack = onBack, trailing = { if (transfer != null) CircasoIconButton(CircasoIcon.Share, "Share receipt", { shareLinks?.share(receiptTarget(transfer, state.fiat)) }) }) },
         toast = { ToastHost(toast, Modifier.align(Alignment.TopCenter).padding(top = 8.dp)) },
     ) { padding ->
         if (transfer == null) {
@@ -186,7 +186,7 @@ fun TransferContent(state: TransferUiState, onBack: () -> Unit) {
                     }
                 }
             }
-            CircasoButton("Share Receipt", { shareText(receiptText(transfer, state.fiat), "Circaso payment") }, style = ButtonStyle.Secondary, size = ButtonSize.Large, block = true)
+            CircasoButton("Share Receipt", { shareLinks?.share(receiptTarget(transfer, state.fiat)) }, style = ButtonStyle.Secondary, size = ButtonSize.Large, block = true)
         }
     }
 }
@@ -218,17 +218,14 @@ internal fun statusText(t: Transfer) = when (t.state) {
 /** "@amina" when the other side is a Circaso person and the name isn't already that handle. */
 private fun handleOf(t: Transfer): String? = t.counterpartHandle?.let { "@$it" }?.takeIf { it != t.counterpartName }
 
-private fun receiptText(t: Transfer, fiat: FiatValue?): String {
+/**
+ * A receipt is shared as a link (decision 2026-11-06): the server builds its page from the payment itself, so the
+ * preview only tells the sharer what the page will show. Never the note: it travelled end to end encrypted.
+ */
+internal fun receiptTarget(t: Transfer, fiat: FiatValue?): com.circaso.feature.share.domain.ShareTarget.Receipt {
     val usdc = t.amount.amount.takeIf { it.isNotEmpty() }?.let { "$it ${t.amount.asset}" } ?: MinorUnits.coinText(t.amount.amountMinor, t.amount.asset)
-    val f = fiat?.takeIf { MinorUnits.isDollar(t.amount.asset) }?.let { usdcToFiat(t.amount.amountMinor, it.rate) }?.let { formatFiat(fiat.currency, it) }
-    return listOfNotNull(
-        "${if (t.direction == TransferDirection.In) "Received" else "Sent"} ${f ?: usdc}" + (if (f != null) " ($usdc)" else ""),
-        t.counterpartName?.let { "${if (t.direction == TransferDirection.In) "From" else "To"}: $it" + (handleOf(t)?.let { h -> " ($h)" } ?: "") },
-        t.note?.let { "Note: $it" },
-        "Network: ${chainName(t.blockchain)}",
-        "Status: ${statusText(t)}",
-        t.txHash?.let { "Transaction: $it" },
-    ).joinToString("\n")
+    val preview = "${if (t.direction == TransferDirection.In) "Received" else "Sent"} $usdc · ${statusText(t)} · ${chainName(t.blockchain)}"
+    return com.circaso.feature.share.domain.ShareTarget.Receipt(t.transferId, preview, currency = fiat?.currency?.takeIf { MinorUnits.isDollar(t.amount.asset) })
 }
 
 /** Design E7. */

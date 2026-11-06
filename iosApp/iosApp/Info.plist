@@ -16,7 +16,17 @@
 				<string>com.googleusercontent.apps.177338416308-tr90ol3iijl7ipe9e5rovs9ms70n8r95</string>
 			</array>
 		</dict>
+		<dict>
+			<key>CFBundleURLName</key>
+			<string>com.circaso.share</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>circaso</string>
+			</array>
+		</dict>
 	</array>
+	<key>CircasoShareHost</key>
+	<string>sandbox.circaso.com</string>
 	<key>FacebookAdvertiserIDCollectionEnabled</key>
 	<false/>
 	<key>FacebookAutoInitEnabled</key>
