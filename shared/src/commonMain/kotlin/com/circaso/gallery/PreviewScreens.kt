@@ -196,10 +196,12 @@ fun PreviewScreens(name: String) {
             // Mine is from the long list, so it also shows in the row (to take it back without opening the list).
             com.circaso.designsystem.components.ReactionBubble(current = "🔥", onPick = {}, onOptions = {}, initiallyExpanded = name.endsWith("expanded"))
         }
-        "you" -> YouContent(
+        "you", "you-notification-privacy-on" -> YouContent(
             YouUiState(
                 profile = profile, maskedPhone = "+254 7•• ••• 678",
-                failed = listOf(com.circaso.core.sync.FailedChange(1, "Profile change", "Your profile changed on another phone. We've loaded the latest, so check and save again.")),
+                failed = if (name == "you") listOf(com.circaso.core.sync.FailedChange(1, "Profile change", "Your profile changed on another phone. We've loaded the latest, so check and save again.")) else emptyList(),
+                // The switches in their other state: privacy on, money sound off.
+                notificationPrivacy = name != "you", moneySound = name == "you",
             ), YouActions({}, {}, {}, {}, {}, {}), "1.0.0",
             PaddingValues(bottom = 90.dp), {}, {}, {},
         )

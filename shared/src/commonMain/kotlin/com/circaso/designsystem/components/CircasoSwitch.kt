@@ -29,9 +29,10 @@ import com.circaso.designsystem.theme.CircasoTheme
 /**
  * An on/off switch for a setting that applies at once (no Save), as `.sw`: the track fills with `action` when on and
  * the thumb takes the background colour (white off; on a dark phone the track is light, so the thumb goes dark). Spoken as a switch with its state; the row around it should carry the label.
+ * With [onCheckedChange] null it is drawn only, for a [SwitchRow] whose whole row is the switch.
  */
 @Composable
-fun CircasoSwitch(checked: Boolean, onCheckedChange: (Boolean) -> Unit, modifier: Modifier = Modifier, enabled: Boolean = true) {
+fun CircasoSwitch(checked: Boolean, onCheckedChange: ((Boolean) -> Unit)?, modifier: Modifier = Modifier, enabled: Boolean = true) {
     val c = CircasoTheme.colors
     val still = CircasoTheme.reduceMotion
     val track by animateColorAsState(if (checked) c.action else c.fillStrong, tween(CircasoMotion.QuickMs), label = "track")
@@ -42,8 +43,9 @@ fun CircasoSwitch(checked: Boolean, onCheckedChange: (Boolean) -> Unit, modifier
     )
     Box(
         // Disabled: the whole switch fades, so it reads as unavailable whichever way it is set.
-        modifier.minimumInteractiveComponentSize().size(51.dp, 31.dp).alpha(if (enabled) 1f else 0.38f).clip(CircasoShapes.pill).background(track)
-            .toggleable(value = checked, enabled = enabled, role = Role.Switch, onValueChange = onCheckedChange)
+        modifier.then(if (onCheckedChange != null) Modifier.minimumInteractiveComponentSize() else Modifier)
+            .size(51.dp, 31.dp).alpha(if (enabled) 1f else 0.38f).clip(CircasoShapes.pill).background(track)
+            .then(if (onCheckedChange != null) Modifier.toggleable(value = checked, enabled = enabled, role = Role.Switch, onValueChange = onCheckedChange) else Modifier)
             .padding(2.dp),
         contentAlignment = Alignment.CenterStart,
     ) {

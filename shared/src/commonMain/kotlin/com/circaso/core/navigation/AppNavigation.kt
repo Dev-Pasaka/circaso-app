@@ -2,6 +2,7 @@ package com.circaso.core.navigation
 
 import androidx.compose.foundation.layout.Box
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.launch
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
@@ -134,6 +135,34 @@ fun AppNavigation(forceUpdate: Boolean, home: @Composable () -> Unit) {
         backStack.add(ChatRoute(id))
     }
     fun backToHome() { droppedTo[0] = -1; while (backStack.size > 1 && backStack.last() != HomeRoute) backStack.removeAt(backStack.lastIndex) }
+    // A tapped notification (Pasaka, 2026-11-06): once signed in and Home is underneath, open where it points, over
+    // Home, whether Circaso was cold, in the background or on screen. Signed out, the tap is dropped.
+    val notificationLookups: com.circaso.core.notifications.NotificationLookups = koinInject()
+    // Notification privacy is mirrored where iOS's notification extension reads it, from every launch on.
+    // Turning it on also takes down what's already showing, so the promise holds for those too.
+    val shownNotifications: com.circaso.core.platform.ChatNotifications = koinInject()
+    LaunchedEffect(Unit) {
+        var was: Boolean? = null
+        prefs.flag(com.circaso.core.datastore.AppPreferences.NotificationPrivacy).collect { on ->
+            com.circaso.core.notifications.mirrorNotificationPrivacy(on)
+            if (on && was == false) shownNotifications.clearShown()
+            was = on
+        }
+    }
+    LaunchedEffect(state, forceUpdate) {
+        val taps = com.circaso.core.notifications.NotificationTaps
+        if (forceUpdate || preview != null) return@LaunchedEffect
+        if (state == AuthState.SignedOut) { taps.pending.value?.let(taps::consumed); return@LaunchedEffect }
+        if (state != AuthState.Active) return@LaunchedEffect
+        taps.pending.filterNotNull().collect { destination ->
+            androidx.compose.runtime.snapshotFlow { backStack.firstOrNull() }.first { it == HomeRoute }
+            val opening = com.circaso.core.notifications.NotificationRoutes.resolve(destination, notificationLookups)
+            backToHome()
+            opening.tab?.let { com.circaso.core.notifications.HomeTabRequests.wanted.value = it }
+            opening.routes.forEach { backStack.add(it) }
+            taps.consumed(destination)
+        }
+    }
     val calls = koinInject<com.circaso.feature.calls.CallController>()
     // A Pay tapped on a chat's profile starts the payment in that chat's composer (money starts in the chat).
     val moneyPrompts = androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateMapOf<String, Long>() }
@@ -190,14 +219,6 @@ fun AppNavigation(forceUpdate: Boolean, home: @Composable () -> Unit) {
                 val walletViewModel = koinViewModel<WalletViewModel>()
                 // Moments (Spaces stopped 2026-11-05): the Moments chip in Chats and the rings on chat avatars.
                 val momentsViewModel: com.circaso.feature.status.presentation.MomentsViewModel = koinViewModel()
-                // A tapped "loved your moment" push (kind moment.loved) opens my moments, once per launch.
-                val openedFromPush = androidx.compose.runtime.saveable.rememberSaveable { androidx.compose.runtime.mutableStateOf(false) }
-                androidx.compose.runtime.LaunchedEffect(Unit) {
-                    if (!openedFromPush.value && com.circaso.gallery.launchValue("kind") == "moment.loved") {
-                        openedFromPush.value = true
-                        backStack.add(MomentViewerRoute(null))
-                    }
-                }
                 val momentsActions = com.circaso.feature.status.presentation.MomentsActions(
                     onOpenRing = { id -> backStack.add(MomentViewerRoute(id)) },
                     onOpenMine = { backStack.add(MomentViewerRoute(null)) },
@@ -249,6 +270,7 @@ fun AppNavigation(forceUpdate: Boolean, home: @Composable () -> Unit) {
                             onNeedsAttention = { backStack.add(NeedsAttentionRoute) },
                             onCurrency = { backStack.add(CurrencyRoute) },
                             onMoneySound = youViewModel::onMoneySound,
+                            onNotificationPrivacy = youViewModel::onNotificationPrivacy,
                             onMomentsPrivacy = { backStack.add(MomentsPrivacyRoute) },
                         ),
                         appVersion = info.appVersion,

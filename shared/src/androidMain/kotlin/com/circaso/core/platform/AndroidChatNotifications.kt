@@ -11,8 +11,17 @@ import android.os.Build
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
+import com.circaso.core.notifications.Notice
+import com.circaso.core.notifications.NoticeChannel
+import com.circaso.core.notifications.NotificationContent
+import com.circaso.core.notifications.NotificationDestination
+import com.circaso.core.notifications.NotificationDestination.Companion.toExtras
 
-/** One notification per chat on the "Messages" channel; tapping it opens the app on that chat. */
+/**
+ * Circaso's own notifications: messages on the "Messages" channel, money on "Money received" with its chime. Each
+ * carries where a tap lands ([NotificationDestination], read back by MainActivity), so a tap opens the chat at the
+ * message, the chat at the payment's card, and so on, never just the app.
+ */
 class AndroidChatNotifications(private val context: Context) : ChatNotifications {
     override var activeChatId: String? = null
 
@@ -48,53 +57,63 @@ class AndroidChatNotifications(private val context: Context) : ChatNotifications
     }
 
     override fun show(chatId: String, title: String, text: String, messageId: String?) {
-        if (!allowed() || chatId == activeChatId) return
-        val open = context.packageManager.getLaunchIntentForPackage(context.packageName)?.apply {
-            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
-            putExtra(ExtraChatId, chatId)
-        }
-        val tap = open?.let { PendingIntent.getActivity(context, chatId.hashCode(), it, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE) }
-        val notification = NotificationCompat.Builder(context, ChannelId)
-            .setSmallIcon(com.circaso.shared.R.drawable.ic_stat_circaso)
-            .setContentTitle(title)
-            .setContentText(text)
-            .setStyle(NotificationCompat.BigTextStyle().bigText(text))
-            .setCategory(NotificationCompat.CATEGORY_MESSAGE)
-            .setPriority(NotificationCompat.PRIORITY_HIGH)
-            .setAutoCancel(true)
-            .setContentIntent(tap)
-            .setGroup(Group)
-            .build()
-        runCatching { manager.notify(chatId.hashCode(), notification) }
+        show(Notice(NotificationContent(title, text), NoticeChannel.Message, "chat:$chatId", NotificationDestination.Chat(chatId, messageId), chatId))
     }
 
-    override fun clear(chatId: String) { manager.cancel(chatId.hashCode()) }
-
-    /** Money received, on the money channel: the coins sound, or the usual one when the person turned it off. */
-    fun showMoney(title: String, text: String, coins: Boolean) {
+    /**
+     * Shows [notice], replacing any earlier one with the same key (a payment's card and its `payment.received` are one
+     * notification, and it chimes once). No message notification for the chat on screen. [coins] picks the money chime.
+     */
+    fun show(notice: Notice, coins: Boolean = true) {
         if (!allowed()) return
-        val open = context.packageManager.getLaunchIntentForPackage(context.packageName)?.apply {
-            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+        if (notice.channel == NoticeChannel.Message && notice.chatId != null && notice.chatId == activeChatId) return
+        val id = notice.key.hashCode()
+        val channel = when (notice.channel) {
+            NoticeChannel.Money -> if (coins) MoneyChannelId else MoneyQuietChannelId
+            else -> ChannelId
         }
-        val tap = open?.let { PendingIntent.getActivity(context, MoneyNotificationId, it, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE) }
-        val notification = NotificationCompat.Builder(context, if (coins) MoneyChannelId else MoneyQuietChannelId)
+        val text = notice.content.text
+        val notification = NotificationCompat.Builder(context, channel)
             .setSmallIcon(com.circaso.shared.R.drawable.ic_stat_circaso)
-            .setContentTitle(title)
+            .setContentTitle(notice.content.title)
             .setContentText(text)
-            .setCategory(NotificationCompat.CATEGORY_STATUS)
+            .setStyle(NotificationCompat.BigTextStyle().bigText(text))
+            .setCategory(if (notice.channel == NoticeChannel.Money) NotificationCompat.CATEGORY_STATUS else NotificationCompat.CATEGORY_MESSAGE)
             .setPriority(NotificationCompat.PRIORITY_HIGH)
             .setAutoCancel(true)
-            .setContentIntent(tap)
+            .setOnlyAlertOnce(notice.channel == NoticeChannel.Money)
+            .setContentIntent(tapIntent(context, id, notice.destination))
+            .apply { if (notice.channel == NoticeChannel.Message) setGroup(Group) }
             .build()
-        runCatching { manager.notify(MoneyNotificationId + (System.currentTimeMillis() % 1000).toInt(), notification) }
+        runCatching { manager.notify(id, notification) }
+    }
+
+    override fun clear(chatId: String) { manager.cancel("chat:$chatId".hashCode()) }
+
+    override fun clearShown() {
+        runCatching {
+            manager.activeNotifications
+                .filter { NotificationCompat.getChannelId(it.notification) in setOf(ChannelId, MoneyChannelId, MoneyQuietChannelId) }
+                .forEach { manager.cancel(it.tag, it.id) }
+        }
     }
 
     companion object {
         const val ChannelId = "messages"
         const val MoneyChannelId = "money"
         const val MoneyQuietChannelId = "money_quiet"
-        private const val MoneyNotificationId = 7_000
         const val Group = "com.circaso.messages"
-        const val ExtraChatId = "com.circaso.chatId"
+
+        /**
+         * Opens Circaso on [destination]: the launcher activity brought forward (single top, so a running app gets it in
+         * `onNewIntent`), the destination in its extras. [request] keeps each notification's intent its own.
+         */
+        fun tapIntent(context: Context, request: Int, destination: NotificationDestination?): PendingIntent? {
+            val open = context.packageManager.getLaunchIntentForPackage(context.packageName)?.apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+                destination?.toExtras()?.forEach { (k, v) -> putExtra(k, v) }
+            } ?: return null
+            return PendingIntent.getActivity(context, request, open, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+        }
     }
 }

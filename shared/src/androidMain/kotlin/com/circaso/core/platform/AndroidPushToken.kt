@@ -3,9 +3,7 @@ package com.circaso.core.platform
 import com.circaso.core.push.PushTokenRegistrar
 import com.google.firebase.messaging.FirebaseMessaging
 import com.circaso.feature.messaging.data.local.ChatsDao
-import com.circaso.feature.messaging.data.local.MessagesDao
-import com.circaso.feature.messaging.domain.ChatsRepository
-import com.circaso.feature.messaging.domain.MessagesRepository
+import com.circaso.core.notifications.PushNotices
 import com.google.firebase.messaging.FirebaseMessagingService
 import com.google.firebase.messaging.RemoteMessage
 import kotlinx.coroutines.flow.first
@@ -35,73 +33,45 @@ class CircasoMessagingService : FirebaseMessagingService() {
     }
 
     override fun onMessageReceived(message: RemoteMessage) {
-        // A ringing call (guide CL1): ring now, the call itself loads when the app opens.
-        // Calls (guide CL1): `kind` is call.ringing / call.missed / call.ended, `callKind` VOICE or VIDEO.
-        message.data["callId"]?.let { callId ->
-            runCatching {
-                val koin = KoinPlatform.getKoin()
-                val notifier = koin.get<com.circaso.core.calls.AndroidCallNotifier>()
-                when (message.data["kind"]) {
-                    "call.ringing" -> {
-                        val chatId = message.data["chatId"]
-                        val title = runBlocking { withTimeoutOrNull(2_000) { chatId?.let { koin.get<ChatsDao>().chat(it)?.name } } } ?: message.data["callerName"] ?: "Incoming call"
-                        notifier.ringing(callId, title, message.data["callKind"] == "VIDEO")
-                    }
-                    // Cancelled or answered elsewhere: stop ringing. A missed call arrives as an alert the system shows.
-                    else -> notifier.clear(callId)
-                }
-            }
-            return
-        }
-        // Money received (a data push, so the app picks the sound): "Bob sent you money".
-        if (message.data["kind"] == "payment.received") {
-            runCatching {
-                val koin = KoinPlatform.getKoin()
-                val off = runBlocking { withTimeoutOrNull(1_000) { koin.get<com.circaso.core.datastore.AppPreferences>().flag(com.circaso.core.datastore.AppPreferences.MoneySoundOff).first() } } ?: false
-                val notifications = koin.get<ChatNotifications>() as? AndroidChatNotifications
-                notifications?.showMoney(message.data["title"] ?: "Circaso", message.data["body"] ?: "You received money", coins = !off)
-            }
-            return
-        }
         // Spaces is archived (2026-11-05): an older server's space.* pushes have nothing to open here, so say nothing.
         if (message.data["kind"]?.startsWith("space.") == true) return
-        val chatId = message.data["chatId"] ?: return
-        val messageId = message.data["messageId"]
         runCatching {
             val koin = KoinPlatform.getKoin()
-            val notifications = koin.get<ChatNotifications>()
-            val chats = koin.get<ChatsRepository>()
-            val messages = koin.get<MessagesRepository>()
-            val chatsDao = koin.get<ChatsDao>()
-            val messagesDao = koin.get<MessagesDao>()
+            val notices = koin.get<PushNotices>()
+            val callId = message.data["callId"]
+            // A ringing call (guide CL1): ring now, the call itself loads when the app opens. With Notification
+            // privacy on it says only "Incoming call".
+            if (callId != null && message.data["kind"] == "call.ringing") {
+                val notifier = koin.get<com.circaso.core.calls.AndroidCallNotifier>()
+                runBlocking {
+                    val chatId = message.data["chatId"]
+                    val name = withTimeoutOrNull(2_000) { chatId?.let { koin.get<ChatsDao>().chat(it)?.name } } ?: message.data["callerName"]
+                    val content = withTimeoutOrNull(1_000) { notices.incomingCall(name, message.data["callKind"] == "VIDEO") }
+                        ?: com.circaso.core.notifications.NotificationText.compose(com.circaso.core.notifications.NotificationEvent.IncomingCall(null, false), private = true, fiat = null)
+                    notifier.ringing(callId, content.title, content.text)
+                }
+                return
+            }
+            // Cancelled or answered elsewhere: stop ringing (a missed one is then worded below).
+            if (callId != null) koin.get<com.circaso.core.calls.AndroidCallNotifier>().clear(callId)
+            val notifications = koin.get<ChatNotifications>() as? AndroidChatNotifications ?: return
             runBlocking {
                 withTimeoutOrNull(SyncWindowMillis) {
-                    if (messageId == null) {
-                        // Added to a group: load it, then say so.
-                        chats.refreshChat(chatId)
-                        notifications.show(chatId, chatsDao.chat(chatId)?.name ?: "New group", "You were added to a group", null)
-                    } else {
-                        messages.syncInbox()
-                        // A reaction isn't a message: name it as WhatsApp does, or say nothing when one was taken back.
-                        koin.get<com.circaso.feature.messaging.data.repository.InboxProcessor>().reactionCarriedBy(messageId)?.let { r ->
-                            val who = chatsDao.members(chatId).firstOrNull { it.userId == r.senderId }?.displayName ?: "Someone"
-                            val target = messagesDao.byMessageId(r.targetMessageId)?.text?.takeIf { it.isNotBlank() && !it.startsWith("{") }
-                            notifications.show(chatId, who, "Reacted ${r.emoji}" + (target?.let { " to \"${it.take(60)}\"" } ?: " to your message"), messageId)
-                            return@withTimeoutOrNull
+                    // A push with its own alert ("Payment sent", "Name is on Circaso"…) reaches here only while Circaso is
+                    // on screen, where the system doesn't show it: show its words with its tap, so it can still be opened.
+                    val notice = notices.forPush(message.data)
+                        ?: message.notification?.takeIf { message.data["kind"] != "session.revoked" }?.let { alert ->
+                            com.circaso.core.notifications.Notice(
+                                com.circaso.core.notifications.NotificationContent(alert.title ?: "Circaso", alert.body.orEmpty()),
+                                com.circaso.core.notifications.NoticeChannel.Message,
+                                "push:${message.messageId}",
+                                com.circaso.core.notifications.NotificationDestination.fromPush(message.data)
+                                    ?: com.circaso.core.notifications.NotificationDestination.Inbox,
+                            )
                         }
-                        val row = messagesDao.byMessageId(messageId)
-                        if (row == null) return@withTimeoutOrNull // a taken-back reaction or a control message: nothing to show
-                        val chat = chatsDao.chat(chatId)
-                        val sender = row?.let { r -> chatsDao.members(chatId).firstOrNull { it.userId == r.senderId }?.displayName }
-                        val title = if (chat?.kind == "GROUP") chat.name ?: "Group" else sender ?: "New message"
-                        val said = if (row.momentQuote != null) "Replied to your moment: ${row.text}" else row.text
-                        val text = when {
-                            said != null && chat?.kind == "GROUP" && sender != null -> "$sender: $said"
-                            said != null -> said
-                            else -> "New message"
-                        }
-                        notifications.show(chatId, title, text, messageId)
-                    }
+                        ?: return@withTimeoutOrNull
+                    val coinsOff = koin.get<com.circaso.core.datastore.AppPreferences>().flag(com.circaso.core.datastore.AppPreferences.MoneySoundOff).first()
+                    notifications.show(notice, coins = !coinsOff)
                 }
             }
         }

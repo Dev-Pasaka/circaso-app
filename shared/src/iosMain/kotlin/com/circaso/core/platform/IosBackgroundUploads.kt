@@ -1,6 +1,7 @@
 package com.circaso.core.platform
 
 import com.circaso.core.crypto.toNSData
+import com.circaso.core.notifications.toUserInfo
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
@@ -74,12 +75,14 @@ class IosBackgroundUploads : BackgroundUploads {
         return done[url] != null
     }
 
-    override fun failed(kind: UploadKind) {
+    override fun failed(kind: UploadKind, chatId: String?, localId: Long?) {
         platform.darwin.dispatch_async(platform.darwin.dispatch_get_main_queue()) {
             if (UIApplication.sharedApplication.applicationState == UIApplicationState.UIApplicationStateActive) return@dispatch_async // the screen shows it
             val content = UNMutableNotificationContent().apply {
                 setTitle(kind.failed)
                 setBody("Open Circaso to send it again.")
+                // Where a tap lands (read back by the notification delegate in iOSApp.swift → NotificationTaps).
+                setUserInfo(kind.failedDestination(chatId, localId).toUserInfo())
             }
             val request = UNNotificationRequest.requestWithIdentifier("upload-failed-${kind.name}", content, null)
             UNUserNotificationCenter.currentNotificationCenter().addNotificationRequest(request, null)

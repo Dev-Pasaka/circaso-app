@@ -2,6 +2,7 @@ package com.circaso.feature.home.presentation
 
 import androidx.compose.foundation.layout.size
 import com.circaso.designsystem.components.CircasoIcon
+import com.circaso.designsystem.components.SwitchRow
 import com.circaso.designsystem.components.CircasoIconImage
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.combinedClickable
@@ -89,6 +90,8 @@ data class YouActions(
     val onNeedsAttention: () -> Unit = {},
     val onCurrency: () -> Unit = {},
     val onMoneySound: (Boolean) -> Unit = {},
+    /** Notification privacy on or off. */
+    val onNotificationPrivacy: (Boolean) -> Unit = {},
     /** Who sees my moments (P1). */
     val onMomentsPrivacy: () -> Unit = {},
 )
@@ -202,15 +205,18 @@ fun YouContent(
                     ListRow("Moments", sub = "Who can see your moments", trailing = { RowChevron() }, onClick = actions.onMomentsPrivacy)
                     RowDivider(Modifier.padding(start = CircasoSpacing.s4))
                     ListRow("Notifications", trailing = { RowChevron() }, onClick = actions.onNotifications)
+                    if (com.circaso.core.notifications.notificationPrivacySupported) {
+                        RowDivider(Modifier.padding(start = CircasoSpacing.s4))
+                        SwitchRow(
+                            "Notification privacy", state.notificationPrivacy, actions.onNotificationPrivacy,
+                            sub = "Money, chats and calls say only that something arrived",
+                        )
+                    }
                 }
                 Section("Money") {
                     ListRow("Currency", sub = "How amounts are shown in your wallet and chats", trailing = { RowChevron() }, onClick = actions.onCurrency)
                     RowDivider(Modifier.padding(start = CircasoSpacing.s4))
-                    ListRow(
-                        "Money sound", sub = "Coins dropping into your wallet when money arrives",
-                        trailing = { com.circaso.designsystem.components.CircasoSwitch(state.moneySound, actions.onMoneySound) },
-                        onClick = { actions.onMoneySound(!state.moneySound) },
-                    )
+                    SwitchRow("Money sound", state.moneySound, actions.onMoneySound, sub = "Coins dropping into your wallet when money arrives")
                 }
                 Section("Assistant") {
                     ListRow("Asha", sub = "Ask about your money by text or voice", trailing = { RowChevron() }, onClick = actions.onAsha)

@@ -106,6 +106,13 @@ class AppPreferences(private val store: DataStore<Preferences>) : com.circaso.co
         /** The coins sound for money received is off (You → Money sound); it is on unless turned off. */
         const val MoneySoundOff = "money_sound_off"
 
+        /**
+         * Notification privacy (You → Notification privacy, Pasaka 2026-11-06): off unless turned on. When on, money
+         * says only "You received money", chats "New message" and calls "Incoming call". A phone setting, kept on
+         * sign-out; iOS mirrors it where its notification extension can read it (see `NotificationPrivacyMirror`).
+         */
+        const val NotificationPrivacy = "notification_privacy"
+
         private const val GroupWalletsKey = "flag.override.group_wallets"
 
         /** The flag that says a wallet approves with biometrics: the personal one keeps its old name. */

@@ -113,6 +113,9 @@ val messagingModule = module {
         )
     }
     single { MessagingFrameHandler(get(), get(), get(), get(), get(), get()) }
+    // Notifications (2026-11-06): pushes worded on the phone with privacy, and where a tap lands.
+    single { com.circaso.core.notifications.PushNotices(get(), get(), get(), get(), get(), get(), get(), get()) }
+    factory<com.circaso.core.notifications.NotificationLookups> { com.circaso.core.notifications.AppNotificationLookups(get(), get(), get()) }
     single { MessagingStarter(get<RealtimeClient>(), get(), get(), get(), live = get()) }
 
     factory { ObserveChatsUseCase(get()) }

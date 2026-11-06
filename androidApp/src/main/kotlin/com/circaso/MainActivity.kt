@@ -38,13 +38,31 @@ class MainActivity : ComponentActivity() {
             App()
         }
         openCall(intent)
+        // A tapped notification that started Circaso (cold start); not again when the activity is only recreated.
+        if (savedInstanceState == null) openNotification(intent)
         debugUpload(intent)
     }
 
     override fun onNewIntent(intent: android.content.Intent) {
         super.onNewIntent(intent)
+        setIntent(intent)
         openCall(intent)
+        // Circaso was already running, in the background or on screen.
+        openNotification(intent)
         debugUpload(intent)
+    }
+
+    /**
+     * Tapping a notification opens where it points (Pasaka, 2026-11-06): the chat at the message or the payment's card,
+     * the moment, Asha, Security… Circaso's own notifications carry the place in their extras; one the system showed
+     * from a push carries the push's data. The navigation shows it once someone is signed in.
+     */
+    private fun openNotification(intent: android.content.Intent?) {
+        if (intent == null || (intent.flags and android.content.Intent.FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY) != 0) return
+        val bundle = intent.extras ?: return
+        val extras = bundle.keySet().mapNotNull { k -> bundle.getString(k)?.let { k to it } }.toMap()
+        // Once: a later configuration change or a launch from Recents must not open it again.
+        if (com.circaso.core.notifications.NotificationTaps.openFrom(extras)) intent.replaceExtras(null as Bundle?)
     }
 
     /**

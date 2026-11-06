@@ -276,6 +276,14 @@ interface MessagesDao {
     @Query("SELECT * FROM message WHERE chatId = :chatId AND outgoing = 0 AND kind != 'system' AND messageId IS NOT NULL ORDER BY orderAt DESC, localId DESC LIMIT 1")
     suspend fun newestIncoming(chatId: String): MessageEntity?
 
+    /** The payment card for [transferId] in [chatId]: a tapped money notification opens the chat at it. */
+    @Query("SELECT localId FROM message WHERE chatId = :chatId AND kind = 'payment' AND transferId = :transferId ORDER BY localId LIMIT 1")
+    suspend fun paymentCardLocalId(chatId: String, transferId: String): Long?
+
+    /** The newest call row in a chat: a tapped missed-call notification opens the chat at it. */
+    @Query("SELECT localId FROM message WHERE chatId = :chatId AND kind = 'call' ORDER BY orderAt DESC, localId DESC LIMIT 1")
+    suspend fun lastCallLocalId(chatId: String): Long?
+
     /** The newest incoming row of any kind that counts as unread, including calls (which have no server id). */
     @Query("SELECT MAX(orderAt) FROM message WHERE chatId = :chatId AND outgoing = 0 AND kind != 'system'")
     suspend fun newestIncomingOrderAt(chatId: String): Long?

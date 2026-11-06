@@ -9,11 +9,13 @@ import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.text.BasicText
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.circaso.designsystem.motion.pressable
@@ -63,6 +65,31 @@ fun ListRow(
         }
         if (meta != null) BasicText(meta, style = t.footnote.copy(color = c.inkTertiary))
         trailing?.invoke()
+    }
+}
+
+/**
+ * A setting that switches at once (`cx-row` with `.sw role=switch`): the whole row is one switch, spoken as its
+ * title, sub line and on/off state, with the switch drawn at the end. The sub line wraps so large text keeps it whole.
+ */
+@Composable
+fun SwitchRow(title: String, checked: Boolean, onCheckedChange: (Boolean) -> Unit, modifier: Modifier = Modifier, sub: String? = null, enabled: Boolean = true) {
+    val c = CircasoTheme.colors
+    val t = CircasoTheme.typography
+    Row(
+        modifier
+            .fillMaxWidth()
+            .toggleable(value = checked, enabled = enabled, role = Role.Switch, onValueChange = onCheckedChange)
+            .defaultMinSize(minHeight = 56.dp)
+            .padding(horizontal = CircasoSpacing.s4, vertical = CircasoSpacing.s3),
+        horizontalArrangement = Arrangement.spacedBy(CircasoSpacing.s3),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(Modifier.weight(1f)) {
+            BasicText(title, style = t.body.copy(color = c.ink))
+            if (sub != null) BasicText(sub, style = t.subhead.copy(color = c.inkSecondary))
+        }
+        CircasoSwitch(checked, null, enabled = enabled)
     }
 }
 
