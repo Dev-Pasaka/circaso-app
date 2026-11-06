@@ -40,7 +40,7 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import com.circaso.designsystem.components.CoinDisc
+import com.circaso.designsystem.components.CoinIcon
 import com.circaso.designsystem.components.ListRow
 import com.circaso.designsystem.components.RowAmount
 import com.circaso.designsystem.components.RowDivider
@@ -403,7 +403,7 @@ internal fun AssetRow(chain: WalletChain, asset: Asset, fiat: FiatValue?, hidden
     ListRow(
         title = asset.symbol,
         sub = assetName(asset.symbol) + if (!chain.receiveEnabled) " · retiring" else "",
-        leading = { CoinDisc(asset.symbol) },
+        leading = { CoinIcon(asset.symbol) },
         onClick = onClick,
         trailing = {
             RowAmount(

@@ -117,6 +117,8 @@ kotlin {
             implementation(libs.coil.compose)
             implementation(libs.markdown.renderer)
             implementation(libs.coil.network.ktor)
+            // Coin icons fetched by symbol from the server (approved 2026-11-06)
+            implementation(libs.coil.svg)
             implementation(libs.koin.core)
             implementation(libs.koin.compose)
             implementation(libs.koin.composeViewmodel)

@@ -27,7 +27,15 @@ import org.koin.compose.koinInject
 @Preview
 fun App() {
     // Pictures come from pre-signed storage links, so they are fetched without our bearer token (a plain Ktor client).
-    setSingletonImageLoaderFactory { context -> ImageLoader.Builder(context).components { add(KtorNetworkFetcherFactory()) }.build() }
+    // Coin marks the app doesn't bundle come from the API's public icon route as SVG, by symbol, and are disk-cached.
+    val api: com.circaso.core.network.ApiConfig = koinInject()
+    setSingletonImageLoaderFactory { context ->
+        ImageLoader.Builder(context).components {
+            add(com.circaso.designsystem.components.CoinIconMapper(api.baseUrl))
+            add(KtorNetworkFetcherFactory())
+            add(coil3.svg.SvgDecoder.Factory())
+        }.build()
+    }
     val events: NetworkEvents = koinInject()
     val prefs: AppPreferences = koinInject()
     val outdated by events.clientOutdated.collectAsState()

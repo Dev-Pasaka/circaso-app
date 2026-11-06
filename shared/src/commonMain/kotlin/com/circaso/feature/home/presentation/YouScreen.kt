@@ -59,7 +59,9 @@ import androidx.compose.ui.unit.dp
 import com.circaso.core.common.maskedForDisplay
 import com.circaso.core.sync.ConnectionBanner
 import com.circaso.designsystem.chrome.CircasoScaffold
+import com.circaso.designsystem.chrome.CircasoSheet
 import com.circaso.designsystem.chrome.ConfirmSheet
+import com.circaso.designsystem.coins.AcknowledgementsSheetContent
 import com.circaso.core.sync.FailedChange
 import com.circaso.designsystem.components.Avatar
 import com.circaso.designsystem.components.ButtonSize
@@ -119,6 +121,8 @@ fun YouContent(
     val short = com.circaso.designsystem.adaptive.LocalWindowLayout.current.short
     // Tapping the photo opens it large; it springs out of the circle and back into it.
     var viewingPhoto by remember { mutableStateOf(false) }
+    // The open-source credits (the Web3 Icons licence) open in a sheet over the tab.
+    var showCredits by remember { mutableStateOf(false) }
     var photoBounds by remember { mutableStateOf(androidx.compose.ui.geometry.Rect.Zero) }
     val photoOpen = remember { androidx.compose.animation.core.Animatable(0f) }
     CircasoScaffold(
@@ -161,6 +165,9 @@ fun YouContent(
                 onConfirm = onSignOutConfirmed,
                 onDismiss = onSignOutCancelled,
             )
+            CircasoSheet(showCredits, { showCredits = false }, label = "Acknowledgements") {
+                AcknowledgementsSheetContent(onClose = { showCredits = false })
+            }
         },
     ) { padding ->
         val hero: @Composable (Modifier) -> Unit = { m ->
@@ -216,6 +223,9 @@ fun YouContent(
                     ListRow("Asha", sub = "Ask about your money by text or voice", trailing = { RowChevron() }, onClick = actions.onAsha)
                     RowDivider(Modifier.padding(start = CircasoSpacing.s4))
                     ListRow("Help", sub = "Chat with a person at Circaso", trailing = { RowChevron() }, onClick = actions.onHelp)
+                }
+                Section(null) {
+                    ListRow("Acknowledgements", sub = "Coin and network icons", trailing = { RowChevron() }, onClick = { showCredits = true })
                 }
                 Section(null) {
                     ListRow("Sign out", destructive = true, onClick = onSignOutRequested)

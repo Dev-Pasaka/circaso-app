@@ -53,7 +53,8 @@ import com.circaso.designsystem.components.ButtonStyle
 import com.circaso.designsystem.components.CircasoButton
 import com.circaso.designsystem.components.CircasoIcon
 import com.circaso.designsystem.components.CircasoIconButton
-import com.circaso.designsystem.components.CoinDisc
+import com.circaso.designsystem.components.CoinIcon
+import com.circaso.designsystem.components.NetworkIcon
 import com.circaso.designsystem.components.DetailRow
 import com.circaso.designsystem.components.ListRow
 import com.circaso.designsystem.components.RowDivider
@@ -124,7 +125,7 @@ fun TransferContent(state: TransferUiState, onBack: () -> Unit) {
         val when_ = formatLocalTime(transfer.createdAt, LocalTimeStyle.ShortDate) + ", " + formatLocalTime(transfer.createdAt, LocalTimeStyle.Clock)
         Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = CircasoSpacing.s4).padding(bottom = padding.calculateBottomPadding() + CircasoSpacing.s4), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(CircasoSpacing.s4)) {
             Spacer(Modifier.height(CircasoSpacing.s2))
-            if (transfer.counterpartName != null) Avatar(transfer.counterpartName, size = CircasoSizes.avatarLg, imageUrl = transfer.counterpartAvatar) else CoinDisc(transfer.amount.asset)
+            if (transfer.counterpartName != null) Avatar(transfer.counterpartName, size = CircasoSizes.avatarLg, imageUrl = transfer.counterpartAvatar) else CoinIcon(transfer.amount.asset, size = CircasoSizes.avatarLg)
             // "KES 2,000" when it has a rate, else the coin itself ("ETH 0.01"): never split the coin text.
             val cur = if (fiat != null) fiat.substringBefore(' ') else transfer.amount.asset
             val num = if (fiat != null) fiat.substringAfter(' ') else coinNumber
@@ -258,7 +259,7 @@ fun ActivityScreen(viewModel: ActivityViewModel, onBack: () -> Unit, onOpen: (St
                         Modifier.fillMaxWidth().padding(CircasoSpacing.s4),
                         horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(CircasoSpacing.s2),
                     ) {
-                        CoinDisc(symbol, Modifier.size(CircasoSizes.avatarLg))
+                        CoinIcon(symbol, size = CircasoSizes.avatarLg)
                         AmountDisplay(symbol, amount, sub = worth ?: chainName(state.blockchain.orEmpty()), size = AmountSize.Medium)
                         BasicText("$received received · $sent sent", style = t.footnote.copy(color = c.inkSecondary))
                     }
@@ -304,7 +305,7 @@ fun NetworksScreen(viewModel: NetworksViewModel, onBack: () -> Unit) {
                 ListRow(
                     title = chainName(option.blockchain) + if (option.blockchain == chains.defaultChain) " · default" else "",
                     sub = status + if (!option.receiveEnabled) " · retiring" else "",
-                    leading = { CoinDisc(option.blockchain.take(3)) },
+                    leading = { NetworkIcon(option.blockchain) },
                     trailing = {
                         when (option.status) {
                             ChainStatus.Available -> CircasoButton(if (state.adding == option.blockchain) "Adding…" else "Add", { viewModel.onAdd(option.blockchain) }, style = ButtonStyle.Secondary, size = ButtonSize.Small, enabled = state.adding == null && state.online && option.receiveEnabled, busy = state.adding == option.blockchain)
