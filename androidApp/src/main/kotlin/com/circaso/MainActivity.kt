@@ -37,13 +37,16 @@ class MainActivity : ComponentActivity() {
         setContent {
             App()
         }
+        shareHost()?.let(com.circaso.feature.share.domain.IncomingLinks::addHost)
         openCall(intent)
+        if (savedInstanceState == null) openShareLink(intent) // not again when the activity is recreated
         debugUpload(intent)
     }
 
     override fun onNewIntent(intent: android.content.Intent) {
         super.onNewIntent(intent)
         openCall(intent)
+        openShareLink(intent)
         debugUpload(intent)
     }
 
@@ -57,6 +60,22 @@ class MainActivity : ComponentActivity() {
         intent.removeExtra("debugUpload") // once, not again on a configuration change
         com.circaso.di.queueDebugUpload(megabytes)
     }
+
+    /**
+     * A share link (App Links `https://<share host>/s/{code}` or `circaso://s/{code}`): handed to IncomingLinks, which
+     * opens it once someone is signed in.
+     */
+    private fun openShareLink(intent: android.content.Intent?) {
+        if (intent?.action != android.content.Intent.ACTION_VIEW) return
+        val url = intent.dataString ?: return
+        if (com.circaso.feature.share.domain.IncomingLinks.open(url)) intent.data = null
+    }
+
+    private fun shareHost(): String? =
+        runCatching {
+            packageManager.getActivityInfo(componentName, android.content.pm.PackageManager.GET_META_DATA)
+                .metaData?.getString("com.circaso.SHARE_HOST")
+        }.getOrNull()
 
     /** From the incoming-call notification (design H1): show that call's answer screen. */
     private fun openCall(intent: android.content.Intent?) {

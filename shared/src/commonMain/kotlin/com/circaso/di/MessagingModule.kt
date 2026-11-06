@@ -142,7 +142,7 @@ val messagingModule = module {
     viewModel { ChatsViewModel(get(), get(), get(), get(), get(), get(), get(), getOrNull()) }
     viewModel {
         NewChatViewModel(
-            get(), get(), get(), observeChats = get(), connect = get(), createInvite = get(),
+            get(), get(), get(), observeChats = get(), connect = get(), createShareLink = get(),
             reader = get(), syncPhoneBook = get(),
         )
     }

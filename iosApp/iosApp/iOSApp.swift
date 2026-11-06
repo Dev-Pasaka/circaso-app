@@ -19,14 +19,24 @@ struct iOSApp: App {
         BackgroundSyncImpl.install() // sends the offline queue in the background once there's a network; see BackgroundSync.kt
         BackgroundUploadImpl.install() // uploads carry on when Circaso is left mid-upload; see BackgroundUploads.kt
         MapImpl.install() // Google Maps for live location, when this build has a key; see PlatformMap.ios.kt
+        if let host = Bundle.main.object(forInfoDictionaryKey: "CircasoShareHost") as? String {
+            IncomingLinks.shared.addHost(host: host) // share links' host (Info.plist); see IncomingLinks.kt
+        }
     }
 
     var body: some Scene {
         WindowGroup {
             ContentView()
                 .onOpenURL { url in
-                    // Google's sign-in comes back to the app through its URL scheme.
-                    GIDSignIn.sharedInstance.handle(url)
+                    // Google's sign-in comes back to the app through its URL scheme; a share link
+                    // (circaso://s/{code}, or a Universal Link) goes to IncomingLinks, which opens it once signed in.
+                    if !GIDSignIn.sharedInstance.handle(url) {
+                        _ = IncomingLinks.shared.open(url: url.absoluteString)
+                    }
+                }
+                .onContinueUserActivity(NSUserActivityTypeBrowsingWeb) { activity in
+                    // Universal Links: https://<share host>/s/{code} (apple-app-site-association on that host).
+                    if let url = activity.webpageURL { _ = IncomingLinks.shared.open(url: url.absoluteString) }
                 }
         }
     }

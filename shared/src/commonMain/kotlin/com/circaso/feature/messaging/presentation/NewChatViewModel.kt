@@ -12,13 +12,16 @@ import com.circaso.core.sync.ConnectionState
 import com.circaso.feature.contacts.domain.ConnectUseCase
 import com.circaso.feature.contacts.domain.ConnectVia
 import com.circaso.feature.contacts.domain.Contact
-import com.circaso.feature.contacts.domain.CreateInviteUseCase
 import com.circaso.feature.contacts.domain.ObserveContactsUseCase
 import com.circaso.feature.contacts.domain.SyncPhoneBookUseCase
 import com.circaso.feature.messaging.domain.ChatKind
 import com.circaso.feature.messaging.domain.ChatSummary
 import com.circaso.feature.messaging.domain.ObserveChatsUseCase
 import com.circaso.feature.messaging.domain.OpenDirectChatUseCase
+import com.circaso.feature.share.domain.CreateShareLinkUseCase
+import com.circaso.feature.share.domain.ShareRequest
+import com.circaso.feature.share.domain.ShareTarget
+import com.circaso.feature.share.domain.ShareText
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -111,7 +114,7 @@ class NewChatViewModel(
     connection: ConnectionState,
     observeChats: ObserveChatsUseCase? = null,
     private val connect: ConnectUseCase? = null,
-    private val createInvite: CreateInviteUseCase? = null,
+    private val createShareLink: CreateShareLinkUseCase? = null,
     private val reader: ContactsReader? = null,
     private val syncPhoneBook: SyncPhoneBookUseCase? = null,
 ) : ViewModel() {
@@ -172,14 +175,17 @@ class NewChatViewModel(
         }
     }
 
-    /** Invite a Friend: a fresh invite link (7 days) into the system share sheet, with a line that says what it is. */
+    /**
+     * Invite a Friend: a share link (decision 2026-11-06) to a page with your name, carrying a fresh 7-day invite, into
+     * the system share sheet with a line that says what it is.
+     */
     fun onInvite() {
-        val create = createInvite ?: return
+        val create = createShareLink ?: return
         if (_state.value.creatingInvite || !_state.value.online) return
         _state.update { it.copy(creatingInvite = true, message = null) }
         viewModelScope.launch {
-            when (val r = create()) {
-                is AppResult.Success -> _state.update { it.copy(creatingInvite = false, share = inviteText(r.value.url)) }
+            when (val r = create(ShareRequest.of(ShareTarget.Invite))) {
+                is AppResult.Success -> _state.update { it.copy(creatingInvite = false, share = ShareText.of(r.value).text) }
                 is AppResult.Failure -> _state.update { it.copy(creatingInvite = false, message = withRef(r.error)) }
             }
         }
@@ -209,8 +215,6 @@ class NewChatViewModel(
     private fun withRef(error: AppError) = ErrorMessages.forError(error) + (ErrorMessages.reference(error)?.let { " Ref $it" } ?: "")
 
     companion object {
-        /** The invite as it lands in another app: who it's from is the sender's own account, so it stays short. */
-        fun inviteText(url: String) = "Join me on Circaso. We can chat and send money to each other, end to end encrypted. $url"
-        const val InviteSubject = "Join me on Circaso"
+        const val InviteSubject = ShareText.InviteSubject
     }
 }

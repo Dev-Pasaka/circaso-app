@@ -91,6 +91,8 @@ data class YouActions(
     val onMoneySound: (Boolean) -> Unit = {},
     /** Who sees my moments (P1). */
     val onMomentsPrivacy: () -> Unit = {},
+    /** The share links I made, each one can be turned off (SH2, SH3). */
+    val onSharedLinks: () -> Unit = {},
 )
 
 @Composable
@@ -200,6 +202,8 @@ fun YouContent(
                     ListRow("Security and Privacy", trailing = { RowChevron() }, onClick = actions.onSecurity)
                     RowDivider(Modifier.padding(start = CircasoSpacing.s4))
                     ListRow("Moments", sub = "Who can see your moments", trailing = { RowChevron() }, onClick = actions.onMomentsPrivacy)
+                    RowDivider(Modifier.padding(start = CircasoSpacing.s4))
+                    ListRow("Shared links", sub = "Links to receipts, statements, your address and invites", trailing = { RowChevron() }, onClick = actions.onSharedLinks)
                     RowDivider(Modifier.padding(start = CircasoSpacing.s4))
                     ListRow("Notifications", trailing = { RowChevron() }, onClick = actions.onNotifications)
                 }

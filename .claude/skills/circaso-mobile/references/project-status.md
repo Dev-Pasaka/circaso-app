@@ -106,6 +106,23 @@ Media3 1.4.1, multiplatform-markdown-renderer 0.46.0.
   with Stop; iOS background location), updates travel encrypted; full-screen map with profile-photo pins.
 - D-C7 Maps styled monochrome from theme tokens. **The Static Maps key never ships in the app**: previews come from the backend proxy `GET /v1/maps/static`.
 
+### Sharing (2026-11-06)
+- D-S1 **Every share is a short link, never plain text** (Pasaka, 2026-11-06). Receipt, group statement, wallet
+  address, "pay me" and invite all call SH1, then open the system share sheet with the URL and one short line. The
+  server builds the page from its own records, so the phone never sends what the page shows.
+- D-S2 Receipts, statements and addresses first show an options sheet: **Show names** (on by default; off shows amounts
+  only) and **Link ends** (Never, 1 day, 7 days, 30 days). Invite and pay me go straight to the share sheet; an invite
+  link ends with its 7-day invite.
+- D-S3 Moments and anything from a chat are never shareable (end-to-end encrypted).
+- D-S4 Links open the app: Android App Links (`https://<share host>/s/{code}`, `autoVerify`, MainActivity
+  `singleTop`), iOS Universal Links (Associated Domains `applinks:<host>`) and `circaso://s/{code}` from the page's
+  "Open in Circaso". The code waits in `IncomingLinks` until someone is signed in, then opens the native shared-link
+  screen (SH4) with what the server allows (the payment, the group, chat with the inviter, pay). Host: sandbox by
+  default; `share.host` in local.properties (Android) and `CircasoShareHost` in Info.plist plus the entitlement (iOS)
+  for the production short domain.
+- D-S5 You → Shared links lists your live links; each can be turned off (SH3). Making a link needs a connection, so
+  offline the sheet says so instead of queueing.
+
 ### Calls
 - D-K1 Cloudflare Realtime (SFU + TURN), WebRTC on the phones. Labelled **"Secure call"**, never "end-to-end encrypted".
 - D-K2 One call at a time; voice can switch to video without renegotiating; group grid up to 8; contribute presets during a group call.
@@ -161,6 +178,7 @@ Media3 1.4.1, multiplatform-markdown-renderer 0.46.0.
 | Groups with wallets (flag) | New Group with the wallet switch (GW1), group wallet set-up with its own PIN and biometrics (GW2–GW5c), group info money rows (GW6–GW8b, locked, leaving blocked), target (GW7b), one wallet design for every wallet with the corner switcher (GW16 as redrawn 2026-11-04, D-M9), contribute (GW9a2/GW9d), Pay Payout (GW9, GW11, GW19), Paying from and Request Payout (GW9b, GW9c, GW10). Not yet on a device. |
 | Moments | Composer (text, camera, gallery, voice), viewer, replies in chat, reactions, privacy, contact-saved rule, push; shown in Chats under the Moments chip with rings on chat avatars (2026-11-05). |
 | Asha | Text and live voice, rich answers, PDF statements, conversations, voice picker; menu sheet (new chat, recents with delete, usage & credits, settings); voice mode transcript with the animated logo (2026-11-05, mascot removed). |
+| Sharing | Share links for receipts, statements, addresses, pay me and invites (options sheet, share sheet), opened links (App Links, Universal Links, `circaso://s/`), You → Shared links with turn off (2026-11-06; backend PR #52). Not yet on a device. |
 | Support | Help screen, support chat UI (needs the support account), recovery case (SP06). |
 | Adaptive | Phones portrait and landscape, iPad 11"/13" checked on simulators. |
 

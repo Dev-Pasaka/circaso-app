@@ -58,6 +58,7 @@
         <activity
             android:exported="true"
             android:name=".MainActivity"
+            android:launchMode="singleTop"
             android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden|density"
             android:windowSoftInputMode="adjustNothing">
             <intent-filter>
@@ -65,6 +66,23 @@
 
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
+            <!-- Share links (decision 2026-11-06): https://<share host>/s/{code} opens Circaso when it is installed.
+                 Verified against the host's /.well-known/assetlinks.json, so Android opens the app without asking. -->
+            <intent-filter android:autoVerify="true">
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="https" android:host="${shareHost}" android:pathPrefix="/s/" />
+            </intent-filter>
+            <!-- The page's "Open in Circaso" button: circaso://s/{code}. -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="circaso" android:host="s" />
+            </intent-filter>
+            <!-- The share host IncomingLinks accepts, the same as the filter above. -->
+            <meta-data android:name="com.circaso.SHARE_HOST" android:value="${shareHost}" />
         </activity>
         <!-- Keeps a call alive while Circaso is in the background (designs H2–H4). -->
         <service

@@ -32,6 +32,12 @@ val mapsAndroidKey: String = Properties().apply {
     rootProject.file("local.properties").takeIf { it.exists() }?.inputStream()?.use { load(it) }
 }.getProperty("maps.android.key").orEmpty()
 
+val shareHost: String = (findProperty("share.host") as String?)
+    ?: Properties().apply {
+        rootProject.file("local.properties").takeIf { it.exists() }?.inputStream()?.use { load(it) }
+    }.getProperty("share.host")
+    ?: "sandbox.circaso.com"
+
 android {
     namespace = "com.circaso"
     compileSdk = libs.versions.android.compileSdk.get().toInt()
@@ -48,6 +54,9 @@ android {
         // `maps.android.key=…` in local.properties. Restrict it in the Cloud console to this package and signing
         // certificate, and to the Maps SDK for Android. Without it the map falls back to Circaso's drawn tile.
         manifestPlaceholders["mapsApiKey"] = mapsAndroidKey
+        // Share links (decision 2026-11-06): the host whose /s/{code} links open the app (App Links). The sandbox by
+        // default; `share.host=…` in local.properties (or -Pshare.host) for the production short domain.
+        manifestPlaceholders["shareHost"] = shareHost
     }
     packaging {
         resources {

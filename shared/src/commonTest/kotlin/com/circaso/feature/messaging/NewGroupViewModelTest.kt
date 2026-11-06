@@ -14,7 +14,6 @@ import com.circaso.feature.contacts.domain.ConnectUseCase
 import com.circaso.feature.contacts.domain.ConnectVia
 import com.circaso.feature.contacts.domain.Contact
 import com.circaso.feature.contacts.domain.ContactsRepository
-import com.circaso.feature.contacts.domain.CreateInviteUseCase
 import com.circaso.feature.contacts.domain.Invite
 import com.circaso.feature.contacts.domain.ObserveContactsUseCase
 import com.circaso.feature.contacts.domain.Person
@@ -217,7 +216,7 @@ class NewGroupViewModelTest {
 
     private fun newChat() = NewChatViewModel(
         ObserveContactsUseCase(contacts), OpenDirectChatUseCase(chats), connection,
-        connect = ConnectUseCase(contacts), createInvite = CreateInviteUseCase(contacts),
+        connect = ConnectUseCase(contacts), createShareLink = com.circaso.feature.share.domain.CreateShareLinkUseCase(FakeInviteShareLinks()),
     )
 
     @Test fun peopleAreInLetterSections() = runTest(dispatcher) {
@@ -241,7 +240,7 @@ class NewGroupViewModelTest {
     @Test fun inviteOpensTheShareSheetWithTheLink() = runTest(dispatcher) {
         val vm = newChat()
         vm.onInvite()
-        assertTrue(vm.state.value.share!!.endsWith("https://circaso.com/i/t"))
+        assertTrue(vm.state.value.share!!.endsWith("https://sandbox.circaso.com/s/Ab3dEf7hJk9m"))
         vm.onShared()
         assertNull(vm.state.value.share)
     }
@@ -303,4 +302,16 @@ private class GroupChats : ChatsRepository {
     override suspend fun leave(chatId: String) = AppResult.Success(Unit)
     override suspend fun setRole(chatId: String, userId: String, role: MemberRole): AppResult<Chat> = AppResult.Success(made(chatId))
     override suspend fun securityCode(userId: String): SecurityCode? = null
+}
+
+/** Makes invite share links the way the server does: a short /s/ link. */
+internal class FakeInviteShareLinks : com.circaso.feature.share.domain.ShareLinksRepository {
+    val made = mutableListOf<com.circaso.feature.share.domain.ShareRequest>()
+    override suspend fun create(request: com.circaso.feature.share.domain.ShareRequest): AppResult<com.circaso.feature.share.domain.ShareLink> {
+        made += request
+        return AppResult.Success(com.circaso.feature.share.domain.ShareLink("Ab3dEf7hJk9m", "https://sandbox.circaso.com/s/Ab3dEf7hJk9m", request.kind, "Join me on Circaso", "", "2026-11-06T10:00:00Z", null))
+    }
+    override suspend fun list(cursor: String?) = AppResult.Success(com.circaso.feature.share.domain.ShareLinkPage(emptyList(), null))
+    override suspend fun revoke(code: String) = AppResult.Success(Unit)
+    override suspend fun open(code: String): AppResult<com.circaso.feature.share.domain.SharedLink> = error("not used")
 }

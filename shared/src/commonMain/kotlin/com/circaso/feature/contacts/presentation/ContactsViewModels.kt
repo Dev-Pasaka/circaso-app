@@ -13,7 +13,10 @@ import com.circaso.feature.contacts.domain.BlockUseCase
 import com.circaso.feature.contacts.domain.ConnectUseCase
 import com.circaso.feature.contacts.domain.ConnectVia
 import com.circaso.feature.contacts.domain.Contact
-import com.circaso.feature.contacts.domain.CreateInviteUseCase
+import com.circaso.feature.share.domain.CreateShareLinkUseCase
+import com.circaso.feature.share.domain.ShareRequest
+import com.circaso.feature.share.domain.ShareTarget
+import com.circaso.feature.share.domain.ShareText
 import com.circaso.feature.contacts.domain.Invite
 import com.circaso.feature.contacts.domain.ObserveBlocksUseCase
 import com.circaso.feature.contacts.domain.ObserveContactsUseCase
@@ -77,7 +80,7 @@ class ContactsViewModel(
     observeContacts: ObserveContactsUseCase,
     private val refreshContacts: RefreshContactsUseCase,
     private val connect: ConnectUseCase,
-    private val createInvite: CreateInviteUseCase,
+    private val createShareLink: CreateShareLinkUseCase,
     private val removeContact: RemoveContactUseCase,
     private val block: BlockUseCase,
     connection: ConnectionState,
@@ -111,13 +114,13 @@ class ContactsViewModel(
     fun onAddOpen() = local.update { it.copy(adding = true, message = null) }
     fun onAddDismissed() = local.update { it.copy(adding = false, connectInput = "") }
 
-    /** Invite a Friend: a fresh link (7 days) straight into the system share sheet, with a line that says what it is. */
+    /** Invite a Friend: a share link carrying a fresh 7-day invite, straight into the system share sheet with one line. */
     fun onInvite() {
         if (local.value.creatingInvite) return
         local.update { it.copy(creatingInvite = true, message = null) }
         viewModelScope.launch {
-            when (val r = createInvite()) {
-                is AppResult.Success -> local.update { it.copy(creatingInvite = false, share = com.circaso.feature.messaging.presentation.NewChatViewModel.inviteText(r.value.url)) }
+            when (val r = createShareLink(ShareRequest.of(ShareTarget.Invite))) {
+                is AppResult.Success -> local.update { it.copy(creatingInvite = false, share = ShareText.of(r.value).text) }
                 is AppResult.Failure -> local.update { it.copy(creatingInvite = false, message = withRef(r.error)) }
             }
         }

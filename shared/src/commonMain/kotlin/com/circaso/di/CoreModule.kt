@@ -136,7 +136,7 @@ private var started = false
  * (`KoinGraphTest`): a module read before its top-level `val` is initialised is null here, and Koin crashes at launch.
  */
 fun appModules(platform: Module): List<Module> =
-    listOf(coreModule, authModule, profileModule, contactsModule, accountModule, assistantModule, realtimeModule, messagingModule, walletModule, chamaModule, statusModule, callsModule, homeModule, platform)
+    listOf(coreModule, authModule, profileModule, contactsModule, accountModule, assistantModule, realtimeModule, messagingModule, walletModule, chamaModule, statusModule, callsModule, homeModule, shareModule, platform)
 
 /** Starts Koin once. Called from each platform's entry point with its platform module. */
 fun initKoin(platform: Module) {

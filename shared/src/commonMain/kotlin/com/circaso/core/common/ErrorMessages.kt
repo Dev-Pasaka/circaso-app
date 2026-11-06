@@ -116,6 +116,11 @@ object ErrorMessages {
         "chama.already_decided" to "You've already decided on this request.",
         "chama.not_approved" to "This request isn't approved yet.",
         "chama.transfer_mismatch" to "That payment doesn't match the request.",
+        // share links (SH1–SH4)
+        "share.request_invalid" to "That can't be shared as a link.",
+        "share.source_not_found" to "We couldn't find that to share. It may not be yours to share.",
+        "share.not_shareable" to "This can't be shared yet.",
+        "share.link_not_found" to "This link is no longer available.",
         // encrypted chats
         "messaging.keys_proof_invalid" to "Check your phone's date and time, then try again.",
         "messaging.keys_not_found" to "This person can't receive encrypted messages yet.",
