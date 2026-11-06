@@ -51,7 +51,7 @@ class NotificationRoutingTest {
         // No chat: the payment's details; money from outside Circaso by its history row.
         assertEquals(listOf(TransferRoute("t9")), open(NotificationDestination.Payment(null, "t9")).routes)
         assertEquals(listOf(TransferRoute("tx1")), open(NotificationDestination.Payment(null, null, "tx1")).routes)
-        assertEquals(listOf(ActivityRoute), open(NotificationDestination.Payment()).routes)
+        assertEquals(listOf(ActivityRoute()), open(NotificationDestination.Payment()).routes)
     }
 
     @Test fun everythingElseOpensWhereItCanBeRead() = runTest {

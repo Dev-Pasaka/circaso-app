@@ -62,7 +62,7 @@ object NotificationRoutes {
             when {
                 chat != null -> NotificationOpening(listOf(ChatRoute(chat, destination.transferId?.let { lookups.paymentCardLocalId(chat, it) })))
                 key != null -> NotificationOpening(listOf(TransferRoute(key)))
-                else -> NotificationOpening(listOf(ActivityRoute))
+                else -> NotificationOpening(listOf(ActivityRoute()))
             }
         }
         is NotificationDestination.MissedCall -> destination.chatId
