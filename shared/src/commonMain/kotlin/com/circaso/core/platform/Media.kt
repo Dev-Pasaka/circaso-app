@@ -36,8 +36,25 @@ expect fun exitApp(): Boolean
 /** Whether this platform lets the app close itself (Android yes, iOS no). */
 expect val canExitApp: Boolean
 
-/** Opens a web page in the phone's browser (a block explorer for a payment). Does nothing if it can't. */
-expect fun openUrl(url: String)
+/**
+ * Opens a link the way Circaso opens links (Pasaka, 2026-11-06): a web page (a block explorer for a payment, a link in
+ * Asha's answer) in the in-app browser, so the person stays in the app; mail, phone, app store and other apps' links
+ * in the system; anything that could run code or read files nowhere. See `core/web/Links.kt`.
+ */
+fun openUrl(url: String) {
+    when (com.circaso.core.web.classifyLink(url)) {
+        com.circaso.core.web.LinkTarget.InApp -> com.circaso.core.web.InAppBrowser.open(url)
+        com.circaso.core.web.LinkTarget.System -> openInSystem(url.trim())
+        com.circaso.core.web.LinkTarget.Blocked -> Unit
+    }
+}
+
+/**
+ * Hands a link to the system: the phone's browser for a web page ("Open in Browser"), the mail, phone or store app for
+ * theirs. Does nothing if nothing can open it. App code calls [openUrl]; this is for the in-app browser and links
+ * that must leave the app.
+ */
+expect fun openInSystem(url: String)
 
 /** Opens this app's page in the phone's Settings, where a refused permission (camera, microphone) can be turned on. */
 expect fun openAppSettings()

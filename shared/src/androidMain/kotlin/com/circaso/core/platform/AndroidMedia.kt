@@ -88,9 +88,10 @@ actual fun exitApp(): Boolean {
     return true
 }
 
-actual fun openUrl(url: String) {
+actual fun openInSystem(url: String) {
     val activity = runCatching { KoinPlatform.getKoin().get<CurrentActivity>().get() }.getOrNull() ?: return
-    runCatching { activity.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url))) }
+    // BROWSABLE: only activities that agree to be opened from a link (a browser, the dialer, a mail app).
+    runCatching { activity.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)).addCategory(Intent.CATEGORY_BROWSABLE)) }
 }
 
 actual fun openAppSettings() {

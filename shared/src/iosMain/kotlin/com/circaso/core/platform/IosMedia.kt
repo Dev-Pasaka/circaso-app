@@ -52,7 +52,7 @@ actual fun exitApp(): Boolean = false
 
 actual val canExitApp: Boolean = false
 
-actual fun openUrl(url: String) {
+actual fun openInSystem(url: String) {
     val link = NSURL.URLWithString(url) ?: return
     UIApplication.sharedApplication.openURL(link, options = emptyMap<Any?, Any?>(), completionHandler = null)
 }

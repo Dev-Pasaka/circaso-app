@@ -35,6 +35,33 @@ Code: `shared/src/commonMain/kotlin/com/circaso/designsystem/`. Built on Compose
 - PIN components are always secret (no `/asha`, no logging): wire this when the PIN screens are built.
 - Collapsing large title, sheet detents, alert-style dialogs (the design only uses sheets).
 
+## In-app browser (no frame in the canvas; decided 2026-11-06)
+`core/web/InAppBrowserScreen.kt`, over everything from `App` (`InAppBrowserHost`); platform views are `PlatformWebView`
+(Android `WebView`, iOS `WKWebView`), no library.
+- Rises full screen as a modal (the sheet spring on iOS, `BaseMs` tween on Android, a fade with Reduce Motion), like
+  Safari's and Chrome's in-app views: a page on top of Circaso, not a new place in the app.
+- Top bar: Close, Back on iOS only (fades in once there is page history; it holds its place so the centred title doesn't
+  jump; Android leaves it out, as Chrome's custom tabs do, since system back goes back in the page), the page title over
+  the domain with a lock (or a warning and "Not secure" for http), always two lines so the bar never changes height, More. The domain is the real host (user info
+  stripped): in a money app the address is what you trust. iOS centres the title, Android starts it.
+- A 2 dp progress line in `action` under the bar, never starting empty, only moving forward (each load restarts from a
+  sliver), drawn rather than laid out, fading once loaded.
+- The web view is built once the slide-in has settled (the first one loads the browser engine on the main thread), and
+  it takes every touch and holds screen readers: nothing reaches the app underneath. The page's own background is white
+  (pages that set none assume it); our opening state covers it until the page draws.
+- More opens a sheet in the menu pattern (as Asha's): the title and the full address, then Forward (when there is one),
+  Open in Browser, Copy Link (toast "Link copied"), Share.
+- System back goes back in the page's history first, then closes. WebKit's own edge swipe is off on iOS so one swipe
+  never goes back twice.
+- States on the page background in the app's voice: "Opening basescan.org" with a spinner until the page first draws
+  (no white flash); offline "You're offline / The page opens by itself when you're back online." with Try Again (it also
+  retries by itself); failed "This page didn't load / {domain} isn't answering right now..." with Try Again and Open in
+  Browser.
+- Security: JavaScript on (explorers need it), no file or content access, no JavaScript bridge, third-party cookies off
+  (Android `CookieManager`; WebKit blocks them by default), no new windows (they open in place), no downloads, mixed
+  content blocked, bad certificates never proceed. Another app's link inside a page opens only on a tap
+  (`decideNavigation`); `intent:` links never launch, only their web fallback.
+
 ## Design gaps found while building the chrome
 Fixed in code where I could; the rest need a design or product decision.
 - **Fixed:** the design's offline banner is an inline glass card under the title, not a bar over the status bar (rebuilt to match). The banner has no "Try again" button in the design, so I removed mine.
