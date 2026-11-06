@@ -64,7 +64,7 @@ import com.circaso.designsystem.components.ButtonStyle
 import com.circaso.designsystem.components.CircasoButton
 import com.circaso.designsystem.components.CircasoIcon
 import com.circaso.designsystem.components.CircasoIconButton
-import com.circaso.designsystem.components.CoinDisc
+import com.circaso.designsystem.components.LetterDisc
 import com.circaso.designsystem.components.ListRow
 import com.circaso.designsystem.components.RowAmount
 import com.circaso.designsystem.components.RowDivider
@@ -721,7 +721,7 @@ fun TransferRow(
     }
     ListRow(
         title = name, sub = sub,
-        leading = { if (transfer.counterpartName != null) Avatar(transfer.counterpartName, size = CircasoSizes.avatarMd, imageUrl = transfer.counterpartAvatar) else CoinDisc(if (incoming) "IN" else "OUT") },
+        leading = { if (transfer.counterpartName != null) Avatar(transfer.counterpartName, size = CircasoSizes.avatarMd, imageUrl = transfer.counterpartAvatar) else LetterDisc(if (incoming) "IN" else "OUT") },
         trailing = { RowAmount(if (hidden) "••••" else amountLine(transfer, fiat), meta, incoming = incoming && transfer.state == TransferState.Confirmed) },
         onClick = onClick,
     )

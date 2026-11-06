@@ -34,6 +34,7 @@ import androidx.compose.ui.unit.sp
 import com.circaso.designsystem.motion.pressable
 import com.circaso.designsystem.theme.CircasoMotion
 import com.circaso.designsystem.theme.CircasoShapes
+import com.circaso.designsystem.theme.CircasoSizes
 import com.circaso.designsystem.theme.CircasoSpacing
 import com.circaso.designsystem.theme.CircasoTheme
 
@@ -185,7 +186,8 @@ fun MoneyCard(
             androidx.compose.animation.Crossfade(head, Modifier.weight(1f), androidx.compose.animation.core.tween(if (still) 0 else CircasoMotion.BaseMs), label = "head") { h ->
                 BasicText(h, style = t.footnote.copy(color = soft, fontWeight = FontWeight.SemiBold))
             }
-            if (symbol != null) CoinDisc(symbol, Modifier.size(28.dp))
+            // On the metal the disc is the card's own ink, faint, so it reads on titanium, pearl and graphite alike.
+            if (symbol != null) CoinIcon(symbol, size = CircasoSizes.avatarSm, tint = if (failed) c.inkSecondary else soft, disc = ink.copy(alpha = 0.12f))
         }
         BasicText(amount, style = t.amountMedium.copy(color = if (failed) c.inkSecondary else ink), maxLines = 1)
         if (!note.isNullOrBlank()) BasicText(note, style = t.callout.copy(color = ink))
@@ -203,39 +205,3 @@ fun RowAmount(amount: String, meta: String?, incoming: Boolean, modifier: Modifi
         if (meta != null) BasicText(meta, style = t.caption1.copy(color = c.inkSecondary))
     }
 }
-
-/** Keeps a row's leading disc the same width as an avatar, with a coin's symbol inside it. */
-@Composable
-fun CoinDisc(symbol: String, modifier: Modifier = Modifier) {
-    val c = CircasoTheme.colors
-    val t = CircasoTheme.typography
-    val icon = coinIconUrl(symbol, c.isDark)
-    Box(modifier.size(40.dp).clip(CircasoShapes.circle).background(c.fillStrong), contentAlignment = Alignment.Center) {
-        // The letters show until the coin's mark arrives, and stay for a coin without one (or offline on first open).
-        BasicText(symbol.take(4), style = t.caption1.copy(color = c.ink, fontWeight = FontWeight.SemiBold))
-        if (icon != null) {
-            coil3.compose.AsyncImage(model = icon, contentDescription = null, modifier = Modifier.matchParentSize())
-        }
-    }
-}
-
-/**
- * The coin's mark on Circaso's titanium (a graphite disc with a white glyph on light, silver with an ink glyph on dark,
- * drawn from the MIT web3icons set), from the public `circaso-static` bucket. Null for a coin with no mark, so no
- * request is made for it. Wrapped and bridged coins use their original's mark. A new set goes under a new version path,
- * so no phone or CDN keeps the old one.
- */
-fun coinIconUrl(symbol: String, dark: Boolean): String? {
-    val key = when (val s = symbol.uppercase()) {
-        "WBTC", "CBBTC", "CIRBTC" -> "btc"
-        "WETH" -> "eth"
-        else -> s.lowercase()
-    }
-    if (key !in CoinIcons) return null
-    return "https://assets.circaso.com/icons/crypto/v3/${if (dark) "dark" else "light"}/$key.png"
-}
-
-private val CoinIcons = setOf(
-    "btc", "eth", "usdc", "usdt", "sol", "pol", "matic", "bnb", "xrp", "ada", "doge", "trx", "dai", "avax", "link", "ltc", "dot", "eurc",
-)
-

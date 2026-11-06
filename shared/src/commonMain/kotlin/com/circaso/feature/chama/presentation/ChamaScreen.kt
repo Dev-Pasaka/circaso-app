@@ -285,7 +285,7 @@ private fun Rows(entries: List<LedgerEntry>, state: ChamaUiState, fiat: FiatValu
             ListRow(
                 title = who,
                 sub = listOfNotNull(if (!incoming) e.request?.note else null, at?.let { chatListTime(it, now) }).joinToString(" · "),
-                leading = { if (incoming || e.request?.payeeUserId != null) Avatar(who, size = CircasoSizes.avatarMd) else com.circaso.designsystem.components.CoinDisc("OUT") },
+                leading = { if (incoming || e.request?.payeeUserId != null) Avatar(who, size = CircasoSizes.avatarMd) else com.circaso.designsystem.components.LetterDisc("OUT") },
                 trailing = { RowAmount((if (incoming) "+" else "−") + amountText(e.amountMinor, fiat), meta = if (fiat != null) MinorUnits.toDisplay(e.amountMinor, 6) + " USDC" else null, incoming = incoming) },
                 onClick = e.transferId?.let { id -> { onOpen(id) } },
             )

@@ -1171,7 +1171,7 @@ private fun CoinSuggestions(coins: List<HeldCoin>, onPick: (HeldCoin) -> Unit) {
                     .padding(start = 6.dp, end = CircasoSpacing.s3, top = 6.dp, bottom = 6.dp),
                 verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(CircasoSpacing.s2),
             ) {
-                com.circaso.designsystem.components.CoinDisc(coin.symbol, Modifier.size(28.dp))
+                com.circaso.designsystem.components.CoinIcon(coin.symbol, size = com.circaso.designsystem.theme.CircasoSizes.avatarSm)
                 Column {
                     BasicText(coin.symbol, style = t.subhead.copy(color = c.ink, fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold))
                     BasicText(coin.amount, style = t.caption2.copy(color = c.inkSecondary))
