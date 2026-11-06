@@ -47,6 +47,8 @@ internal data class ContributeCoin(
  */
 internal fun usdPriceOf(asset: Asset, fiat: FiatValue?): Double? {
     if (MinorUnits.isDollar(asset.symbol)) return 1.0
+    // The server's own price for the coin (CoinGecko feed), the same one the chat's money card types with.
+    asset.dollarPrice?.toDoubleOrNull()?.takeIf { it > 0 }?.let { return it }
     val rate = fiat?.rate?.toDoubleOrNull()?.takeIf { it > 0 } ?: return null
     val worth = asset.fiatAmount?.toDoubleOrNull()?.takeIf { it > 0 } ?: return null
     val units = asset.amount.replace(",", "").toDoubleOrNull()?.takeIf { it > 0 } ?: return null
