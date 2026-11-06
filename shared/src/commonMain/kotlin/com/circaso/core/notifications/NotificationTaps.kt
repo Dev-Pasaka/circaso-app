@@ -24,7 +24,11 @@ object NotificationTaps {
     private val _pending = MutableStateFlow<NotificationDestination?>(null)
     val pending: StateFlow<NotificationDestination?> = _pending.asStateFlow()
 
-    fun open(destination: NotificationDestination) { _pending.value = destination }
+    fun open(destination: NotificationDestination) {
+        // The in-app browser sits over everything; close it so the place the tap opens is what they see.
+        com.circaso.core.web.InAppBrowser.close()
+        _pending.value = destination
+    }
 
     /** The extras or `userInfo` of a tapped notification; false when they name nowhere (an ordinary launch). */
     fun openFrom(extras: Map<String, String>): Boolean {

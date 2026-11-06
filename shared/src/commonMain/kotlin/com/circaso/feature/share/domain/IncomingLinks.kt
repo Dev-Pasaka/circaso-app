@@ -25,6 +25,7 @@ object IncomingLinks {
     /** True when [url] was a share link and is now pending. */
     fun open(url: String): Boolean {
         val code = codeOf(url, hosts) ?: return false
+        com.circaso.core.web.InAppBrowser.close() // the shared page opens in view, not under the browser
         _pending.value = code
         return true
     }
