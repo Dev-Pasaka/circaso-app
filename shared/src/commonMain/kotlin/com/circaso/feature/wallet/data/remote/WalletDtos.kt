@@ -4,8 +4,9 @@ import kotlinx.serialization.Serializable
 
 // Guide section 11, wallet (W1–W5, W9–W12). Amounts are strings: `amountMinor` exact, `amount` whole units for display.
 
-@Serializable data class AssetDto(val symbol: String, val tokenAddress: String = "", val decimals: Int, val amountMinor: String, val amount: String, val fiatAmount: String? = null)
-@Serializable data class AssetTotalDto(val symbol: String, val decimals: Int, val amountMinor: String, val amount: String)
+// `usdPrice` (backend PR #48, 2026-11-06): one whole unit in US dollars; absent from an older server and from an older cache row.
+@Serializable data class AssetDto(val symbol: String, val tokenAddress: String = "", val decimals: Int, val amountMinor: String, val amount: String, val fiatAmount: String? = null, val usdPrice: String? = null)
+@Serializable data class AssetTotalDto(val symbol: String, val decimals: Int, val amountMinor: String, val amount: String, val usdPrice: String? = null)
 @Serializable data class ChainDto(val blockchain: String, val address: String, val state: String, val assets: List<AssetDto> = emptyList(), val receiveEnabled: Boolean = true)
 @Serializable data class FiatDto(val currency: String, val amount: String, val rate: String, val asOf: String, val partial: Boolean = false)
 @Serializable data class HoldDto(val until: String)

@@ -498,8 +498,8 @@ class WalletRepositoryImpl(
 
 internal fun WalletResponse.toDomain(fetchedAt: Long) = Wallet(
     status = when (status) { "ACTIVE" -> WalletStatus.Active; "SETTING_UP" -> WalletStatus.SettingUp; else -> WalletStatus.None },
-    chains = chains.map { c -> WalletChain(c.blockchain, c.address, c.state, c.assets.map { Asset(it.symbol, it.tokenAddress, it.decimals, it.amountMinor, it.amount, it.fiatAmount) }, c.receiveEnabled) },
-    totals = totals.map { AssetTotal(it.symbol, it.decimals, it.amountMinor, it.amount) },
+    chains = chains.map { c -> WalletChain(c.blockchain, c.address, c.state, c.assets.map { Asset(it.symbol, it.tokenAddress, it.decimals, it.amountMinor, it.amount, it.fiatAmount, it.usdPrice) }, c.receiveEnabled) },
+    totals = totals.map { AssetTotal(it.symbol, it.decimals, it.amountMinor, it.amount, it.usdPrice) },
     fiat = fiat?.let { FiatValue(it.currency, it.amount, it.rate, it.asOf, it.partial) },
     holdUntil = hold?.until,
     fetchedAt = fetchedAt,

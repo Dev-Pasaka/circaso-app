@@ -20,6 +20,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.TextStyle
@@ -42,8 +43,8 @@ import com.circaso.designsystem.theme.CircasoSizes
 import com.circaso.designsystem.theme.CircasoSpacing
 import com.circaso.designsystem.theme.CircasoTheme
 import com.circaso.feature.wallet.domain.MinorUnits
-import com.circaso.feature.wallet.domain.fiatToUsdcMinor
-import com.circaso.feature.wallet.domain.usdcToFiat
+import com.circaso.feature.wallet.domain.coinToFiat
+import com.circaso.feature.wallet.domain.fiatToCoinMinor
 import kotlin.time.Instant
 
 // Phase 2F's fee and limit lines (spaces-plan §7a, §7b; frames GW13, GW13b–d, GW14, GW14b, GW20), shared by the chat's
@@ -73,10 +74,10 @@ private fun buttonTime(iso: String?): String? = clockOf(iso)?.let { t -> if (t.s
  * stands for no more than [maxMinor] (so an offer never promises a cent more than fits), else in the coin.
  */
 internal fun fittedAmount(s: PayUiState, maxMinor: String): String? {
-    val rate = s.rate
-    if (!(s.inFiat && rate != null && s.tagged == null)) return MinorUnits.toDisplay(maxMinor, s.tagged?.second?.decimals ?: 6).replace(",", "")
-    var fiat = usdcToFiat(maxMinor, rate) ?: return null
-    while (fiatToUsdcMinor(fiat, rate)?.let { MinorUnits.lessThan(maxMinor, it) } == true) {
+    val rate = s.unitRate
+    if (!(s.inFiat && rate != null)) return MinorUnits.toDisplay(maxMinor, s.decimals).replace(",", "")
+    var fiat = coinToFiat(maxMinor, s.decimals, rate) ?: return null
+    while (fiatToCoinMinor(fiat, rate, s.decimals)?.let { MinorUnits.lessThan(maxMinor, it) } == true) {
         val cents = MinorUnits.fromDisplay(fiat, 2)?.toLongOrNull() ?: return null
         if (cents <= 0) return null
         fiat = MinorUnits.toDisplay((cents - 1).toString(), 2, minFraction = 2).replace(",", "")
@@ -87,8 +88,7 @@ internal fun fittedAmount(s: PayUiState, maxMinor: String): String? {
 /** [fittedAmount] in words: "KES 18,149", "499.75 USDC". */
 private fun fittedText(s: PayUiState, maxMinor: String): String? {
     val amount = fittedAmount(s, maxMinor) ?: return null
-    val rate = s.rate
-    return if (s.inFiat && rate != null && s.tagged == null && s.currency != null) {
+    return if (s.inFiat && s.unitRate != null && s.currency != null) {
         "${s.currency} ${fiatDisplay(MinorUnits.fromDisplay(amount, 2) ?: "0")}"
     } else "${MinorUnits.group(amount.substringBefore('.'))}${amount.substringAfter('.', "").let { if (it.isEmpty()) "" else ".$it" }} ${s.asset}"
 }
@@ -105,6 +105,8 @@ internal fun FeeValue(s: PayUiState, onRetry: () -> Unit, style: TextStyle, modi
     val c = CircasoTheme.colors
     val fee = s.fee
     val shown = when {
+        // No coin price yet: there is no amount in the coin, so no fee to say (never "No fee" under "KES 500").
+        s.priceWaiting -> "none"
         fee is PayFee.Quoting -> "working"
         fee is PayFee.Failed && fee.retryable -> "retry"
         fee is PayFee.Failed -> "none"
@@ -167,10 +169,11 @@ internal fun feeFootnote(s: PayUiState, now: Long = nowMillis()): String {
     if (s.blocked) return ref.orEmpty()
     val charged = fee is PayFee.Quoted && !MinorUnits.isZero(fee.amountMinor)
     val minimum = charged && (fee as PayFee.Quoted).minimum
-    val rate = s.rate?.takeIf { s.tagged == null && s.currency != null }?.let { "1 USDC = ${s.currency} ${formatRate(it)}" }
+    val rate = rateLine(s)
     val held = (fee as? PayFee.Quoted)?.expiresAt
         ?.takeIf { charged && !s.requestPayout && !s.feeStale && (millisOf(it) ?: 0) > now }
-        ?.let { clockOf(it, now) }?.let { "fee and rate held until $it" }
+        // The frame's words for a dollar coin; a coin's market price is never held, so for one only the fee is.
+        ?.let { clockOf(it, now) }?.let { if (MinorUnits.isDollar(s.asset)) "fee and rate held until $it" else "fee held until $it" }
     return listOfNotNull(
         ref,
         "Small payments have a minimum fee that covers the network cost.".takeIf { minimum },
@@ -282,3 +285,55 @@ internal fun BlockNoteView(note: BlockNote, onAction: () -> Unit, modifier: Modi
         note.action?.let { CircasoButton(it, onAction, style = ButtonStyle.Secondary, size = ButtonSize.Medium, block = true, enabled = !stale) }
     }
 }
+
+/**
+ * Why Pay waits on a coin price, the same on the chat card and the Pay screen: a fresh one on its way (with the
+ * spinner), or none to be had (with the request reference when there is one) and a 44 dp Try Again. Nothing when the
+ * price isn't waited on.
+ */
+@Composable
+internal fun PriceWait(s: PayUiState, onRetry: () -> Unit, modifier: Modifier = Modifier, textAlign: TextAlign = TextAlign.Start) {
+    val c = CircasoTheme.colors
+    val t = CircasoTheme.typography
+    val spec = if (CircasoTheme.reduceMotion) 0 else CircasoMotion.QuickMs
+    val line = priceLine(s)
+    Column(modifier, horizontalAlignment = if (textAlign == TextAlign.Center) Alignment.CenterHorizontally else Alignment.Start) {
+        Crossfade(line, animationSpec = tween(spec), label = "price") { l ->
+            if (l != null) Row(
+                Modifier.semantics { liveRegion = LiveRegionMode.Polite },
+                horizontalArrangement = Arrangement.spacedBy(CircasoSpacing.s1), verticalAlignment = Alignment.CenterVertically,
+            ) {
+                if (l.second == PriceLineKind.Loading) Spinner(c.inkSecondary, Modifier.size(14.dp))
+                BasicText(l.first, style = t.footnote.copy(color = if (l.second == PriceLineKind.Loading) c.inkSecondary else c.warning, textAlign = textAlign))
+            }
+        }
+        AnimatedVisibility(
+            canRetryPrice(s),
+            enter = fadeIn(tween(spec)), exit = fadeOut(tween(if (CircasoTheme.reduceMotion) 0 else CircasoMotion.QuickMs / 2)),
+        ) {
+            Box(
+                Modifier.defaultMinSize(minHeight = CircasoSizes.controlMd)
+                    .semantics { contentDescription = "Try again to get the ${s.asset} price" }
+                    .pressable(role = Role.Button, onClick = onRetry),
+                contentAlignment = Alignment.CenterStart,
+            ) { BasicText("Try Again", style = t.subhead.copy(color = c.action, fontWeight = FontWeight.SemiBold)) }
+        }
+    }
+}
+
+internal enum class PriceLineKind { Loading, Problem }
+
+/** The words for [PriceWait]; null when Pay doesn't wait on a price. */
+internal fun priceLine(s: PayUiState): Pair<String, PriceLineKind>? {
+    if (!s.priceWaiting) return null
+    val amount = s.fiatText ?: "this amount"
+    return when (val r = s.priceRefresh) {
+        PriceRefresh.Loading -> "Getting the latest ${s.asset} price…" to PriceLineKind.Loading
+        is PriceRefresh.Failed ->
+            ("Couldn’t get the latest ${s.asset} price, so $amount can’t be worked out in ${s.asset} yet." + (r.reference?.let { " Ref $it" } ?: "")) to PriceLineKind.Problem
+        PriceRefresh.Idle -> "No ${s.asset} price right now, so $amount can’t be worked out in ${s.asset} yet." to PriceLineKind.Problem
+    }
+}
+
+/** Try Again is offered whenever Pay waits on a price and no fresh one is on its way (never offline: that line says why). */
+internal fun canRetryPrice(s: PayUiState): Boolean = s.priceWaiting && s.online && s.priceRefresh !is PriceRefresh.Loading

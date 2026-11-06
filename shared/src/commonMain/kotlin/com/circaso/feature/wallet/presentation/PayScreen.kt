@@ -86,7 +86,7 @@ fun PayScreen(
     PayContent(
         state, onBack, viewModel::onQuery, viewModel::onPick, { if (!viewModel.onBackToPick()) onBack() }, viewModel::onAmount, viewModel::onToggleUnit, viewModel::onNote, viewModel::onChain, viewModel::onRemind, viewModel::onPay, viewModel::onErrorShown, onOpenTransfer, onOpenChat,
         onAttachAgain = viewModel::onAttachAgain, onScan = if (viewModel.canScan) viewModel::onScan else null, onChoosing = viewModel::onChoosing, onPayFrom = viewModel::onPayFrom,
-        onRetryQuote = viewModel::onRetryQuote, onUseMax = viewModel::onUseMax,
+        onRetryQuote = viewModel::onRetryQuote, onUseMax = viewModel::onUseMax, onRetryPrice = viewModel::onRetryPrice,
         onToAddress = onToAddress?.let { open -> { open(state.payingFrom.walletId) } },
     )
 }
@@ -119,6 +119,8 @@ fun PayContent(
     onUseMax: () -> Unit = {},
     /** The picker's "A Wallet Address" row: Send to a Wallet (E5) from the same wallet. */
     onToAddress: (() -> Unit)? = null,
+    /** Try Again when a fresh coin price couldn’t be had. */
+    onRetryPrice: () -> Unit = {},
 ) {
     val c = CircasoTheme.colors
     val t = CircasoTheme.typography
@@ -157,7 +159,7 @@ fun PayContent(
     ) { padding ->
         when (state.step) {
             PayStep.Pick -> PickPerson(state, padding, onQuery, onPick, onToAddress)
-            PayStep.Amount, PayStep.Signing, PayStep.Sending -> AmountStep(state, padding, onAmount, onToggleUnit, onNote, onChain, onRemind, onPay, onChoosing, onRetryQuote, onUseMax)
+            PayStep.Amount, PayStep.Signing, PayStep.Sending -> AmountStep(state, padding, onAmount, onToggleUnit, onNote, onChain, onRemind, onPay, onChoosing, onRetryQuote, onUseMax, onRetryPrice)
             PayStep.Done -> DoneStep(state, padding, onBack, onOpenTransfer, onOpenChat, onAttachAgain)
         }
     }
@@ -232,7 +234,7 @@ private fun PickIcon(icon: CircasoIcon) {
 
 /** Design C4: the person, the amount big, a note, from/fee/receives, then the button. The SDK takes over for C5. */
 @Composable
-private fun AmountStep(state: PayUiState, padding: PaddingValues, onAmount: (String) -> Unit, onToggleUnit: () -> Unit, onNote: (String) -> Unit, onChain: (String) -> Unit, onRemind: () -> Unit, onPay: () -> Unit, onChoosing: (Boolean) -> Unit = {}, onRetryQuote: () -> Unit = {}, onUseMax: () -> Unit = {}) {
+private fun AmountStep(state: PayUiState, padding: PaddingValues, onAmount: (String) -> Unit, onToggleUnit: () -> Unit, onNote: (String) -> Unit, onChain: (String) -> Unit, onRemind: () -> Unit, onPay: () -> Unit, onChoosing: (Boolean) -> Unit = {}, onRetryQuote: () -> Unit = {}, onUseMax: () -> Unit = {}, onRetryPrice: () -> Unit = {}) {
     val c = CircasoTheme.colors
     val t = CircasoTheme.typography
     val payee = state.payee
@@ -263,7 +265,7 @@ private fun AmountStep(state: PayUiState, padding: PaddingValues, onAmount: (Str
             }
         }
         // The amount as typed, with the other unit under it.
-        val unit = if (state.inFiat) state.currency ?: "USDC" else "USDC"
+        val unit = if (state.typingFiat) state.currency ?: state.asset else state.asset
         Row(verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             BasicText(unit, style = t.title2.copy(fontWeight = FontWeight.SemiBold, color = c.inkSecondary), modifier = Modifier.padding(bottom = CircasoSpacing.s2))
             Box {
@@ -277,13 +279,13 @@ private fun AmountStep(state: PayUiState, padding: PaddingValues, onAmount: (Str
                 )
             }
         }
-        val other = if (state.inFiat) state.usdcText else state.fiatText
+        val other = if (state.typingFiat) state.amountMinor?.let { com.circaso.feature.wallet.domain.coinShort(it, state.decimals, state.asset) } else state.fiatText
         if (state.payout) Row(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
             CircasoIconImage(CircasoIcon.Lock, c.inkSecondary, Modifier.size(12.dp))
             BasicText(listOfNotNull(state.fiatText?.let { "≈ $it" }, "The amount the admins approved").joinToString(" · "), style = t.footnote.copy(color = c.inkSecondary, textAlign = TextAlign.Center))
         }
-        else if (state.canUseFiat) SuggestionChip(other?.let { "≈ $it · switch" } ?: "Type in ${if (state.inFiat) "USDC" else state.currency}", onToggleUnit)
-        if (state.overBalance && state.block == null) BasicText((if (state.fromGroupWallet) "${state.walletName} has" else "You have") + " ${MinorUnits.toDisplay(state.balanceMinor, 6)} USDC on ${chainName(state.blockchain.orEmpty())}.", style = t.footnote.copy(color = c.critical))
+        else if (state.canUseFiat) SuggestionChip(other?.let { "≈ $it · switch" } ?: "Type in ${if (state.typingFiat) state.asset else state.currency}", onToggleUnit)
+        if (state.overBalance && state.block == null) BasicText((if (state.fromGroupWallet) "${state.walletName} has" else "You have") + " ${state.balanceText} on ${chainName(state.payChain.orEmpty())}.", style = t.footnote.copy(color = c.critical))
         // G2 / GW19: the payment didn't go; nothing was taken, and the approval (if any) still stands.
         state.failure?.let { f ->
             com.circaso.designsystem.chrome.Banner(
@@ -401,13 +403,28 @@ private fun AmountStep(state: PayUiState, padding: PaddingValues, onAmount: (Str
             BasicText("Approve from ${state.walletName} · ${state.walletName}’s PIN, not your personal one.", Modifier.semantics { liveRegion = androidx.compose.ui.semantics.LiveRegionMode.Polite }, style = t.footnote.copy(color = c.inkSecondary, textAlign = TextAlign.Center))
         }
         if (state.requestPayout) BasicText(if (state.payingFrom.canSign) "Admins approve in the group chat. Then you pay it with ${state.walletName}’s PIN." else "Admins approve in the group chat. Then ${state.signerName} pays it from ${state.walletName}’s wallet.", style = t.footnote.copy(color = c.inkSecondary, textAlign = TextAlign.Center))
-        state.rate?.let { BasicText("1 USDC = ${state.currency} ${formatRate(it)}", style = t.caption1.copy(color = c.inkTertiary)) }
         if (!state.online) BasicText("You need a connection to send money.", style = t.footnote.copy(color = c.inkSecondary))
+        // Typed in their money but no usable coin price yet: why Pay waits, with Try Again (the same as the chat card).
+        if (state.online && !state.onHold) PriceWait(state, onRetryPrice, textAlign = TextAlign.Center)
         if (state.onHold) BasicText("Sending is paused for a short while after your account was recovered. You can still receive money.", style = t.footnote.copy(color = c.warning, textAlign = TextAlign.Center))
     }
 }
 
-internal fun formatRate(rate: String) = rate.substringBefore('.') + "." + rate.substringAfter('.', "00").take(2).padEnd(2, '0')
+/** "1 USDC = KES 129.25", "1 ETH = KES 452,375.00 · Prices by CoinGecko" (the feed's terms ask for the credit). */
+internal fun rateLine(s: PayUiState): String? = s.unitRate?.let { r ->
+    val line = "1 ${s.asset} = ${s.currency} ${formatRate(r).let { v -> MinorUnits.group(v.substringBefore('.').ifEmpty { "0" }) + "." + v.substringAfter('.') }}"
+    if (MinorUnits.isDollar(s.asset)) line else "$line · Prices by CoinGecko"
+}
+
+internal fun formatRate(rate: String): String {
+    // Below one, four significant digits ("0.001296"), so a cheap coin never reads 0.00; else to the cent.
+    if (rate.substringBefore('.').trimStart('0').isEmpty()) {
+        val frac = rate.substringAfter('.', "")
+        val lead = frac.indexOfFirst { it != '0' }
+        if (lead >= 0) return "0." + frac.take(lead + 4)
+    }
+    return rate.substringBefore('.') + "." + rate.substringAfter('.', "00").take(2).padEnd(2, '0')
+}
 
 
 @Composable

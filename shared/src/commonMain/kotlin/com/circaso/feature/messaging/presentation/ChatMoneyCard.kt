@@ -39,6 +39,7 @@ import com.circaso.designsystem.theme.CircasoSizes
 import com.circaso.designsystem.theme.CircasoSpacing
 import com.circaso.designsystem.theme.CircasoTheme
 import com.circaso.designsystem.chrome.glass
+import com.circaso.designsystem.motion.pressable
 import com.circaso.feature.chama.domain.ApprovalPolicy
 import com.circaso.feature.chama.presentation.amountNumber
 import com.circaso.feature.chama.presentation.amountText
@@ -77,6 +78,8 @@ internal fun ChatMoneyCard(
     onRetryQuote: () -> Unit = {},
     /** GW14 / GW20's "… Instead": the most that fits, with its fee. */
     onUseMax: () -> Unit = {},
+    /** Try Again when a fresh coin price couldn't be had. */
+    onRetryPrice: () -> Unit = {},
 ) {
     val c = CircasoTheme.colors
     val t = CircasoTheme.typography
@@ -112,7 +115,7 @@ internal fun ChatMoneyCard(
                 amount ?: "Type an amount after #",
                 Modifier.weight(1f).semantics {
                     heading()
-                    contentDescription = listOfNotNull(title, amount, s.usdcText.takeIf { s.fiatText != null }, "the amount the admins approved".takeIf { s.payout }).joinToString(", ")
+                    contentDescription = listOfNotNull(title, amount, "the amount the admins approved".takeIf { s.payout }).joinToString(", ")
                 },
                 style = (if (amount != null) t.headline else t.subhead).copy(color = if (amount != null) c.ink else c.inkSecondary, fontWeight = FontWeight.SemiBold, fontFeatureSettings = "tnum"),
                 maxLines = 1, overflow = TextOverflow.Ellipsis,
@@ -128,16 +131,25 @@ internal fun ChatMoneyCard(
         }
         // Below, with room to breathe: just the fee, in the person's currency ("Fee KES 5.17", or "No fee").
         if (amount != null) {
-            Row(Modifier.fillMaxWidth().padding(end = CircasoSpacing.s2), verticalAlignment = Alignment.CenterVertically) {
+            // The coin it moves (any coin with a price, not only USDC) on the left, the fee on the right. At large text the
+            // fee drops to its own line rather than being squeezed; neither is ever cut short. The coin is read here once.
+            androidx.compose.foundation.layout.FlowRow(
+                Modifier.fillMaxWidth().padding(end = CircasoSpacing.s2).semantics(mergeDescendants = true) {},
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalArrangement = Arrangement.spacedBy(CircasoSpacing.s1),
+            ) {
                 val quiet = t.caption1.copy(color = c.inkSecondary, fontFeatureSettings = "tnum")
                 val charged = (s.fee as? com.circaso.feature.wallet.presentation.PayFee.Quoted)?.let { !MinorUnits.isZero(it.amountMinor) } ?: false
-                if (charged) BasicText("Fee ", style = quiet)
-                com.circaso.feature.wallet.presentation.FeeValue(s, onRetryQuote, quiet, compact = true)
+                coinLine(s)?.let { BasicText(it, Modifier.padding(end = CircasoSpacing.s3), style = quiet) }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    if (charged) BasicText("Fee ", style = quiet)
+                    com.circaso.feature.wallet.presentation.FeeValue(s, onRetryQuote, quiet, compact = true)
+                }
             }
         }
         // Only when something needs saying; scrolls if it ever outgrows the room above the composer.
         val (line, tone) = statusLine(s, first)
-        if (s.failure != null || s.feeChange != null || s.block != null || line != null) {
+        if (s.failure != null || s.feeChange != null || s.block != null || line != null || tone == Tone.Price) {
             Column(Modifier.fillMaxWidth().weight(1f, fill = false).verticalScroll(rememberScrollState()).padding(end = CircasoSpacing.s2), verticalArrangement = Arrangement.spacedBy(CircasoSpacing.s2)) {
                 // GW19 / G2: refused before it reached the chain. Nothing was taken; a payout's approval stands.
                 s.failure?.let { f ->
@@ -153,23 +165,24 @@ internal fun ChatMoneyCard(
                     BasicText(
                         line,
                         Modifier.semantics { liveRegion = LiveRegionMode.Polite },
-                        style = t.footnote.copy(color = when (tone) { Tone.Critical -> c.critical; Tone.Warning -> c.warning; Tone.Quiet -> c.inkSecondary }),
+                        style = t.footnote.copy(color = when (tone) { Tone.Critical -> c.critical; Tone.Warning -> c.warning; Tone.Quiet, Tone.Price -> c.inkSecondary }),
                     )
                 }
+                // Waiting on a coin price: a fresh one on its way (spinner), or none to be had, with Try Again.
+                if (tone == Tone.Price) com.circaso.feature.wallet.presentation.PriceWait(s, onRetryPrice)
             }
         }
     }
 }
 
-/** "3.869969 USDC" as "3.87 USDC": dollar coins read as money on the card; other coins keep their digits. */
-private fun coinShort(text: String?): String? {
-    if (text == null) return null
-    val parts = text.split(' ')
-    if (parts.size != 2 || parts[1] !in setOf("USDC", "EURC", "USDT")) return text
-    val v = parts[0].replace(",", "").toDoubleOrNull() ?: return text
-    val cents = kotlin.math.round(v * 100).toLong()
-    return "${cents / 100}.${(cents % 100).toString().padStart(2, '0')} ${parts[1]}"
-}
+/** The person's money is the default, but this coin has no price: the number is in the coin itself. */
+internal fun coinUnitsFallback(s: PayUiState): Boolean =
+    s.inFiat && !s.typingFiat && !s.coinPriced && s.tagged != null && s.currency != null &&
+        s.amountMinor?.let { !MinorUnits.isZero(it) } == true
+
+/** The coin under a fiat amount ("0.001105 ETH", "3.87 USDC"); null when the amount is already in the coin. */
+internal fun coinLine(s: PayUiState): String? =
+    s.amountMinor?.takeIf { s.fiatText != null && !MinorUnits.isZero(it) }?.let { com.circaso.feature.wallet.domain.coinShort(it, s.decimals, s.asset) }
 
 /** The card's button, and the composer arrow's spoken label while a payment is in the field. */
 internal fun payLabel(s: PayUiState, amount: String? = s.fiatText ?: s.usdcText, total: String? = com.circaso.feature.wallet.presentation.buttonTotal(s)): String = com.circaso.feature.wallet.presentation.blockedLabel(s)?.takeIf { s.step == PayStep.Amount && s.failure == null } ?: when {
@@ -182,7 +195,8 @@ internal fun payLabel(s: PayUiState, amount: String? = s.fiatText ?: s.usdcText,
     else -> if (total != null) "Send $total" else "Send"
 }
 
-private enum class Tone { Quiet, Warning, Critical }
+/** [Price]: Pay waits on a coin price, and [com.circaso.feature.wallet.presentation.PriceWait] says why. */
+private enum class Tone { Quiet, Warning, Critical, Price }
 
 /** The card's status line: offline and hold first (amber, they pass and explain a dimmed Pay), then what's wrong (red). */
 private fun statusLine(s: PayUiState, first: String): Pair<String?, Tone> = when {
@@ -197,8 +211,12 @@ private fun statusLine(s: PayUiState, first: String): Pair<String?, Tone> = when
     s.problem is PayeeProblem.NotOnChain -> "$first can’t receive on this network yet." to Tone.Critical
     s.problem is PayeeProblem.Other -> s.problem.message to Tone.Critical
     s.assetMissing -> "You don’t have ${s.assetTag?.uppercase()} in this wallet." to Tone.Critical
+    // Typed in their money but no usable price: PriceWait says why Pay waits (never a guessed amount).
+    s.priceWaiting -> null to Tone.Price
     s.block != null && !s.requestPayout -> null to Tone.Quiet
-    s.overBalance -> ((if (s.fromGroupWallet) "${s.walletName} has" else "You have") + " ${MinorUnits.toDisplay(s.balanceMinor, s.tagged?.second?.decimals ?: 6)} ${s.asset}.") to Tone.Critical
+    // A coin with no price at all is typed in its own units (as before prices); say so, so "#500 @xyz" is never a surprise.
+    coinUnitsFallback(s) -> "No ${s.asset} price yet, so this amount is in ${s.asset}." to Tone.Warning
+    s.overBalance -> ((if (s.fromGroupWallet) "${s.walletName} has" else "You have") + " ${s.balanceText}.") to Tone.Critical
     s.requestPayout -> (if (s.payingFrom.canSign) "Admins approve in the group chat. Then you pay it with ${s.walletName}’s PIN." else "Admins approve in the group chat. Then ${s.signerName} pays it from ${s.walletName}’s wallet.") to Tone.Quiet
     else -> null to Tone.Quiet
 }

@@ -150,7 +150,7 @@ fun ThreadScreen(
     val state by viewModel.state.collectAsState()
     val pay = quickPay?.let { vm ->
         val payState by vm.state.collectAsState()
-        QuickPay(payState, vm::onAmount, vm::onNote, vm::onPay, vm::onQuickReset, vm::onErrorShown, vm::onAssetTag, vm::onChoosing, vm::onPayFrom, vm::onRetryExact, vm::onRetryQuote, vm::onUseMax)
+        QuickPay(payState, vm::onAmount, vm::onNote, vm::onPay, vm::onQuickReset, vm::onErrorShown, vm::onAssetTag, vm::onChoosing, vm::onPayFrom, vm::onRetryExact, vm::onRetryQuote, vm::onUseMax, vm::onRetryPrice)
     }
     // Opening a request's Pay again: its card starts over only if its last payment didn't go (the approval still stands).
     // If that payment is on its way or confirmed, it isn't paid twice: say so and put the card away.
@@ -163,7 +163,7 @@ fun ThreadScreen(
     }
     val paying = payout?.let { vm ->
         val payState by vm.state.collectAsState()
-        QuickPay(payState, vm::onAmount, vm::onNote, vm::onPay, vm::onQuickReset, vm::onErrorShown, vm::onAssetTag, vm::onChoosing, vm::onPayFrom, vm::onRetryExact, vm::onRetryQuote, vm::onUseMax)
+        QuickPay(payState, vm::onAmount, vm::onNote, vm::onPay, vm::onQuickReset, vm::onErrorShown, vm::onAssetTag, vm::onChoosing, vm::onPayFrom, vm::onRetryExact, vm::onRetryQuote, vm::onUseMax, vm::onRetryPrice)
     }
     ThreadContent(
         state, onBack, onInfo, onAsha, viewModel::onDraft, viewModel::onSend, viewModel::onSelect, viewModel::onRetry, viewModel::onDiscard, viewModel::onDeleteForEveryone, viewModel::onMessageShown,
@@ -752,13 +752,13 @@ fun ThreadContent(
                         paying && quickPay != null,
                         enter = if (CircasoTheme.reduceMotion) fadeIn(tween(CircasoMotion.QuickMs)) else fadeIn(tween(CircasoMotion.QuickMs)) + androidx.compose.animation.slideInVertically(tween(CircasoMotion.QuickMs)) { it / 2 },
                         exit = fadeOut(tween(CircasoMotion.QuickMs / 2)),
-                    ) { quickPay?.let { q -> ChatMoneyCard(q.state, q.onPay, { q.onChoosing(true) }, cardMotion, maxHeight = cardMax(), onRetryQuote = q.onRetryQuote, onUseMax = q.onUseMax) } }
+                    ) { quickPay?.let { q -> ChatMoneyCard(q.state, q.onPay, { q.onChoosing(true) }, cardMotion, maxHeight = cardMax(), onRetryQuote = q.onRetryQuote, onUseMax = q.onUseMax, onRetryPrice = q.onRetryPrice) } }
                     // An approved request's Pay (D5/GW9): the same card, the amount and payee locked by the approval.
                     AnimatedVisibility(
                         payout != null,
                         enter = if (CircasoTheme.reduceMotion) fadeIn(tween(CircasoMotion.QuickMs)) else fadeIn(tween(CircasoMotion.QuickMs)) + androidx.compose.animation.slideInVertically(tween(CircasoMotion.QuickMs)) { it / 2 },
                         exit = fadeOut(tween(CircasoMotion.QuickMs / 2)),
-                    ) { payout?.let { q -> ChatMoneyCard(q.state, q.onPay, { q.onChoosing(true) }, cardMotion, onClose = onPayoutClose, maxHeight = cardMax(), onRetryQuote = q.onRetryQuote, onUseMax = q.onUseMax) } }
+                    ) { payout?.let { q -> ChatMoneyCard(q.state, q.onPay, { q.onChoosing(true) }, cardMotion, onClose = onPayoutClose, maxHeight = cardMax(), onRetryQuote = q.onRetryQuote, onUseMax = q.onUseMax, onRetryPrice = q.onRetryPrice) } }
                 },
                 above = {
                     // Support never takes money (so nobody pretending to be Circaso can ask for it): say so the moment
@@ -1105,6 +1105,8 @@ class QuickPay(
     val onRetryQuote: () -> Unit = {},
     /** GW14 / GW20's "… Instead". */
     val onUseMax: () -> Unit = {},
+    /** Try Again when a fresh coin price couldn't be had. */
+    val onRetryPrice: () -> Unit = {},
 )
 
 /** The amount while it is still being typed: "#5", "#12.", "#12.5" (no space yet). */
@@ -1117,20 +1119,36 @@ internal fun afterTypedAmount(draft: String): String = draft.substringAfter(' ',
 /** The coin being typed after "@" at the end of the note ("for lunch @us" → "us", "@" → ""); null when none is. */
 internal fun coinQuery(draft: String): String? = Regex("""(?:^|\s)@([A-Za-z]*)$""").find(draft)?.groupValues?.get(1)
 
-/** One coin the wallet holds, over all its networks. */
-internal data class HeldCoin(val symbol: String, val amount: String, val worth: Double)
+/** One coin the wallet holds, over all its networks; [usdCents] is what it is worth in US cents, null when unpriced. */
+internal data class HeldCoin(val symbol: String, val amount: String, val usdCents: String?, val amountMinor: String = "0", val decimals: Int = 6)
 
-/** Every coin with a balance, the most valuable first (by its local value, else by its amount). */
+/**
+ * Every coin with a balance, the most valuable first: priced coins by their worth (each at its `usdPrice`, dollar coins
+ * at 1, worked out exactly in cents, so 0.5 BTC outranks 20 USDC), then unpriced ones by their amount.
+ */
 internal fun heldCoins(wallet: com.circaso.feature.wallet.domain.Wallet?): List<HeldCoin> {
     val assets = wallet?.chains.orEmpty().flatMap { it.assets }.filter { it.amountMinor.trimStart('0').isNotEmpty() }
-    return assets.groupBy { it.symbol.uppercase() }.map { (symbol, list) ->
+    val coins = assets.groupBy { it.symbol.uppercase() }.map { (symbol, list) ->
         // Summed in minor units (never floating point), shown with the coin's decimals.
         val decimals = list.first().decimals
         val minor = list.fold("0") { sum, it -> MinorUnits.add(sum, it.amountMinor.ifEmpty { "0" }) }
-        val worth = list.sumOf { it.fiatAmount?.toDoubleOrNull() ?: 0.0 }
-        val total = list.sumOf { it.amount.toDoubleOrNull() ?: 0.0 }
-        HeldCoin(symbol, MinorUnits.toDisplay(minor, decimals), if (worth > 0) worth else total)
-    }.sortedByDescending { it.worth }
+        val price = list.firstNotNullOfOrNull { it.dollarPrice }
+        val cents = price?.let { com.circaso.feature.wallet.domain.coinToFiat(minor, decimals, it) }?.let { MinorUnits.fromDisplay(it, 2) }
+        HeldCoin(symbol, MinorUnits.toDisplay(minor, decimals), cents, minor, decimals)
+    }
+    val (priced, unpriced) = coins.partition { it.usdCents != null }
+    val mostFirst = Comparator<HeldCoin> { x, y ->
+        val a = x.usdCents.orEmpty()
+        val b = y.usdCents.orEmpty()
+        when {
+            a == b -> 0
+            MinorUnits.lessThan(a, b) -> 1
+            else -> -1
+        }
+    }
+    return priced.sortedWith(mostFirst) +
+        // Unpriced coins have nothing in common to weigh them by; their whole amounts order them (display only).
+        unpriced.sortedByDescending { it.amount.replace(",", "").toDoubleOrNull() ?: 0.0 }
 }
 
 /** The "@" picker over the composer: up to four held coins as chips; they settle in and out as the list narrows. */

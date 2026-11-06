@@ -23,9 +23,10 @@ import com.circaso.feature.wallet.domain.RemindOutcome
 import com.circaso.feature.wallet.domain.RemindRecipientUseCase
 import com.circaso.feature.wallet.domain.Transfer
 import com.circaso.feature.wallet.domain.Wallet
-import com.circaso.feature.wallet.domain.fiatToUsdcMinor
+import com.circaso.feature.wallet.domain.coinToFiat
+import com.circaso.feature.wallet.domain.fiatToCoinMinor
 import com.circaso.feature.wallet.domain.shortAddress
-import com.circaso.feature.wallet.domain.usdcToFiat
+import com.circaso.feature.wallet.domain.unitFiatRate
 import com.circaso.feature.chama.domain.AlreadyLinkedCodes
 import com.circaso.feature.chama.domain.AttachChamaPaymentUseCase
 import com.circaso.feature.chama.domain.Chama
@@ -143,7 +144,7 @@ data class PayUiState(
     val online: Boolean = true,
     /** The chain the payment leaves from: the wallet's default, or one the payee can receive on. */
     val blockchain: String? = null,
-    /** True when the person types in fiat; the USDC amount is derived with the wallet's rate. */
+    /** True when the person types in fiat; the coin amount is derived from the coin's price and the wallet's rate. */
     val inFiat: Boolean = true,
     val amountText: String = "",
     val note: String = "",
@@ -190,6 +191,16 @@ data class PayUiState(
     val me: Person? = null,
     /** §7b's fee line, from W17 (phase 2F). */
     val fee: PayFee = PayFee.None,
+    /**
+     * What the typed number is in, fixed when it is typed, a coin is tagged or the unit is switched: true is the
+     * person's currency, false the coin; null until then (follow [inFiat]). A later wallet refresh never changes it, so
+     * a price that goes away can't turn "KES 500" into 500 ETH (design review, 2026-11-06).
+     */
+    val typedInFiat: Boolean? = null,
+    /** The wallet copy's prices are recent enough to turn money into a coin other than a dollar coin. */
+    val pricesFresh: Boolean = true,
+    /** Asking for a fresh coin price (the wallet the money leaves from): what the card says while the price waits. */
+    val priceRefresh: PriceRefresh = PriceRefresh.Idle,
     /** The fee shown was asked for an earlier version of this payment; the new answer is on its way and Pay waits. */
     val feeStale: Boolean = false,
     /** GW13c: the fee rose since it was shown; said once, until the next quote. */
@@ -236,20 +247,47 @@ data class PayUiState(
 
     /** What the payment is in: USDC unless a held asset was tagged. */
     val asset: String get() = tagged?.second?.symbol ?: Wallet.Usdc
-    private val decimals: Int get() = tagged?.second?.decimals ?: 6
-    private val inUsdc get() = tagged == null
+    /** The payment coin's decimals (6 for USDC). */
+    val decimals: Int get() = tagged?.second?.decimals ?: 6
     val contribution get() = toGroup || (goalName != null && requestId == null)
     val payout get() = requestId != null
     /** The request is marked paid only once the link has landed (treasurer model; W4 links it with group wallets). */
     val linked get() = payout && result != null && !attaching && !attachPending
     val currency get() = wallet?.fiat?.currency
+    /** One US dollar in the person's currency (W1 `fiat.rate`). */
     val rate get() = wallet?.fiat?.rate
-    val canUseFiat get() = rate != null && currency != null
 
-    /** The USDC amount in minor units for what was typed, or null when it isn't an amount yet. */
+    /**
+     * One whole unit of the payment's coin in the person's currency: its US dollar price (W1 `usdPrice`; dollar coins
+     * are 1 even without one) × [rate]. Null when the coin has no price: then it is typed and shown in its own units.
+     */
+    val unitRate: String?
+        get() {
+            if (currency == null) return null
+            val coin = tagged?.second
+            // An old copy's price isn't used to work out how much of a coin to send; a fresh one is on its way.
+            if (coin != null && !MinorUnits.isDollar(coin.symbol) && !pricesFresh) return null
+            return unitFiatRate(coin, rate)
+        }
+
+    /** The payment's coin can be shown and typed in the person's currency. */
+    val canUseFiat get() = unitRate != null
+
+    /** The coin has a price at all (perhaps not a fresh one): what decides the unit a number is typed in. */
+    val coinPriced get() = currency != null && rate != null && (tagged?.second?.dollarPrice ?: if (tagged == null) "1" else null) != null
+
+    /** The unit a number typed now would be in: the person's currency when the coin has a price. */
+    val fiatUnitNow get() = inFiat && coinPriced
+
+    /** Typing in the person's currency: "#500 @eth" is KES 500 worth of ETH. */
+    val typingFiat get() = typedInFiat ?: fiatUnitNow
+
+    /** Typed in the person's currency, but there's no usable price to turn it into the coin: Pay waits, nothing is guessed. */
+    val priceWaiting get() = typingFiat && unitRate == null && amountText.any { it in '1'..'9' }
+
+    /** The coin amount in minor units for what was typed (rounded down, never through a float), or null when it isn't an amount yet. */
     val amountMinor: String?
-        // Another asset is typed in its own units: the fiat rate is for USD stablecoins only.
-        get() = if (inUsdc && inFiat && rate != null) fiatToUsdcMinor(amountText, rate!!) else MinorUnits.fromDisplay(amountText, decimals)
+        get() = if (typingFiat) unitRate?.let { fiatToCoinMinor(amountText, it, decimals) } else MinorUnits.fromDisplay(amountText, decimals)
 
     /** USDC on the chosen chain. */
     val balanceMinor: String get() = tagged?.second?.amountMinor ?: wallet?.chains?.firstOrNull { it.blockchain == blockchain }?.usdc?.amountMinor ?: "0"
@@ -281,10 +319,13 @@ data class PayUiState(
             }
         }
 
-    /** A coin amount in the person's currency when there is a rate ("KES 2.50", "KES 5"), else in the coin. */
+    /** A coin amount in the person's currency when the coin is priced ("KES 2.50", "KES 5"), else in the coin. */
     fun moneyText(minor: String): String =
-        if (inUsdc && rate != null && currency != null) usdcToFiat(minor, rate!!)?.let { "$currency ${fiatDisplay(MinorUnits.fromDisplay(it, 2) ?: "0")}" } ?: (MinorUnits.toDisplay(minor, decimals) + " " + asset)
-        else MinorUnits.toDisplay(minor, decimals) + " " + asset
+        localCents(minor)?.let { "$currency ${fiatDisplay(it)}" } ?: (MinorUnits.toDisplay(minor, decimals) + " " + asset)
+
+    /** [minor] of the payment's coin in the person's currency, in cents; null when the coin has no price. */
+    private fun localCents(minor: String): String? =
+        unitRate?.let { coinToFiat(minor, decimals, it) }?.let { MinorUnits.fromDisplay(it, 2) }
 
     /** The fee's minor units, when one is quoted. */
     val feeMinor: String? get() = (fee as? PayFee.Quoted)?.amountMinor
@@ -303,16 +344,26 @@ data class PayUiState(
         get() {
             val feeMinor = (fee as? PayFee.Quoted)?.amountMinor
             typedFiatCents?.let { cents ->
-                val feeCents = feeMinor?.let { f -> usdcToFiat(f, rate!!)?.let { MinorUnits.fromDisplay(it, 2) } } ?: "0"
+                val feeCents = feeMinor?.let(::localCents) ?: "0"
                 return "$currency ${fiatDisplay(MinorUnits.add(cents, feeCents))}"
             }
-            return totalMinor?.let { t -> if (inUsdc && currency != null && rate != null && inFiat) usdcToFiat(t, rate!!)?.let { "$currency $it" } else MinorUnits.toDisplay(t, decimals) + " " + asset }
+            return totalMinor?.let { t -> localCents(t)?.takeIf { inFiat }?.let { "$currency ${fiatDisplay(it)}" } ?: (MinorUnits.toDisplay(t, decimals) + " " + asset) }
         }
-    /** Typed in the person's currency: what they typed ("#500" is KES 500, never the 499.99 a round trip through USDC gives). */
-    private val typedFiatCents: String? get() = if (inUsdc && inFiat && rate != null && currency != null) MinorUnits.fromDisplay(amountText, 2) else null
+    /** Typed in the person's currency: what they typed ("#500" is KES 500, never the 499.99 a round trip through the coin gives). */
+    private val typedFiatCents: String? get() = if (typingFiat && currency != null) MinorUnits.fromDisplay(amountText, 2) else null
     val fiatText: String?
         get() = typedFiatCents?.let { "$currency ${fiatDisplay(it)}" }
-            ?: if (inUsdc && currency != null && rate != null) amountMinor?.let { usdcToFiat(it, rate!!) }?.let { "$currency $it" } else null
+            ?: amountMinor?.let(::localCents)?.let { "$currency ${fiatDisplay(it)}" }
+    /**
+     * What the wallet holds of the payment's coin, as the over-balance line says it: in the person's money with the coin
+     * short ("KES 5,584 (0.01234 ETH)"), both rounded down so a balance never reads higher than it is; else the coin.
+     */
+    val balanceText: String
+        get() {
+            val coin = com.circaso.feature.wallet.domain.coinShort(balanceMinor, decimals, asset, roundDown = true)
+            val money = unitRate?.let { coinToFiat(balanceMinor, decimals, it, roundDown = true) }?.let { MinorUnits.fromDisplay(it, 2) }
+            return if (money != null) "$currency ${fiatDisplay(money)} ($coin)" else coin
+        }
     val overBalance: Boolean get() = totalMinor?.let { MinorUnits.lessThan(balanceMinor, it) } ?: false
     val onHold: Boolean get() = wallet?.holdUntil != null
     val canPay: Boolean get() = online && !onHold && payee != null && payChain != null && problem == null && !checking && !assetMissing && amountMinor?.let { !MinorUnits.isZero(it) } == true && !overBalance && step == PayStep.Amount && (feeSettled || requestPayout) && !blocked &&
@@ -369,6 +420,11 @@ class PayViewModel(
     observeMe: kotlinx.coroutines.flow.Flow<Person?> = flowOf(null),
     /** Payout requests and approvals (parked 2026-11-06, [com.circaso.core.flags.GroupPayoutApprovals]). */
     approvals: Boolean = com.circaso.core.flags.GroupPayoutApprovals.Enabled,
+    /**
+     * A fresh coin price for the wallet the money leaves from (null: W1, the personal wallet; else W16 for that group
+     * wallet), when a coin other than a dollar coin is tagged or its price grows old; absent in older tests and previews.
+     */
+    private val refreshPrices: (suspend (walletId: String?) -> AppResult<*>)? = null,
 ) : ViewModel() {
     private val userId = intent.userId
     private val chatId = intent.chatId
@@ -418,8 +474,11 @@ class PayViewModel(
                 }
             }
 
+    /** Bumped when the wallet copy's prices pass [PriceFreshMillis], so [PayUiState.pricesFresh] is worked out again. */
+    private val priceTick = MutableStateFlow(0)
+
     val state: StateFlow<PayUiState> = combine(
-        local, observeWallet(), observeContacts(), connection.status,
+        combine(local, priceTick) { ui, _ -> ui }, observeWallet(), observeContacts(), connection.status,
         combine(if (intent.goalName != null && chatId != null) observeChama(chatId) else flowOf(null), groupSide, observeMe) { ch, g, m -> Triple(ch, g, m) },
     ) { ui, personal, contacts, c, sides ->
         val (chama, group, me) = sides
@@ -438,6 +497,7 @@ class PayViewModel(
                 ?: intent.groupId?.let { Person("", group.groupTitle ?: intent.displayName ?: "The group", null, group.groupAvatar, null) },
             blockchain = ui.blockchain?.takeIf { b -> wallet?.chains?.any { it.blockchain == b } != false } ?: wallet?.chainsReceiving?.firstOrNull()?.blockchain,
             inFiat = ui.inFiat && wallet?.fiat != null,
+            pricesFresh = wallet == null || now() - wallet.fetchedAt < PriceFreshMillis,
             groupWallets = group.on,
             payingFrom = group.payingFrom,
             choices = group.choices,
@@ -478,11 +538,50 @@ class PayViewModel(
         // wallet is checked by W4 itself (members only).
         if (userId != null) check(userId, null)
         wallets?.let { w -> viewModelScope.launch { if (groupWallets.isOn) w.refresh(intent.fromWalletId, intent.groupId ?: intent.chatId) } }
+        viewModelScope.launch { keepPricesFresh() }
         quotePayment?.let { quote ->
             viewModelScope.launch { quoteAsTyped(quote) }
             viewModelScope.launch { keepQuoteForTheSamePayment() }
         }
     }
+
+    /**
+     * While a coin other than a dollar coin is tagged, its price is kept fresh: when the wallet copy's prices pass
+     * [PriceFreshMillis] (or the connection comes back with an old one) a fresh copy of the wallet the money leaves from
+     * is asked for. A failure is said on the card with Try Again; nothing loops (2026-11-06 design review).
+     */
+    private suspend fun keepPricesFresh() {
+        state.map { s ->
+            val wants = s.currency != null && s.tagged?.second?.let { !MinorUnits.isDollar(it.symbol) } == true
+            Triple(wants, s.wallet?.fetchedAt, s.online)
+        }
+            .distinctUntilChanged()
+            .collectLatest { (wants, fetchedAt, online) ->
+                if (!wants || fetchedAt == null || !online) return@collectLatest
+                val left = fetchedAt + PriceFreshMillis - now()
+                if (left > 0) {
+                    delay(left)
+                    priceTick.update { it + 1 }
+                }
+                if (fetchedAt + PriceFreshMillis - now() <= 0) refreshPrice()
+            }
+    }
+
+    private var priceJob: kotlinx.coroutines.Job? = null
+
+    /** Asks for a fresh coin price once (never while one is on its way, never offline: the offline line says why). */
+    private fun refreshPrice() {
+        val refresh = refreshPrices ?: return
+        if (priceJob?.isActive == true || !state.value.online) return
+        priceJob = viewModelScope.launch {
+            local.update { it.copy(priceRefresh = PriceRefresh.Loading) }
+            val r = refresh(fromId.value)
+            local.update { it.copy(priceRefresh = if (r is AppResult.Failure) PriceRefresh.Failed(ErrorMessages.reference(r.error)) else PriceRefresh.Idle) }
+        }
+    }
+
+    /** The card's Try Again when a fresh price couldn't be had. */
+    fun onRetryPrice() = refreshPrice()
 
     /**
      * Marked stale but nothing that decides the fee changed (in the chat, typing the note after "#500" passes the same
@@ -669,13 +768,16 @@ class PayViewModel(
     fun onAmount(text: String) {
         // A request's amount is what the admins approved; changing it would fail the link after the money left.
         if (state.value.payout) return
-        // Digits and one point; the decimals the unit allows (2 for fiat, 6 for USDC).
+        // Digits and one point; the decimals the unit allows (2 for fiat, the coin's own otherwise).
         val clean = text.filter { it.isDigit() || it == '.' }
         if (clean.count { it == '.' } > 1) return
-        val max = if (state.value.inFiat) 2 else 6
+        val s = state.value
+        // The person's own choices from [local] (the derived state can lag a toggle made a moment ago).
+        val inFiat = typingFiatNow(s)
+        val max = if (inFiat) 2 else s.decimals
         if (clean.substringAfter('.', "").length > max) return
         staleFee()
-        local.update { it.copy(amountText = clean, error = null) }
+        local.update { it.copy(amountText = clean, error = null, typedInFiat = if (clean.isEmpty()) null else inFiat) }
     }
 
     fun onToggleUnit() {
@@ -683,15 +785,19 @@ class PayViewModel(
         if (!s.canUseFiat || s.payout) return
         // Carry the value across so the number doesn't jump.
         val minor = s.amountMinor
-        val next = !s.inFiat
+        // From what the number is in now, not the default: a coin typed in its units before it had a price switches to money.
+        val next = !typingFiatNow(s)
         val text = when {
             minor == null || MinorUnits.isZero(minor) -> ""
-            next -> usdcToFiat(minor, s.rate!!) ?: ""
-            else -> MinorUnits.toDisplay(minor, 6).replace(",", "")
+            next -> s.unitRate?.let { coinToFiat(minor, s.decimals, it) } ?: ""
+            else -> MinorUnits.toDisplay(minor, s.decimals).replace(",", "")
         }
         staleFee()
-        local.update { it.copy(inFiat = next, amountText = text) }
+        local.update { it.copy(inFiat = next, amountText = text, typedInFiat = next) }
     }
+
+    /** [PayUiState.typingFiat] from the person's latest choices in [local], the price from the derived state. */
+    private fun typingFiatNow(s: PayUiState): Boolean = local.value.let { l -> l.typedInFiat ?: (l.inFiat && s.coinPriced) }
 
     fun onNote(text: String) = local.update { it.copy(note = text.take(140)) }
 
@@ -699,7 +805,13 @@ class PayViewModel(
     fun onAssetTag(tag: String?) {
         if (local.value.assetTag == tag) return
         staleFee()
-        local.update { it.copy(assetTag = tag) }
+        // The unit is decided again for the coin now named: its currency when it has a price, else the coin (as before
+        // prices). The person sees the change on the card at once; nothing changes it later behind their back.
+        val next = state.value.copy(assetTag = tag)
+        local.update { it.copy(assetTag = tag, typedInFiat = if (it.amountText.isEmpty()) null else next.fiatUnitNow) }
+        // A coin other than a dollar coin is worked out at its price: ask for a fresh one at the moment it is tagged
+        // (keepPricesFresh asks again once that grows old).
+        if (next.tagged?.second?.let { !MinorUnits.isDollar(it.symbol) } == true) refreshPrice()
         state.value.payee?.userId?.takeIf { it.isNotEmpty() }?.let { check(it, state.value.payChain) }
     }
 
@@ -864,7 +976,7 @@ class PayViewModel(
                 // A payout's amount is the approved one (CH3), so it comes back with it; a `#` card starts empty.
                 step = PayStep.Amount, amountText = if (intent.payout) intent.amount?.filter { c -> c.isDigit() || c == '.' }.orEmpty() else "", note = "",
                 result = null, error = null, assetTag = null, failure = null, choosing = false, requested = null,
-                inFiat = !intent.payout, blockchain = null,
+                inFiat = !intent.payout, blockchain = null, typedInFiat = null, priceRefresh = PriceRefresh.Idle,
             )
         }
     }
@@ -879,7 +991,7 @@ class PayViewModel(
         val decimals = state.value.wallet?.chains.orEmpty().flatMap { it.assets }.firstOrNull { it.symbol.equals(asset, true) }?.decimals ?: 6
         local.update {
             it.copy(
-                step = PayStep.Amount, inFiat = false, amountText = MinorUnits.toDisplay(amountMinor, decimals).replace(",", ""),
+                step = PayStep.Amount, inFiat = false, typedInFiat = false, amountText = MinorUnits.toDisplay(amountMinor, decimals).replace(",", ""),
                 assetTag = asset.lowercase().takeIf { a -> a != "usdc" }, note = cardNoteTyped(note), failure = null, result = null, error = null,
             )
         }
@@ -933,6 +1045,16 @@ class PayViewModel(
 
 /** GW13: the pause after the last keystroke before the fee is asked for. */
 const val QuoteDelayMillis = 400L
+
+/** Asking for a fresh coin price: [Failed] carries the request reference for support, when there is one. */
+sealed interface PriceRefresh {
+    data object Idle : PriceRefresh
+    data object Loading : PriceRefresh
+    data class Failed(val reference: String?) : PriceRefresh
+}
+
+/** How old the wallet's copy may be for its coin prices to turn money into ETH, SOL and the like (the server keeps them a minute). */
+const val PriceFreshMillis = 5L * 60 * 1000
 
 /** What the group-wallet side of the review reads, combined. */
 /** "0.5%", "1%", "2%" from basis points. */
