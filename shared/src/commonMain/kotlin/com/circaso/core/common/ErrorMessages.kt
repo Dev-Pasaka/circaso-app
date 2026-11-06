@@ -132,6 +132,10 @@ object ErrorMessages {
         "messaging.group_full" to "This group is full.",
         "messaging.group_invalid" to "Those group details can't be saved. Check them and try again.",
         "messaging.avatar_invalid" to "Couldn't use that photo. Try another one.",
+        // made on this phone: it has no key for the group's name and photo
+        "messaging.meta_key_missing" to "This phone lost the group's key. We've asked the members for it, so try again soon.",
+        "messaging.meta_key_asked" to "This phone lost the group's key. We've asked the members for it. If no one sends it, try again in a minute to give the group a new key.",
+        "messaging.group_name_needed" to "Type the group's name to carry on.",
         "messaging.version_conflict" to "This group changed just now. We've loaded the latest, so try again.",
         "messaging.message_too_large" to "That message is too long to send.",
         "messaging.recipients_mismatch" to "The members of this chat changed. Please send again.",

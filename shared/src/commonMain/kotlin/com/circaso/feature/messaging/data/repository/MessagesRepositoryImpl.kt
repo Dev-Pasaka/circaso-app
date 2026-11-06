@@ -646,6 +646,8 @@ class InboxProcessor(
                 loadChat(dto.chatId)
                 retryPending(dto.chatId, dto.senderId)
             }
+            // A member's phone lost this group's key and asks for it: answered 1:1 when I hold it. Never shown.
+            ChatPayload.MetaKeyRequest -> groupKeys.answerMetaKeyRequest(dto.chatId, dto.senderId)
             else -> return refuse(dto, "unknown payload ${payload.type}")
         }
         return true
@@ -712,7 +714,7 @@ class InboxProcessor(
 
     private companion object {
         const val PendingKeepMillis = 24L * 60 * 60 * 1000
-        val NeverResent = setOf(ChatPayload.SenderKey, ChatPayload.MetaKey, ChatPayload.Control, ChatPayload.MomentBody, ChatPayload.LiveUpdate, ChatPayload.LiveStop)
+        val NeverResent = setOf(ChatPayload.SenderKey, ChatPayload.MetaKey, ChatPayload.MetaKeyRequest, ChatPayload.Control, ChatPayload.MomentBody, ChatPayload.LiveUpdate, ChatPayload.LiveStop)
     }
 }
 

@@ -21,7 +21,7 @@ class CreateGroupUseCase(private val chats: ChatsRepository) { suspend operator 
 class RenameGroupUseCase(private val chats: ChatsRepository) { suspend operator fun invoke(chatId: String, name: String) = chats.rename(chatId, name) }
 
 /** Online-only (admins): a new group photo, or null to remove it. */
-class SetGroupPhotoUseCase(private val chats: ChatsRepository) { suspend operator fun invoke(chatId: String, image: com.circaso.core.platform.GroupPhotoImage?) = chats.setGroupPhoto(chatId, image) }
+class SetGroupPhotoUseCase(private val chats: ChatsRepository) { suspend operator fun invoke(chatId: String, image: com.circaso.core.platform.GroupPhotoImage?, name: String? = null) = chats.setGroupPhoto(chatId, image, name) }
 
 /** Online-only. */
 class SetMembersCanAddUseCase(private val chats: ChatsRepository) { suspend operator fun invoke(chatId: String, allowed: Boolean) = chats.setMembersCanAdd(chatId, allowed) }
