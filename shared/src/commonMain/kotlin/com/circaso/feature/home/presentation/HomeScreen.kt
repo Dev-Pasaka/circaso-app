@@ -130,10 +130,10 @@ fun HomeScreen(
         androidx.compose.foundation.layout.Box(Modifier.fillMaxSize()) {
             Tab.entries.filter { it.ordinal in visited.value }.forEach { t ->
                 val front = t == tab
+                androidx.compose.runtime.key(t) {
                 val alpha by androidx.compose.animation.core.animateFloatAsState(
                     if (front) 1f else 0f, androidx.compose.animation.core.tween(if (still) 0 else TabFadeMs), label = "tab",
                 )
-                androidx.compose.runtime.key(t) {
                     androidx.compose.foundation.layout.Box(
                         Modifier.fillMaxSize()
                             .then(if (front) Modifier.zIndex(1f) else Modifier.zIndex(0f))
@@ -142,7 +142,7 @@ fun HomeScreen(
                                 awaitPointerEventScope { while (true) awaitPointerEvent(androidx.compose.ui.input.pointer.PointerEventPass.Initial).changes.forEach { it.consume() } }
                             }),
                     ) {
-                        androidx.compose.runtime.CompositionLocalProvider(LocalTabArrival provides if (front) arrivals.value else -1) {
+                        androidx.compose.runtime.CompositionLocalProvider(LocalTabArrival provides if (front) arrivals.value else -1, com.circaso.designsystem.chrome.LocalInFront provides front) {
                             when (t) {
                                 Tab.You -> you(padding)
                                 Tab.Chats -> chats(padding)

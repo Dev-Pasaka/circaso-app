@@ -138,6 +138,8 @@ fun CircasoScaffold(
 /** Where a screen's full-bleed backdrop is drawn: the outermost scaffold, from the top-left of the screen. */
 class BackdropHost {
     var content: (@Composable BoxScope.() -> Unit)? by mutableStateOf(null)
+    /** Which screen put [content] there, so only that screen takes it away again. */
+    var owner: Any? = null
 }
 
 val LocalBackdropHost = androidx.compose.runtime.staticCompositionLocalOf<BackdropHost?> { null }
@@ -149,6 +151,16 @@ val LocalBackdropHost = androidx.compose.runtime.staticCompositionLocalOf<Backdr
 @Composable
 fun HostedBackdrop(content: @Composable BoxScope.() -> Unit) {
     val host = LocalBackdropHost.current ?: return
-    androidx.compose.runtime.SideEffect { host.content = content }
-    androidx.compose.runtime.DisposableEffect(host) { onDispose { if (host.content === content) host.content = null } }
+    val front = LocalInFront.current
+    val owner = androidx.compose.runtime.remember { Any() }
+    // Tabs stay alive behind the one in front (2026-11-07): only the front one may hold the backdrop, and a tab that
+    // goes behind gives it up, so the Wallet's glow never shows under You.
+    androidx.compose.runtime.SideEffect {
+        if (front) { host.content = content; host.owner = owner }
+        else if (host.owner === owner) { host.content = null; host.owner = null }
+    }
+    androidx.compose.runtime.DisposableEffect(host) { onDispose { if (host.owner === owner) { host.content = null; host.owner = null } } }
 }
+
+/** False inside a tab that is alive but behind the one in front: it keeps its state but mustn't draw chrome. */
+val LocalInFront = androidx.compose.runtime.compositionLocalOf { true }
