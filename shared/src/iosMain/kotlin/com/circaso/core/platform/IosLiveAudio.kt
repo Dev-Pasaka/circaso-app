@@ -34,6 +34,8 @@ interface LiveAudioBridgeApi {
     fun startSpeaker(sampleRate: Int, onPlaying: (Boolean) -> Unit, onLevel: (Float) -> Unit): Boolean
     fun playSamples(pcm16: NSData)
     fun flushSpeaker()
+    /** Her volume 0..1 on the player, at once; `startSpeaker` begins at 1. */
+    fun setSpeakerVolume(volume: Float)
     fun stopSpeaker()
 }
 
@@ -87,6 +89,10 @@ class IosLiveSpeaker : LiveSpeaker {
     override fun play(pcm: ShortArray) {
         if (!started || pcm.isEmpty()) return
         api?.playSamples(pcm.toNSData())
+    }
+
+    override fun setVolume(volume: Float) {
+        if (started) api?.setSpeakerVolume(volume.coerceIn(0f, 1f))
     }
 
     override fun flush() {

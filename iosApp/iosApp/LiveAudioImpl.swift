@@ -156,6 +156,7 @@ final class LiveAudioImpl: NSObject, LiveAudioBridgeApi {
         self.onPlaying = { onPlaying(KotlinBoolean(value: $0)) }
         self.onVoiceLevel = { onLevel(KotlinFloat(value: $0)) }
         queued = 0
+        player.volume = 1
         do {
             if !engine.isRunning { try engine.start() }
         } catch {
@@ -206,6 +207,12 @@ final class LiveAudioImpl: NSObject, LiveAudioBridgeApi {
             self.onVoiceLevel?(0)
             self.player.play()
         }
+    }
+
+    /// Ducking while the person may be talking over her. The shared code ramps it in ~16 ms steps; the player's
+    /// volume applies to what is already scheduled, so the dip is heard at once.
+    func setSpeakerVolume(volume: Float) {
+        work.async { self.player.volume = min(max(volume, 0), 1) }
     }
 
     func stopSpeaker() {

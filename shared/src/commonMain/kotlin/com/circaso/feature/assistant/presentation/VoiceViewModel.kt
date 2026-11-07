@@ -103,6 +103,11 @@ data class VoiceUiState(
     val notice: String? = null,
     /** Debug builds only: the last turn's delays ("model 420 · voice 610 · sent 780 · heard 830 ms"). */
     val timing: String? = null,
+    /**
+     * The person started talking over her and her voice is ducked while the server confirms it: the screen shows
+     * listening at once, before `interrupted` (or, if it was only noise, she comes back up and carries on).
+     */
+    val ducked: Boolean = false,
 ) {
     val live get() = phase != VoicePhase.Connecting && phase != VoicePhase.Ended && phase != VoicePhase.Reconnecting
 
@@ -116,13 +121,16 @@ data class VoiceUiState(
             VoicePhase.Connecting -> VoiceVisual.Connecting
             VoicePhase.Listening -> if (muted) VoiceVisual.Muted else VoiceVisual.Listening
             VoicePhase.Thinking -> VoiceVisual.Thinking
-            VoicePhase.Speaking -> VoiceVisual.Speaking
+            VoicePhase.Speaking -> if (ducked && !muted) VoiceVisual.Listening else VoiceVisual.Speaking
             VoicePhase.Reconnecting -> VoiceVisual.Reconnecting
             VoicePhase.Ended -> when (ending) {
                 VoiceEnding.Offline, is VoiceEnding.Failed, VoiceEnding.NoMicrophone -> VoiceVisual.Error
                 else -> VoiceVisual.Ended
             }
         }
+
+    /** The state a screen reader announces: [visual] without the short-lived duck, so a cough isn't read out. */
+    val announcedVisual: VoiceVisual get() = if (ducked) copy(ducked = false).visual else visual
 
     /** The loudness the waves follow: the person's while listening, Asha's while she speaks, else none. */
     val waveLevel: Float get() = when (visual) {
@@ -134,9 +142,12 @@ data class VoiceUiState(
 
 /**
  * The voice screen's conversation (guide A11): one socket and the microphone open for as long as the screen is up.
- * The microphone streams the whole time, even while Asha speaks, which is how talking over her works; `interrupted`
- * from the server stops her voice at once. The transcript, turn and reply frames build a chat-style transcript; the saved
- * messages reach the Asha chat through the normal history refresh.
+ * The microphone streams the whole time, even while Asha speaks, which is how talking over her works: the platform's
+ * echo canceller takes her voice out and the server decides what is the person (one clear word; guide `interrupted`).
+ * The phone answers first: the moment it hears the person over her ([VoiceActivity]), her voice ducks and the screen
+ * shows listening; `interrupted` then stops her for good, and without one she comes back up after a moment. The
+ * transcript, turn and reply frames build a chat-style transcript; the saved messages reach the Asha chat through the
+ * normal history refresh.
  */
 class VoiceViewModel(
     private val talk: TalkToAshaUseCase,
@@ -173,7 +184,7 @@ class VoiceViewModel(
 
     // The server's `reply_done` ends the speaking phase, not a gap between sentences, so the phase is never read off the player.
     val state: StateFlow<VoiceUiState> = combine(local, microphone.level, speaker.level) { ui, mic, voice ->
-        ui.copy(micLevel = if (ui.muted || ui.phase != VoicePhase.Listening) 0f else mic, voiceLevel = if (ui.phase == VoicePhase.Speaking) voice else 0f)
+        ui.copy(micLevel = if (ui.visual == VoiceVisual.Listening) mic else 0f, voiceLevel = if (ui.visual == VoiceVisual.Speaking) voice else 0f)
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), VoiceUiState())
 
     init {
@@ -262,18 +273,25 @@ class VoiceViewModel(
             is LiveVoiceEvent.Transcript -> local.update { it.copy(heard = event.text, heardFinal = event.final, notice = null) }
             is LiveVoiceEvent.Turn -> Diagnostics.note("voice: turn").also {
                 turnAt = nowMillis(); heardAfterMs = null; serverTiming = null
+                resetDucking()
                 local.update { it.copy(phase = VoicePhase.Thinking, turns = VoiceTranscript.question(it.turns, event.text), heard = "", heardFinal = false, status = null) } }
             is LiveVoiceEvent.Reply -> local.update { it.copy(phase = VoicePhase.Speaking, turns = VoiceTranscript.sentence(it.turns, event.text), status = null) }
             is LiveVoiceEvent.UsingTool -> local.update { it.copy(status = "Reading your chats…") }
             is LiveVoiceEvent.Status -> local.update { it.copy(status = event.label) }
-            is LiveVoiceEvent.Interrupted -> { Diagnostics.note("voice: interrupted"); speaker.flush(); local.update { it.copy(phase = VoicePhase.Listening, turns = VoiceTranscript.interrupted(it.turns)) } }
+            is LiveVoiceEvent.Interrupted -> {
+                Diagnostics.note("voice: interrupted")
+                speaker.flush()
+                resetDucking(flushed = true)
+                local.update { it.copy(phase = VoicePhase.Listening, turns = VoiceTranscript.interrupted(it.turns)) }
+            }
             is LiveVoiceEvent.ReplyDone -> {
                 Diagnostics.note("voice: reply done, spoken=${event.spoken}")
                 event.message.conversationId?.let { conversationId = it }
+                resetDucking()
                 local.update { it.copy(phase = VoicePhase.Listening, status = null, turns = VoiceTranscript.done(it.turns, event.message.text, event.spoken)) }
                 viewModelScope.launch { refreshHistory() }
             }
-            is LiveVoiceEvent.Error -> Diagnostics.note("voice: error ${event.code}").also { local.update { it.copy(phase = VoicePhase.Listening, status = null, notice = noticeFor(event.code), turns = VoiceTranscript.failed(it.turns)) } }
+            is LiveVoiceEvent.Error -> Diagnostics.note("voice: error ${event.code}").also { resetDucking(); local.update { it.copy(phase = VoicePhase.Listening, status = null, notice = noticeFor(event.code), turns = VoiceTranscript.failed(it.turns)) } }
             is LiveVoiceEvent.Closing -> { Diagnostics.note("voice: closing ${event.reason}"); finish(endingFor(event)) }
             // A refused sign-in ends the call; any other close is the line dropping, which [converse] reconnects.
             is LiveVoiceEvent.Closed -> if (!ended) closedEnding(event)?.let { finish(it) }
@@ -292,7 +310,10 @@ class VoiceViewModel(
     private suspend fun onReady(ready: LiveVoiceEvent.Ready, s: LiveVoiceSession) {
         Diagnostics.note("voice: ready ${ready.encoding} ${ready.sampleRate} Hz, ${ready.voiceSecondsLeft} s left")
         encoding = ready.encoding
-        speaker.start(ready.sampleRate)
+        speaker.start(ready.sampleRate) // at full volume: a new call never starts ducked
+        volumeRamp?.cancel()
+        volume = 1f
+        activity.reset()
         when (microphone.start()) {
             LiveMicStart.Started -> Unit
             LiveMicStart.PermissionDenied -> { s.end(); return finish(VoiceEnding.NoMicrophone) }
@@ -306,24 +327,77 @@ class VoiceViewModel(
         local.update { it.copy(phase = VoicePhase.Listening, voiceSecondsLeft = ready.voiceSecondsLeft) }
         streaming?.cancel()
         streaming = viewModelScope.launch {
-            // During Asha's whole turn (from the question taken, through her thinking, her sentences and the gaps
-            // between them, until her answer is done, cut off or failed) and for an echo tail after her voice last
-            // played, the loudspeaker's leftovers and room noise stay on the phone: the server takes any word it hears
-            // then as the person talking over her, which cut her off and left a silent "You talked over this". Only a
-            // voice clearly louder than that gets through (a real barge-in), and once heard the stream stays open for a
-            // moment so their words are not chopped. Outside her turn everything streams.
-            var openUntil = 0L
-            var lastPlayedAt = Long.MIN_VALUE / 2
+            // Everything streams, her turn included: no loudness gate. With the echo canceller on, a normal voice
+            // talking over her is quiet on the microphone, and a gate that kept her echo out kept the person out too.
+            // The server tells the person from her echo and from noise (guide `interrupted`); the phone only ducks.
             microphone.packets.collect { packet ->
-                val now = clock()
-                if (speaker.playing.value) lastPlayedAt = now
-                val herTurn = local.value.phase == VoicePhase.Thinking || local.value.phase == VoicePhase.Speaking
-                if (herTurn || now - lastPlayedAt < EchoTailMillis) {
-                    if (microphone.level.value >= BargeInLevel) openUntil = now + BargeInHoldMillis
-                    if (now > openUntil) return@collect
-                }
+                if (local.value.muted) return@collect
+                duckForVoice(clock())
                 s.sendAudio(packet)
             }
+        }
+    }
+
+    // ---- ducking: her voice dips the moment the person talks over her, before the server confirms it ----------
+
+    private val activity = VoiceActivity()
+    private var volumeRamp: Job? = null
+    private var volume = 1f
+    /** When the person's voice was last heard over hers while she is ducked; restored [DuckHoldMillis] after it. */
+    private var voiceLastAt = 0L
+
+    /** Called for every microphone packet (every 20 ms) with the clock. */
+    private fun duckForVoice(now: Long) {
+        val voice = activity.update(microphone.level.value, now)
+        val ui = local.value
+        if (!ui.ducked) {
+            if (voice && ui.phase == VoicePhase.Speaking) {
+                Diagnostics.note("voice: ducking")
+                voiceLastAt = now
+                rampVolume(DuckedVolume, DuckMillis)
+                local.update { it.copy(ducked = true) }
+            }
+            return
+        }
+        if (voice) { voiceLastAt = now; return }
+        // No `interrupted` after the person's voice stopped: it was a cough, the TV, a word to someone else.
+        if (now - voiceLastAt >= DuckHoldMillis) {
+            Diagnostics.note("voice: unducking")
+            rampVolume(1f, UnduckMillis)
+            local.update { it.copy(ducked = false) }
+        }
+    }
+
+    /**
+     * Her turn is over (talked over, answered, failed, or a new one began): full volume for the next reply. At once
+     * when nothing of hers is left to play (after a flush); otherwise what is still buffered finishes ducked, so the
+     * tail of her answer never jumps back up over a person mid-sentence.
+     */
+    private fun resetDucking(flushed: Boolean = false) {
+        volumeRamp?.cancel()
+        local.update { if (it.ducked) it.copy(ducked = false) else it }
+        if (volume == 1f) return
+        if (flushed || !speaker.playing.value) { volume = 1f; speaker.setVolume(1f); return }
+        volumeRamp = viewModelScope.launch {
+            speaker.playing.first { !it }
+            volume = 1f
+            speaker.setVolume(1f)
+        }
+    }
+
+    /** Moves her volume to [to] in [millis], easing out, a step per frame. */
+    private fun rampVolume(to: Float, millis: Long) {
+        volumeRamp?.cancel()
+        val from = volume
+        volumeRamp = viewModelScope.launch {
+            val steps = (millis / RampStepMillis).toInt().coerceAtLeast(1)
+            for (i in 1..steps) {
+                val t = i.toFloat() / steps
+                volume = from + (to - from) * (1 - (1 - t) * (1 - t))
+                speaker.setVolume(volume)
+                if (i < steps) delay(millis / steps)
+            }
+            volume = to
         }
     }
 
@@ -333,6 +407,12 @@ class VoiceViewModel(
     fun onMute() {
         val muted = !local.value.muted
         microphone.muted = muted
+        // muted, nothing of the person reaches anyone, so nothing of theirs ducks her either
+        // (she comes back up gently: the person has stepped out of the conversation, she hasn't stopped)
+        if (muted) {
+            activity.reset()
+            if (local.value.ducked) { rampVolume(1f, UnduckMillis); local.update { it.copy(ducked = false) } }
+        }
         local.update { it.copy(muted = muted) }
     }
 
@@ -360,9 +440,10 @@ class VoiceViewModel(
         ended = true
         giveUp?.cancel()
         streaming?.cancel()
+        volumeRamp?.cancel()
         microphone.stop()
         speaker.stop()
-        local.update { it.copy(phase = VoicePhase.Ended, ending = ending, status = null) }
+        local.update { it.copy(phase = VoicePhase.Ended, ending = ending, status = null, ducked = false) }
     }
 
     private fun endingFor(c: LiveVoiceEvent.Closing): VoiceEnding = when (c.reason) {
@@ -399,11 +480,14 @@ class VoiceViewModel(
     }
 
     private companion object {
-        /** A voice at the phone sits at 0.5 and above on the level scale; echo after cancellation stays well under. */
-        const val BargeInLevel = 0.5f
-        const val BargeInHoldMillis = 600L
-        /** How long after her voice last played the microphone stays gated: the room's echo tail. */
-        const val EchoTailMillis = 500L
+        /** Her volume while the person may be talking over her: low enough to hear yourself, not gone. */
+        const val DuckedVolume = 0.25f
+        /** Down fast (an answer to the person), back up gently (it was nothing). */
+        const val DuckMillis = 80L
+        const val UnduckMillis = 150L
+        /** How long after the person's voice stops a ducked reply waits for the server's `interrupted`. */
+        const val DuckHoldMillis = 900L
+        const val RampStepMillis = 16L
 
         /** A dropped call that can't reopen within this ends as Offline, with Talk Again. */
         const val ReconnectWindowMillis = 30_000L
