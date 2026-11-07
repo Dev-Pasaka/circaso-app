@@ -41,6 +41,8 @@ data class ChatsUiState(
     val firstName: String? = null,
     /** The wallet's rate to the person's currency, for "Bob sent KES 650" in the list. */
     val fiat: com.circaso.feature.wallet.domain.FiatValue? = null,
+    /** Each held coin's value in the person's money, so a preview in EURC reads like USDC's. */
+    val coinRates: Map<String, String> = emptyMap(),
     /** The chip under the search bar: every chat, the unread ones, groups, or the Moments list (as WhatsApp). */
     val filter: ChatFilter = ChatFilter.All,
 ) {
@@ -64,7 +66,7 @@ class ChatsViewModel(
 
     init {
         viewModelScope.launch { preferences.flag(MetAsha).collect { met -> _state.update { it.copy(meetAsha = !met) } } }
-        observeWallet?.let { wallet -> viewModelScope.launch { wallet().collect { w -> _state.update { it.copy(fiat = w?.fiat) } } } }
+        observeWallet?.let { wallet -> viewModelScope.launch { wallet().collect { w -> _state.update { it.copy(fiat = w?.fiat, coinRates = com.circaso.feature.wallet.domain.coinUnitRates(w)) } } } }
         viewModelScope.launch { observeProfile().collect { p -> _state.update { it.copy(firstName = p?.displayName?.trim()?.substringBefore(' ')?.takeIf { n -> n.isNotEmpty() }) } } }
     }
 

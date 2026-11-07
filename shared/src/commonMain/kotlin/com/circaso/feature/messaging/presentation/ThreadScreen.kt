@@ -277,6 +277,8 @@ fun ThreadContent(
         focusComposer()
     }
     val typingAmount = if (payChip == null && payable) typingAmount(state.draft) else null
+    // The wallet's coin prices, so a card in EURC or ETH reads in the person's money like USDC.
+    val coinRates = androidx.compose.runtime.remember(quickPay?.state?.wallet) { com.circaso.feature.wallet.domain.coinUnitRates(quickPay?.state?.wallet) }
     LaunchedEffect(typingAmount) {
         if (typingAmount != null) quickPay?.onAmount?.invoke(typingAmount) else if (payChip == null) quickPay?.onReset?.invoke()
     }
@@ -657,7 +659,7 @@ fun ThreadContent(
                                 else onOpenMoment(if (outgoing) state.chat?.peerId else null, q.momentId)
                             }) { onSelect(m) }
                         }
-                        is Message.Payment -> PaymentMessage(m, onOpen = { onOpenTransfer(m.transferId) }, moment = !m.outgoing && !groupPayoutCard(m, state.groupMoney) && index == state.messages.lastIndex && now - m.orderAt < MoneyMomentMillis, onThanks = { onQuickReply("Asante!") }, chama = chama, fiat = state.fiat, groupName = state.chat?.title?.takeIf { state.groupMoney?.hasWallet == true }, groupPayout = groupPayoutCard(m, state.groupMoney),
+                        is Message.Payment -> PaymentMessage(m, onOpen = { onOpenTransfer(m.transferId) }, moment = !m.outgoing && !groupPayoutCard(m, state.groupMoney) && index == state.messages.lastIndex && now - m.orderAt < MoneyMomentMillis, onThanks = { onQuickReply("Asante!") }, chama = chama, fiat = state.fiat, coinRates = coinRates, groupName = state.chat?.title?.takeIf { state.groupMoney?.hasWallet == true }, groupPayout = groupPayoutCard(m, state.groupMoney),
                             react = reactUi(m.messageId), transfer = state.paymentStates[m.transferId], pendingPayment = state.paymentPending(m, now),
                             // Only a payment made just now is read out (not old cards a new phone's sync brings back).
                             announce = m.outgoing && m.localId == lastOutgoingPayment && now - m.orderAt < AnnounceWithinMillis,
@@ -863,6 +865,8 @@ internal fun amountShortcut(text: String): Pair<String, String>? {
 @Composable
 private fun PaymentMessage(
     m: Message.Payment, onOpen: () -> Unit, moment: Boolean = false, onThanks: () -> Unit = {}, chama: Chama? = null, fiat: FiatValue? = null, react: ReactUi? = null, groupName: String? = null,
+    /** Each held coin's value in the person's money ([com.circaso.feature.wallet.domain.coinUnitRates]). */
+    coinRates: Map<String, String> = emptyMap(),
     /** Money out of the group's wallet: the note says so and the group wallet's signer sent the card ([groupPayoutCard]). */
     groupPayout: Boolean = false,
     /** The payment itself as this phone knows it (null: not read yet, as before). */
@@ -896,9 +900,9 @@ private fun PaymentMessage(
         m.senderId == treasurer -> "Paid from the group"
         else -> "Contribution"
     }
-    val fiatAmount = fiat?.let { com.circaso.feature.chama.presentation.amountText(m.amountMinor, it) }
-    // Only dollar coins have a rate; anything else shows as itself.
-    val shownFiat = fiatAmount?.takeIf { MinorUnits.isDollar(m.asset) }
+    // Every coin in the person's money, the same as USDC (Pasaka, 2026-11-07): EURC, ETH… at their price; a coin
+    // with no price yet shows as itself.
+    val shownFiat = com.circaso.feature.wallet.domain.coinFiatText(m.amountMinor, m.asset, fiat, coinRates)
     Row(Modifier.fillMaxWidth(), horizontalArrangement = if (m.outgoing) Arrangement.End else Arrangement.Start) {
         MessageColumn(m.outgoing, Modifier.weight(1f, fill = false)) {
             val card: @Composable () -> Unit = { MoneyCard(
