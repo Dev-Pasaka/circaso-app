@@ -179,7 +179,7 @@ fun ThreadScreen(
         media = viewModel.media?.let { m ->
             ThreadMediaActions(
                 canShareLocation = m.canShareLocation, onCompose = onComposeMedia, uploading = m.progress, onLocation = viewModel::onSendLocation,
-                onVoiceStart = viewModel::onVoiceStart, onVoiceEnd = viewModel::onVoiceEnd, load = { d -> m.load(d) }, mapPicture = m::mapPicture,
+                onVoiceStart = viewModel::onVoiceStart, onVoiceEnd = viewModel::onVoiceEnd, load = { d -> m.load(d) }, openDocument = { d -> m.videoFile(d) }, mapPicture = m::mapPicture,
                 onShareLive = viewModel::onShareLive, onStopLive = viewModel::onStopLive,
                 onPlayVideo = viewModel::onPlayVideo, onCloseVideo = viewModel::onCloseVideo,
                 onPlay = viewModel::onPlay, onRetry = viewModel::onRetryMedia,
@@ -391,7 +391,7 @@ fun ThreadContent(
     val lastOutgoingPayment = state.messages.lastOrNull { it is Message.Payment && it.outgoing }?.localId
 
     // Location tiles draw the server's map picture when there is one (MAP1).
-    androidx.compose.runtime.CompositionLocalProvider(LocalMapPicture provides media?.mapPicture) {
+    androidx.compose.runtime.CompositionLocalProvider(LocalMapPicture provides media?.mapPicture, LocalOpenDocument provides media?.openDocument) {
     CircasoScaffold(
         banner = {
             // Someone I chat with but haven't saved: one tap saves them (moments need both sides saved).
@@ -1005,6 +1005,9 @@ class ThreadMediaActions(
     val onVoiceStart: () -> Unit,
     val onVoiceEnd: (send: Boolean) -> Unit,
     val load: suspend (com.circaso.feature.messaging.data.repository.MediaDetails) -> com.circaso.feature.messaging.data.repository.MediaLoad,
+    /** A document's decrypted file on disk (downloaded a piece at a time if needed), or why not: opened from its path. */
+    val openDocument: suspend (com.circaso.feature.messaging.data.repository.MediaDetails) -> Pair<String?, com.circaso.feature.messaging.data.repository.MediaLoad?> =
+        { null to com.circaso.feature.messaging.data.repository.MediaLoad.Failed },
     val mapPicture: MapPictureLoader? = null,
     val onShareLive: (durationMs: Long) -> Unit = {},
     val onPlayVideo: (Message.Media) -> Unit = {},
@@ -1071,12 +1074,12 @@ internal fun FailedBadge(modifier: Modifier = Modifier) {
 @Composable
 private fun FileBubble(
     m: Message.Media, bubble: Modifier, options: (() -> Unit)?, onOptions: () -> Unit,
-    load: suspend (com.circaso.feature.messaging.data.repository.MediaDetails) -> com.circaso.feature.messaging.data.repository.MediaLoad,
     ink: androidx.compose.ui.graphics.Color, inkSoft: androidx.compose.ui.graphics.Color, progress: Float?,
 ) {
     val c = CircasoTheme.colors
     val t = CircasoTheme.typography
     val scope = androidx.compose.runtime.rememberCoroutineScope()
+    val openDocument = LocalOpenDocument.current ?: { null to com.circaso.feature.messaging.data.repository.MediaLoad.Failed }
     var opening by androidx.compose.runtime.remember(m.localId) { androidx.compose.runtime.mutableStateOf(false) }
     var problem by androidx.compose.runtime.remember(m.localId) { androidx.compose.runtime.mutableStateOf<String?>(null) }
     val name = m.details.label ?: "File"
@@ -1092,13 +1095,15 @@ private fun FileBubble(
                 else if (!opening) scope.launch {
                     opening = true
                     problem = null
-                    when (val r = load(m.details)) {
-                        is com.circaso.feature.messaging.data.repository.MediaLoad.Loaded ->
-                            if (!com.circaso.core.platform.openFile(r.bytes, name, m.details.mime ?: "application/octet-stream")) problem = "No app here can open this file"
-                        com.circaso.feature.messaging.data.repository.MediaLoad.Offline -> problem = "Opens when you're back online"
-                        com.circaso.feature.messaging.data.repository.MediaLoad.Gone -> problem = "No longer available"
-                        com.circaso.feature.messaging.data.repository.MediaLoad.Damaged -> problem = "This file couldn't be opened safely"
-                        com.circaso.feature.messaging.data.repository.MediaLoad.Failed -> problem = "Couldn't open · Tap to try again"
+                    // From its file on disk (downloaded and decrypted a piece at a time): never read into memory.
+                    val (path, why) = openDocument(m.details)
+                    when {
+                        path != null ->
+                            if (!com.circaso.core.platform.openFile(path, name, m.details.mime ?: "application/octet-stream")) problem = "No app here can open this file"
+                        why == com.circaso.feature.messaging.data.repository.MediaLoad.Offline -> problem = "Opens when you're back online"
+                        why == com.circaso.feature.messaging.data.repository.MediaLoad.Gone -> problem = "No longer available"
+                        why == com.circaso.feature.messaging.data.repository.MediaLoad.Damaged -> problem = "This file couldn't be opened safely"
+                        else -> problem = "Couldn't open · Tap to try again"
                     }
                     opening = false
                 }
@@ -1429,7 +1434,7 @@ private fun MediaRow(
                         m.details.caption?.let { BasicText(it, style = t.body.copy(color = ink), modifier = Modifier.padding(horizontal = CircasoSpacing.s3, vertical = CircasoSpacing.s2)) }
                     }
                 }
-                m.isFile -> FileBubble(m, bubble, options, onOptions, load, ink, inkSoft, uploadProgress)
+                m.isFile -> FileBubble(m, bubble, options, onOptions, ink, inkSoft, uploadProgress)
                 m.isVoice -> Row(
                     bubble.then(if (options != null) Modifier.combinedClickable(onLongClick = options, onClick = { if (failed) onOptions() }) else Modifier)
                         .padding(horizontal = CircasoSpacing.s3, vertical = CircasoSpacing.s2),

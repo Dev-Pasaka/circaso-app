@@ -33,11 +33,16 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
 /**
- * A chat's limits, one named constant each so they are easy to change (Pasaka hasn't decided; 2026-11-07). For now the
- * same as a moment's: a video up to a minute untrimmed, ten items at once. Chats allowed about 2 minutes and 30 items
- * before they moved onto the moment composer.
+ * A chat's limits (Pasaka, 2026-11-07: "Trimming is for moments. When sharing in a chat ... there's no need to trim
+ * videos ... The limit should be on the file size"). No length limit: null means any video goes untrimmed; the
+ * trimmer stays as an option, never a gate. The limit is the file's size, [com.circaso.core.platform.ChatFileMaxBytes].
  */
-const val ChatVideoMaxMs: Long = com.circaso.core.platform.MomentMediaMaxMs
+val ChatVideoMaxMs: Long? = null
+
+/**
+ * Ten at once, as a moment: each item can now be up to 100 MB and is copied into Circaso's files before it goes, so
+ * ten keeps a batch to about a gigabyte on the phone and a reasonable wait, and matches the moment composer's picker.
+ */
 const val ChatPickMax: Int = com.circaso.core.platform.MomentPickMax
 
 /** Where the attach sheet opens the composer: the camera (with the recents strip), the gallery, or Files. */
@@ -98,6 +103,8 @@ class ChatMediaComposerViewModel(
         read = { _state.value.media },
         write = { f -> _state.update { it.copy(media = f(it.media)) } },
         maxItems = ChatPickMax,
+        maxBytes = com.circaso.core.platform.ChatFileMaxBytes,
+        sendAsIs = true,
     )
 
     init {
@@ -153,8 +160,8 @@ class ChatMediaComposerViewModel(
     fun addDocument() { viewModelScope.launch { composer.pickDocument() } }
 
     /**
-     * Each item, in order, read and made ready (a video too large is re-encoded with the same step a moment uses), then
-     * queued as its own message. Only once every one is ready is anything queued: never half a batch sent and the rest
+     * Each item, in order, checked and made ready (a video or document goes as it is, from its file, up to
+     * [com.circaso.core.platform.ChatFileMaxBytes]; one over it stops the send on that item with its size), then queued as its own message. Only once every one is ready is anything queued: never half a batch sent and the rest
      * left behind. If queueing stops part-way, what went is taken off the review, so trying again never sends twice.
      */
     fun send() {
@@ -172,7 +179,7 @@ class ChatMediaComposerViewModel(
                 for ((index, item) in s.media.items.withIndex()) {
                     when (val p = composer.prepare(item)) {
                         PreparedItem.Missing -> { stop(index, if (item.capture is ComposerCapture.Document) "This document isn’t on the phone any more. Pick it again." else "This video isn’t on the phone any more. Pick it again."); return@keep }
-                        PreparedItem.TooLarge -> { stop(index, when { item.capture is ComposerCapture.Document -> "Documents up to 32 MB can be sent."; item.video != null -> "This video is too large to send. Trim it shorter."; else -> "This photo is too large to send." }); return@keep }
+                        is PreparedItem.TooLarge -> { stop(index, tooLarge(item, p.size)); return@keep }
                         else -> ready += p
                     }
                 }
@@ -197,13 +204,25 @@ class ChatMediaComposerViewModel(
         }
     }
 
+    /** Said on the item over the limit, before anything is sent: what it is, its size, and the limit. */
+    private fun tooLarge(item: com.circaso.feature.mediacompose.ComposerItem, size: Long?): String {
+        val limit = composer.limitLabel
+        val its = size?.let { " This one is ${com.circaso.feature.mediacompose.overLimitLabel(it, composer.maxBytes)}." }.orEmpty()
+        return when {
+            item.video != null && size != null -> composer.tooLargeVideo(size)
+            item.video != null -> "Videos up to $limit can be sent."
+            item.capture is ComposerCapture.Document -> "Documents up to $limit can be sent.$its"
+            else -> "Photos up to $limit can be sent.$its"
+        }
+    }
+
     private fun stop(index: Int, why: String) = _state.update { it.copy(sending = false, media = it.media.copy(preparing = false, current = index, error = why)) }
 
     override fun onCleared() { camera?.close() }
 }
 
 /** The words a chat uses in the shared composer. */
-private val ChatCopy = MediaComposeCopy(itemNoun = "Item", sendVerb = "send", trimHint = "Videos are up to a minute. Drag the edges to choose which minute.")
+private val ChatCopy = MediaComposeCopy(itemNoun = "Item", sendVerb = "send", trimHint = "Drag the edges to cut the video, or cancel to send it whole.", trimHintAlways = true)
 
 /**
  * The chat's media composer: MediaComposeStage, the screen a moment is posted from, with who it goes to beside Send.
@@ -240,7 +259,6 @@ fun ChatMediaComposerScreen(viewModel: ChatMediaComposerViewModel, onClose: () -
             enabled = state.canSend, busy = state.sending || media.preparing, onClick = viewModel::send,
         ),
         footnote = when {
-            media.preparing -> "Making the video smaller to send…"
             n > 1 -> "$n items, in this order. End-to-end encrypted."
             else -> "End-to-end encrypted."
         },

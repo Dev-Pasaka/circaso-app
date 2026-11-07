@@ -3,6 +3,8 @@
 package com.circaso.core.platform
 
 import kotlinx.cinterop.addressOf
+import kotlinx.cinterop.alloc
+import kotlinx.cinterop.ptr
 import kotlinx.cinterop.usePinned
 import kotlinx.coroutines.suspendCancellableCoroutine
 import platform.Foundation.NSData
@@ -87,4 +89,55 @@ class IosMediaFiles : MediaFiles {
 
     override suspend fun path(name: String): String? = filePath(name).takeIf { NSFileManager.defaultManager.fileExistsAtPath(it) }
     override suspend fun delete(name: String) { NSFileManager.defaultManager.removeItemAtPath(filePath(name), error = null) }
+
+    // Streaming through POSIX file calls: only the piece asked for is in memory, and nothing waits on an autorelease
+    // pool (a loop of NSData pieces would keep every piece alive until the pool drained).
+
+    override suspend fun size(name: String): Long? = fileSizeAt(filePath(name))
+
+    override suspend fun readAt(name: String, offset: Long, count: Int): ByteArray? = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
+        val f = platform.posix.fopen(filePath(name), "rb") ?: return@withContext null
+        try {
+            if (count <= 0) return@withContext ByteArray(0)
+            platform.posix.fseeko(f, offset, platform.posix.SEEK_SET)
+            val buf = ByteArray(count)
+            val n = buf.usePinned { platform.posix.fread(it.addressOf(0), 1u, count.toULong(), f).toInt() }
+            if (n == count) buf else buf.copyOf(n)
+        } finally {
+            platform.posix.fclose(f)
+        }
+    }
+
+    override suspend fun append(name: String, bytes: ByteArray) = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
+        NSFileManager.defaultManager.createDirectoryAtPath(applicationSupportPath("media"), withIntermediateDirectories = true, attributes = null, error = null)
+        val f = platform.posix.fopen(filePath(name), "ab") ?: throw IllegalStateException("can't open a media file to write")
+        try {
+            if (bytes.isNotEmpty()) {
+                val n = bytes.usePinned { platform.posix.fwrite(it.addressOf(0), 1u, bytes.size.toULong(), f).toInt() }
+                if (n != bytes.size) throw IllegalStateException("a media file write fell short (disk full?)")
+            }
+        } finally {
+            platform.posix.fclose(f)
+        }
+    }
+
+    override suspend fun move(from: String, to: String): Boolean {
+        val fm = NSFileManager.defaultManager
+        if (!fm.fileExistsAtPath(filePath(from))) return false
+        fm.removeItemAtPath(filePath(to), error = null)
+        return fm.moveItemAtPath(filePath(from), toPath = filePath(to), error = null)
+    }
+
+    /** A copy through the file system (on APFS a clone, instant and without reading the file). */
+    override suspend fun copyIn(path: String, name: String): Boolean {
+        val fm = NSFileManager.defaultManager
+        fm.createDirectoryAtPath(applicationSupportPath("media"), withIntermediateDirectories = true, attributes = null, error = null)
+        fm.removeItemAtPath(filePath(name), error = null)
+        return fm.copyItemAtPath(path, toPath = filePath(name), error = null)
+    }
+}
+
+actual fun fileSizeAt(path: String): Long? = kotlinx.cinterop.memScoped {
+    val st = alloc<platform.posix.stat>()
+    if (platform.posix.stat(path, st.ptr) != 0) null else st.st_size
 }

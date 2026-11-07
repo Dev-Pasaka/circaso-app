@@ -107,4 +107,38 @@ class AndroidMediaFiles(context: Context) : MediaFiles {
     override suspend fun clear() { withContext(Dispatchers.IO) { dir.deleteRecursively() } }
     override suspend fun path(name: String): String? = File(dir, name).takeIf { it.exists() }?.absolutePath
     override suspend fun delete(name: String) { withContext(Dispatchers.IO) { File(dir, name).delete() } }
+
+    override suspend fun size(name: String): Long? = withContext(Dispatchers.IO) { File(dir, name).takeIf { it.exists() }?.length() }
+
+    override suspend fun readAt(name: String, offset: Long, count: Int): ByteArray? = withContext(Dispatchers.IO) {
+        val file = File(dir, name).takeIf { it.exists() } ?: return@withContext null
+        java.io.RandomAccessFile(file, "r").use { raf ->
+            val n = (raf.length() - offset).coerceIn(0, count.toLong()).toInt()
+            ByteArray(n).also { if (n > 0) { raf.seek(offset); raf.readFully(it) } }
+        }
+    }
+
+    override suspend fun append(name: String, bytes: ByteArray) = withContext(Dispatchers.IO) {
+        dir.mkdirs()
+        java.io.FileOutputStream(File(dir, name), true).use { it.write(bytes) }
+    }
+
+    override suspend fun move(from: String, to: String): Boolean = withContext(Dispatchers.IO) {
+        val source = File(dir, from)
+        if (!source.exists()) return@withContext false
+        val target = File(dir, to)
+        target.delete()
+        source.renameTo(target) || (runCatching { source.copyTo(target, overwrite = true); source.delete() }.isSuccess)
+    }
+
+    override suspend fun copyIn(path: String, name: String): Boolean = withContext(Dispatchers.IO) {
+        runCatching {
+            dir.mkdirs()
+            // Streamed through a 256 KB buffer: a 100 MB video never sits in memory.
+            File(path).inputStream().use { input -> File(dir, name).outputStream().use { input.copyTo(it, 256 * 1024) } }
+            true
+        }.getOrDefault(false)
+    }
 }
+
+actual fun fileSizeAt(path: String): Long? = File(path).takeIf { it.isFile }?.length()

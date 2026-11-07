@@ -70,15 +70,19 @@ interface MediaLibrary {
      */
     suspend fun read(path: String): ByteArray? = null
 
+    /** The size of the file at [path] in bytes (a picked video, a document's copy), or null when it isn't there. */
+    suspend fun size(path: String): Long? = fileSizeAt(path)
+
     /** [count] small JPEG frames spread evenly through the video at [path], for the trim bar (M3b). */
     suspend fun filmstrip(path: String, count: Int): List<ByteArray> = emptyList()
 
     /**
-     * A copy of the video at [path] from [startMs] to [endMs] (MP4, ready to post, with a fresh thumb); null when the
+     * A copy of the video at [path] from [startMs] to [endMs] (MP4, ready to post, with a fresh thumb), at most
+     * [maxBytes] (a moment's 32 MiB; a chat's 100 MB, so a cut from a long video keeps its quality); null when the
      * phone can't make one. The platform's own tools: Media3 Transformer (already in the app) on Android,
      * AVAssetExportSession on iOS. No new library.
      */
-    suspend fun trim(path: String, startMs: Long, endMs: Long): CapturedMedia? = null
+    suspend fun trim(path: String, startMs: Long, endMs: Long, maxBytes: Long = MomentMediaMaxBytes): CapturedMedia? = null
 
     /**
      * The system's Files picker for any document (a chat's Document, no permission needed); null when the person
@@ -131,3 +135,17 @@ const val MomentMediaMaxMs = 60_000L
 
 /** Picks from the gallery at once (design M3: up to 10, each its own moment). */
 const val MomentPickMax = 10
+
+/**
+ * The largest chat attachment, as encrypted and uploaded: the server's `MESSAGING_MAX_ATTACHMENT_BYTES` (Pasaka,
+ * 2026-11-07: "up to 100 MB"; first said 500). Chat videos and documents go as they are, untrimmed and not
+ * re-encoded, up to this. Moments keep [MomentMediaMaxBytes].
+ */
+const val ChatAttachmentMaxBytes: Long = 100L * 1024 * 1024
+
+/**
+ * The largest video or document a chat sends, as the person's file: [ChatAttachmentMaxBytes] less the encryption's
+ * 28 bytes per 1 MiB chunk ([com.circaso.core.crypto.ChunkedFileCipher]), so a file this size seals to exactly the limit.
+ */
+const val ChatFileMaxBytes: Long = ChatAttachmentMaxBytes -
+    (ChatAttachmentMaxBytes / com.circaso.core.crypto.ChunkedFileCipher.ChunkBytes) * com.circaso.core.crypto.ChunkedFileCipher.ChunkOverhead

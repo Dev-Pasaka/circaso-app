@@ -46,6 +46,10 @@ private class ScriptedUploads(val answers: MutableList<Boolean> = mutableListOf(
         puts += url to bytes
         return answers.removeFirstOrNull() ?: true
     }
+    override suspend fun putStored(url: String, headers: Map<String, String>, files: MediaFiles, name: String, size: Long, onProgress: (Long, Long) -> Unit): Boolean? {
+        puts += url to files.read(name)!!
+        return answers.removeFirstOrNull() ?: true
+    }
     override suspend fun finished(url: String) = url in finishedUrls
 }
 

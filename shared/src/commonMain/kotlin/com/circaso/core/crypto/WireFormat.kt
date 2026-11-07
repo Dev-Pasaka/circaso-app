@@ -122,6 +122,12 @@ data class ChatPayload(
      * Optional: an older app ignores it and shows each on its own; each item is still its own message and attachment.
      */
     val albumId: String? = null,
+    /**
+     * A file sealed in 1 MiB chunks (2026-11-07, chat files over 32 MiB; [ChunkedFileCipher]): its base64 file key, in
+     * place of [mediaKey] and [digest]. An older app sees neither and shows "a message this phone can't show" instead
+     * of loading a file too large for it.
+     */
+    val chunkedKey: String? = null,
     /** A moment's body sealed again for one person (type [MomentBody]): which moment; [text] is the body JSON. */
     val momentId: String? = null,
     /**

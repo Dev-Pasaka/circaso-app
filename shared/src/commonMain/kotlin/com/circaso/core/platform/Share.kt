@@ -8,7 +8,7 @@ expect fun sharePdf(title: String, lines: List<String>)
 
 /**
  * Opens a chat's document with the apps on this phone that can show it (Android's "Open with", iPhone's share sheet,
- * which offers Save to Files and the apps that open it). The decrypted copy is written to the app's cache under its
- * own name first. False when nothing could take it.
+ * which offers Save to Files and the apps that open it). The decrypted file at [path] is copied to the app's cache under
+ * its own name first, through the file system (never read into memory). False when nothing could take it.
  */
-expect suspend fun openFile(bytes: ByteArray, name: String, mime: String): Boolean
+expect suspend fun openFile(path: String, name: String, mime: String): Boolean

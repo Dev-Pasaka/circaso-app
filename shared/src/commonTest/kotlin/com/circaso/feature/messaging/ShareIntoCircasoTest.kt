@@ -64,6 +64,8 @@ private val photo = SharedFile("/in/a.jpg", "a.jpg", "image/jpeg", 2_000)
 private val clip = SharedFile("/in/b.mp4", "b.mp4", "video/mp4", 9_000)
 private val pdf = SharedFile("/in/Lease.pdf", "Lease.pdf", "application/pdf", 12_000)
 private val huge = SharedFile("/in/film.mov", "film.mov", "video/quicktime", MomentMediaMaxBytes + 1)
+/** Over a chat's limit too (100 MB less encryption). */
+private val tooBigForChats = SharedFile("/in/long.mov", "long.mov", "video/quicktime", com.circaso.core.platform.ChatFileMaxBytes + 1)
 
 class SharedItemsTest {
     @Test fun whatEachSharedItemBecomes() {
@@ -81,7 +83,7 @@ class SharedItemsTest {
         assertEquals(10, check.usable.size)
         assertEquals(listOf(huge), check.tooLarge)
         assertEquals(2, check.overCount)
-        assertEquals("film.mov is over 32 MB, so it can’t be sent. You can send up to 10 at a time; the first 10 are here.", check.notice)
+        assertEquals("film.mov is just over 32 MB. Up to 32 MB can be sent. You can send up to 10 at a time; the first 10 are here.", check.notice)
         assertNull(checkShare(listOf(photo)).notice)
     }
 
@@ -240,6 +242,7 @@ private class ShareLibrary : MediaLibrary {
     override suspend fun load(item: LibraryItem): CapturedMedia? = null
     override suspend fun pick(kind: LibraryKind): CapturedMedia? = null
     override suspend fun read(path: String) = ByteArray(5)
+    override suspend fun size(path: String): Long? = 5
     override suspend fun loadFile(path: String, mime: String): CapturedMedia? =
         if (mime.startsWith("video")) CapturedMedia(ByteArray(0), mime, 1, 1, durationMs = 5_000, path = path) else CapturedMedia(ByteArray(3), "image/jpeg", 1, 1)
 }
@@ -281,7 +284,7 @@ class SharedIntoChatsTest {
     }
 
     @Test fun aShareWithNothingUsableClosesAndSaysWhy() = runTest(dispatcher) {
-        val vm = ChatMediaComposerViewModel("c1", ChatComposeStart.Shared, ShareLibrary(), NoCamera, ShareChats(), ChatMediaSender { _, _, _ -> true }, now = { 0 }, shared = { listOf(huge) })
+        val vm = ChatMediaComposerViewModel("c1", ChatComposeStart.Shared, ShareLibrary(), NoCamera, ShareChats(), ChatMediaSender { _, _, _ -> true }, now = { 0 }, shared = { listOf(tooBigForChats) })
         assertTrue(vm.state.value.closed)
     }
 }

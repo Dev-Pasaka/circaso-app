@@ -7,7 +7,7 @@ import Shared
 /// was the soft video Pasaka saw), so this is AVAssetReader into AVAssetWriter, the platform's own tools.
 enum MomentVideoTranscoder {
     /// Writes [range] of [asset] to [url] as MP4; false when this phone can't (the caller then has nothing to post).
-    static func transcode(_ asset: AVAsset, range: CMTimeRange, to url: URL) async -> Bool {
+    static func transcode(_ asset: AVAsset, range: CMTimeRange, to url: URL, maxBytes: Int64 = MomentCameraKt.MomentMediaMaxBytes) async -> Bool {
         guard let video = try? await asset.loadTracks(withMediaType: .video).first,
               let loaded = try? await video.load(.naturalSize, .preferredTransform, .nominalFrameRate, .estimatedDataRate)
         else { return false }
@@ -19,7 +19,7 @@ enum MomentVideoTranscoder {
             width: Int32(abs(shown.width).rounded()), height: Int32(abs(shown.height).rounded()),
             frameRate: fps > 0 ? KotlinFloat(value: fps) : nil,
             sourceBitRate: dataRate > 0 ? KotlinLong(value: Int64(dataRate)) : nil,
-            durationMs: max(durationMs, 1), maxBytes: MomentCameraKt.MomentMediaMaxBytes
+            durationMs: max(durationMs, 1), maxBytes: maxBytes
         )
         // The encoder works in the track's own orientation; the rotation stays in the file as it was.
         let (encW, encH) = sideways ? (Int(plan.height), Int(plan.width)) : (Int(plan.width), Int(plan.height))

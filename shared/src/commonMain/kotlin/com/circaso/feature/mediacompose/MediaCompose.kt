@@ -42,8 +42,11 @@ sealed interface ComposerCapture {
  */
 data class ComposerItem(val capture: ComposerCapture, val caption: String = "", val unplayable: Boolean = false) {
     val video: CapturedMedia? get() = (capture as? ComposerCapture.Shot)?.takeIf { it.video }?.media
-    /** Longer than [maxMs] (a moment's minute): it opens the trimmer, and can't be sent until it has been trimmed (M3b). */
-    fun tooLong(maxMs: Long): Boolean = (video?.durationMs ?: 0) > maxMs + 500
+    /**
+     * Longer than [maxMs] (a moment's minute): it opens the trimmer, and can't be sent until it has been trimmed (M3b).
+     * Null [maxMs] is no limit (a chat, Pasaka 2026-11-07: "trimming is for moments").
+     */
+    fun tooLong(maxMs: Long?): Boolean = maxMs != null && (video?.durationMs ?: 0) > maxMs + 500
 }
 
 /** The gallery's tabs (M3). */
@@ -92,22 +95,23 @@ object TrimWindow {
     const val MinMs = 1_000L
     val MaxMs get() = MomentMediaMaxMs
 
-    /** Where the window opens: the whole clip when it fits, else its first [maxMs]. */
-    fun initial(durationMs: Long, maxMs: Long = MaxMs): Pair<Long, Long> = 0L to minOf(durationMs, maxMs)
+    /** Where the window opens: the whole clip when it fits, else its first [maxMs] (null: no limit, the whole clip). */
+    fun initial(durationMs: Long, maxMs: Long? = MaxMs): Pair<Long, Long> = 0L to minOf(durationMs, maxMs ?: durationMs)
 
     /**
      * [startMs] and [endMs] asked for, given the window was [oldStart]..[oldEnd]: kept inside the clip, at least [MinMs]
      * (or the whole clip, if shorter) and at most [maxMs]. Under the minimum the edge being dragged stops; past the
      * maximum the other edge follows it.
      */
-    fun clamp(durationMs: Long, oldStart: Long, startMs: Long, endMs: Long, maxMs: Long = MaxMs): Pair<Long, Long> {
+    fun clamp(durationMs: Long, oldStart: Long, startMs: Long, endMs: Long, maxMs: Long? = MaxMs): Pair<Long, Long> {
         val min = minOf(MinMs, durationMs)
+        val max = maxMs ?: durationMs
         var start = startMs.coerceIn(0, durationMs)
         var end = endMs.coerceIn(0, durationMs)
         val movedStart = start != oldStart
         if (end - start < min) { if (movedStart) start = (end - min).coerceAtLeast(0) else end = (start + min).coerceAtMost(durationMs) }
         if (end - start < min) { start = (end - min).coerceAtLeast(0); end = (start + min).coerceAtMost(durationMs) }
-        if (end - start > maxMs) { if (movedStart) end = start + maxMs else start = end - maxMs }
+        if (end - start > max) { if (movedStart) end = start + max else start = end - max }
         return start to end
     }
 
@@ -142,8 +146,8 @@ data class MediaComposeState(
     /** Re-encoding a video that is too large to send as it is. */
     val preparing: Boolean = false,
     val error: String? = null,
-    /** The longest video that may go untrimmed: a moment's minute, or the chat's limit ([ChatVideoMaxMs]). */
-    val maxVideoMs: Long = MomentMediaMaxMs,
+    /** The longest video that may go untrimmed: a moment's minute; null in a chat, where any length goes ([ChatVideoMaxMs]). */
+    val maxVideoMs: Long? = MomentMediaMaxMs,
 ) {
     val item: ComposerItem? get() = items.getOrNull(current)
     /** Over [maxVideoMs]: opens the trimmer, and holds Send until it is trimmed. */
@@ -156,14 +160,18 @@ data class MediaComposeState(
 
 /** What one item came to when it was read for sending; see [MediaComposer.prepare]. */
 sealed interface PreparedItem {
-    /** [media]: the item as it goes (a re-encoded copy when the original was too large); [bytes] are its file. */
-    class Shot(val bytes: ByteArray, val media: CapturedMedia, val caption: String) : PreparedItem
+    /**
+     * [media]: the item as it goes (a re-encoded copy when the original was too large); [bytes] are its file, or, sent
+     * as it is from disk ([MediaComposer] with `sendAsIs`, a chat's video), empty with the file at [path].
+     */
+    class Shot(val bytes: ByteArray, val media: CapturedMedia, val caption: String, val path: String? = null) : PreparedItem
     class Voice(val capture: ComposerCapture.Voice, val caption: String) : PreparedItem
-    class Document(val bytes: ByteArray, val file: PickedFile, val caption: String) : PreparedItem
+    /** [bytes] are the document, or (sent as it is from disk) empty with the file at [path]. */
+    class Document(val bytes: ByteArray, val file: PickedFile, val caption: String, val path: String? = null) : PreparedItem
     /** The file isn't on the phone any more (a picked video's copy was cleared). */
     data object Missing : PreparedItem
-    /** Too large to send even after re-encoding. */
-    data object TooLarge : PreparedItem
+    /** Too large to send (even after re-encoding, for a moment); [size] is the file's, when known. */
+    data class TooLarge(val size: Long? = null) : PreparedItem
 }
 
 /**
@@ -181,8 +189,16 @@ class MediaComposer(
     /** At most this many at once, the same for moments and chats. */
     private val maxItems: Int = MomentPickMax,
     /** The largest file that may be sent: the server's attachment limit, less encryption. */
-    private val maxBytes: Long = MomentMediaMaxBytes,
+    val maxBytes: Long = MomentMediaMaxBytes,
+    /**
+     * A chat (Pasaka, 2026-11-07): videos and documents go as they are, from their files, never re-encoded or read
+     * into memory; one over [maxBytes] is refused, item by item, with its size. A moment re-encodes a video too large.
+     */
+    private val sendAsIs: Boolean = false,
 ) {
+    /** "100 MB": the limit as people read it. */
+    val limitLabel: String get() = limitLabel(maxBytes)
+
     // The video limit lives in the state ([MediaComposeState.maxVideoMs]), so the screen and Send read the same one.
     private var recentsJob: Job? = null
     private var trimJob: Job? = null
@@ -318,7 +334,7 @@ class MediaComposer(
         update { s ->
             when {
                 file == null -> s.copy(loadingPick = false)
-                file.size > maxBytes -> s.copy(loadingPick = false, error = "Documents up to 32 MB can be sent. This one is ${sizeLabel(file.size)}.")
+                file.size > maxBytes -> s.copy(loadingPick = false, error = "Documents up to $limitLabel can be sent. This one is ${overLimitLabel(file.size, maxBytes)}.")
                 s.items.size >= maxItems -> s.copy(loadingPick = false, error = "You can pick up to $maxItems at a time.")
                 else -> s.copy(loadingPick = false, items = s.items + ComposerItem(ComposerCapture.Document(file)), current = s.items.size)
             }
@@ -365,6 +381,9 @@ class MediaComposer(
         scope.launch {
             val media = load()
             val audio = media.firstOrNull { it.mime.startsWith("audio") }
+            // A chat sends videos as they are: one over the limit is said at once, before anyone presses Send.
+            val tooBig = if (sendAsIs) media.mapNotNull { m -> m.path?.takeIf { m.mime.startsWith("video") }?.let { p -> library.size(p)?.takeIf { it > maxBytes }?.let { p to it } } } else emptyList()
+            val bigPaths = tooBig.map { it.first }.toSet()
             update { s ->
                 when {
                     media.isEmpty() -> s.copy(loadingPick = false)
@@ -375,7 +394,17 @@ class MediaComposer(
                         val added = media.take(maxItems - s.items.size).map { m -> ComposerItem(ComposerCapture.Shot(m)) }
                         // The first one over a minute goes on the stage, so its trimmer opens straight away.
                         val long = added.indexOfFirst { s.needsTrim(it) }
-                        s.copy(loadingPick = false, items = s.items + added, current = s.items.size + long.coerceAtLeast(0), gallery = null, selecting = false, selection = emptyList())
+                        // The first one over the limit goes on the stage, with its size said, so it can be taken out.
+                        val big = added.indexOfFirst { it.video?.path in bigPaths }
+                        s.copy(
+                            loadingPick = false, items = s.items + added, current = s.items.size + (if (big >= 0) big else long.coerceAtLeast(0)),
+                            gallery = null, selecting = false, selection = emptyList(),
+                            error = when {
+                                tooBig.size == 1 -> tooLargeVideo(tooBig.single().second)
+                                tooBig.size > 1 -> "${tooBig.size} videos are over $limitLabel, so they can’t be sent. Take them out to send the rest."
+                                else -> s.error
+                            },
+                        )
                     }
                 }
             }
@@ -461,7 +490,7 @@ class MediaComposer(
         if (t.startMs == 0L && t.endMs >= t.durationMs && !state.needsTrim(item)) { update { it.copy(trim = null) }; return }
         update { it.copy(trim = t.copy(working = true)) }
         scope.launch {
-            val cut = library.trim(path, t.startMs, t.endMs)
+            val cut = library.trim(path, t.startMs, t.endMs, maxBytes)
             update { s ->
                 if (cut == null) s.copy(trim = s.trim?.copy(working = false), error = "This video couldn’t be trimmed on this phone. Try a shorter one.")
                 else s.copy(trim = null, items = s.items.mapIndexed { i, it -> if (i == t.index) it.copy(capture = ComposerCapture.Shot(cut), unplayable = false) else it })
@@ -523,16 +552,33 @@ class MediaComposer(
 
     /**
      * One item read for sending, the same for a moment and a chat: a photo as it is, a video from its file, and a video
-     * too large to send as it is re-encoded first with the library's own encoder (the trimmer's, over the whole clip),
+     * too large to send as it is (a moment; a chat sends its videos as they are, `sendAsIs`) re-encoded first with the library's own encoder (the trimmer's, over the whole clip),
      * which shows "Making the video smaller…" meanwhile.
      */
     suspend fun prepare(item: ComposerItem): PreparedItem = when (val cap = item.capture) {
-        is ComposerCapture.Voice -> if (cap.bytes.size > maxBytes) PreparedItem.TooLarge else PreparedItem.Voice(cap, item.caption)
+        is ComposerCapture.Voice -> if (cap.bytes.size > maxBytes) PreparedItem.TooLarge(cap.bytes.size.toLong()) else PreparedItem.Voice(cap, item.caption)
+        // A chat: the file goes as it is, by its path, checked only for its size.
+        is ComposerCapture.Document if sendAsIs && cap.file.path != null -> {
+            val size = library.size(cap.file.path)
+            when {
+                size == null || size <= 0 -> PreparedItem.Missing
+                size > maxBytes -> PreparedItem.TooLarge(size)
+                else -> PreparedItem.Document(ByteArray(0), cap.file, item.caption, path = cap.file.path)
+            }
+        }
+        is ComposerCapture.Shot if sendAsIs && cap.video && cap.media.path != null -> {
+            val size = library.size(cap.media.path)
+            when {
+                size == null || size <= 0 -> PreparedItem.Missing
+                size > maxBytes -> PreparedItem.TooLarge(size)
+                else -> PreparedItem.Shot(ByteArray(0), cap.media, item.caption, path = cap.media.path)
+            }
+        }
         is ComposerCapture.Document -> {
             val bytes = cap.file.bytes?.takeIf { it.isNotEmpty() } ?: cap.file.path?.let { library.read(it) } ?: ByteArray(0)
             when {
                 bytes.isEmpty() -> PreparedItem.Missing
-                bytes.size > maxBytes -> PreparedItem.TooLarge
+                bytes.size > maxBytes -> PreparedItem.TooLarge(bytes.size.toLong())
                 else -> PreparedItem.Document(bytes, cap.file, item.caption)
             }
         }
@@ -550,11 +596,14 @@ class MediaComposer(
             }
             when {
                 bytes.isEmpty() -> PreparedItem.Missing
-                bytes.size > maxBytes -> PreparedItem.TooLarge
+                bytes.size > maxBytes -> PreparedItem.TooLarge(bytes.size.toLong())
                 else -> PreparedItem.Shot(bytes, media, item.caption)
             }
         }
     }
+
+    /** "This video is 142.3 MB. Videos up to 100 MB can be sent." */
+    fun tooLargeVideo(size: Long): String = "This video is ${overLimitLabel(size, maxBytes)}. Videos up to $limitLabel can be sent: trim it shorter or take it out."
 
     companion object {
         /** Frames in the trim bar's filmstrip (design M3b shows eight). */
@@ -573,4 +622,17 @@ fun sizeLabel(bytes: Long): String = when {
     }
     bytes >= 1024 -> "${(bytes + 512) / 1024} KB"
     else -> "$bytes bytes"
+}
+
+/** "100 MB": an attachment limit as people read it. */
+fun limitLabel(maxBytes: Long): String = "${(maxBytes + 512 * 1024) / (1024 * 1024)} MB"
+
+/**
+ * The size of a file refused for being over [maxBytes], never reading as if it fits: a file a few bytes over 100 MB
+ * would round to "100.0 MB" next to "up to 100 MB", so it says "just over 100 MB" instead.
+ */
+fun overLimitLabel(size: Long, maxBytes: Long): String {
+    val tenths = (size * 10 + 512 * 1024) / (1024 * 1024)
+    val limitTenths = (maxBytes + 512 * 1024) / (1024 * 1024) * 10
+    return if (tenths <= limitTenths) "just over ${limitLabel(maxBytes)}" else sizeLabel(size)
 }

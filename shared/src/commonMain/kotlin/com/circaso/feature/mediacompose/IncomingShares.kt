@@ -32,14 +32,15 @@ fun sharedKind(mime: String, name: String): SharedKind {
  * What can be done with a share before any destination is picked: which items fit (at most [MomentPickMax], each
  * under the attachment limit), which were left out and why, and whether it can be a moment (photos and videos only).
  */
-data class ShareCheck(val usable: List<SharedFile>, val tooLarge: List<SharedFile>, val overCount: Int, val maxItems: Int = MomentPickMax) {
+data class ShareCheck(val usable: List<SharedFile>, val tooLarge: List<SharedFile>, val overCount: Int, val maxItems: Int = MomentPickMax, val maxBytes: Long = MomentMediaMaxBytes) {
     val canBeMoment: Boolean get() = usable.isNotEmpty() && usable.all { sharedKind(it.mime, it.name) != SharedKind.Document }
 
     /** The polite line for what was left out, or null when everything fits. */
     val notice: String?
         get() = listOfNotNull(
             tooLarge.takeIf { it.isNotEmpty() }?.let {
-                if (it.size == 1) "${it[0].name} is over 32 MB, so it can’t be sent." else "${it.size} items are over 32 MB, so they can’t be sent."
+                if (it.size == 1) "${it[0].name} is ${overLimitLabel(it[0].size, maxBytes)}. Up to ${limitLabel(maxBytes)} can be sent."
+                else "${it.size} items are over ${limitLabel(maxBytes)}, so they can’t be sent."
             },
             overCount.takeIf { it > 0 }?.let { "You can send up to $maxItems at a time; the first $maxItems are here." },
         ).joinToString(" ").ifBlank { null }
@@ -47,7 +48,7 @@ data class ShareCheck(val usable: List<SharedFile>, val tooLarge: List<SharedFil
 
 fun checkShare(files: List<SharedFile>, maxBytes: Long = MomentMediaMaxBytes, maxItems: Int = MomentPickMax): ShareCheck {
     val (big, fit) = files.partition { it.size > maxBytes }
-    return ShareCheck(fit.take(maxItems), big, (fit.size - maxItems).coerceAtLeast(0), maxItems)
+    return ShareCheck(fit.take(maxItems), big, (fit.size - maxItems).coerceAtLeast(0), maxItems, maxBytes)
 }
 
 /** Where a share goes: one moment, or one or more chats (each gets the same items). */

@@ -352,7 +352,7 @@ class MomentComposerViewModel(
                         // A moment has no file kind; the composer never offers one here.
                         is PreparedItem.Document -> Unit
                         PreparedItem.Missing -> { stop(index, "This video isn’t on the phone any more. Pick it again."); return@keep }
-                        PreparedItem.TooLarge -> { stop(index, "This is too large to share. Keep videos under a minute."); return@keep }
+                        is PreparedItem.TooLarge -> { stop(index, "This is too large to share. Keep videos under a minute."); return@keep }
                     }
                 }
                 // Only once every one is ready: never half a batch posted and the rest left behind.

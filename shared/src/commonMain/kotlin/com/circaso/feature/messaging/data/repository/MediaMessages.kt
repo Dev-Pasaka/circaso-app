@@ -10,7 +10,6 @@ import com.circaso.core.network.idempotencyKey
 import com.circaso.core.network.newIdempotencyKey
 import com.circaso.core.platform.GeoPoint
 import com.circaso.core.platform.MediaFiles
-import com.circaso.core.platform.putFile
 import com.circaso.core.sync.Outbox
 import com.circaso.core.sync.OutboxType
 import com.circaso.feature.messaging.data.local.ChatsDao
@@ -24,7 +23,6 @@ import io.ktor.client.request.header
 import io.ktor.client.request.put
 import io.ktor.client.request.setBody
 import io.ktor.client.request.url
-import io.ktor.client.statement.readRawBytes
 import io.ktor.http.ContentType
 import io.ktor.http.HttpMethod
 import io.ktor.http.contentType
@@ -72,6 +70,11 @@ data class MediaDetails(
     val album: String? = null,
     /** How far this phone's upload of the file got, so a send cut off by the process dying resumes it. Never sent. */
     val upload: com.circaso.core.platform.UploadState? = null,
+    /**
+     * Sealed in 1 MiB chunks ([com.circaso.core.crypto.ChunkedFileCipher]): [key] opens each chunk and there is no
+     * whole-file [digest]. Sent as `chunkedKey` (2026-11-07, chat files over 32 MiB).
+     */
+    val chunked: Boolean? = null,
 ) {
     val isLive get() = liveId != null
 
@@ -104,7 +107,8 @@ internal fun MediaDetails.toPayload(sentAt: String): ChatPayload = ChatPayload(
         else -> ChatPayload.Location
     },
     text = caption, clientSentAt = sentAt,
-    attachmentId = attachmentId, mediaKey = key, digest = digest, size = size, mime = mime, width = width, height = height, durationMs = durationMs,
+    attachmentId = attachmentId, mediaKey = key.takeIf { chunked != true }, digest = digest.takeIf { chunked != true },
+    chunkedKey = key.takeIf { chunked == true }, size = size, mime = mime, width = width, height = height, durationMs = durationMs,
     latitude = latitude, longitude = longitude, accuracy = accuracy, label = label,
     liveId = liveId, liveUntil = liveUntil, liveAt = liveAt, thumb = thumb,
     albumId = album?.takeIf { kind == MediaDetails.Image || kind == MediaDetails.Video },
@@ -116,9 +120,9 @@ internal fun ChatPayload.toMediaDetails(): MediaDetails? = when (type) {
     ChatPayload.LiveLocation -> if (latitude != null && longitude != null && liveId != null && liveUntil != null) MediaDetails(
         MediaDetails.Location, latitude = latitude, longitude = longitude, accuracy = accuracy, liveId = liveId, liveUntil = liveUntil, liveAt = liveAt,
     ) else null
-    ChatPayload.Image, ChatPayload.Voice, ChatPayload.Video, ChatPayload.File -> if (attachmentId != null && mediaKey != null && digest != null) MediaDetails(
+    ChatPayload.Image, ChatPayload.Voice, ChatPayload.Video, ChatPayload.File -> if (attachmentId != null && (chunkedKey != null || (mediaKey != null && digest != null))) MediaDetails(
         when (type) { ChatPayload.Image -> MediaDetails.Image; ChatPayload.Video -> MediaDetails.Video; ChatPayload.File -> MediaDetails.File; else -> MediaDetails.Voice },
-        attachmentId = attachmentId, key = mediaKey, digest = digest, size = size, mime = mime, width = width, height = height, durationMs = durationMs, caption = text,
+        attachmentId = attachmentId, key = chunkedKey ?: mediaKey, digest = digest.takeIf { chunkedKey == null }, chunked = true.takeIf { chunkedKey != null }, size = size, mime = mime, width = width, height = height, durationMs = durationMs, caption = text,
         thumb = thumb?.takeIf { type == ChatPayload.Video },
         label = label?.takeIf { type == ChatPayload.File }?.let(::safeFileName),
         album = albumId?.takeIf { (type == ChatPayload.Image || type == ChatPayload.Video) && it.length in 1..64 },
@@ -196,6 +200,7 @@ class MediaMessages(
     private val uploads: com.circaso.core.platform.BackgroundUploads = com.circaso.core.platform.NoBackgroundUploads,
 ) {
     private val resumable = com.circaso.core.platform.ResumableUpload(crypto, files, uploads, storage, now)
+    private val downloads = AttachmentDownloads(crypto, files, attachments, storage)
 
     /**
      * How far each outgoing file's upload has got (0..1) by row, in memory only: it means something only while this
@@ -238,6 +243,17 @@ class MediaMessages(
     suspend fun sendVideo(chatId: String, bytes: ByteArray, mime: String, width: Int?, height: Int?, durationMs: Long?, thumb: String?, caption: String?, album: String? = null): AppResult<Unit> =
         sendFile(chatId, bytes, MediaDetails(MediaDetails.Video, size = bytes.size.toLong(), mime = mime, width = width, height = height, durationMs = durationMs, thumb = thumb, caption = caption?.takeIf { it.isNotBlank() }, album = album))
 
+    /**
+     * A video from its file as it is (no trim, no re-encode; Pasaka, 2026-11-07), up to [com.circaso.core.platform.ChatAttachmentMaxBytes] once
+     * encrypted. Copied into Circaso's files a piece at a time, never read into memory.
+     */
+    suspend fun sendVideoFile(chatId: String, path: String, mime: String, width: Int?, height: Int?, durationMs: Long?, thumb: String?, caption: String?, album: String? = null): AppResult<Unit> =
+        sendStored(chatId, path, MediaDetails(MediaDetails.Video, mime = mime, width = width, height = height, durationMs = durationMs, thumb = thumb, caption = caption?.takeIf { it.isNotBlank() }, album = album))
+
+    /** A document from its file under its own [name], like [sendVideoFile]. */
+    suspend fun sendDocumentFile(chatId: String, path: String, mime: String, name: String, caption: String?): AppResult<Unit> =
+        sendStored(chatId, path, MediaDetails(MediaDetails.File, mime = mime, label = safeFileName(name), caption = caption?.takeIf { it.isNotBlank() }))
+
     /** A document (any file) under its own [name], with an optional caption: the same queue, encryption and upload as a photo. */
     suspend fun sendDocument(chatId: String, bytes: ByteArray, mime: String, name: String, caption: String?): AppResult<Unit> =
         sendFile(chatId, bytes, MediaDetails(MediaDetails.File, size = bytes.size.toLong(), mime = mime, label = safeFileName(name), caption = caption?.takeIf { it.isNotBlank() }))
@@ -250,6 +266,19 @@ class MediaMessages(
         val file = "out-" + newClientMessageId()
         files.write(file, bytes)
         val localId = insert(chatId, base.copy(file = file)) ?: return AppResult.Failure(AppError.Unexpected(null))
+        enqueue(localId)
+        return AppResult.Success(Unit)
+    }
+
+    private suspend fun sendStored(chatId: String, path: String, base: MediaDetails): AppResult<Unit> {
+        val file = "out-" + newClientMessageId()
+        if (!files.copyIn(path, file)) return AppResult.Failure(AppError.Api("media.file_missing", 400, null, null, emptyMap()))
+        val size = files.size(file) ?: 0L
+        if (com.circaso.core.crypto.ChunkedFileCipher.sealedSizeFor(size) > com.circaso.core.platform.ChatAttachmentMaxBytes) {
+            files.delete(file)
+            return AppResult.Failure(AppError.Api("messaging.attachment_too_large", 400, null, null, emptyMap()))
+        }
+        val localId = insert(chatId, base.copy(file = file, size = size)) ?: return AppResult.Failure(AppError.Unexpected(null)).also { files.delete(file) }
         enqueue(localId)
         return AppResult.Success(Unit)
     }
@@ -272,6 +301,8 @@ class MediaMessages(
         var details = MediaDetails.read(row.text) ?: return AppResult.Failure(AppError.Unexpected(null))
         if (details.kind == MediaDetails.Location || details.attachmentId != null) return AppResult.Success(Unit)
         val plainFile = details.file ?: return AppResult.Failure(AppError.Api("media.file_missing", 400, null, null, emptyMap()))
+        // Over 32 MiB sealed (the old limit older apps hold in memory): sealed and uploaded in chunks, streamed.
+        val chunked = details.upload?.chunked ?: files.size(plainFile)?.let { !com.circaso.core.crypto.ChunkedFileCipher.fitsLegacy(it) } ?: false
         // Each step is saved in the row (MediaDetails.upload), so a send cut off by the process dying resumes it.
         val done = when (val r = resumable.run(
             plainFile = plainFile, sealedFile = "sealed-$localId", state = details.upload,
@@ -291,16 +322,19 @@ class MediaMessages(
             startOver = { e -> (e as? AppError.Api)?.code in setOf("messaging.attachment_incomplete", "messaging.attachment_not_found") },
             missing = AppError.Api("media.file_missing", 400, null, null, emptyMap()),
             onProgress = { sent, total -> if (total > 0) setProgress(localId, sent.toFloat() / total) },
+            chunked = chunked,
         )) {
             is AppResult.Failure -> { setProgress(localId, null); return r }
             is AppResult.Success -> r.value
         }
         setProgress(localId, null)
-        // The decrypted copy is filed under the attachment id, the same name the receiver's copy gets.
-        files.read(plainFile)?.let { files.write(done.id, it) }
-        val ready = details.copy(attachmentId = done.id, key = Base64.encode(done.key), digest = Base64.encode(done.digest), size = done.size, file = done.id, upload = null)
+        // The decrypted copy is filed under the attachment id, the same name the receiver's copy gets (a rename, not a copy).
+        if (plainFile != done.id) files.move(plainFile, done.id)
+        val ready = details.copy(
+            attachmentId = done.id, key = Base64.encode(done.key), digest = Base64.encode(done.digest).takeIf { !done.chunked }, size = done.size,
+            file = done.id, upload = null, chunked = true.takeIf { done.chunked },
+        )
         dao.setText(localId, MediaDetails.write(ready))
-        if (plainFile != done.id) files.delete(plainFile)
         return AppResult.Success(Unit)
     }
 
@@ -310,40 +344,28 @@ class MediaMessages(
      */
     suspend fun bytes(details: MediaDetails): ByteArray? = (load(details) as? MediaLoad.Loaded)?.bytes
 
-    /** The decrypted file on disk (downloading it first if needed), for a video player; or why it can't be had. */
-    suspend fun file(details: MediaDetails): Pair<String?, MediaLoad> {
-        val loaded = load(details)
-        if (loaded !is MediaLoad.Loaded) return null to loaded
+    /**
+     * The decrypted file on disk (downloading and decrypting it first if needed, streamed), for a video player or to
+     * open a document; or why it can't be had (null when it can). Never read into memory, whatever its size.
+     */
+    suspend fun file(details: MediaDetails): Pair<String?, MediaLoad?> {
+        downloads.fetch(details)?.let { return null to it }
         val path = details.file?.let { files.path(it) } ?: details.attachmentId?.let { files.path(it) }
-        return path to loaded
+        return path to (if (path == null) MediaLoad.Failed else null)
     }
 
     /**
-     * The file, from this phone or downloaded and decrypted (AT3), with why not when it can't be had: offline, gone
-     * from the server (past 30 days, or this person left the chat), or damaged (the blob doesn't match the digest the
-     * sender signed into the message, or won't decrypt). Only offline and a passing failure are worth retrying.
+     * The file's bytes, from this phone or downloaded and decrypted (AT3), with why not when it can't be had: offline,
+     * gone from the server (past 30 days, or this person left the chat), or damaged (the blob doesn't match what the
+     * sender signed into the message, or won't decrypt). Only offline and a passing failure are worth retrying. For a
+     * photo or voice note: anything over [InMemoryMaxBytes] is refused rather than read (videos and documents use [file]).
      */
     suspend fun load(details: MediaDetails): MediaLoad {
-        details.file?.let { name -> files.read(name)?.let { return MediaLoad.Loaded(it) } }
-        val id = details.attachmentId ?: return MediaLoad.Failed
-        files.read(id)?.let { return MediaLoad.Loaded(it) }
-        val key = details.key?.let { runCatching { Base64.decode(it) }.getOrNull() } ?: return MediaLoad.Damaged
-        val digest = details.digest?.let { runCatching { Base64.decode(it) }.getOrNull() } ?: return MediaLoad.Damaged
-        val link = when (val r = attachments.download(id)) {
-            is AppResult.Success -> r.value
-            is AppResult.Failure -> return when {
-                r.error is AppError.Network -> MediaLoad.Offline
-                (r.error as? AppError.Api)?.code == "messaging.attachment_not_found" -> MediaLoad.Gone
-                else -> MediaLoad.Failed
-            }
-        }
-        val response = runCatching { storage.get(link.downloadUrl) }.getOrNull() ?: return MediaLoad.Offline
-        if (response.status.value == 404) return MediaLoad.Gone
-        val sealed = runCatching { response.takeIf { it.status.isSuccess() }?.readRawBytes() }.getOrNull() ?: return MediaLoad.Failed
-        if (!crypto.sha256(sealed).contentEquals(digest)) return MediaLoad.Damaged
-        val plain = runCatching { crypto.aesGcmOpen(key, sealed) }.getOrNull() ?: return MediaLoad.Damaged
-        files.write(id, plain)
-        return MediaLoad.Loaded(plain)
+        downloads.fetch(details)?.let { return it }
+        val name = details.file?.takeIf { files.size(it) != null } ?: details.attachmentId ?: return MediaLoad.Failed
+        val size = files.size(name) ?: return MediaLoad.Failed
+        if (size > InMemoryMaxBytes) return MediaLoad.Failed
+        return files.read(name)?.let { MediaLoad.Loaded(it) } ?: MediaLoad.Failed
     }
 
     private suspend fun insert(chatId: String, details: MediaDetails): Long? {
@@ -363,6 +385,11 @@ class MediaMessages(
     private suspend fun enqueue(localId: Long) {
         outbox.enqueue(OutboxType.ChatMessage, json.encodeToString(ChatMessageJob.serializer(), ChatMessageJob(localId)))
         kickOutbox()
+    }
+
+    private companion object {
+        /** A photo or voice note read into memory to show or play; anything larger is never read whole. */
+        const val InMemoryMaxBytes = com.circaso.core.crypto.ChunkedFileCipher.LegacyMaxSealedBytes
     }
 
 }

@@ -45,7 +45,7 @@ object AndroidShareIntake {
         }
         if (IncomingShares.pending.value == null) scope.launch {
             val kept = runCatching { json.decodeFromString(ListSerializer(SharedFile.serializer()), manifest(app).readText()) }.getOrNull()
-                ?.filter { File(it.path).exists() || it.size > MomentMediaMaxBytes } // an item too large was never copied: kept to say so
+                ?.filter { File(it.path).exists() || it.size > ChatFileMaxBytes } // an item too large was never copied: kept to say so
             if (!kept.isNullOrEmpty()) IncomingShares.offer(kept)
         }
     }
@@ -89,12 +89,13 @@ object AndroidShareIntake {
         val shown = shareFileName(name ?: uri.lastPathSegment, mime, index)
         val folder = File(dir(context), "s-${System.nanoTime()}").apply { mkdirs() }
         val out = File(folder, shown)
-        if (size > MomentMediaMaxBytes) return@runCatching SharedFile(out.absolutePath, shown, mime, size)
+        // The largest anything shared in can be sent as (a chat; a moment refuses over its own 32 MiB on its review).
+        if (size > ChatFileMaxBytes) return@runCatching SharedFile(out.absolutePath, shown, mime, size)
         var copied = 0L
         resolver.openInputStream(uri)?.use { input ->
             out.outputStream().use { o ->
                 val buffer = ByteArray(64 * 1024)
-                while (copied <= MomentMediaMaxBytes) {
+                while (copied <= ChatFileMaxBytes) {
                     val n = input.read(buffer)
                     if (n < 0) break
                     o.write(buffer, 0, n)
