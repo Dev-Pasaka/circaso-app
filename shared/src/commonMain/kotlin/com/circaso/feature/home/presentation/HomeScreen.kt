@@ -1,5 +1,9 @@
 package com.circaso.feature.home.presentation
 
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.zIndex
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -114,13 +118,52 @@ fun HomeScreen(
             )
         },
     ) { padding ->
-        when (tab) {
-            Tab.You -> you(padding)
-            Tab.Chats -> chats(padding)
-            Tab.Wallet -> wallet(padding)
+        // Each tab, once visited, stays composed and is only revealed (Pasaka, 2026-11-07: switching felt slow because
+        // every tap tore the tab down and built it again; Wallet is heavy). The others sit underneath, invisible,
+        // untouchable and silent to screen readers; a short crossfade hands one to the next.
+        val visited = androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(setOf(tab.ordinal)) }
+        if (tab.ordinal !in visited.value) visited.value = visited.value + tab.ordinal
+        // Bumped each time a tab comes to the front, so a tab's own arrival motion can play again.
+        val arrivals = androidx.compose.runtime.remember { mutableStateOf(0) }
+        androidx.compose.runtime.LaunchedEffect(tab) { arrivals.value++ }
+        val still = CircasoTheme.reduceMotion
+        androidx.compose.foundation.layout.Box(Modifier.fillMaxSize()) {
+            Tab.entries.filter { it.ordinal in visited.value }.forEach { t ->
+                val front = t == tab
+                val alpha by androidx.compose.animation.core.animateFloatAsState(
+                    if (front) 1f else 0f, androidx.compose.animation.core.tween(if (still) 0 else TabFadeMs), label = "tab",
+                )
+                androidx.compose.runtime.key(t) {
+                    androidx.compose.foundation.layout.Box(
+                        Modifier.fillMaxSize()
+                            .then(if (front) Modifier.zIndex(1f) else Modifier.zIndex(0f))
+                            .graphicsLayer { this.alpha = alpha }
+                            .then(if (front) Modifier else Modifier.clearAndSetSemantics {}.pointerInput(Unit) {
+                                awaitPointerEventScope { while (true) awaitPointerEvent(androidx.compose.ui.input.pointer.PointerEventPass.Initial).changes.forEach { it.consume() } }
+                            }),
+                    ) {
+                        androidx.compose.runtime.CompositionLocalProvider(LocalTabArrival provides if (front) arrivals.value else -1) {
+                            when (t) {
+                                Tab.You -> you(padding)
+                                Tab.Chats -> chats(padding)
+                                Tab.Wallet -> wallet(padding)
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 }
+
+/** A quick handover between tabs: long enough to read as motion, short enough to feel instant. */
+private const val TabFadeMs = 120
+
+/**
+ * How many times the tab this is read in has come to the front (-1 while it is hidden behind another): a tab keyed on
+ * it replays its arrival motion, since tabs now stay alive between visits.
+ */
+val LocalTabArrival = androidx.compose.runtime.compositionLocalOf { 0 }
 
 @Composable
 private fun ComingSoon(title: String, message: String, padding: PaddingValues) {

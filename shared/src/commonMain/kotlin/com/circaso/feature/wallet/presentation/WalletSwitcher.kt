@@ -214,47 +214,9 @@ fun GroupWalletHeader(
                 BasicText(line, style = t.footnote.copy(color = if (locked) c.warning else c.inkSecondary), maxLines = 2, overflow = TextOverflow.Ellipsis)
             }
         }
-        val groups = state.groupWallets
-        val listed = menuGroups(groups, w.walletId)
-        val wallets = listed.map { gw ->
-            val isLocked = gw.walletId in state.lockedWallets
-            val balance = balanceLine(state.balances, gw.walletId, state.hidden)
-            val sub = listOfNotNull(balance, walletLine(gw, isLocked)).joinToString(" · ")
-            NativeMenuItem(
-                id = "wallet:${gw.walletId}", title = gw.name, subtitle = sub, checked = gw.walletId == w.walletId,
-                avatarName = gw.name, avatarUrl = gw.avatarUrl,
-                accessibilityLabel = listOfNotNull(gw.name, walletLine(gw, isLocked), balance?.takeIf { !state.hidden }).joinToString(", "),
-            )
-        } + (if (groups.size > listed.size) listOf(NativeMenuItem("all", "All Group Wallets…", icon = NativeMenuIcon.List)) else emptyList())
-        val chat = w.chatId
-        val actions = if (menu != null && chat != null) listOf(
-            NativeMenuItem("chat", "Open Group Chat", icon = NativeMenuIcon.Chat),
-            NativeMenuItem("info", "Group Info", icon = NativeMenuIcon.Info),
-        ) else emptyList()
-        // 2026-11-06: only the owner moves the group's money, so only they see these; a locked or unready wallet offers none.
-        val spend = w.walletId?.takeIf { menu != null && w.canSign && w.status == WalletStatus.Active && !locked }
-        val money = if (spend != null) listOfNotNull(
-            menu?.onPay?.let { NativeMenuItem("pay", "Pay from ${shortWalletName(w.name)}", icon = NativeMenuIcon.Send) },
-            menu?.onSendToWallet?.let { NativeMenuItem("external", "Send to a Wallet", subtitle = "An exchange or another wallet", icon = NativeMenuIcon.External) },
-        ) else emptyList()
-        NativeMoreMenu(
-            title = "Group Wallets",
-            sections = listOf(wallets, money, actions).filter { it.isNotEmpty() },
-            expanded = state.switching,
-            onExpandedChange = onSwitching,
-            onSelect = { id ->
-                onSwitching(false)
-                when {
-                    id.startsWith("wallet:") -> groups.firstOrNull { "wallet:${it.walletId}" == id }?.let(onSelectWallet)
-                    id == "all" -> onAllGroups(true)
-                    id == "chat" -> chat?.let { menu?.onOpenChat?.invoke(it) }
-                    id == "info" -> chat?.let { menu?.onGroupInfo?.invoke(it) }
-                    id == "pay" -> spend?.let { menu?.onPay?.invoke(it) }
-                    id == "external" -> spend?.let { menu?.onSendToWallet?.invoke(it) }
-                }
-            },
-            contentDescription = "More group wallet options",
-        )
+        // One sheet for everything (Pasaka, 2026-11-07): this wallet's actions, then every group wallet, searchable.
+        // A drop-down didn't scale past a handful of groups.
+        com.circaso.designsystem.components.CircasoIconButton(CircasoIcon.More, "Group wallet options and other group wallets", { onAllGroups(true) })
     }
 }
 
@@ -264,12 +226,22 @@ fun GroupWalletHeader(
  * holds, as of when it was read.
  */
 @Composable
-fun ColumnScope.AllGroupWalletsContent(state: WalletUiState, onPick: (NamedWallet) -> Unit, onClose: () -> Unit) {
+fun ColumnScope.AllGroupWalletsContent(state: WalletUiState, onPick: (NamedWallet) -> Unit, onClose: () -> Unit, menu: GroupMenuActions? = null) {
     val c = CircasoTheme.colors
     val t = CircasoTheme.typography
     var query by remember { mutableStateOf("") }
     val shown = filterGroups(state.groupWallets, query)
     SheetHead("Group Wallets", onClose)
+    // The wallet on screen first: what can be done with it, as tiles (the owner alone sends, 2026-11-06).
+    val actions = groupSheetActions(state, menu)
+    if (actions.isNotEmpty()) {
+        BasicText(state.selected.name, Modifier.fillMaxWidth().semantics { heading() }, style = t.footnote.copy(color = c.inkSecondary, fontWeight = FontWeight.SemiBold), maxLines = 1, overflow = TextOverflow.Ellipsis)
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(CircasoSpacing.s2)) {
+            actions.forEach { a -> SheetActionTile(a.label, a.icon, Modifier.weight(1f)) { onClose(); a.run() } }
+        }
+        if (state.groupWallets.size > 1) BasicText("Switch wallet", Modifier.fillMaxWidth().padding(top = CircasoSpacing.s2).semantics { heading() }, style = t.footnote.copy(color = c.inkSecondary, fontWeight = FontWeight.SemiBold))
+    }
+    if (state.groupWallets.size <= 1 && actions.isNotEmpty()) return
     CircasoTextField(
         query, { query = it }, label = "Search", placeholder = "Search groups",
         leading = { CircasoIconImage(CircasoIcon.Search, c.inkSecondary, Modifier.size(18.dp)) },
@@ -322,5 +294,42 @@ private fun WalletChoiceRow(w: NamedWallet, on: Boolean, locked: Boolean, balanc
         // The tick keeps its place on every row, so the balances line up whichever wallet is chosen.
         if (on) CircasoIconImage(CircasoIcon.Check, c.action, Modifier.size(18.dp), strokeWidth = 2.4f)
         else Spacer(Modifier.width(18.dp))
+    }
+}
+
+/** One thing the sheet offers for the wallet on screen. */
+private class SheetAction(val label: String, val icon: CircasoIcon, val run: () -> Unit)
+
+/** The wallet on screen's actions: Pay and Send to a Wallet for its owner (active, unlocked), then its chat and info. */
+private fun groupSheetActions(state: WalletUiState, menu: GroupMenuActions?): List<SheetAction> {
+    menu ?: return emptyList()
+    val w = state.selected
+    val locked = w.walletId != null && w.walletId in state.lockedWallets || state.group?.locked == true
+    val spend = w.walletId?.takeIf { w.canSign && w.status == WalletStatus.Active && !locked }
+    val chat = w.chatId
+    return listOfNotNull(
+        spend?.let { id -> menu.onPay?.let { SheetAction("Pay", CircasoIcon.Send) { it(id) } } },
+        spend?.let { id -> menu.onSendToWallet?.let { SheetAction("Send to Wallet", CircasoIcon.ArrowUp) { it(id) } } },
+        chat?.let { SheetAction("Group Chat", CircasoIcon.Chat) { menu.onOpenChat(it) } },
+        chat?.let { SheetAction("Group Info", CircasoIcon.Info) { menu.onGroupInfo(it) } },
+    )
+}
+
+/** A square-ish tile: the glyph in a soft circle over its label; 72 dp tall, presses with the app's scale. */
+@Composable
+private fun SheetActionTile(label: String, icon: CircasoIcon, modifier: Modifier, onClick: () -> Unit) {
+    val c = CircasoTheme.colors
+    val t = CircasoTheme.typography
+    Column(
+        modifier.heightIn(min = 72.dp).clip(CircasoShapes.lg).background(c.surfaceRaised)
+            .pressable(role = Role.Button, onClick = onClick).semantics(mergeDescendants = true) {}
+            .padding(vertical = CircasoSpacing.s3, horizontal = CircasoSpacing.s1),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(CircasoSpacing.s2),
+    ) {
+        Box(Modifier.size(36.dp).clip(CircasoShapes.circle).background(c.fill), contentAlignment = Alignment.Center) {
+            CircasoIconImage(icon, c.ink, Modifier.size(18.dp))
+        }
+        BasicText(label, style = t.caption1.copy(color = c.ink, textAlign = TextAlign.Center), maxLines = 2)
     }
 }

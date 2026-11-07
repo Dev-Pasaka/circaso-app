@@ -226,12 +226,13 @@ fun androidx.compose.foundation.layout.BoxScope.WalletOverlay(
     viewModel: WalletViewModel,
     actions: WalletActions,
     biometrics: com.circaso.feature.account.presentation.BiometricApprovalViewModel? = null,
+    groupMenu: GroupMenuActions? = null,
 ) {
     val state by viewModel.state.collectAsState()
     WalletSheets(state, actions, viewModel::onReceive, viewModel::onComing)
     // Every group wallet, searchable, for someone in more groups than the Groups menu lists.
     CircasoSheet(state.allGroups, { viewModel.onAllGroups(false) }, label = "Group Wallets") {
-        AllGroupWalletsContent(state, onPick = viewModel::onSelectWallet, onClose = { viewModel.onAllGroups(false) })
+        AllGroupWalletsContent(state, onPick = viewModel::onSelectWallet, onClose = { viewModel.onAllGroups(false) }, menu = groupMenu)
     }
     if (biometrics != null) {
         val bio by biometrics.state.collectAsState()

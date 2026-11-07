@@ -345,8 +345,11 @@ private fun ProfileHero(
             // after the backdrop starts melting: a small spring in scale and a fade, never a bounce in layout.
             val stillHero = CircasoTheme.reduceMotion
             val focus = androidx.compose.runtime.remember { androidx.compose.animation.core.Animatable(if (stillHero) 1f else 0f) }
-            androidx.compose.runtime.LaunchedEffect(Unit) {
+            val heroArrival = LocalTabArrival.current
+            androidx.compose.runtime.LaunchedEffect(heroArrival) {
+                if (heroArrival < 0) return@LaunchedEffect
                 if (stillHero) focus.snapTo(1f) else {
+                    focus.snapTo(0f)
                     kotlinx.coroutines.delay(AvatarFocusDelayMs)
                     focus.animateTo(1f, androidx.compose.animation.core.spring(dampingRatio = 0.8f, stiffness = 260f))
                 }
@@ -391,9 +394,14 @@ private fun ProfileGlow(photo: String?, modifier: Modifier) {
     // settles from a touch of zoom, so the eye lands on the round photo rather than the backdrop just appearing.
     val still = CircasoTheme.reduceMotion
     val settle = androidx.compose.runtime.remember { androidx.compose.animation.core.Animatable(if (still) 1f else 0f) }
-    androidx.compose.runtime.LaunchedEffect(photo) {
+    val arrival = LocalTabArrival.current
+    androidx.compose.runtime.LaunchedEffect(photo, arrival) {
+        if (arrival < 0) return@LaunchedEffect
         if (still) settle.snapTo(1f)
-        else if (settle.value < 1f) settle.animateTo(1f, androidx.compose.animation.core.tween(GlowSettleMs, easing = androidx.compose.animation.core.LinearOutSlowInEasing))
+        else {
+            settle.snapTo(0f)
+            settle.animateTo(1f, androidx.compose.animation.core.tween(GlowSettleMs, easing = androidx.compose.animation.core.LinearOutSlowInEasing))
+        }
     }
     Box(modifier.clipToBounds().graphicsLayer { val z = 1f + (1f - settle.value) * GlowZoom; scaleX = z; scaleY = z }) {
         if (photo != null && !c.isHighContrast) {

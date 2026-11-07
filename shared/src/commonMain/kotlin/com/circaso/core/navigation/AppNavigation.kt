@@ -136,6 +136,11 @@ fun AppNavigation(forceUpdate: Boolean, home: @Composable () -> Unit) {
         if (twoPaneNow) while (backStack.size > 1 && backStack.last() != HomeRoute) backStack.removeAt(backStack.lastIndex)
         backStack.add(ChatRoute(id))
     }
+    // The Groups wallet's sheet actions (one place for the tab's header and its sheet).
+    fun groupMenuActions() = com.circaso.feature.wallet.presentation.GroupMenuActions(
+        onOpenChat = ::openChatFromList, onGroupInfo = { backStack.add(ChatInfoRoute(it)) },
+        onPay = { wid -> backStack.add(PayRoute(fromWalletId = wid)) }, onSendToWallet = { wid -> backStack.add(SendToWalletRoute(wid)) },
+    )
     fun backToHome() { droppedTo[0] = -1; while (backStack.size > 1 && backStack.last() != HomeRoute) backStack.removeAt(backStack.lastIndex) }
     // A tapped notification (Pasaka, 2026-11-06): once signed in and Home is underneath, open where it points, over
     // Home, whether Circaso was cold, in the background or on screen. Signed out, the tap is dropped.
@@ -265,21 +270,19 @@ fun AppNavigation(forceUpdate: Boolean, home: @Composable () -> Unit) {
                         }
                     },
                     wallet = { bottomPadding ->
+                        val groupMenu = groupMenuActions()
                         // GW16 (Pasaka, 2026-11-04): one wallet design for every wallet; the corner switcher picks which.
                         WalletTab(
                             walletViewModel, bottomPadding,
                             actions = { walletId -> walletActions(walletId, backStack::add) },
                             groupActions = { key, gw -> groupWalletActions(key, gw, backStack::add) },
-                            groupMenu = com.circaso.feature.wallet.presentation.GroupMenuActions(
-                                onOpenChat = ::openChatFromList, onGroupInfo = { backStack.add(ChatInfoRoute(it)) },
-                                onPay = { wid -> backStack.add(PayRoute(fromWalletId = wid)) }, onSendToWallet = { wid -> backStack.add(SendToWalletRoute(wid)) },
-                            ),
+                            groupMenu = groupMenu,
                         )
                     },
                     walletActions = { WalletTitleActions(walletViewModel) },
                     chatsOverlay = { ChatsOverlay(chatsViewModel, onAsha = { backStack.add(AshaRoute) }, onVoice = { backStack.add(AshaRoute); backStack.add(VoiceRoute) }) },
                     walletOverlay = {
-                        WalletOverlay(walletViewModel, walletActions(null, backStack::add), biometrics = koinViewModel())
+                        WalletOverlay(walletViewModel, walletActions(null, backStack::add), biometrics = koinViewModel(), groupMenu = groupMenuActions())
                     },
                 ) { bottomPadding ->
                     val youViewModel: com.circaso.feature.home.presentation.YouViewModel = koinViewModel()
