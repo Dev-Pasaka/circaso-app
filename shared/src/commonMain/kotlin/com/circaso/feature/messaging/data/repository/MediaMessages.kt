@@ -57,6 +57,7 @@ data class MediaDetails(
     val latitude: Double? = null,
     val longitude: Double? = null,
     val accuracy: Double? = null,
+    /** A place's name for a location; a document's own file name ("Lease.pdf") for a file. */
     val label: String? = null,
     /** A live location: the share's id, when it ends, when the pin last moved (epoch millis), and whether it was stopped early. */
     val liveId: String? = null,
@@ -80,13 +81,15 @@ data class MediaDetails(
         const val Voice = "voice"
         const val Video = "video"
         const val Location = "location"
+        /** A document (any file), 2026-11-07. */
+        const val File = "file"
         private val json = Json { ignoreUnknownKeys = true; explicitNulls = false }
         fun read(text: String?): MediaDetails? = text?.let { runCatching { json.decodeFromString(serializer(), it) }.getOrNull() }
         fun write(d: MediaDetails): String = json.encodeToString(serializer(), d)
     }
 }
 
-internal fun isMediaKind(kind: String) = kind == MessageKind.Image || kind == MessageKind.Voice || kind == MessageKind.Video || kind == MessageKind.Location
+internal fun isMediaKind(kind: String) = kind == MessageKind.Image || kind == MessageKind.Voice || kind == MessageKind.Video || kind == MessageKind.Location || kind == MessageKind.File
 
 /** The payload a media row sends (the phone-only `file` is left out). */
 internal fun MediaDetails.toPayload(sentAt: String): ChatPayload = ChatPayload(
@@ -94,6 +97,7 @@ internal fun MediaDetails.toPayload(sentAt: String): ChatPayload = ChatPayload(
         kind == MediaDetails.Image -> ChatPayload.Image
         kind == MediaDetails.Voice -> ChatPayload.Voice
         kind == MediaDetails.Video -> ChatPayload.Video
+        kind == MediaDetails.File -> ChatPayload.File
         liveId != null -> ChatPayload.LiveLocation
         else -> ChatPayload.Location
     },
@@ -109,15 +113,29 @@ internal fun ChatPayload.toMediaDetails(): MediaDetails? = when (type) {
     ChatPayload.LiveLocation -> if (latitude != null && longitude != null && liveId != null && liveUntil != null) MediaDetails(
         MediaDetails.Location, latitude = latitude, longitude = longitude, accuracy = accuracy, liveId = liveId, liveUntil = liveUntil, liveAt = liveAt,
     ) else null
-    ChatPayload.Image, ChatPayload.Voice, ChatPayload.Video -> if (attachmentId != null && mediaKey != null && digest != null) MediaDetails(
-        when (type) { ChatPayload.Image -> MediaDetails.Image; ChatPayload.Video -> MediaDetails.Video; else -> MediaDetails.Voice },
+    ChatPayload.Image, ChatPayload.Voice, ChatPayload.Video, ChatPayload.File -> if (attachmentId != null && mediaKey != null && digest != null) MediaDetails(
+        when (type) { ChatPayload.Image -> MediaDetails.Image; ChatPayload.Video -> MediaDetails.Video; ChatPayload.File -> MediaDetails.File; else -> MediaDetails.Voice },
         attachmentId = attachmentId, key = mediaKey, digest = digest, size = size, mime = mime, width = width, height = height, durationMs = durationMs, caption = text,
         thumb = thumb?.takeIf { type == ChatPayload.Video },
+        label = label?.takeIf { type == ChatPayload.File }?.let(::safeFileName),
     ) else null
     else -> null
 }
 
-internal fun mediaRowKind(details: MediaDetails) = when (details.kind) { MediaDetails.Image -> MessageKind.Image; MediaDetails.Voice -> MessageKind.Voice; MediaDetails.Video -> MessageKind.Video; else -> MessageKind.Location }
+internal fun mediaRowKind(details: MediaDetails) = when (details.kind) {
+    MediaDetails.Image -> MessageKind.Image; MediaDetails.Voice -> MessageKind.Voice; MediaDetails.Video -> MessageKind.Video; MediaDetails.File -> MessageKind.File
+    else -> MessageKind.Location
+}
+
+/**
+ * A file name as it came in a message, made safe to show and to save under: no folders, no control characters, at
+ * most 120 characters (the end kept, so the extension stays). A sender can put anything there.
+ */
+internal fun safeFileName(name: String): String {
+    val base = name.substringAfterLast('/').substringAfterLast('\\').filter { it >= ' ' && it != '\u007f' }.trim().trimStart('.')
+    val cut = if (base.length > 120) base.takeLast(120) else base
+    return cut.ifBlank { "File" }
+}
 
 /** What loading a photo or voice note came to; see [MediaMessages.load]. */
 sealed interface MediaLoad {
@@ -175,6 +193,24 @@ class MediaMessages(
 ) {
     private val resumable = com.circaso.core.platform.ResumableUpload(crypto, files, uploads, storage, now)
 
+    /**
+     * How far each outgoing file's upload has got (0..1) by row, in memory only: it means something only while this
+     * run is sending it. The thread draws it as the ring on the thumbnail (the moment ring's M6 language).
+     */
+    private val _progress = kotlinx.coroutines.flow.MutableStateFlow<Map<Long, Float>>(emptyMap())
+    val progress: kotlinx.coroutines.flow.StateFlow<Map<Long, Float>> = _progress
+
+    /** Published in whole percent steps, so a 30 MB upload is a hundred updates, not thousands. */
+    private fun setProgress(localId: Long, fraction: Float?) {
+        _progress.value = _progress.value.let { now ->
+            when {
+                fraction == null -> now - localId
+                ((now[localId] ?: -1f) * 100).toInt() == (fraction * 100).toInt() -> now
+                else -> now + (localId to fraction.coerceIn(0f, 1f))
+            }
+        }
+    }
+
     suspend fun sendLocation(chatId: String, point: GeoPoint, label: String?) {
         val details = MediaDetails(MediaDetails.Location, latitude = point.latitude, longitude = point.longitude, accuracy = point.accuracyMeters, label = label)
         val localId = insert(chatId, details) ?: return
@@ -197,6 +233,10 @@ class MediaMessages(
 
     suspend fun sendVideo(chatId: String, bytes: ByteArray, mime: String, width: Int?, height: Int?, durationMs: Long?, thumb: String?, caption: String?): AppResult<Unit> =
         sendFile(chatId, bytes, MediaDetails(MediaDetails.Video, size = bytes.size.toLong(), mime = mime, width = width, height = height, durationMs = durationMs, thumb = thumb, caption = caption?.takeIf { it.isNotBlank() }))
+
+    /** A document (any file) under its own [name], with an optional caption: the same queue, encryption and upload as a photo. */
+    suspend fun sendDocument(chatId: String, bytes: ByteArray, mime: String, name: String, caption: String?): AppResult<Unit> =
+        sendFile(chatId, bytes, MediaDetails(MediaDetails.File, size = bytes.size.toLong(), mime = mime, label = safeFileName(name), caption = caption?.takeIf { it.isNotBlank() }))
 
     suspend fun sendVoice(chatId: String, bytes: ByteArray, mime: String, durationMs: Long): AppResult<Unit> =
         sendFile(chatId, bytes, MediaDetails(MediaDetails.Voice, size = bytes.size.toLong(), mime = mime, durationMs = durationMs))
@@ -246,10 +286,12 @@ class MediaMessages(
             complete = { id -> when (val c = attachments.complete(id)) { is AppResult.Failure -> c; is AppResult.Success -> AppResult.Success(Unit) } },
             startOver = { e -> (e as? AppError.Api)?.code in setOf("messaging.attachment_incomplete", "messaging.attachment_not_found") },
             missing = AppError.Api("media.file_missing", 400, null, null, emptyMap()),
+            onProgress = { sent, total -> if (total > 0) setProgress(localId, sent.toFloat() / total) },
         )) {
-            is AppResult.Failure -> return r
+            is AppResult.Failure -> { setProgress(localId, null); return r }
             is AppResult.Success -> r.value
         }
+        setProgress(localId, null)
         // The decrypted copy is filed under the attachment id, the same name the receiver's copy gets.
         files.read(plainFile)?.let { files.write(done.id, it) }
         val ready = details.copy(attachmentId = done.id, key = Base64.encode(done.key), digest = Base64.encode(done.digest), size = done.size, file = done.id, upload = null)

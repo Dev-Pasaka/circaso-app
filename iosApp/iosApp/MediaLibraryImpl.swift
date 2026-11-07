@@ -18,6 +18,8 @@ final class MediaLibraryImpl: NSObject, MediaLibraryProvider, PHPickerViewContro
     private static let mediaMaxBytes = Int(MomentCameraKt.MomentMediaMaxBytes)
 
     private var pickCompletion: ((LibraryMedia?) -> Void)?
+    /// The Files picker is up for a chat's document (kind 3), not for audio: the file goes as it is, under its own name.
+    private var pickingDocument = false
     /// Set while the several-at-once picker is up (Moments M3); its results come back in the order ticked.
     private var pickManyCompletion: (([LibraryMedia]) -> Void)?
 
@@ -52,8 +54,9 @@ final class MediaLibraryImpl: NSObject, MediaLibraryProvider, PHPickerViewContro
     func pick(kind: Int32, completion: @escaping (LibraryMedia?) -> Void) {
         guard pickCompletion == nil, let presenter = Self.topController() else { completion(nil); return }
         pickCompletion = completion
-        if kind == 2 {
-            let picker = UIDocumentPickerViewController(forOpeningContentTypes: [.audio], asCopy: true)
+        if kind == 2 || kind == 3 {
+            pickingDocument = kind == 3
+            let picker = UIDocumentPickerViewController(forOpeningContentTypes: kind == 3 ? [.item] : [.audio], asCopy: true)
             picker.allowsMultipleSelection = false
             picker.delegate = self
             presenter.present(picker, animated: true)
@@ -127,6 +130,11 @@ final class MediaLibraryImpl: NSObject, MediaLibraryProvider, PHPickerViewContro
 
     func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) {
         guard let url = urls.first else { finishPick(nil); return }
+        if pickingDocument {
+            pickingDocument = false
+            Task.detached(priority: .userInitiated) { self.finishPick(Self.document(url)) }
+            return
+        }
         Task.detached(priority: .userInitiated) {
             // asCopy: the file is already in our sandbox; it moves into tmp so it is ours to delete.
             let file = Self.copyToTemp(url)
@@ -136,7 +144,21 @@ final class MediaLibraryImpl: NSObject, MediaLibraryProvider, PHPickerViewContro
         }
     }
 
-    func documentPickerWasCancelled(_ controller: UIDocumentPickerViewController) { finishPick(nil) }
+    func documentPickerWasCancelled(_ controller: UIDocumentPickerViewController) { pickingDocument = false; finishPick(nil) }
+
+    /// A chat's document (2026-11-07): moved into a folder of its own in tmp so it keeps its own name, handed over by
+    /// path (the shared code reads it when it is sent, and takes the name from the path).
+    private nonisolated static func document(_ url: URL) -> LibraryMedia? {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("doc-\(UUID().uuidString)", isDirectory: true)
+        let name = url.lastPathComponent.isEmpty ? "File" : url.lastPathComponent
+        let copy = dir.appendingPathComponent(name)
+        do {
+            try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+            try FileManager.default.moveItem(at: url, to: copy)
+        } catch { return nil }
+        let mime = UTType(filenameExtension: copy.pathExtension)?.preferredMIMEType ?? "application/octet-stream"
+        return LibraryMedia(data: Data(), thumb: nil, width: 0, height: 0, durationMs: 0, path: copy.path, mime: mime)
+    }
 
     /// Called from the pickers' background callbacks; the completion itself runs on the main thread.
     private nonisolated func finishPick(_ media: LibraryMedia?) {

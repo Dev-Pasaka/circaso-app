@@ -85,6 +85,12 @@ interface MediaLibrary {
      * closes it. The file is copied to this app's cache and handed over by [PickedFile.path], read when it is sent.
      */
     suspend fun pickFile(): PickedFile? = null
+
+    /**
+     * The first frame of the video at [path] as a small JPEG (about 240 px, under ~12 KB) for a chat bubble's poster,
+     * which travels inside the encrypted message; null when it can't be made (the moment's tiny thumb is used then).
+     */
+    suspend fun poster(path: String): ByteArray? = null
 }
 
 /** A document picked from Files: its own name, type and size; [path] is this app's copy (or [bytes] in memory). */

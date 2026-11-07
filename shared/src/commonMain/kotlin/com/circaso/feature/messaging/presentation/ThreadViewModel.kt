@@ -66,10 +66,6 @@ data class ThreadUiState(
     /** SP05: the person said that's all; ask whether it was sorted. */
     val supportEnding: Boolean = false,
     /** A voice note is being recorded (the mic is held). */
-    /** The attach sheet's recent photos and videos (WhatsApp-style), and which are ticked, in tick order. */
-    val gallery: List<com.circaso.core.platform.GalleryItem> = emptyList(),
-    val gallerySelected: List<String> = emptyList(),
-    val galleryLoading: Boolean = false,
     /** A video being fetched to play (its bubble shows a spinner), and the file now playing full screen. */
     val videoLoading: Long? = null,
     val videoPath: String? = null,
@@ -79,9 +75,6 @@ data class ThreadUiState(
     /** "Getting your location…" then the place to confirm before it's shared. */
     val locating: Boolean = false,
     val pendingLocation: com.circaso.core.platform.GeoPoint? = null,
-    /** A picked photo shown for a caption before it's sent (WhatsApp-style). */
-    val pendingPhoto: com.circaso.core.platform.PickedImage? = null,
-    val photoCaption: String = "",
     /** Each money card's payment as this phone knows it (transferId → state): Sending, Sent or Not sent. */
     val paymentStates: Map<String, com.circaso.feature.wallet.domain.TransferState> = emptyMap(),
     /** Cards whose payment the server won't show this phone (403/404): shown as they were, never left "on its way". */
@@ -345,46 +338,7 @@ class ThreadViewModel(
         }
     }
 
-    /** Media (WhatsApp-style): photo from the picker, current location, hold-to-record voice notes, playback. */
-    /** The attach sheet opened: load the recent grid (the first time, Android asks for library access). */
-    fun onGalleryOpen() {
-        val m = media ?: return
-        if (!m.hasGallery || _state.value.galleryLoading) return
-        _state.update { it.copy(galleryLoading = true, gallerySelected = emptyList()) }
-        viewModelScope.launch {
-            val items = m.recentMedia()
-            _state.update { it.copy(gallery = items, galleryLoading = false) }
-        }
-    }
-
-    fun onGalleryToggle(item: com.circaso.core.platform.GalleryItem) = _state.update { s ->
-        val picked = s.gallerySelected
-        when {
-            item.id in picked -> s.copy(gallerySelected = picked - item.id)
-            picked.size >= MaxGalleryPick -> s.copy(message = "You can send up to $MaxGalleryPick at once.")
-            else -> s.copy(gallerySelected = picked + item.id)
-        }
-    }
-
-    fun onGallerySend(caption: String?) {
-        val m = media ?: return
-        val items = _state.value.gallerySelected.mapNotNull { id -> _state.value.gallery.firstOrNull { it.id == id } }
-        if (items.isEmpty()) return
-        _state.update { it.copy(gallerySelected = emptyList()) }
-        if (items.any { it.video }) _state.update { it.copy(message = "Preparing video…") }
-        viewModelScope.launch { m.sendGalleryMedia(chatId, items, caption)?.let { e -> _state.update { it.copy(message = e) } } }
-    }
-
-    fun onSendPhoto() { val m = media ?: return; viewModelScope.launch { m.pickPhoto()?.let { p -> _state.update { it.copy(pendingPhoto = p, photoCaption = "") } } } }
-    fun onPhotoCaption(text: String) = _state.update { it.copy(photoCaption = text.take(1000)) }
-    fun onCancelPhoto() = _state.update { it.copy(pendingPhoto = null, photoCaption = "") }
-    fun onConfirmPhoto() {
-        val m = media ?: return
-        val photo = _state.value.pendingPhoto ?: return
-        val caption = _state.value.photoCaption.trim().takeIf { it.isNotEmpty() }
-        _state.update { it.copy(pendingPhoto = null, photoCaption = "") }
-        viewModelScope.launch { m.sendPhoto(chatId, photo, caption)?.let { e -> _state.update { it.copy(message = e) } } }
-    }
+    /** Media (WhatsApp-style): current location, hold-to-record voice notes, playback. Photos, videos and documents go through ChatMediaComposer. */
     /** Step one of sharing a location: find it, then show it for the person to confirm (nothing is sent yet). */
     fun onSendLocation() {
         val m = media ?: return
@@ -503,8 +457,6 @@ class ThreadViewModel(
     }
 }
 
-/** WhatsApp's limit for one send from the gallery. */
-private const val MaxGalleryPick = 30
 
 /** Cards younger than this with no state yet count as on their way; older ones settled long ago. */
 internal const val PaymentFreshMillis = 30L * 60 * 1000

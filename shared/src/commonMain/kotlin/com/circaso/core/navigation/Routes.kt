@@ -83,6 +83,13 @@ data class ChatRoute(
 @Serializable
 data object NeedsAttentionRoute : Route
 
+/**
+ * Sending photos, videos or a document into a chat with the moment composer's screens (2026-11-07). [start] is a
+ * `ChatComposeStart` name: Camera, Gallery or Document.
+ */
+@Serializable
+data class ChatMediaRoute(val chatId: String, val start: String) : Route
+
 /** A location message's map: the tapped place and everyone sharing live in the chat. */
 @Serializable
 data class LocationMapRoute(val chatId: String, val focusLocalId: Long) : Route
@@ -216,6 +223,7 @@ val routeSerializers = SerializersModule {
         subclass(ChatRoute::class)
         subclass(NeedsAttentionRoute::class)
         subclass(LocationMapRoute::class)
+        subclass(ChatMediaRoute::class)
         subclass(NewChatRoute::class)
         subclass(NewGroupRoute::class)
         subclass(ChatInfoRoute::class)

@@ -17,6 +17,7 @@ enum class UploadKind(val sending: String, val failed: String, private val toWho
     Photo("Sending a photo", "A photo didn't send", toWhom = true),
     Video("Sending a video", "A video didn't send", toWhom = true),
     VoiceNote("Sending a voice note", "A voice note didn't send", toWhom = true),
+    File("Sending a file", "A file didn't send", toWhom = true),
     ProfilePhoto("Updating your profile photo", "Your profile photo didn't update"),
     ;
 

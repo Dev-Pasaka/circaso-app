@@ -319,6 +319,12 @@ fun AppNavigation(forceUpdate: Boolean, home: @Composable () -> Unit) {
                 com.circaso.feature.support.presentation.LostAccessScreen(koinViewModel(key = "lost-" + route.phone, parameters = { parametersOf(route.phone) }), onBack = ::pop)
             }
             entry<ContactsRoute> { ContactsScreen(koinViewModel(), onBack = ::pop) }
+            // A chat's photos, videos and documents: the moment composer's screens, sent to this chat (2026-11-07).
+            entry<ChatMediaRoute> { route ->
+                com.circaso.feature.messaging.presentation.ChatMediaComposerScreen(
+                    koinViewModel(key = "chat-media-${route.chatId}-${route.start}", parameters = { parametersOf(route.chatId, route.start) }), onClose = ::pop,
+                )
+            }
             entry<MomentComposerRoute> { com.circaso.feature.status.presentation.MomentComposerScreen(koinViewModel(), onClose = ::pop, onAudience = { backStack.add(MomentsPrivacyRoute) }, onFindPeople = { backStack.add(ContactsRoute) }) }
             entry<MomentViewerRoute> { key ->
                 val chats = koinInject<com.circaso.feature.messaging.domain.ChatsRepository>()
@@ -399,6 +405,7 @@ fun AppNavigation(forceUpdate: Boolean, home: @Composable () -> Unit) {
                     onReturnToCall = { calls.minimise(false) },
                     focusLocalId = route.focusLocalId,
                     onOpenLocation = { m -> backStack.add(LocationMapRoute(route.chatId, m.localId)) },
+                    onComposeMedia = { start -> backStack.add(ChatMediaRoute(route.chatId, start.name)) },
                     // C3: `#500` pays without leaving the chat; the chat's money card is the review. One per chat, reset after each payment.
                     quickPay = when {
                         peer != null -> koinViewModel<com.circaso.feature.wallet.presentation.PayViewModel>(

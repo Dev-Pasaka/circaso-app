@@ -76,7 +76,7 @@ import kotlin.coroutines.resume
 interface MediaLibraryProvider {
     /** [video] says which way to read the PHAsset [id]; answers null when it is gone or cannot be read. */
     fun load(id: String, video: Boolean, completion: (LibraryMedia?) -> Unit)
-    /** [kind]: 0 photo (PHPicker), 1 video (PHPicker), 2 audio (Files). Null when the person cancels. */
+    /** [kind]: 0 photo (PHPicker), 1 video (PHPicker), 2 audio (Files), 3 any document (Files). Null when the person cancels. */
     fun pick(kind: Int, completion: (LibraryMedia?) -> Unit)
     /** PHPicker for photos and videos, up to [max] in the order ticked; empty when the person cancels. */
     fun pickMany(max: Int, completion: (List<LibraryMedia>) -> Unit)
@@ -196,6 +196,32 @@ class IosMediaLibrary : MediaLibrary {
         val p = MediaLibraryBridge.provider ?: return null
         val code = when (kind) { LibraryKind.Photo -> 0; LibraryKind.Video -> 1; LibraryKind.Audio -> 2 }
         return suspendCancellableCoroutine<LibraryMedia?> { cont -> p.pick(code) { if (cont.isActive) cont.resume(it) } }?.toCaptured()
+    }
+
+    /** The first frame through AVFoundation, as small as the chat's own video thumb has been. */
+    @OptIn(kotlinx.cinterop.ExperimentalForeignApi::class)
+    override suspend fun poster(path: String): ByteArray? = withContext(Dispatchers.Default) {
+        runCatching {
+            val asset = platform.AVFoundation.AVURLAsset.URLAssetWithURL(platform.Foundation.NSURL.fileURLWithPath(path), null)
+            val generator = platform.AVFoundation.AVAssetImageGenerator.assetImageGeneratorWithAsset(asset)
+            generator.appliesPreferredTrackTransform = true
+            generator.maximumSize = platform.CoreGraphics.CGSizeMake(480.0, 480.0)
+            val cg = generator.copyCGImageAtTime(platform.CoreMedia.CMTimeMake(0, 600), null, null) ?: return@runCatching null
+            val image = platform.UIKit.UIImage.imageWithCGImage(cg)
+            platform.CoreGraphics.CGImageRelease(cg)
+            tinyJpeg(image)
+        }.getOrNull()
+    }
+
+    /** A chat's document from Files, under its own name (the Swift side keeps it as the path's last part). */
+    override suspend fun pickFile(): PickedFile? {
+        val p = MediaLibraryBridge.provider ?: return null
+        val media = suspendCancellableCoroutine<LibraryMedia?> { cont -> p.pick(3) { if (cont.isActive) cont.resume(it) } } ?: return null
+        val path = media.path ?: return null
+        val size = withContext(Dispatchers.Default) {
+            (platform.Foundation.NSFileManager.defaultManager.attributesOfItemAtPath(path, null)?.get(platform.Foundation.NSFileSize) as? platform.Foundation.NSNumber)?.longLongValue
+        } ?: return null
+        return PickedFile(path.substringAfterLast('/').ifBlank { "File" }, media.mime, size, path = path)
     }
 
     override suspend fun pickMany(max: Int): List<CapturedMedia> {

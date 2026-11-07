@@ -155,7 +155,7 @@ private fun fit(image: UIImage, maxSide: Double): UIImage {
 }
 
 /** The bubble's placeholder frame travels inside the message, so it stays small (as on Android, about 240 px and 12 KB). */
-private fun tinyJpeg(image: UIImage): ByteArray? {
+internal fun tinyJpeg(image: UIImage): ByteArray? {
     val small = fit(image, 240.0)
     var quality = 0.7
     var bytes: ByteArray?

@@ -120,6 +120,10 @@ fun MediaComposeStage(
     belowSend: @Composable ColumnScope.() -> Unit = {},
     /** Something covers the stage (a moment's Forward): the video on the review holds still and silent. */
     covered: Boolean = false,
+    /** Close on the review (everything picked is let go); a chat opened on Files closes instead. */
+    onDiscard: () -> Unit = composer::discard,
+    /** Close on the gallery (M3). */
+    onCloseGallery: () -> Unit = composer::closeGallery,
 ) {
     androidx.compose.runtime.CompositionLocalProvider(LocalPersonalDark provides CircasoTheme.colors.isDark) {
         CircasoTheme(darkTheme = true, highContrast = CircasoTheme.colors.isHighContrast) {
@@ -141,7 +145,7 @@ fun MediaComposeStage(
                     Modifier.fillMaxWidth().statusBarsPadding().padding(horizontal = CircasoSpacing.s4, vertical = CircasoSpacing.s2),
                     verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp),
                 ) {
-                    StageButton(CircasoIcon.Close, if (capture != null) "Discard" else "Close") { if (capture != null) composer.discard() else onClose() }
+                    StageButton(CircasoIcon.Close, if (capture != null) "Discard" else "Close") { if (capture != null) onDiscard() else onClose() }
                     Box(Modifier.weight(1f))
                     topActions()
                     if (capture == null && (state.mode == ComposerMode.Photo || state.mode == ComposerMode.Video) && state.camera == CameraStart.Started) {
@@ -182,7 +186,7 @@ fun MediaComposeStage(
                     if (capture == null && !state.recordingVideo && !recordingOther && !state.selecting && modes.size > 1) ModeRow(modes, state.mode, composer::setMode)
                 }
                 // The gallery and the trimmer rise over the stage and fade away (still under reduced motion).
-                Layer(state.gallery) { GalleryScreen(it, state, composer) }
+                Layer(state.gallery) { GalleryScreen(it, state, composer, onCloseGallery) }
                 Layer(state.trim) { TrimScreen(it, state, copy, composer) }
                 ToastHost(toast, Modifier.align(Alignment.TopCenter).statusBarsPadding().padding(top = 64.dp))
             }
@@ -598,7 +602,7 @@ fun StageButton(icon: CircasoIcon?, description: String, label: String? = null, 
  * and the phone's own picker (which needs no permission).
  */
 @Composable
-private fun GalleryScreen(gallery: GalleryState, state: MediaComposeState, composer: MediaComposer) {
+private fun GalleryScreen(gallery: GalleryState, state: MediaComposeState, composer: MediaComposer, onClose: () -> Unit) {
     val t = CircasoTheme.typography
     // The gallery is a list screen: the person's own theme, not the dark stage.
     CircasoTheme(darkTheme = LocalPersonalDark.current, highContrast = CircasoTheme.colors.isHighContrast) {
@@ -610,7 +614,7 @@ private fun GalleryScreen(gallery: GalleryState, state: MediaComposeState, compo
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Box(
-                    Modifier.size(CircasoSizes.controlMd).clip(CircasoShapes.circle).pressable(onClick = composer::closeGallery).semantics { contentDescription = "Close"; role = Role.Button },
+                    Modifier.size(CircasoSizes.controlMd).clip(CircasoShapes.circle).pressable(onClick = onClose).semantics { contentDescription = "Close"; role = Role.Button },
                     contentAlignment = Alignment.Center,
                 ) { CircasoIconImage(CircasoIcon.Close, cc.ink, Modifier.size(20.dp)) }
                 BasicText("Recents", Modifier.weight(1f).semantics { heading() }, style = t.headline.copy(color = cc.ink, textAlign = TextAlign.Center))

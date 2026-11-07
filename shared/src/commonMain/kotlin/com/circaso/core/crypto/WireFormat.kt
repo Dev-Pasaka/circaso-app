@@ -132,6 +132,8 @@ data class ChatPayload(
         const val Voice = "voice"
         const val Location = "location"
         const val Video = "video"
+        /** A document (any file): an attachment like [Image], its name in [label] (2026-11-07). */
+        const val File = "file"
         const val LiveLocation = "liveLocation"
         const val LiveUpdate = "liveUpdate"
         const val LiveStop = "liveStop"

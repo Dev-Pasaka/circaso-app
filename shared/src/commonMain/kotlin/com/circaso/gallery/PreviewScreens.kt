@@ -130,11 +130,13 @@ private val mediaThread = listOf(
     media(14, D(D.Location, latitude = -1.29207, longitude = 36.82195, accuracy = 18.0), true, 10),
     media(15, D(D.Image, file = "x", width = 3, height = 4), true, 2, DeliveryState.Waiting),
     media(16, D(D.Voice, file = "y", durationMs = 3_000), true, 1, DeliveryState.Failed),
+    media(17, D(D.File, file = "z", label = "Lease agreement 2026.pdf", mime = "application/pdf", size = 2_480_000, caption = "Signed copy"), true, 1, DeliveryState.Sending),
+    media(18, D(D.File, attachmentId = "a4", label = "Budget.xlsx", mime = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", size = 48_200), false, 1),
 )
 /** Media actions for previews: nothing loads, so photos show their "couldn't load" state. */
 private val previewMedia = com.circaso.feature.messaging.presentation.ThreadMediaActions(
-    canShareLocation = true, onPhoto = {}, onLocation = {}, onVoiceStart = {}, onVoiceEnd = {}, load = { com.circaso.feature.messaging.data.repository.MediaLoad.Failed }, onPlay = {}, onRetry = {},
-    onConfirmLocation = {}, onCancelLocation = {}, onPhotoCaption = {}, onConfirmPhoto = {}, onCancelPhoto = {},
+    canShareLocation = true, onCompose = {}, onLocation = {}, onVoiceStart = {}, onVoiceEnd = {}, load = { com.circaso.feature.messaging.data.repository.MediaLoad.Failed }, onPlay = {}, onRetry = {},
+    onConfirmLocation = {}, onCancelLocation = {}, uploading = mapOf(17L to 0.42f),
 )
 internal val chatList = listOf(
     ChatSummary(direct("2", "Mum"), text(1, "2", "Thank you, karibu tena!", false, 12), 2),

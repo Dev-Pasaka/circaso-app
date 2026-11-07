@@ -171,13 +171,22 @@ val messagingModule = module {
         )
     }
     factory {
-        com.circaso.feature.messaging.presentation.ThreadMedia(
-            get(), get(), get(), get(), get(), get(), get(),
-            gallery = getOrNull<com.circaso.core.platform.MediaGallery>() ?: com.circaso.core.platform.NoMediaGallery,
+        com.circaso.feature.messaging.presentation.ThreadMedia(get(), get(), get(), get(), get(), get())
+    }
+    factory { com.circaso.feature.messaging.presentation.ThreadPayments(get()) }
+    // The chat's media composer (the moment composer's screens): each item into the chat's own media queue.
+    single<com.circaso.feature.messaging.presentation.ChatMediaSender> {
+        val media = get<com.circaso.feature.messaging.data.repository.MediaMessages>()
+        val library = get<com.circaso.core.platform.MediaLibrary>()
+        com.circaso.feature.messaging.presentation.ChatMediaSender { chatId, item -> sendPrepared(media, library, chatId, item) }
+    }
+    viewModel { params ->
+        com.circaso.feature.messaging.presentation.ChatMediaComposerViewModel(
+            params.get<String>(0), com.circaso.feature.messaging.presentation.ChatComposeStart.valueOf(params.get<String>(1)),
+            get(), getOrNull(), get(), get(),
             uploads = getOrNull<com.circaso.core.platform.BackgroundUploads>() ?: com.circaso.core.platform.NoBackgroundUploads,
         )
     }
-    factory { com.circaso.feature.messaging.presentation.ThreadPayments(get()) }
     viewModel { params -> ThreadViewModel(params.get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), contacts = get(), payments = get()) }
     viewModel { params ->
         com.circaso.feature.messaging.presentation.map.LocationMapViewModel(params.get(), params.get(), get(), get(), getOrNull())
@@ -191,4 +200,30 @@ val messagingModule = module {
             sources = getOrNull(),
         )
     }
+}
+
+/**
+ * One prepared item into a chat's queue: a photo, a video (with its first frame as the bubble's poster, the moment's
+ * tiny thumb when the phone can't make one) or a document. Queued, encrypted and uploaded exactly as before.
+ */
+@OptIn(kotlin.io.encoding.ExperimentalEncodingApi::class)
+private suspend fun sendPrepared(
+    media: com.circaso.feature.messaging.data.repository.MediaMessages,
+    library: com.circaso.core.platform.MediaLibrary,
+    chatId: String,
+    item: com.circaso.feature.mediacompose.PreparedItem,
+): Boolean {
+    val r = when (item) {
+        is com.circaso.feature.mediacompose.PreparedItem.Shot -> {
+            val m = item.media
+            if (m.mime.startsWith("video")) {
+                val poster = m.path?.let { library.poster(it) } ?: m.thumb
+                media.sendVideo(chatId, item.bytes, m.mime, m.width, m.height, m.durationMs, poster?.let { kotlin.io.encoding.Base64.encode(it) }, item.caption)
+            } else media.sendImage(chatId, item.bytes, m.mime, m.width, m.height, item.caption)
+        }
+        is com.circaso.feature.mediacompose.PreparedItem.Document -> media.sendDocument(chatId, item.bytes, item.file.mime, item.file.name, item.caption)
+        is com.circaso.feature.mediacompose.PreparedItem.Voice -> media.sendVoice(chatId, item.capture.bytes, item.capture.mime, item.capture.durationMs)
+        else -> return false
+    }
+    return r is com.circaso.core.common.AppResult.Success
 }

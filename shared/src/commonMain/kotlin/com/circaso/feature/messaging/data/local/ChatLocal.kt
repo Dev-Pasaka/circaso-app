@@ -105,6 +105,8 @@ object MessageKind {
     const val Voice = "voice"
     const val Video = "video"
     const val Location = "location"
+    /** A document (any file), sent like a photo; its name travels as the details' label. */
+    const val File = "file"
 }
 
 /** The furthest receipt per person for one of my messages (group receipts arrive batched). */

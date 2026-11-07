@@ -1,5 +1,6 @@
 package com.circaso.core.platform
 
+import com.circaso.core.crypto.toNSData
 import platform.Foundation.writeToFile
 import platform.UIKit.drawAtPoint
 import platform.UIKit.UIActivityViewController
@@ -45,4 +46,18 @@ actual fun sharePdf(title: String, lines: List<String>) {
     val url = platform.Foundation.NSURL.fileURLWithPath(path)
     val sheet = UIActivityViewController(activityItems = listOf(url), applicationActivities = null)
     top.presentViewController(sheet, animated = true, completion = null)
+}
+
+@OptIn(kotlinx.cinterop.ExperimentalForeignApi::class, kotlinx.cinterop.BetaInteropApi::class)
+actual fun openFile(bytes: ByteArray, name: String, mime: String): Boolean {
+    val top = topViewController() ?: return false
+    val dir = platform.Foundation.NSTemporaryDirectory() + "open-" + platform.Foundation.NSUUID().UUIDString + "/"
+    platform.Foundation.NSFileManager.defaultManager.createDirectoryAtPath(dir, withIntermediateDirectories = true, attributes = null, error = null)
+    val path = dir + name.replace(Regex("[/\\\\:]"), "_").ifBlank { "File" }
+    val data = bytes.toNSData()
+    if (!data.writeToFile(path, atomically = true)) return false
+    val url = platform.Foundation.NSURL.fileURLWithPath(path)
+    val sheet = UIActivityViewController(activityItems = listOf(url), applicationActivities = null)
+    top.presentViewController(sheet, animated = true, completion = null)
+    return true
 }
