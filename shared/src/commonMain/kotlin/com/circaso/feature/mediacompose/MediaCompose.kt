@@ -276,7 +276,7 @@ class MediaComposer(
         update { s ->
             when {
                 file == null -> s.copy(loadingPick = false)
-                file.size > maxBytes -> s.copy(loadingPick = false, error = "Files up to 32 MB can be sent. This one is ${sizeLabel(file.size)}.")
+                file.size > maxBytes -> s.copy(loadingPick = false, error = "Documents up to 32 MB can be sent. This one is ${sizeLabel(file.size)}.")
                 s.items.size >= maxItems -> s.copy(loadingPick = false, error = "You can pick up to $maxItems at a time.")
                 else -> s.copy(loadingPick = false, items = s.items + ComposerItem(ComposerCapture.Document(file)), current = s.items.size)
             }

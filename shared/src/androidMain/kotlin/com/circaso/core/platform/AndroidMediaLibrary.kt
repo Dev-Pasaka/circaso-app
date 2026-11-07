@@ -287,11 +287,14 @@ class AndroidMediaLibrary(private val context: Context) : MediaLibrary {
                     }
                 }
                 val mime = resolver.getType(uri) ?: "application/octet-stream"
+                val shownName = name?.takeIf { it.isNotBlank() } ?: "File"
+                // Over the limit by the provider's own count: refused at once, nothing is copied.
+                if (size > MomentMediaMaxBytes) return@runCatching PickedFile(shownName, mime, size)
                 val dir = File(context.cacheDir, "picked").apply { mkdirs() }
                 val out = File(dir, "doc-${System.nanoTime()}")
                 // Stop reading past the attachment limit: the composer refuses it by its size anyway.
                 val copied = resolver.openInputStream(uri)?.use { input -> out.outputStream().use { o -> copyCapped(input, o, MomentMediaMaxBytes + 1) } } ?: return@runCatching null
-                PickedFile(name?.takeIf { it.isNotBlank() } ?: "File", mime, if (size >= 0) maxOf(size, copied) else copied, path = out.absolutePath)
+                PickedFile(shownName, mime, if (size >= 0) maxOf(size, copied) else copied, path = out.absolutePath)
             }.getOrNull()
         }
     }
@@ -305,8 +308,6 @@ class AndroidMediaLibrary(private val context: Context) : MediaLibrary {
             output.write(buffer, 0, n)
             total += n
         }
-        // Past the cap: count the rest without keeping it, so the size shown is the real one.
-        if (total >= cap) { while (true) { val n = input.read(buffer); if (n < 0) break; total += n } }
         return total
     }
 

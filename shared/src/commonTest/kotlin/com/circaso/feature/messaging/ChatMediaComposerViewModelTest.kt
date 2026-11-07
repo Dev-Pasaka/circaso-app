@@ -217,7 +217,7 @@ class ChatMediaComposerViewModelTest {
         library.nextFile = PickedFile("Film.mov", "video/quicktime", MomentMediaMaxBytes + 10, path = "/film")
         val vm = composer(ChatComposeStart.Document)
         assertTrue(vm.state.value.media.items.isEmpty())
-        assertEquals("Files up to 32 MB can be sent. This one is 32.0 MB.", vm.state.value.media.error)
+        assertEquals("Documents up to 32 MB can be sent. This one is 32.0 MB.", vm.state.value.media.error)
     }
 
     @Test fun discardingADocumentGoesBackToTheChat() = runTest(dispatcher) {
@@ -246,7 +246,23 @@ class ChatMediaComposerViewModelTest {
         assertTrue(queue.sent.isEmpty())
         assertFalse(vm.state.value.sending)
         assertEquals(0, vm.state.value.media.current)
-        assertEquals("This file isn’t on the phone any more. Pick it again.", vm.state.value.media.error)
+        assertEquals("This document isn’t on the phone any more. Pick it again.", vm.state.value.media.error)
+    }
+
+    @Test fun nothingCanBeLetGoWhileItIsBeingSent() = runTest(dispatcher) {
+        library.media["a"] = jpeg(3)
+        val gate = kotlinx.coroutines.CompletableDeferred<Unit>()
+        val held = ChatMediaSender { _, _ -> gate.await(); true }
+        val vm = ChatMediaComposerViewModel("c1", ChatComposeStart.Camera, library, camera, OneChat("Wanjiru", ChatKind.Direct), held, now = { 0 })
+        vm.composer.useRecent(photo("a"))
+        vm.send()
+        assertTrue(vm.state.value.sending)
+        vm.discard()
+        // Still on the review, still going: what was on screen when Send was tapped is what goes.
+        assertEquals(1, vm.state.value.media.items.size)
+        assertFalse(vm.state.value.closed)
+        gate.complete(Unit)
+        assertTrue(vm.state.value.sent)
     }
 
     @Test fun whatWasQueuedLeavesTheReviewWhenQueueingStopsPartWay() = runTest(dispatcher) {

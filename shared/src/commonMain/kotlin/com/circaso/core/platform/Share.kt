@@ -11,4 +11,4 @@ expect fun sharePdf(title: String, lines: List<String>)
  * which offers Save to Files and the apps that open it). The decrypted copy is written to the app's cache under its
  * own name first. False when nothing could take it.
  */
-expect fun openFile(bytes: ByteArray, name: String, mime: String): Boolean
+expect suspend fun openFile(bytes: ByteArray, name: String, mime: String): Boolean

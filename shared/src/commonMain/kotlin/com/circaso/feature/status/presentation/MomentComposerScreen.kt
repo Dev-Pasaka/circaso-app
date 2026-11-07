@@ -87,6 +87,7 @@ fun MomentComposerScreen(viewModel: MomentComposerViewModel, onClose: () -> Unit
             state.trim != null -> viewModel.cancelTrim()
             state.gallery != null -> viewModel.closeGallery()
             state.selecting -> viewModel.clearSelection()
+            state.sharing -> Unit
             state.capture != null -> viewModel.discardCapture()
             else -> onClose()
         }

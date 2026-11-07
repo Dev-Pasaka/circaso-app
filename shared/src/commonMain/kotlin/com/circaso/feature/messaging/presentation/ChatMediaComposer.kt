@@ -4,6 +4,13 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.unit.dp
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.circaso.core.platform.MediaLibrary
@@ -57,7 +64,7 @@ data class ChatMediaUiState(
  */
 class ChatMediaComposerViewModel(
     private val chatId: String,
-    private val start: ChatComposeStart,
+    val start: ChatComposeStart,
     library: MediaLibrary,
     val camera: MomentCamera?,
     chats: ChatsRepository,
@@ -101,6 +108,8 @@ class ChatMediaComposerViewModel(
      * back to the camera (as a moment does), started now if the composer was opened on the gallery.
      */
     fun discard() {
+        // Being made ready and queued: what is on screen is what goes, so it can't be let go part-way.
+        if (_state.value.sending) return
         composer.discard()
         when {
             start == ChatComposeStart.Document -> _state.update { it.copy(closed = true) }
@@ -130,8 +139,8 @@ class ChatMediaComposerViewModel(
                 val ready = mutableListOf<PreparedItem>()
                 for ((index, item) in s.media.items.withIndex()) {
                     when (val p = composer.prepare(item)) {
-                        PreparedItem.Missing -> { stop(index, if (item.capture is ComposerCapture.Document) "This file isn’t on the phone any more. Pick it again." else "This video isn’t on the phone any more. Pick it again."); return@keep }
-                        PreparedItem.TooLarge -> { stop(index, if (item.capture is ComposerCapture.Document) "Files up to 32 MB can be sent." else "This is too large to send. Keep videos under a minute."); return@keep }
+                        PreparedItem.Missing -> { stop(index, if (item.capture is ComposerCapture.Document) "This document isn’t on the phone any more. Pick it again." else "This video isn’t on the phone any more. Pick it again."); return@keep }
+                        PreparedItem.TooLarge -> { stop(index, when { item.capture is ComposerCapture.Document -> "Documents up to 32 MB can be sent."; item.video != null -> "This video is too large to send. Trim it shorter."; else -> "This photo is too large to send." }); return@keep }
                         else -> ready += p
                     }
                 }
@@ -140,7 +149,8 @@ class ChatMediaComposerViewModel(
                     if (!sender.send(chatId, p)) {
                         _state.update { st ->
                             val left = st.media.items.drop(index)
-                            st.copy(sending = false, media = st.media.copy(items = left, current = 0, error = "This couldn’t be saved to send. Try again."))
+                            val why = if (index == 0) "This couldn’t be saved to send. Try again." else "$index sent. The rest couldn’t be saved to send. Try again."
+                            st.copy(sending = false, media = st.media.copy(items = left, current = 0, error = why))
                         }
                         return@keep
                     }
@@ -175,6 +185,7 @@ fun ChatMediaComposerScreen(viewModel: ChatMediaComposerViewModel, onClose: () -
             media.trim != null -> composer.cancelTrim()
             media.gallery != null -> viewModel.closeGallery()
             media.selecting -> composer.clearSelection()
+            state.sending -> Unit
             media.capture != null -> viewModel.discard()
             else -> onClose()
         }
@@ -188,7 +199,7 @@ fun ChatMediaComposerScreen(viewModel: ChatMediaComposerViewModel, onClose: () -
         modes = listOf(ComposerMode.Photo, ComposerMode.Video),
         copy = ChatCopy,
         send = MediaSendButton(
-            description = "Send ${if (n > 1) "$n items" else if (documents == 1) "file" else if (media.item?.video != null) "video" else "photo"} to ${state.title}",
+            description = "Send ${if (n > 1) "$n items" else if (documents == 1) "document" else if (media.item?.video != null) "video" else "photo"} to ${state.title}",
             enabled = state.canSend, busy = state.sending || media.preparing, onClick = viewModel::send,
         ),
         footnote = when {
@@ -199,11 +210,33 @@ fun ChatMediaComposerScreen(viewModel: ChatMediaComposerViewModel, onClose: () -
         onClose = onClose,
         topActions = {
             if (media.capture is ComposerCapture.Document) com.circaso.feature.mediacompose.StageButton(
-                com.circaso.designsystem.components.CircasoIcon.Plus, "Add another file", onClick = viewModel::addDocument,
+                com.circaso.designsystem.components.CircasoIcon.Plus, "Add another document", onClick = viewModel::addDocument,
             )
         },
         leading = { RecipientChip(state.title, state.avatarUrl, state.group) },
         onDiscard = viewModel::discard,
         onCloseGallery = viewModel::closeGallery,
+        // Opened on Files there is no camera behind it: while Files is up or the document is copied, it says so.
+        showCamera = viewModel.start != ChatComposeStart.Document,
+        customStage = if (viewModel.start == ChatComposeStart.Document && media.capture == null) ({ OpeningFiles(media.loadingPick) }) else null,
     )
+}
+
+/** Opened on Files: the document review's card, waiting for the picker (and the copy into the app) to finish. */
+@Composable
+private fun androidx.compose.foundation.layout.BoxScope.OpeningFiles(busy: Boolean) {
+    val c = com.circaso.designsystem.theme.CircasoTheme.colors
+    androidx.compose.foundation.layout.Column(
+        androidx.compose.ui.Modifier.align(androidx.compose.ui.Alignment.Center)
+            .padding(horizontal = com.circaso.designsystem.theme.CircasoSpacing.s6)
+            .clip(com.circaso.designsystem.theme.CircasoShapes.lg).background(c.glass)
+            .padding(horizontal = com.circaso.designsystem.theme.CircasoSpacing.s5, vertical = com.circaso.designsystem.theme.CircasoSpacing.s6)
+            .semantics(mergeDescendants = true) { liveRegion = androidx.compose.ui.semantics.LiveRegionMode.Polite },
+        horizontalAlignment = androidx.compose.ui.Alignment.CenterHorizontally,
+        verticalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(com.circaso.designsystem.theme.CircasoSpacing.s3),
+    ) {
+        com.circaso.designsystem.components.CircasoIconImage(com.circaso.designsystem.components.CircasoIcon.Document, c.ink, androidx.compose.ui.Modifier.size(36.dp))
+        androidx.compose.foundation.text.BasicText(if (busy) "Opening your document…" else "Choose a document in Files", style = com.circaso.designsystem.theme.CircasoTheme.typography.subhead.copy(color = c.ink))
+        if (busy) com.circaso.designsystem.components.Spinner(c.ink)
+    }
 }

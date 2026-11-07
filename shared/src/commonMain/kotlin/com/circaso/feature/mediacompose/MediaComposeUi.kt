@@ -124,7 +124,11 @@ fun MediaComposeStage(
     onDiscard: () -> Unit = composer::discard,
     /** Close on the gallery (M3). */
     onCloseGallery: () -> Unit = composer::closeGallery,
+    /** False where there is no camera to come back to (a chat opened on Files): no strip, shutter or modes. */
+    showCamera: Boolean = true,
 ) {
+    // While it is being made ready and queued nothing on the review can change: what is on screen is what goes.
+    val locked = send.busy
     androidx.compose.runtime.CompositionLocalProvider(LocalPersonalDark provides CircasoTheme.colors.isDark) {
         CircasoTheme(darkTheme = true, highContrast = CircasoTheme.colors.isHighContrast) {
             val c = CircasoTheme.colors
@@ -145,13 +149,15 @@ fun MediaComposeStage(
                     Modifier.fillMaxWidth().statusBarsPadding().padding(horizontal = CircasoSpacing.s4, vertical = CircasoSpacing.s2),
                     verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp),
                 ) {
-                    StageButton(CircasoIcon.Close, if (capture != null) "Discard" else "Close") { if (capture != null) onDiscard() else onClose() }
+                    StageButton(CircasoIcon.Close, if (locked) "Sending, please wait" else if (capture != null) "Discard" else "Close", enabled = !locked) {
+                        if (capture != null) onDiscard() else onClose()
+                    }
                     Box(Modifier.weight(1f))
                     topActions()
                     if (capture == null && (state.mode == ComposerMode.Photo || state.mode == ComposerMode.Video) && state.camera == CameraStart.Started) {
                         StageButton(CircasoIcon.Flash, if (state.flash) "Flash on" else "Flash off", filled = state.flash, onClick = composer::toggleFlash)
                     }
-                    if (state.item?.video?.path != null) StageButton(CircasoIcon.Scissors, "Trim video") { composer.openTrim() }
+                    if (state.item?.video?.path != null && !locked) StageButton(CircasoIcon.Scissors, "Trim video") { composer.openTrim() }
                 }
 
                 if (state.recordingVideo) {
@@ -167,8 +173,8 @@ fun MediaComposeStage(
 
                 Column(Modifier.align(Alignment.BottomCenter).fillMaxWidth().navigationBarsPadding().imePadding().padding(bottom = CircasoSpacing.s3), verticalArrangement = Arrangement.spacedBy(14.dp)) {
                     if (reviewing) {
-                        if (state.items.size > 1) PickedStrip(state, copy, composer)
-                        if (capture != null) CaptionField(state.caption, composer::onCaption)
+                        if (state.items.size > 1) PickedStrip(state, copy, composer, locked)
+                        if (capture != null) CaptionField(state.caption, composer::onCaption, enabled = !locked)
                         // Under the caption, once (design M4): what happens to it.
                         if (capture != null && footnote != null) LockLine(footnote)
                         reviewExtras()
@@ -178,12 +184,12 @@ fun MediaComposeStage(
                             SendButton(send)
                         }
                         belowSend()
-                    } else {
+                    } else if (showCamera) {
                         if (!state.recordingVideo && !recordingOther) RecentsStrip(state, composer)
                         if (state.selecting && state.selection.isNotEmpty()) SelectionBar(state, composer)
                         else if (state.mode != ComposerMode.Voice) CameraControls(state, composer)
                     }
-                    if (capture == null && !state.recordingVideo && !recordingOther && !state.selecting && modes.size > 1) ModeRow(modes, state.mode, composer::setMode)
+                    if (showCamera && capture == null && !state.recordingVideo && !recordingOther && !state.selecting && modes.size > 1) ModeRow(modes, state.mode, composer::setMode)
                 }
                 // The gallery and the trimmer rise over the stage and fade away (still under reduced motion).
                 Layer(state.gallery) { GalleryScreen(it, state, composer, onCloseGallery) }
@@ -255,7 +261,7 @@ private fun SelectionBar(state: MediaComposeState, composer: MediaComposer) {
 
 /** M4: several picked; tap one to put it on the stage (and edit its caption), the bin takes it out. */
 @Composable
-private fun PickedStrip(state: MediaComposeState, copy: MediaComposeCopy, composer: MediaComposer) {
+private fun PickedStrip(state: MediaComposeState, copy: MediaComposeCopy, composer: MediaComposer, locked: Boolean) {
     val c = CircasoTheme.colors
     Row(Modifier.fillMaxWidth().padding(horizontal = CircasoSpacing.s4), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
         androidx.compose.foundation.lazy.LazyRow(Modifier.weight(1f), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -266,7 +272,7 @@ private fun PickedStrip(state: MediaComposeState, copy: MediaComposeCopy, compos
                 Box(
                     Modifier.size(CircasoSizes.controlMd).clip(CircasoShapes.sm).background(c.fill)
                         .then(if (on) Modifier.border(2.dp, c.ink, CircasoShapes.sm) else Modifier)
-                        .pressable(onClick = { composer.select(i) })
+                        .pressable(enabled = !locked, onClick = { composer.select(i) })
                         .semantics { contentDescription = "${copy.itemNoun} ${i + 1} of ${state.items.size}" + if (item.tooLong) ", needs trimming" else ""; selected = on; role = Role.Tab },
                     contentAlignment = Alignment.Center,
                 ) {
@@ -277,7 +283,7 @@ private fun PickedStrip(state: MediaComposeState, copy: MediaComposeCopy, compos
                 }
             }
         }
-        StageButton(CircasoIcon.Trash, "Remove this one", onClick = composer::removeCurrent)
+        if (!locked) StageButton(CircasoIcon.Trash, "Remove this one", onClick = composer::removeCurrent)
     }
 }
 
@@ -401,12 +407,12 @@ fun fileKind(name: String, mime: String): String {
 }
 
 @Composable
-private fun CaptionField(value: String, onChange: (String) -> Unit) {
+private fun CaptionField(value: String, onChange: (String) -> Unit, enabled: Boolean = true) {
     val c = CircasoTheme.colors
     val t = CircasoTheme.typography
     Box(Modifier.fillMaxWidth().padding(horizontal = CircasoSpacing.s4).clip(CircasoShapes.lg).background(c.glass).padding(horizontal = 16.dp, vertical = 12.dp)) {
         if (value.isEmpty()) BasicText("Add a caption", style = t.body.copy(color = c.inkSecondary))
-        BasicTextField(value, onChange, textStyle = t.body.copy(color = c.ink), cursorBrush = SolidColor(c.ink), modifier = Modifier.fillMaxWidth().semantics { contentDescription = "Caption" })
+        BasicTextField(value, onChange, enabled = enabled, textStyle = t.body.copy(color = c.ink), cursorBrush = SolidColor(c.ink), modifier = Modifier.fillMaxWidth().semantics { contentDescription = "Caption" })
     }
 }
 
@@ -584,11 +590,12 @@ fun BoxScope.Blocked(title: String, sub: String, settings: Boolean = true, icon:
 
 /** A round glass button on the stage (close, flash, scissors, the bin). */
 @Composable
-fun StageButton(icon: CircasoIcon?, description: String, label: String? = null, bold: Boolean = false, filled: Boolean = false, onClick: () -> Unit) {
+fun StageButton(icon: CircasoIcon?, description: String, label: String? = null, bold: Boolean = false, filled: Boolean = false, enabled: Boolean = true, onClick: () -> Unit) {
     val c = CircasoTheme.colors
     Box(
         Modifier.size(CircasoSizes.controlMd).clip(CircasoShapes.circle).background(if (filled) c.ink else c.glass)
-            .pressable(onClick = onClick).semantics(mergeDescendants = true) { contentDescription = description; role = Role.Button },
+            .graphicsLayer { alpha = if (enabled) 1f else 0.4f }
+            .pressable(enabled = enabled, onClick = onClick).semantics(mergeDescendants = true) { contentDescription = description; role = Role.Button },
         contentAlignment = Alignment.Center,
     ) {
         if (label != null) BasicText(label, style = CircasoTheme.typography.headline.copy(color = c.ink, fontWeight = if (bold) FontWeight.Bold else FontWeight.Normal))
@@ -795,13 +802,19 @@ private fun <T : Any> Layer(value: T?, content: @Composable (T) -> Unit) {
 @Composable
 fun UploadRing(progress: Float?, modifier: Modifier = Modifier, ink: androidx.compose.ui.graphics.Color = CircasoTheme.colors.ink) {
     val reduce = CircasoTheme.reduceMotion
-    val angle = if (reduce || progress != null) 0f else androidx.compose.animation.core.rememberInfiniteTransition().animateFloat(
+    // Both are read only while drawing, so a turning or filling ring redraws without recomposing the bubble.
+    val angle = if (reduce || progress != null) null else androidx.compose.animation.core.rememberInfiniteTransition().animateFloat(
         0f, 360f, androidx.compose.animation.core.infiniteRepeatable(
             androidx.compose.animation.core.tween(CircasoMotion.MomentMs * 2, easing = androidx.compose.animation.core.LinearEasing),
             androidx.compose.animation.core.RepeatMode.Restart,
         ),
-    ).value
-    val shown = androidx.compose.animation.core.animateFloatAsState(progress ?: 0f, if (reduce) androidx.compose.animation.core.snap() else androidx.compose.animation.core.tween(CircasoMotion.BaseMs)).value
+    )
+    val fill = androidx.compose.runtime.remember { androidx.compose.animation.core.Animatable(progress ?: 0f) }
+    LaunchedEffect(progress) {
+        val target = progress ?: 0f
+        // Forward it fills smoothly; back to the start (a send again) it snaps, never running backwards.
+        if (reduce || target < fill.value) fill.snapTo(target) else fill.animateTo(target, androidx.compose.animation.core.tween(CircasoMotion.BaseMs))
+    }
     androidx.compose.foundation.Canvas(
         modifier.semantics { if (progress != null) progressBarRangeInfo = androidx.compose.ui.semantics.ProgressBarRangeInfo(progress, 0f..1f) },
     ) {
@@ -810,7 +823,7 @@ fun UploadRing(progress: Float?, modifier: Modifier = Modifier, ink: androidx.co
         val arc = androidx.compose.ui.geometry.Size(size.width - w, size.height - w)
         val topLeft = androidx.compose.ui.geometry.Offset(inset, inset)
         drawArc(ink.copy(alpha = 0.3f), 0f, 360f, false, topLeft, arc, style = androidx.compose.ui.graphics.drawscope.Stroke(w))
-        if (progress != null) drawArc(ink, -90f, 360f * shown, false, topLeft, arc, style = androidx.compose.ui.graphics.drawscope.Stroke(w, cap = androidx.compose.ui.graphics.StrokeCap.Round))
-        else drawArc(ink, angle - 90f, 90f, false, topLeft, arc, style = androidx.compose.ui.graphics.drawscope.Stroke(w, cap = androidx.compose.ui.graphics.StrokeCap.Round))
+        if (progress != null) drawArc(ink, -90f, 360f * fill.value, false, topLeft, arc, style = androidx.compose.ui.graphics.drawscope.Stroke(w, cap = androidx.compose.ui.graphics.StrokeCap.Round))
+        else drawArc(ink, (angle?.value ?: 0f) - 90f, 90f, false, topLeft, arc, style = androidx.compose.ui.graphics.drawscope.Stroke(w, cap = androidx.compose.ui.graphics.StrokeCap.Round))
     }
 }

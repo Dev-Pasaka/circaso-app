@@ -177,9 +177,8 @@ fun ThreadScreen(
         notice = if (payoutBusy) "This payout is already on its way." else null, onNoticeShown = { payoutBusy = false },
         onLoadOlder = viewModel::onLoadOlder, onSavePeer = viewModel::onSavePeer, onOpenMoment = onOpenMoment, onReactTo = viewModel::onReactTo,
         media = viewModel.media?.let { m ->
-            val uploading by m.progress.collectAsState()
             ThreadMediaActions(
-                canShareLocation = m.canShareLocation, onCompose = onComposeMedia, uploading = uploading, onLocation = viewModel::onSendLocation,
+                canShareLocation = m.canShareLocation, onCompose = onComposeMedia, uploading = m.progress, onLocation = viewModel::onSendLocation,
                 onVoiceStart = viewModel::onVoiceStart, onVoiceEnd = viewModel::onVoiceEnd, load = { d -> m.load(d) }, mapPicture = m::mapPicture,
                 onShareLive = viewModel::onShareLive, onStopLive = viewModel::onStopLive,
                 onPlayVideo = viewModel::onPlayVideo, onCloseVideo = viewModel::onCloseVideo,
@@ -321,6 +320,8 @@ fun ThreadContent(
     val onPlay: (Message.Media) -> Unit = media?.onPlay ?: {}
     val onRetryMedia: (Message.Media) -> Unit = media?.onRetry ?: {}
     var attaching by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(false) }
+    // Collected here but read only inside each media row, so a percent step redraws that row, not the thread.
+    val uploading = media?.uploading?.collectAsState()
     var viewing by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf<ByteArray?>(null) }
     var selectedMedia by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf<Message.Media?>(null) }
     var reactingTo by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf<String?>(null) }
@@ -642,7 +643,7 @@ fun ThreadContent(
                                 avatarUrl = state.chat?.members?.firstOrNull { it.userId == m.senderId }?.avatarUrl,
                                 onOpenLocation = { onOpenLocation(m) }, onStopLive = { media?.onStopLive?.invoke(m) }, now = liveNow,
                                 onPlayVideo = { media?.onPlayVideo?.invoke(m) }, videoLoading = state.videoLoading == m.localId,
-                                uploadProgress = media?.uploading?.get(m.localId),
+                                uploadProgress = uploading?.let { u -> androidx.compose.runtime.remember(m.localId, u) { androidx.compose.runtime.derivedStateOf { u.value[m.localId] } }.value },
                                 react = reactUi(m.messageId, options = if (m.state == DeliveryState.Failed || m.outgoing) ({ selectedMedia = m }) else null),
                             )
                         }
@@ -968,8 +969,8 @@ class ThreadMediaActions(
     val canShareLocation: Boolean,
     /** Opens the shared media composer (the moment composer's screens) for photos, videos or a document. */
     val onCompose: (ChatComposeStart) -> Unit,
-    /** How far each outgoing file's upload has got, by row (MediaMessages.progress). */
-    val uploading: Map<Long, Float> = emptyMap(),
+    /** How far each outgoing file's upload has got, by row (MediaMessages.progress); each row reads only its own. */
+    val uploading: kotlinx.coroutines.flow.StateFlow<Map<Long, Float>> = kotlinx.coroutines.flow.MutableStateFlow(emptyMap()),
     val onLocation: () -> Unit,
     val onVoiceStart: () -> Unit,
     val onVoiceEnd: (send: Boolean) -> Unit,
@@ -1014,9 +1015,9 @@ private fun AttachOption(icon: CircasoIcon, title: String, sub: String, onClick:
 private fun androidx.compose.foundation.layout.BoxScope.SendState(state: DeliveryState, progress: Float?) {
     val ink = com.circaso.designsystem.theme.DarkColors.ink
     when (state) {
-        DeliveryState.Sending, DeliveryState.Waiting -> Box(Modifier.matchParentSize().background(CircasoTheme.colors.scrim), contentAlignment = Alignment.Center) {
+        DeliveryState.Sending, DeliveryState.Waiting -> Box(Modifier.matchParentSize().background(com.circaso.designsystem.theme.DarkColors.scrim), contentAlignment = Alignment.Center) {
             if (state == DeliveryState.Waiting && progress == null) CircasoIconImage(CircasoIcon.Clock, ink, Modifier.size(28.dp))
-            else com.circaso.feature.mediacompose.UploadRing(progress, Modifier.size(44.dp), ink = ink)
+            else com.circaso.feature.mediacompose.UploadRing(progress, Modifier.size(com.circaso.designsystem.theme.CircasoSizes.controlMd), ink = ink)
         }
         DeliveryState.Failed -> FailedBadge(Modifier.align(Alignment.Center))
         else -> Unit
@@ -1027,7 +1028,7 @@ private fun androidx.compose.foundation.layout.BoxScope.SendState(state: Deliver
 @Composable
 private fun FailedBadge(modifier: Modifier = Modifier) {
     val c = CircasoTheme.colors
-    Box(modifier.size(44.dp).clip(com.circaso.designsystem.theme.CircasoShapes.circle).background(c.critical), contentAlignment = Alignment.Center) {
+    Box(modifier.size(com.circaso.designsystem.theme.CircasoSizes.controlMd).clip(com.circaso.designsystem.theme.CircasoShapes.circle).background(c.critical), contentAlignment = Alignment.Center) {
         CircasoIconImage(CircasoIcon.Warning, c.onAction, Modifier.size(22.dp))
     }
 }
@@ -1054,8 +1055,8 @@ private fun FileBubble(
     val failed = m.state == DeliveryState.Failed
     val going = m.state == DeliveryState.Sending || m.state == DeliveryState.Waiting
     Column(
-        bubble.combinedClickable(
-            onClickLabel = "Open document", onLongClick = options,
+        bubble.pressable(
+            role = androidx.compose.ui.semantics.Role.Button, onLongClick = options,
             onClick = {
                 if (failed) onOptions()
                 else if (!opening) scope.launch {
@@ -1078,15 +1079,20 @@ private fun FileBubble(
         verticalArrangement = Arrangement.spacedBy(CircasoSpacing.s2),
     ) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(CircasoSpacing.s3)) {
-            Box(Modifier.size(MediaIconSize + 4.dp), contentAlignment = Alignment.Center) {
-                Box(Modifier.size(MediaIconSize).clip(com.circaso.designsystem.theme.CircasoShapes.md).background(if (m.outgoing) c.onAction.copy(alpha = 0.18f) else c.fillStrong), contentAlignment = Alignment.Center) {
-                    when {
-                        opening -> com.circaso.designsystem.components.Spinner(ink, Modifier.size(18.dp))
-                        failed -> CircasoIconImage(CircasoIcon.Warning, c.critical, Modifier.size(20.dp))
-                        else -> CircasoIconImage(CircasoIcon.Document, ink, Modifier.size(22.dp))
+            // A round tile, so the upload ring sits round it as it does on a photo; the same clock and failed badge too.
+            Box(Modifier.size(MediaIconSize + 8.dp), contentAlignment = Alignment.Center) {
+                when {
+                    failed -> FailedBadge(Modifier.size(MediaIconSize))
+                    else -> Box(Modifier.size(MediaIconSize).clip(com.circaso.designsystem.theme.CircasoShapes.circle).background(if (m.outgoing) c.onAction else c.fillStrong), contentAlignment = Alignment.Center) {
+                        val glyph = if (m.outgoing) c.action else c.ink
+                        when {
+                            opening -> com.circaso.designsystem.components.Spinner(glyph, Modifier.size(18.dp))
+                            m.state == DeliveryState.Waiting && progress == null -> CircasoIconImage(CircasoIcon.Clock, glyph, Modifier.size(20.dp))
+                            else -> CircasoIconImage(CircasoIcon.Document, glyph, Modifier.size(22.dp))
+                        }
                     }
                 }
-                if (going) com.circaso.feature.mediacompose.UploadRing(progress, Modifier.matchParentSize(), ink = ink)
+                if (going && !(m.state == DeliveryState.Waiting && progress == null)) com.circaso.feature.mediacompose.UploadRing(progress, Modifier.matchParentSize(), ink = ink)
             }
             Column(Modifier.weight(1f)) {
                 BasicText(name, style = t.callout.copy(color = ink, fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold), maxLines = 2, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)

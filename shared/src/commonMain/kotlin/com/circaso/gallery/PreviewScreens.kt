@@ -136,7 +136,7 @@ private val mediaThread = listOf(
 /** Media actions for previews: nothing loads, so photos show their "couldn't load" state. */
 private val previewMedia = com.circaso.feature.messaging.presentation.ThreadMediaActions(
     canShareLocation = true, onCompose = {}, onLocation = {}, onVoiceStart = {}, onVoiceEnd = {}, load = { com.circaso.feature.messaging.data.repository.MediaLoad.Failed }, onPlay = {}, onRetry = {},
-    onConfirmLocation = {}, onCancelLocation = {}, uploading = mapOf(17L to 0.42f),
+    onConfirmLocation = {}, onCancelLocation = {}, uploading = kotlinx.coroutines.flow.MutableStateFlow(mapOf(17L to 0.42f)),
 )
 internal val chatList = listOf(
     ChatSummary(direct("2", "Mum"), text(1, "2", "Thank you, karibu tena!", false, 12), 2),
@@ -347,6 +347,7 @@ fun PreviewScreens(name: String) {
             ThreadUiState(chat = direct("2", "Mum"), online = false, messages = thread + listOf(text(5, "2", "Not yet, on my way home", true, 2, DeliveryState.Waiting), text(6, "2", "I'll send lunch money once I have network", true, 1, DeliveryState.Waiting))),
             {}, {}, null, {}, {}, {}, {}, {}, {}, {},
         )
+        "compose-moment", "compose-chat-camera", "compose-chat-gallery", "compose-chat-document" -> MediaComposePreview(name)
         "chat-media" -> ThreadContent(ThreadUiState(chat = direct("2", "Mum"), messages = mediaThread, playing = 12, playingSince = now - 4_000), {}, {}, null, {}, {}, {}, {}, {}, {}, {}, media = previewMedia)
         "chat-video" -> ThreadContent(ThreadUiState(chat = direct("2", "Mum"), messages = listOf(
             media(31, D(D.Video, attachmentId = "v1", width = 720, height = 1280, durationMs = 42_000, caption = "Goal!"), false, 30),

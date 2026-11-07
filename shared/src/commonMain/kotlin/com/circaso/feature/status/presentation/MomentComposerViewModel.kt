@@ -274,7 +274,7 @@ class MomentComposerViewModel(
     fun onVoiceBackground(bg: String) = _state.update { it.copy(voiceBackground = bg) }
 
     /** The close button on the review: everything picked or captured is let go, back to the camera. */
-    fun discardCapture() { stopPlayback(); composer.discard(); _state.update { it.copy(forwarding = false) } }
+    fun discardCapture() { if (_state.value.sharing) return; stopPlayback(); composer.discard(); _state.update { it.copy(forwarding = false) } }
 
     fun onCaption(text: String) = composer.onCaption(text)
     fun onText(text: String) = _state.update { it.copy(text = text.take(700)) }
