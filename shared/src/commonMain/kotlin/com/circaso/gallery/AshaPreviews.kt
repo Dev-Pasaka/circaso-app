@@ -60,6 +60,14 @@ internal fun AshaPreview(name: String): Boolean {
             VoiceUiState(phase = VoicePhase.Ended, ending = com.circaso.feature.assistant.presentation.VoiceEnding.Offline, turns = listOf(VoiceTurn("Who did I chat with this week?", listOf("Mostly Amina and Otieno."), done = true))),
             {}, {}, {}, {},
         )
+        "asha-waiting" -> Chat(null, online = false) {
+            it.copy(waiting = com.circaso.feature.assistant.presentation.WaitingQuestion("And how much on transport?", partial = "Let me check your transport payments this"))
+        }
+        "asha-back-online" -> Chat(null) { it.copy(backOnline = true, pendingQuestion = "And how much on transport?", carried = "Let me check your transport payments this") }
+        "asha-voice-reconnecting" -> VoiceContent(
+            VoiceUiState(phase = VoicePhase.Reconnecting, turns = listOf(VoiceTurn("Who did I chat with this week?", listOf("Mostly Amina and Otieno."), done = true), VoiceTurn("And Mum?", listOf("You and Mum talked on"), done = true, cutOff = true))),
+            {}, {}, {}, {},
+        )
         "asha-voice-muted" -> VoiceContent(VoiceUiState(phase = VoicePhase.Listening, muted = true), {}, {}, {}, {})
         else -> return false
     }
@@ -88,9 +96,9 @@ private fun sampleUsage(used: Int = 18) = AshaUsage(
 )
 
 @Composable
-private fun Chat(sheet: AshaSheet, online: Boolean = true, usage: UsageUi = UsageUi.Loaded(sampleUsage()), confirmDelete: String? = null) {
+private fun Chat(sheet: AshaSheet?, online: Boolean = true, usage: UsageUi = UsageUi.Loaded(sampleUsage()), confirmDelete: String? = null, change: (AshaUiState) -> AshaUiState = { it }) {
     AshaContent(
-        AshaUiState(
+        change(AshaUiState(
             messages = listOf(
                 AshaMessage("1", "USER", "What did I spend on lunch this week?", null, null, null, "2026-11-05T10:01:00Z", "c1"),
                 AshaMessage("2", "ASHA", "About **KES 1,850** over four lunches. Thursday was the biggest at KES 650.", "1", null, null, "2026-11-05T10:01:05Z", "c1"),
@@ -101,7 +109,7 @@ private fun Chat(sheet: AshaSheet, online: Boolean = true, usage: UsageUi = Usag
             sheet = sheet,
             usage = usage,
             confirmDelete = confirmDelete,
-        ),
+        )),
         {}, {}, {}, {}, {}, {},
         menu = AshaMenuActions(onVoiceSettings = {}),
     )

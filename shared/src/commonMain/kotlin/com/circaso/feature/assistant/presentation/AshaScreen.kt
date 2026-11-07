@@ -47,6 +47,16 @@ import com.circaso.designsystem.components.ThreadHeader
 import com.circaso.designsystem.theme.CircasoSizes
 import com.circaso.designsystem.theme.CircasoSpacing
 import com.circaso.designsystem.theme.CircasoTheme
+import com.circaso.designsystem.theme.CircasoMotion
+import com.circaso.designsystem.components.CircasoIconImage
+import androidx.compose.animation.Crossfade
+import androidx.compose.animation.core.tween
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import kotlinx.coroutines.launch
 
 /**
  * [onVoice] opens the live conversation (A11); null where this phone can only record clips, and the mic records one
@@ -131,19 +141,44 @@ fun AshaContent(
     ) {
         Column(Modifier.fillMaxSize()) {
             val shown: List<Bubble> = buildList {
-                state.messages.forEach { add(Bubble(it.text, it.isFromUser, speakable = !it.isFromUser)) }
-                state.pendingQuestion?.let { add(Bubble(it, true)) }
-                if (state.streaming.isNotEmpty() || state.sending) add(Bubble(state.status ?: state.streaming.ifEmpty { "…" }, false, thinking = state.streaming.isEmpty()))
+                state.messages.forEach { add(Bubble("m:${it.messageId}", it.text, it.isFromUser, speakable = !it.isFromUser)) }
+                // The question in flight and its answer keep the keys "q" and "a" whether asking, waiting or asking
+                // again, so a dropped line never adds a second bubble.
+                val waiting = state.waiting
+                if (waiting != null) {
+                    add(Bubble("q", waiting.question, true, waiting = true))
+                    if (waiting.partial.isNotEmpty()) add(Bubble("a", waiting.partial, false, thinking = true, cutOff = true))
+                } else {
+                    state.pendingQuestion?.let { add(Bubble("q", it, true)) }
+                    if (state.streaming.isNotEmpty() || state.sending) {
+                        add(Bubble("a", state.status ?: state.streaming.ifEmpty { state.carried.ifEmpty { "…" } }, false, thinking = state.streaming.isEmpty()))
+                    }
+                }
             }
+            // Each conversation opens at its newest line, following, whatever was scrolled in the last one.
+            val list = androidx.compose.runtime.key(state.shownConversation) { androidx.compose.foundation.lazy.rememberLazyListState() }
+            val scope = androidx.compose.runtime.rememberCoroutineScope()
+            val follow = rememberFollowLatest(list) { shown.size to shown.lastOrNull()?.key }
+            val still = CircasoTheme.reduceMotion
+            // Sending something new always brings the newest line back into view and resumes following.
+            val send = { scope.launch { follow.jump(!still) }; onSend() }
+            val suggest = { text: String -> scope.launch { follow.jump(!still) }; onSuggestion(text) }
             if (shown.isEmpty()) {
-                EmptyAsha(Modifier.weight(1f).fillMaxWidth(), online = state.online, onSuggestion = onSuggestion)
+                EmptyAsha(Modifier.weight(1f).fillMaxWidth(), online = state.online, onSuggestion = suggest)
             } else {
-                LazyColumn(
-                    Modifier.weight(1f).fillMaxWidth(),
-                    reverseLayout = true,
-                    contentPadding = PaddingValues(horizontal = CircasoSpacing.s4, vertical = 14.dp),
-                    verticalArrangement = Arrangement.spacedBy(CircasoSpacing.s2),
-                ) { items(shown.asReversed()) { BubbleView(it, speaking = it.speakable && it.text == state.speakingText, canSpeak = state.online, onSpeak = onSpeak) } }
+                Box(Modifier.weight(1f).fillMaxWidth()) {
+                    LazyColumn(
+                        Modifier.fillMaxSize(),
+                        state = list,
+                        reverseLayout = true,
+                        contentPadding = PaddingValues(horizontal = CircasoSpacing.s4, vertical = 14.dp),
+                        verticalArrangement = Arrangement.spacedBy(CircasoSpacing.s2),
+                    ) { items(shown.asReversed(), key = { it.key }) { BubbleView(it, speaking = it.speakable && it.text == state.speakingText, canSpeak = state.online, onSpeak = onSpeak) } }
+                    JumpToLatest(
+                        !follow.following, { scope.launch { follow.jump(!still) } },
+                        Modifier.align(Alignment.BottomEnd).padding(end = CircasoSpacing.s4, bottom = CircasoSpacing.s3),
+                    )
+                }
             }
             state.error?.let { BasicText(it, Modifier.padding(horizontal = CircasoSpacing.s4, vertical = CircasoSpacing.s1), style = t.footnote.copy(color = c.critical)) }
             ComposerBar(
@@ -157,7 +192,7 @@ fun AshaContent(
                 },
                 enabled = state.online && !state.sending && state.voice == VoiceState.Idle,
                 canSend = state.canSend,
-                onSend = onSend,
+                onSend = { send() },
                 trailing = {
                     val recording = state.voice == VoiceState.Recording
                     when {
@@ -168,11 +203,10 @@ fun AshaContent(
                     }
                 },
                 above = {
-                    if (!state.online) {
-                        BasicText("Asha needs a connection. You can still read your past conversation.", style = t.footnote.copy(color = c.inkSecondary), modifier = Modifier.padding(start = CircasoSpacing.s4, end = CircasoSpacing.s4, top = CircasoSpacing.s2))
-                    } else if (shown.isNotEmpty() && !state.sending) {
+                    ConnectionLine(online = state.online, backOnline = state.backOnline, waiting = state.waiting != null)
+                    if (state.online && !state.backOnline && shown.isNotEmpty() && !state.sending && state.waiting == null) {
                         LazyRow(contentPadding = PaddingValues(horizontal = CircasoSpacing.s3), horizontalArrangement = Arrangement.spacedBy(CircasoSpacing.s2), modifier = Modifier.padding(top = 10.dp)) {
-                            items(Suggestions) { SuggestionChip(it, { onSuggestion(it) }) }
+                            items(Suggestions) { SuggestionChip(it, { suggest(it) }) }
                         }
                     }
                 },
@@ -181,7 +215,65 @@ fun AshaContent(
     }
 }
 
-private data class Bubble(val text: String, val mine: Boolean, val speakable: Boolean = false, val thinking: Boolean = false)
+private data class Bubble(
+    val key: String,
+    val text: String,
+    val mine: Boolean,
+    val speakable: Boolean = false,
+    val thinking: Boolean = false,
+    /** A question waiting for the connection: faded, with a clock (design G3). */
+    val waiting: Boolean = false,
+    /** The part of an answer that arrived before the line dropped: quiet, and labelled so it never reads as complete. */
+    val cutOff: Boolean = false,
+)
+
+/**
+ * The line over the composer about the connection. Offline it says Asha needs one; when the connection comes back it
+ * turns into a quiet "Back online" with a check for about 3 s ([AshaUiState.backOnline]), then folds away.
+ *
+ * Departure from G4 (decided 2026-11-07): G4 is a glass toast that shows only after waiting chat messages went out.
+ * Asha's chat already has its offline line in this spot, so the same line turning into "Back online" says the change
+ * where the person was reading, with nothing new popping over the thread; it shows on every return while Asha is open
+ * because asking needs the connection. With a question waiting it adds "Asking Asha again", never "asked" before an
+ * answer exists. The words and timing follow G4; reduced motion swaps them without the fade and fold.
+ */
+@Composable
+private fun ConnectionLine(online: Boolean, backOnline: Boolean, waiting: Boolean) {
+    val c = CircasoTheme.colors
+    val t = CircasoTheme.typography
+    val still = CircasoTheme.reduceMotion
+    val enterMs = if (still) 0 else CircasoMotion.BaseMs
+    val exitMs = if (still) 0 else CircasoMotion.QuickMs
+    val words = when {
+        !online && waiting -> "You're offline. Your question goes to Asha when you reconnect."
+        !online -> "Asha needs a connection. You can still read your past conversation."
+        backOnline && waiting -> "Back online · Asking Asha again"
+        backOnline -> "Back online"
+        else -> null
+    }
+    // A stable node carries the live region, so TalkBack and VoiceOver hear each change of words.
+    Box(Modifier.fillMaxWidth().semantics { liveRegion = LiveRegionMode.Polite; words?.let { contentDescription = it } }) {
+        androidx.compose.animation.AnimatedVisibility(
+            visible = words != null,
+            enter = androidx.compose.animation.fadeIn(tween(enterMs)) + androidx.compose.animation.expandVertically(tween(enterMs)),
+            exit = androidx.compose.animation.fadeOut(tween(exitMs)) + androidx.compose.animation.shrinkVertically(tween(exitMs)),
+        ) {
+            // The last words stay while the line folds away.
+            val last = remember { mutableStateOf("") }
+            androidx.compose.runtime.SideEffect { words?.let { last.value = it } }
+            Crossfade(words ?: last.value, animationSpec = tween(enterMs), label = "connection line") { text ->
+                Row(
+                    Modifier.fillMaxWidth().padding(start = CircasoSpacing.s4, end = CircasoSpacing.s4, top = CircasoSpacing.s2).clearAndSetSemantics {},
+                    horizontalArrangement = Arrangement.spacedBy(CircasoSpacing.s1),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    if (text.startsWith("Back online")) CircasoIconImage(CircasoIcon.Check, c.inkSecondary, Modifier.size(16.dp))
+                    BasicText(text, style = t.footnote.copy(color = c.inkSecondary))
+                }
+            }
+        }
+    }
+}
 
 @Composable
 private fun EmptyAsha(modifier: Modifier, online: Boolean, onSuggestion: (String) -> Unit) {
@@ -204,7 +296,7 @@ private fun BubbleView(b: Bubble, speaking: Boolean, canSpeak: Boolean, onSpeak:
     val c = CircasoTheme.colors
     Row(Modifier.fillMaxWidth(), horizontalArrangement = if (b.mine) Arrangement.End else Arrangement.Start, verticalAlignment = Alignment.Bottom) {
         MessageColumn(b.mine, Modifier.weight(1f, fill = false)) {
-            if (b.mine || b.thinking) ChatBubble(b.text, b.mine, quiet = b.thinking, markdown = !b.mine)
+            if (b.mine || b.thinking) ChatBubble(b.text, b.mine, faded = b.waiting, quiet = b.thinking, markdown = !b.mine)
             else {
                 // Her answers: markdown, charts, statements and diagrams (the output contract), on the incoming bubble.
                 Box(
@@ -213,6 +305,8 @@ private fun BubbleView(b: Bubble, speaking: Boolean, canSpeak: Boolean, onSpeak:
                 ) { AshaAnswer(b.text) }
             }
             if (speaking) BubbleMeta("Reading aloud", icon = CircasoIcon.Speaker)
+            if (b.waiting) BubbleMeta("Waiting to send", icon = CircasoIcon.Clock)
+            if (b.cutOff) BubbleMeta("Cut off. Asha answers again when you're back online.")
         }
         if (b.speakable && (canSpeak || speaking)) {
             Box(Modifier.padding(start = CircasoSpacing.s2, bottom = 2.dp)) {

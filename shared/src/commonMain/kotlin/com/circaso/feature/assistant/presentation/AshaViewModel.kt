@@ -31,9 +31,24 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
 enum class VoiceState { Idle, Recording, Transcribing }
+
+/**
+ * A question that failed only because the connection dropped (no network, offline, a timeout, or the answer's stream
+ * cut off). It stays in its bubble with a clock and is asked again by itself once the connection is back.
+ * [partial] is what had arrived of the answer before the line dropped; it stays on screen until the new answer starts.
+ */
+data class WaitingQuestion(
+    val question: String,
+    val partial: String = "",
+    /** The history's message ids when it was asked: a new copy of the question after these means the server answered it. */
+    val knownIds: Set<String> = emptySet(),
+    /** Automatic asks so far; after [AshaViewModel.MaxAsks] it goes back to the draft as before. */
+    val tries: Int = 1,
+)
 
 data class AshaUiState(
     val messages: List<AshaMessage> = emptyList(),
@@ -60,6 +75,12 @@ data class AshaUiState(
     val usage: UsageUi = UsageUi.Loading,
     /** The conversation waiting for its delete to be confirmed (long-pressed in the recents). */
     val confirmDelete: String? = null,
+    /** A question waiting for the connection (see [WaitingQuestion]). */
+    val waiting: WaitingQuestion? = null,
+    /** The reply that arrived before the line dropped, shown while the same question is asked again and nothing new has come. */
+    val carried: String = "",
+    /** The connection just came back: the offline line says "Back online" for a moment, then goes. */
+    val backOnline: Boolean = false,
 ) {
     /** The open conversation's id: the one chosen, else the latest. */
     val shownConversation: String? get() = currentConversation ?: conversations.firstOrNull()?.id
@@ -67,18 +88,18 @@ data class AshaUiState(
     /** The open conversation's title, for the header; "New chat" until it has one. */
     val conversationTitle: String? get() = (currentConversation?.let { id -> conversations.firstOrNull { it.id == id } } ?: conversations.firstOrNull())?.title
     val sending get() = pendingQuestion != null
-    val canSend get() = online && !sending && voice == VoiceState.Idle && draft.isNotBlank()
+    val canSend get() = online && !sending && waiting == null && voice == VoiceState.Idle && draft.isNotBlank()
     /** Voice needs the server for both directions, so it is offered only online. */
     val canUseVoice get() = online && !sending && voice != VoiceState.Transcribing
 }
 
 /** Asha (design F1). Reading the history works offline; asking needs the server, and says so before the person types. */
 class AshaViewModel(
-    observeHistory: ObserveAshaHistoryUseCase,
+    private val observeHistory: ObserveAshaHistoryUseCase,
     private val refreshHistory: RefreshAshaHistoryUseCase,
     private val ask: AskAshaUseCase,
     private val clearHistory: DeleteAshaHistoryUseCase,
-    connection: ConnectionState,
+    private val connection: ConnectionState,
     private val recorder: AudioRecorder,
     private val player: AudioPlayer,
     private val transcribe: TranscribeVoiceUseCase,
@@ -88,15 +109,16 @@ class AshaViewModel(
     /** This period's usage (A7) for the menu; absent in tests that don't need it. */
     private val usage: GetAshaUsageUseCase? = null,
 ) : ViewModel() {
-    private val local = MutableStateFlow(AshaUiState())
+    // `online` lives here, set by the same collector that sets `backOnline`, so the two change in one frame.
+    private val local = MutableStateFlow(AshaUiState(online = connection.status.value == ConnectionStatus.Online))
     private var job: Job? = null
     private var timer: Job? = null
     private var speaking: Job? = null
 
     private val conversationsFlow = chats?.let { r -> combine(r.conversations, r.current) { list, cur -> list to cur } } ?: kotlinx.coroutines.flow.flowOf(emptyList<com.circaso.feature.assistant.domain.AshaConversation>() to null)
 
-    val state: StateFlow<AshaUiState> = combine(observeHistory(), local, connection.status, conversationsFlow) { messages, ui, status, conv ->
-        ui.copy(messages = messages, online = status == ConnectionStatus.Online, conversations = conv.first, currentConversation = conv.second)
+    val state: StateFlow<AshaUiState> = combine(observeHistory(), local, conversationsFlow) { messages, ui, conv ->
+        ui.copy(messages = messages, conversations = conv.first, currentConversation = conv.second)
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), AshaUiState())
 
     private var usageJob: Job? = null
@@ -120,7 +142,7 @@ class AshaViewModel(
 
     private fun loadUsage() {
         val u = usage ?: return
-        if (!state.value.online) {
+        if (connection.status.value != ConnectionStatus.Online) {
             local.update { it.copy(usage = if (it.usage is UsageUi.Loaded) it.usage else UsageUi.Offline) }
             return
         }
@@ -141,6 +163,7 @@ class AshaViewModel(
         val r = chats ?: return
         if (!state.value.online || state.value.sending) return
         stopSpeaking()
+        releaseWaiting()
         local.update { it.copy(sheet = null, error = null, confirmDelete = null) }
         viewModelScope.launch {
             (r.newConversation() as? AppResult.Failure)?.let { f -> local.update { it.copy(error = message(f.error)) } }
@@ -151,6 +174,7 @@ class AshaViewModel(
     fun onOpenConversation(id: String) {
         if (local.value.confirmDelete != null) { local.update { it.copy(confirmDelete = null) }; return }
         stopSpeaking()
+        releaseWaiting()
         chats?.open(id)
         local.update { it.copy(sheet = null) }
     }
@@ -171,8 +195,33 @@ class AshaViewModel(
         viewModelScope.launch { (r.deleteConversation(id) as? AppResult.Failure)?.let { f -> local.update { it.copy(error = message(f.error)) } } }
     }
 
+    private var waitingJob: Job? = null
+    private var backOnlineJob: Job? = null
+
     init {
         viewModelScope.launch { refreshHistory() }
+        // The one signal that the connection is back: the app's ConnectionState, never a poll.
+        viewModelScope.launch {
+            var last = connection.status.value
+            connection.status.collect { now ->
+                val back = last == ConnectionStatus.Offline && now == ConnectionStatus.Online
+                last = now
+                local.update { it.copy(online = now == ConnectionStatus.Online, backOnline = if (back) true else it.backOnline && now == ConnectionStatus.Online) }
+                if (back) onBackOnline()
+            }
+        }
+    }
+
+    /** Back online while Asha is open: say so briefly, and quietly reload what showed offline. */
+    private fun onBackOnline() {
+        backOnlineJob?.cancel()
+        backOnlineJob = viewModelScope.launch {
+            delay(BackOnlineMillis)
+            local.update { it.copy(backOnline = false) }
+        }
+        // The waiting question refreshes the history itself before it asks again.
+        if (local.value.waiting == null) viewModelScope.launch { refreshHistory() }
+        if (local.value.usage is UsageUi.Offline || local.value.usage is UsageUi.Failed) loadUsage()
     }
 
     fun onDraft(text: String) = local.update { it.copy(draft = text, error = null) }
@@ -188,28 +237,83 @@ class AshaViewModel(
         val s = state.value
         if (!s.canSend) return
         val question = s.draft.trim()
-        local.update { it.copy(draft = "", pendingQuestion = question, streaming = "", status = null, error = null) }
+        local.update { it.copy(draft = "") }
+        askNow(question, carried = "", tries = 1)
+    }
+
+    /**
+     * Asks [question] and streams the answer. A failure caused only by the connection keeps the question in its bubble
+     * as waiting ([WaitingQuestion]); any other failure gives it back to the draft with the error, as before.
+     */
+    private fun askNow(question: String, carried: String, tries: Int) {
+        val knownIds = state.value.messages.mapTo(HashSet()) { it.messageId }
+        local.update { it.copy(pendingQuestion = question, streaming = "", carried = carried, status = null, error = null, waiting = null) }
         job = viewModelScope.launch {
             var failed: AppError? = null
+            var done = false
             ask(question).collect { event ->
                 when (event) {
-                    is AshaEvent.Delta -> local.update { it.copy(streaming = it.streaming + event.text, status = null) }
+                    is AshaEvent.Delta -> local.update { it.copy(streaming = it.streaming + event.text, carried = "", status = null) }
                     is AshaEvent.UsingTool -> local.update { it.copy(status = "Reading your chats…") }
                     is AshaEvent.Status -> local.update { it.copy(status = event.label) }
-                    is AshaEvent.Done -> Unit
+                    is AshaEvent.Done -> done = true
                     is AshaEvent.Failed -> failed = event.error
                     is AshaEvent.ToolRequest -> Unit
                 }
             }
+            // The stream ended with neither an answer nor an error: the line was cut mid-answer.
+            if (!done && failed == null) failed = AppError.Network
+            val error = failed
+            if (error != null && isConnectionDrop(error) && tries < MaxAsks) {
+                local.update {
+                    it.copy(
+                        pendingQuestion = null, streaming = "", status = null, carried = "",
+                        waiting = WaitingQuestion(question, partial = it.streaming.ifEmpty { it.carried }, knownIds = knownIds, tries = tries),
+                    )
+                }
+                awaitConnection()
+                return@launch
+            }
             local.update {
                 it.copy(
-                    pendingQuestion = null, streaming = "", status = null,
+                    pendingQuestion = null, streaming = "", status = null, carried = "",
                     // Nothing was answered: give the question back so it is not lost.
-                    draft = if (failed != null) question else it.draft,
-                    error = failed?.let { e -> message(e) },
+                    draft = if (error != null) question else it.draft,
+                    error = error?.let { e -> message(e) },
                 )
             }
         }
+    }
+
+    /**
+     * Asks the waiting question again once the connection is back. It first lets the app's connection state settle (a
+     * timeout on a live line may not have flipped it to offline yet), then waits for Online, then asks: once.
+     */
+    private fun awaitConnection() {
+        waitingJob?.cancel()
+        waitingJob = viewModelScope.launch {
+            delay(SettleMillis)
+            connection.status.first { it == ConnectionStatus.Online }
+            askWaiting()
+        }
+    }
+
+    /** Moving to another conversation: a waiting question would land there, so it goes back to the draft instead. */
+    private fun releaseWaiting() {
+        val w = local.value.waiting ?: return
+        waitingJob?.cancel()
+        local.update { it.copy(waiting = null, draft = listOf(it.draft.trim(), w.question).filter(String::isNotEmpty).joinToString(" ")) }
+    }
+
+    private suspend fun askWaiting() {
+        val w = local.value.waiting ?: return
+        if (local.value.sending) return
+        // If the answer was saved before the line dropped, the history now holds the question again: don't ask twice.
+        refreshHistory()
+        val answered = observeHistory().first().any { it.isFromUser && it.messageId !in w.knownIds && it.text.trim() == w.question }
+        if (local.value.waiting != w) return
+        if (answered) { local.update { it.copy(waiting = null) }; return }
+        askNow(w.question, carried = w.partial, tries = w.tries + 1)
     }
 
     /** Tap to start recording, tap again to stop. The words land in the draft so the person can read them before sending. */
@@ -295,6 +399,15 @@ class AshaViewModel(
         local.update { it.copy(speakingText = null) }
     }
 
+    companion object {
+        /** How long "Back online" shows (design G4: about 3 s). */
+        const val BackOnlineMillis = 3_000L
+        /** Time for the app's connection state to notice a drop before a waiting question checks it. */
+        const val SettleMillis = 3_000L
+        /** Asks of one question in all (the person's, then automatic ones) before it goes back to the draft. */
+        const val MaxAsks = 3
+    }
+
     @OptIn(DelicateCoroutinesApi::class)
     override fun onCleared() {
         timer?.cancel()
@@ -302,6 +415,9 @@ class AshaViewModel(
         // The scope is already cancelled here, and the microphone must be released.
         if (local.value.voice == VoiceState.Recording) GlobalScope.launch { recorder.cancel() }
     }
+
+    /** Only a lost connection waits for the network; quota, auth and the server's refusals are told as before. */
+    private fun isConnectionDrop(error: AppError) = error is AppError.Network
 
     private fun message(error: AppError): String =
         if (error is AppError.Api && error.code == "assistant.quota_exceeded" && error.retryAfterSeconds != null) {

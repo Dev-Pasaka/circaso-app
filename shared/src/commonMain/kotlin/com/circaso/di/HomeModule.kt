@@ -27,5 +27,5 @@ val homeModule = module {
     viewModel { com.circaso.feature.home.presentation.NotificationsViewModel(get(), get(), get(), get(), get(), get()) }
     viewModel { SecurityLogViewModel(get(), get()) }
     viewModel { AshaViewModel(get(), get(), get(), get(), get(), get(), get(), get(), get(), chats = get(), usage = get()) }
-    viewModel { VoiceViewModel(get(), get(), get(), get(), getOrNull()) }
+    viewModel { VoiceViewModel(get(), get(), get(), get(), getOrNull(), connection = get<com.circaso.core.sync.ConnectionState>().status) }
 }
