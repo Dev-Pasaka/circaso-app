@@ -17,6 +17,7 @@ import androidx.camera.core.Preview
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.video.FileOutputOptions
 import androidx.camera.video.Quality
+import androidx.camera.video.FallbackStrategy
 import androidx.camera.video.QualitySelector
 import androidx.camera.video.Recorder
 import androidx.camera.video.Recording
@@ -97,8 +98,10 @@ class AndroidMomentCamera(private val context: Context) : MomentCamera {
         val photo = ImageCapture.Builder().setCaptureMode(if (photoOnly) ImageCapture.CAPTURE_MODE_MAXIMIZE_QUALITY else ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY)
             .setFlashMode(if (flash) ImageCapture.FLASH_MODE_ON else ImageCapture.FLASH_MODE_OFF).build()
         // No video for a profile photo: binding it beside the still can cap the still's size on some phones.
-        val video = if (photoOnly) null else VideoCapture.withOutput(Recorder.Builder().setQualitySelector(QualitySelector.from(Quality.HD))
-            // About 3.5 Mbit/s: a full minute stays near 26 MB, under the server's 32 MiB for a moment's media.
+        val video = if (photoOnly) null else VideoCapture.withOutput(Recorder.Builder()
+            // 1080p (720p on a camera without it) at the moments' bit rate for 1080p30: a short clip posts as recorded;
+            // one over the 32 MiB limit is re-encoded to fit before posting (MomentVideoEncoding).
+            .setQualitySelector(QualitySelector.from(Quality.FHD, FallbackStrategy.lowerQualityOrHigherThan(Quality.FHD)))
             .setTargetVideoEncodingBitRate(MomentVideoBitRate).build())
         // A phone with one camera (a tablet's front one only, say) uses whichever it has.
         if (!runCatching { p.hasCamera(if (front) CameraSelector.DEFAULT_FRONT_CAMERA else CameraSelector.DEFAULT_BACK_CAMERA) }.getOrDefault(true)) front = !front

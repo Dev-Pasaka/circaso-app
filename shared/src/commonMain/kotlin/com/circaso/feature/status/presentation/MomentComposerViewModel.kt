@@ -80,8 +80,44 @@ data class TrimState(
     /** The video was over a minute: Cancel takes it out instead of keeping the long one. */
     val required: Boolean,
     val working: Boolean = false,
+    /** The moment the stage shows: the edge last dragged, so the person sees exactly where the cut falls. */
+    val previewMs: Long = startMs,
 ) {
     val selectedMs: Long get() = endMs - startMs
+}
+
+/**
+ * The trim window's maths (M3b), apart from any screen. A minute is the most a moment holds, not a fixed window: any
+ * clip, short or long, can be cut to anything from [MinMs] to [MaxMs], with either edge or the whole window moved.
+ */
+object TrimWindow {
+    const val MinMs = 1_000L
+    val MaxMs get() = MomentMediaMaxMs
+
+    /** Where the window opens: the whole clip when it is a minute or less, else its first minute. */
+    fun initial(durationMs: Long): Pair<Long, Long> = 0L to minOf(durationMs, MaxMs)
+
+    /**
+     * [startMs] and [endMs] asked for, given the window was [oldStart]..[oldEnd]: kept inside the clip, at least [MinMs]
+     * (or the whole clip, if shorter) and at most [MaxMs]. Under the minimum the edge being dragged stops; past the
+     * maximum the other edge follows it.
+     */
+    fun clamp(durationMs: Long, oldStart: Long, startMs: Long, endMs: Long): Pair<Long, Long> {
+        val min = minOf(MinMs, durationMs)
+        var start = startMs.coerceIn(0, durationMs)
+        var end = endMs.coerceIn(0, durationMs)
+        val movedStart = start != oldStart
+        if (end - start < min) { if (movedStart) start = (end - min).coerceAtLeast(0) else end = (start + min).coerceAtMost(durationMs) }
+        if (end - start < min) { start = (end - min).coerceAtLeast(0); end = (start + min).coerceAtMost(durationMs) }
+        if (end - start > MaxMs) { if (movedStart) end = start + MaxMs else start = end - MaxMs }
+        return start to end
+    }
+
+    /** The whole window slid by [deltaMs], stopping at either end of the clip; its length never changes. */
+    fun slide(durationMs: Long, startMs: Long, endMs: Long, deltaMs: Long): Pair<Long, Long> {
+        val shift = deltaMs.coerceIn(-startMs, durationMs - endMs)
+        return (startMs + shift) to (endMs + shift)
+    }
 }
 
 /** Designs M1–M6. */
@@ -357,7 +393,8 @@ class MomentComposerViewModel(
         val video = item.video ?: return
         val path = video.path ?: return
         val duration = video.durationMs?.takeIf { it > 0 } ?: return
-        _state.update { it.copy(trim = TrimState(s.current, duration, 0, minOf(duration, MomentMediaMaxMs), required = required || item.tooLong)) }
+        val (start, end) = TrimWindow.initial(duration)
+        _state.update { it.copy(trim = TrimState(s.current, duration, start, end, required = required || item.tooLong)) }
         trimJob?.cancel()
         trimJob = viewModelScope.launch {
             val frames = library.filmstrip(path, TrimFrames)
@@ -365,17 +402,23 @@ class MomentComposerViewModel(
         }
     }
 
-    /** Dragging a handle: the window stays between 1 s and a minute, inside the video. */
+    /** Dragging a handle: the window stays between 1 s and a minute, inside the video ([TrimWindow]). */
     fun setTrim(startMs: Long, endMs: Long) {
         _state.update { s ->
             val t = s.trim ?: return@update s
-            var start = startMs.coerceIn(0, t.durationMs)
-            var end = endMs.coerceIn(0, t.durationMs)
-            val movedStart = start != t.startMs
-            if (end - start < MinTrimMs) { if (movedStart) start = (end - MinTrimMs).coerceAtLeast(0) else end = (start + MinTrimMs).coerceAtMost(t.durationMs) }
-            if (end - start > MomentMediaMaxMs) { if (movedStart) end = start + MomentMediaMaxMs else start = end - MomentMediaMaxMs }
-            s.copy(trim = t.copy(startMs = start, endMs = end))
+            if (t.working) return@update s
+            val (start, end) = TrimWindow.clamp(t.durationMs, t.startMs, startMs, endMs)
+            // The stage follows the edge that moved (the start when both did: the window slid).
+            val preview = if (end != t.endMs && start == t.startMs) end else start
+            s.copy(trim = t.copy(startMs = start, endMs = end, previewMs = preview))
         }
+    }
+
+    /** Sliding the whole window by [deltaMs] from where it was when the drag began ([fromStart]..[fromEnd]). */
+    fun slideTrim(fromStart: Long, fromEnd: Long, deltaMs: Long) {
+        val t = _state.value.trim ?: return
+        val (start, end) = TrimWindow.slide(t.durationMs, fromStart, fromEnd, deltaMs)
+        setTrim(start, end)
     }
 
     /** Done: the trimmed copy replaces the original on this phone until it is shared. */
@@ -627,7 +670,7 @@ class MomentComposerViewModel(
         /** Bars in the live wave while recording. */
         const val LiveBars = 32
         /** The shortest clip the trimmer keeps. */
-        const val MinTrimMs = 1_000L
+        const val MinTrimMs = TrimWindow.MinMs
     }
 }
 

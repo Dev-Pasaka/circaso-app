@@ -377,6 +377,23 @@ class MomentComposerViewModelTest {
         assertEquals(58_000L, (vm.state.value.capture as ComposerCapture.Shot).media.durationMs)
     }
 
+    @Test fun aShortClipCanBeTrimmedAndTheStageFollowsTheDraggedEdge() = runTest(dispatcher) {
+        library.media["short"] = clip("/tmp/short.mp4", 12_000)
+        val vm = composer()
+        vm.useRecent(video("short", 12_000))
+        assertNull(vm.state.value.trim) // a short clip doesn't have to be trimmed
+        vm.openTrim()
+        assertEquals(0L to 12_000L, vm.state.value.trim!!.let { it.startMs to it.endMs })
+        vm.setTrim(3_000, 12_000)
+        assertEquals(3_000L, vm.state.value.trim!!.previewMs)
+        vm.setTrim(3_000, 8_000)
+        assertEquals(8_000L, vm.state.value.trim!!.previewMs)
+        vm.slideTrim(3_000, 8_000, 2_000)
+        assertEquals(Triple(5_000L, 10_000L, 5_000L), vm.state.value.trim!!.let { Triple(it.startMs, it.endMs, it.previewMs) })
+        vm.applyTrim()
+        assertEquals(Triple("/tmp/short.mp4", 5_000L, 10_000L), library.trims.single())
+    }
+
     @Test fun cancellingARequiredTrimLeavesTheVideoOut() = runTest(dispatcher) {
         library.media["a"] = jpeg(1)
         library.media["long"] = clip("/tmp/long.mp4", 90_000)
