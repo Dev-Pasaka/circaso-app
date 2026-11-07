@@ -9,7 +9,6 @@ import UIKit
 final class MomentCameraImpl: NSObject, MomentCameraProvider, AVCapturePhotoCaptureDelegate, AVCaptureFileOutputRecordingDelegate {
     private static let photoMaxSide = CGFloat(MomentCameraKt.MomentPhotoMaxSide)
     private static let thumbSide = CGFloat(MomentCameraKt.MomentThumbSide)
-    private static let videoMaxSeconds = Double(MomentCameraKt.MomentVideoMaxMs) / 1000
 
     private let session = AVCaptureSession()
     private let queue = DispatchQueue(label: "com.circaso.momentcamera")
@@ -26,8 +25,10 @@ final class MomentCameraImpl: NSObject, MomentCameraProvider, AVCapturePhotoCapt
     /// The shot in flight is a profile photo: handed over as the sensor gave it, not scaled to a moment's size.
     private var photoFull = false
     private var stopCompletion: ((MomentShot?) -> Void)?
-    /// A clip that finished by itself (the 60 s limit) before anyone asked for it.
+    /// A clip that finished by itself (a moment's minute, a chat's size) before anyone asked for it.
     private var finishedShot: MomentShot?
+    /// The recording stopped by itself at its limit (set on [queue]); cleared by the next start.
+    private var stoppedByLimit = false
     private var finishing = false
 
     // MARK: Opening
@@ -87,7 +88,6 @@ final class MomentCameraImpl: NSObject, MomentCameraProvider, AVCapturePhotoCapt
         }
         if session.canAddOutput(photoOutput) { session.addOutput(photoOutput) }
         if session.canAddOutput(movieOutput) { session.addOutput(movieOutput) }
-        movieOutput.maxRecordedDuration = CMTime(seconds: Self.videoMaxSeconds, preferredTimescale: 600)
         deviceChanged(device)
         return true
     }
@@ -173,17 +173,30 @@ final class MomentCameraImpl: NSObject, MomentCameraProvider, AVCapturePhotoCapt
 
     // MARK: Video
 
-    func startVideo(completion: @escaping (KotlinBoolean) -> Void) {
+    /// Records until stopped, or by itself at [maxMs] long or [maxBytes] on disk (0: no limit): a moment's minute,
+    /// a chat's size with no length limit (Pasaka, 2026-11-07).
+    func startVideo(maxMs: Int64, maxBytes: Int64, completion: @escaping (KotlinBoolean) -> Void) {
         queue.async {
             guard self.videoInput != nil, self.session.isRunning, !self.movieOutput.isRecording, !self.finishing else {
                 DispatchQueue.main.async { completion(KotlinBoolean(bool: false)) }; return
             }
             self.finishedShot = nil
+            self.stoppedByLimit = false
+            self.movieOutput.maxRecordedDuration = maxMs > 0 ? CMTime(value: maxMs, timescale: 1000) : .invalid
+            self.movieOutput.maxRecordedFileSize = maxBytes
             self.applyCaptureRotation(self.movieOutput.connection(with: .video))
             let url = FileManager.default.temporaryDirectory.appendingPathComponent("moment-\(UUID().uuidString).mov")
             self.setTorch(self.flash)
             self.movieOutput.startRecording(to: url, recordingDelegate: self)
             DispatchQueue.main.async { completion(KotlinBoolean(bool: true)) }
+        }
+    }
+
+    /// Bytes written so far while recording; -2 once it stopped by itself at its limit; -1 when nothing is recording.
+    func recordedBytes() -> Int64 {
+        queue.sync {
+            if movieOutput.isRecording { return movieOutput.recordedFileSize }
+            return stoppedByLimit ? -2 : -1
         }
     }
 
@@ -204,9 +217,10 @@ final class MomentCameraImpl: NSObject, MomentCameraProvider, AVCapturePhotoCapt
     func fileOutput(_ output: AVCaptureFileOutput, didStartRecordingTo fileURL: URL, from connections: [AVCaptureConnection]) {}
 
     func fileOutput(_ output: AVCaptureFileOutput, didFinishRecordingTo outputFileURL: URL, from connections: [AVCaptureConnection], error: Error?) {
-        // Reaching the 60 s limit reports an error but the file is complete.
+        // Reaching a limit (the length or the size) reports an error but the file is complete.
         let finished = error == nil || ((error as NSError?)?.userInfo[AVErrorRecordingSuccessfullyFinishedKey] as? Bool ?? false)
-        queue.sync { self.finishing = true } // so a stopVideo arriving now waits for this clip
+        let byLimit = error != nil && finished
+        queue.sync { self.finishing = true; if byLimit { self.stoppedByLimit = true } } // so a stopVideo arriving now waits for this clip
         queue.async { self.setTorch(false) }
         Task.detached(priority: .userInitiated) {
             let shot = finished ? await Self.videoShot(outputFileURL) : nil
@@ -230,7 +244,9 @@ final class MomentCameraImpl: NSObject, MomentCameraProvider, AVCapturePhotoCapt
         try? FileManager.default.removeItem(at: mp4)
         guard let export = AVAssetExportSession(asset: asset, presetName: AVAssetExportPresetPassthrough) else { return nil }
         do { try await export.export(to: mp4, as: .mp4) } catch { return nil }
-        guard let data = try? Data(contentsOf: mp4) else { return nil }
+        // Used from its file, never read into memory (a chat's can be up to 100 MB): the shared code reads the path.
+        guard FileManager.default.fileExists(atPath: mp4.path) else { return nil }
+        let data = Data()
         let duration = (try? await asset.load(.duration)).map { CMTimeGetSeconds($0) } ?? 0
         var size = CGSize.zero
         if let track = try? await asset.loadTracks(withMediaType: .video).first,

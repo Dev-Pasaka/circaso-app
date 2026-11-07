@@ -4,6 +4,11 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
+import com.circaso.designsystem.chrome.CircasoSheet
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.ui.semantics.heading
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -72,8 +77,14 @@ data class ChatMediaUiState(
     val sent: Boolean = false,
     /** Opened for a document and Files was closed with nothing chosen: there is nothing to show, so it closes. */
     val closed: Boolean = false,
+    /**
+     * Send was tapped with items over the size limit among them: how many would be left out, while the sheet asks
+     * whether to send the rest. Null when nothing is being asked.
+     */
+    val askLeaveOut: Int? = null,
 ) {
-    val canSend: Boolean get() = !sending && media.ready
+    /** Something can go: ready, and not every item is over the limit. */
+    val canSend: Boolean get() = !sending && media.ready && media.anySendable
 }
 
 /**
@@ -105,6 +116,8 @@ class ChatMediaComposerViewModel(
         maxItems = ChatPickMax,
         maxBytes = com.circaso.core.platform.ChatFileMaxBytes,
         sendAsIs = true,
+        // Chats: any length, up to the size limit (Pasaka, 2026-11-07); a moment keeps its minute.
+        recordingLimits = com.circaso.core.platform.RecordingLimits.chat(com.circaso.core.platform.ChatFileMaxBytes),
     )
 
     init {
@@ -161,12 +174,28 @@ class ChatMediaComposerViewModel(
 
     /**
      * Each item, in order, checked and made ready (a video or document goes as it is, from its file, up to
-     * [com.circaso.core.platform.ChatFileMaxBytes]; one over it stops the send on that item with its size), then queued as its own message. Only once every one is ready is anything queued: never half a batch sent and the rest
-     * left behind. If queueing stops part-way, what went is taken off the review, so trying again never sends twice.
+     * [com.circaso.core.platform.ChatFileMaxBytes]), then queued as its own message. Items over the limit are marked on
+     * the strip and never go: with any among them, Send first asks whether to send the rest ([askLeaveOut]), and
+     * [leaveOutConfirmed] sends them. Only once every one is ready is anything queued: never half a batch sent and the
+     * rest left behind. If queueing stops part-way, what went is taken off the review, so trying again never sends twice.
      */
-    fun send() {
+    fun send() = send(confirmed = false)
+
+    /** The sheet's "Send the rest": the items over the limit stay out, the others go. */
+    fun leaveOutConfirmed() {
+        _state.update { it.copy(askLeaveOut = null) }
+        send(confirmed = true)
+    }
+
+    /** The sheet's "Go Back": nothing is sent, the marked items stay on the strip to remove or trim. */
+    fun leaveOutCancelled() = _state.update { st ->
+        st.copy(askLeaveOut = null, media = st.media.copy(current = st.media.items.indexOfFirst { it.overLimit != null }.takeIf { it >= 0 } ?: st.media.current))
+    }
+
+    private fun send(confirmed: Boolean) {
         val s = _state.value
         if (!s.canSend) return
+        if (!confirmed && s.media.overLimitCount > 0) { _state.update { it.copy(askLeaveOut = it.media.overLimitCount) }; return }
         _state.update { it.copy(sending = true) }
         viewModelScope.launch {
             val kind = when {
@@ -176,11 +205,23 @@ class ChatMediaComposerViewModel(
             }
             uploads.keep(kind, s.title) {
                 val ready = mutableListOf<PreparedItem>()
+                val going = mutableListOf<com.circaso.feature.mediacompose.ComposerItem>()
                 for ((index, item) in s.media.items.withIndex()) {
+                    if (item.overLimit != null) continue // marked and confirmed: left out
                     when (val p = composer.prepare(item)) {
                         PreparedItem.Missing -> { stop(index, if (item.capture is ComposerCapture.Document) "This document isn’t on the phone any more. Pick it again." else "This video isn’t on the phone any more. Pick it again."); return@keep }
-                        is PreparedItem.TooLarge -> { stop(index, tooLarge(item, p.size)); return@keep }
-                        else -> ready += p
+                        is PreparedItem.TooLarge -> {
+                            // Found only now (its size wasn't known at pick time): marked like the others, then asked
+                            // about, or said, before anything goes.
+                            _state.update { st ->
+                                val marked = st.media.items.mapIndexed { i, it -> if (i == index) it.copy(overLimit = p.size ?: (composer.maxBytes + 1)) else it }
+                                val media = st.media.copy(items = marked, preparing = false, current = index)
+                                st.copy(sending = false, media = if (media.anySendable) media else media.copy(error = tooLarge(item, p.size)),
+                                    askLeaveOut = media.overLimitCount.takeIf { media.anySendable })
+                            }
+                            return@keep
+                        }
+                        else -> { ready += p; going += item }
                     }
                 }
                 _state.update { it.copy(media = it.media.copy(preparing = false)) }
@@ -191,7 +232,7 @@ class ChatMediaComposerViewModel(
                 for ((index, p) in ready.withIndex()) {
                     if (!sender.send(target, p, album.takeIf { p is PreparedItem.Shot })) {
                         _state.update { st ->
-                            val left = st.media.items.drop(index)
+                            val left = going.drop(index)
                             val why = if (index == 0) "This couldn’t be saved to send. Try again." else "$index sent. The rest couldn’t be saved to send. Try again."
                             st.copy(sending = false, media = st.media.copy(items = left, current = 0, error = why))
                         }
@@ -205,7 +246,7 @@ class ChatMediaComposerViewModel(
     }
 
     /** Said on the item over the limit, before anything is sent: what it is, its size, and the limit. */
-    private fun tooLarge(item: com.circaso.feature.mediacompose.ComposerItem, size: Long?): String {
+    internal fun tooLarge(item: com.circaso.feature.mediacompose.ComposerItem, size: Long?): String {
         val limit = composer.limitLabel
         val its = size?.let { " This one is ${com.circaso.feature.mediacompose.overLimitLabel(it, composer.maxBytes)}." }.orEmpty()
         return when {
@@ -248,6 +289,9 @@ fun ChatMediaComposerScreen(viewModel: ChatMediaComposerViewModel, onClose: () -
     }
     val n = media.items.size
     val documents = media.items.count { it.capture is ComposerCapture.Document }
+    val out = media.overLimitCount
+    val going = n - out
+    androidx.compose.foundation.layout.Box(androidx.compose.ui.Modifier.fillMaxSize()) {
     MediaComposeStage(
         state = media,
         composer = composer,
@@ -255,10 +299,14 @@ fun ChatMediaComposerScreen(viewModel: ChatMediaComposerViewModel, onClose: () -
         modes = listOf(ComposerMode.Photo, ComposerMode.Video),
         copy = ChatCopy,
         send = MediaSendButton(
-            description = "Send ${if (n > 1) "$n items" else if (documents == 1) "document" else if (media.item?.video != null) "video" else "photo"} to ${state.title}",
+            description = "Send ${if (n > 1) "$going ${if (going == 1) "item" else "items"}" else if (documents == 1) "document" else if (media.item?.video != null) "video" else "photo"} to ${state.title}" +
+                (if (out > 0 && going > 0) ", $out over ${composer.limitLabel} left out" else ""),
             enabled = state.canSend, busy = state.sending || media.preparing, onClick = viewModel::send,
         ),
         footnote = when {
+            // Said where Send is, so what it will do is never a surprise.
+            out > 0 && going == 0 -> if (n == 1) "Over ${composer.limitLabel}, so it can’t be sent." else "All $n are over ${composer.limitLabel}, so none can be sent."
+            out > 0 -> "$going of $n will be sent, in this order; $out over ${composer.limitLabel} ${if (out == 1) "is" else "are"} left out. End-to-end encrypted."
             n > 1 -> "$n items, in this order. End-to-end encrypted."
             else -> "End-to-end encrypted."
         },
@@ -281,6 +329,49 @@ fun ChatMediaComposerScreen(viewModel: ChatMediaComposerViewModel, onClose: () -
             else -> null
         },
     )
+    // Send with items over the limit among them: ask before leaving them out (the stage's dark, as everything here).
+    com.circaso.designsystem.theme.CircasoTheme(darkTheme = true, highContrast = com.circaso.designsystem.theme.CircasoTheme.colors.isHighContrast) {
+        val asked = state.askLeaveOut
+        var lastAsked by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(0) }
+        if (asked != null) lastAsked = asked
+        val rest = n - lastAsked
+        CircasoSheet(visible = asked != null, onDismiss = viewModel::leaveOutCancelled, label = "Items over the limit") {
+            LeaveOutSheet(lastAsked, rest, composer.limitLabel, onSend = viewModel::leaveOutConfirmed, onBack = viewModel::leaveOutCancelled)
+        }
+    }
+    }
+}
+
+/**
+ * Send tapped with items over the size limit among them: they can't go in a chat, so before anything is sent it asks
+ * whether to send the rest, or go back to remove or trim them (they are marked on the strip).
+ */
+@Composable
+private fun androidx.compose.foundation.layout.ColumnScope.LeaveOutSheet(out: Int, rest: Int, limit: String, onSend: () -> Unit, onBack: () -> Unit) {
+    val c = com.circaso.designsystem.theme.CircasoTheme.colors
+    val t = com.circaso.designsystem.theme.CircasoTheme.typography
+    androidx.compose.foundation.layout.Column(
+        androidx.compose.ui.Modifier.fillMaxWidth(),
+        verticalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(com.circaso.designsystem.theme.CircasoSpacing.s3),
+    ) {
+        androidx.compose.foundation.text.BasicText(
+            if (out == 1) "1 item is over $limit" else "$out items are over $limit",
+            androidx.compose.ui.Modifier.semantics { heading() },
+            style = t.title3.copy(color = c.ink),
+        )
+        androidx.compose.foundation.text.BasicText(
+            "Chats take files up to $limit, so ${if (out == 1) "it’s" else "they’re"} marked and won’t be sent. Send the other $rest now, or go back to trim or remove ${if (out == 1) "it" else "them"}.",
+            style = t.body.copy(color = c.inkSecondary),
+        )
+        com.circaso.designsystem.components.CircasoButton(
+            if (rest == 1) "Send the Other 1" else "Send the Other $rest", onSend,
+            size = com.circaso.designsystem.components.ButtonSize.Large, block = true,
+        )
+        com.circaso.designsystem.components.CircasoButton(
+            "Go Back", onBack, style = com.circaso.designsystem.components.ButtonStyle.Plain,
+            size = com.circaso.designsystem.components.ButtonSize.Large, block = true,
+        )
+    }
 }
 
 /** Opened on Files: the document review's card, waiting for the picker (and the copy into the app) to finish. */

@@ -5,6 +5,13 @@ import com.circaso.core.common.AppResult
 import com.circaso.core.crypto.SignalCrypto
 import com.circaso.core.platform.MediaFiles
 import io.ktor.client.HttpClient
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Deferred
+import kotlinx.coroutines.async
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import io.ktor.client.request.header
 import io.ktor.client.request.prepareGet
 import io.ktor.client.statement.bodyAsChannel
@@ -25,13 +32,57 @@ class AttachmentDownloads(
     private val files: MediaFiles,
     private val attachments: AttachmentsRemote,
     private val storage: HttpClient,
+    /**
+     * Where downloads run (the app's scope): a download outlives the bubble that asked for it, so scrolling away or
+     * leaving the thread doesn't stop it, and asking again joins the one already going. Null runs it in the caller.
+     */
+    private val scope: CoroutineScope? = null,
 ) {
+    /**
+     * How far each file being fetched has got (0..1) by attachment id, in memory only: the ring on its bubble or album
+     * tile. The download is the first [DownloadShare] of it, opening the chunked file the rest. Gone once it's done.
+     */
+    private val _progress = MutableStateFlow<Map<String, Float>>(emptyMap())
+    val progress: StateFlow<Map<String, Float>> = _progress
+
+    private val lock = Mutex()
+    private val going = mutableMapOf<String, Deferred<MediaLoad?>>()
+
+    /** Published in whole percent steps, so a 100 MB file is a hundred updates, not thousands. */
+    private fun setProgress(id: String, fraction: Float?) {
+        _progress.value = _progress.value.let { now ->
+            when {
+                fraction == null -> now - id
+                ((now[id] ?: -1f) * 100).toInt() == (fraction * 100).toInt() -> now
+                else -> now + (id to fraction.coerceIn(0f, 1f))
+            }
+        }
+    }
+
+    /**
+     * Makes sure the decrypted file is on this phone, like [fetchHere], but in [scope]: one download per attachment
+     * however many ask, and it carries on when the asker goes away (the bubble scrolled off); the asker can come back
+     * and wait for the same one.
+     */
+    suspend fun fetch(details: MediaDetails): MediaLoad? {
+        val id = details.attachmentId
+        if (scope == null || id == null) return fetchHere(details)
+        if (details.file != null && files.size(details.file) != null) return null
+        if (files.size(id) != null) return null
+        val job = lock.withLock {
+            going[id]?.takeIf { it.isActive } ?: scope.async {
+                try { fetchHere(details) } finally { setProgress(id, null); lock.withLock { going.remove(id) } }
+            }.also { going[id] = it }
+        }
+        return job.await()
+    }
+
     /**
      * Makes sure the decrypted file is on this phone (by its own name or the attachment id): null when it is, else why
      * not. The download streams to a partial file a piece at a time and picks up where it stopped (`Range`) when the
      * connection drops, now or on the next try; then it is checked and decrypted from disk to disk.
      */
-    suspend fun fetch(details: MediaDetails): MediaLoad? {
+    private suspend fun fetchHere(details: MediaDetails): MediaLoad? {
         if (details.file != null && files.size(details.file) != null) return null
         val id = details.attachmentId ?: return MediaLoad.Failed
         if (files.size(id) != null) return null
@@ -44,7 +95,9 @@ class AttachmentDownloads(
         }
         if (details.chunked == true) {
             val part = "$id.part"
-            return when (com.circaso.core.crypto.ChunkedFileCipher.open(crypto, files, key, sealed, part)) {
+            return when (com.circaso.core.crypto.ChunkedFileCipher.open(crypto, files, key, sealed, part) { done, total ->
+                setProgress(id, DownloadShare + (1 - DownloadShare) * done / total.coerceAtLeast(1))
+            }) {
                 com.circaso.core.crypto.ChunkedFileCipher.OpenResult.Opened -> { files.move(part, id); files.delete(sealed); null }
                 com.circaso.core.crypto.ChunkedFileCipher.OpenResult.Missing -> MediaLoad.Failed
                 com.circaso.core.crypto.ChunkedFileCipher.OpenResult.Damaged -> { files.delete(sealed); MediaLoad.Damaged }
@@ -79,6 +132,8 @@ class AttachmentDownloads(
             }
             val expected = link.sizeBytes
             var have = files.size(into) ?: 0L
+            fun report(bytes: Long) { if (expected != null && expected > 0) setProgress(id, DownloadShare * bytes / expected) }
+            report(have)
             if (expected != null && have > expected) { files.delete(into); have = 0 }
             if (expected != null && have == expected && have > 0) return null
             val outcome: MediaLoad? = try {
@@ -90,6 +145,7 @@ class AttachmentDownloads(
                         else -> {
                             // 200 is the whole file again (the server ignored the range): start the partial over.
                             if (response.status.value != 206) files.delete(into)
+                            var written = if (response.status.value == 206) have else 0L
                             val channel = response.bodyAsChannel()
                             val buffer = ByteArray(com.circaso.core.platform.StreamPieceBytes)
                             while (true) {
@@ -99,7 +155,11 @@ class AttachmentDownloads(
                                     if (n < 0) break
                                     filled += n
                                 }
-                                if (filled > 0) files.append(into, if (filled == buffer.size) buffer.copyOf() else buffer.copyOf(filled))
+                                if (filled > 0) {
+                                    files.append(into, if (filled == buffer.size) buffer.copyOf() else buffer.copyOf(filled))
+                                    written += filled
+                                    report(written)
+                                }
                                 if (filled < buffer.size) break
                             }
                             val got = files.size(into) ?: 0L
@@ -121,5 +181,7 @@ class AttachmentDownloads(
 
     private companion object {
         const val DownloadAttempts = 3
+        /** The share of the ring the download fills; opening a chunked file (disk to disk) fills the rest. */
+        const val DownloadShare = 0.9f
     }
 }

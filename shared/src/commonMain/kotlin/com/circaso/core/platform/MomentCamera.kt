@@ -31,6 +31,16 @@ interface MomentCamera {
     suspend fun takePhoto(): CapturedMedia?
     /** Starts recording; stops by itself at [MomentVideoMaxMs]. */
     suspend fun startVideo(): Boolean
+
+    /**
+     * Starts recording within [limits]: a moment stops by itself at its minute; a chat has no length limit and stops by
+     * itself just before its file would pass the chat's size limit (Pasaka, 2026-11-07). [recordingStatus] says how
+     * far it has got and whether it stopped by itself.
+     */
+    suspend fun startVideo(limits: RecordingLimits): Boolean = startVideo()
+
+    /** The recording in progress: bytes written so far and whether it stopped by itself at a limit; null if unknown. */
+    fun recordingStatus(): RecordingStatus? = null
     suspend fun stopVideo(): CapturedMedia?
     fun flip()
     fun setFlash(on: Boolean)
@@ -49,6 +59,28 @@ interface MomentCamera {
      */
     suspend fun takeProfilePhoto(): PickedImage? = null
 }
+
+/**
+ * What a recording may reach before it stops by itself: [maxMs] long (null: any length) and [maxBytes] on disk (null:
+ * any size). A moment is a minute; a chat is up to its attachment limit, whatever the length.
+ */
+data class RecordingLimits(val maxMs: Long?, val maxBytes: Long?) {
+    companion object {
+        val Moment = RecordingLimits(MomentVideoMaxMs, null)
+
+        /**
+         * A chat's: no length limit; it stops a little under [fileMaxBytes] (the container's closing index and the
+         * last frames are written after the recorder stops, so the finished file still fits).
+         */
+        fun chat(fileMaxBytes: Long) = RecordingLimits(null, fileMaxBytes - fileMaxBytes / RecordingHeadroomDivisor)
+
+        /** 1/50th (2%) of the limit is kept back for what the recorder writes as it finishes. */
+        private const val RecordingHeadroomDivisor = 50
+    }
+}
+
+/** How a recording is going: [bytes] written so far, and [stopped] once it stopped by itself at a limit. */
+data class RecordingStatus(val bytes: Long, val stopped: Boolean)
 
 /** The live camera picture, filling [modifier]. Draws nothing where there is no camera. */
 @Composable

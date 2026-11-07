@@ -198,9 +198,14 @@ class MediaMessages(
     private val now: () -> Long,
     /** The PUT goes through the platform's background uploader where there is one (iOS), so it outlives the app. */
     private val uploads: com.circaso.core.platform.BackgroundUploads = com.circaso.core.platform.NoBackgroundUploads,
+    /** The app's scope: downloads run there, so one keeps going when its bubble scrolls away (AttachmentDownloads). */
+    downloadScope: kotlinx.coroutines.CoroutineScope? = null,
 ) {
     private val resumable = com.circaso.core.platform.ResumableUpload(crypto, files, uploads, storage, now)
-    private val downloads = AttachmentDownloads(crypto, files, attachments, storage)
+    private val downloads = AttachmentDownloads(crypto, files, attachments, storage, downloadScope)
+
+    /** How far each incoming file's download has got (0..1), by attachment id: the ring on its bubble or album tile. */
+    val downloading: kotlinx.coroutines.flow.StateFlow<Map<String, Float>> get() = downloads.progress
 
     /**
      * How far each outgoing file's upload has got (0..1) by row, in memory only: it means something only while this

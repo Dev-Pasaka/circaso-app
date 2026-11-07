@@ -110,6 +110,7 @@ val messagingModule = module {
             get(), get(), get(), get(named("kickOutbox")), get(), get(), get(), get(named("plain")), get(), get(named("ownUserId")),
             now = { com.circaso.core.sync.nowMillis() },
             uploads = getOrNull<com.circaso.core.platform.BackgroundUploads>() ?: com.circaso.core.platform.NoBackgroundUploads,
+            downloadScope = get<kotlinx.coroutines.CoroutineScope>(),
         )
     }
     single { MessagingFrameHandler(get(), get(), get(), get(), get(), get()) }

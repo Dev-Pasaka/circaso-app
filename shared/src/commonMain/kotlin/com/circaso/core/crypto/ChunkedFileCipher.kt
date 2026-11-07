@@ -81,7 +81,11 @@ object ChunkedFileCipher {
      * Opens the chunked [sealedFile] into [plainFile] (replacing it) a chunk at a time. [Damaged] when any chunk fails
      * its tag or the file's length can't be a chunked file; [plainFile] is removed then, so nothing half-opened stays.
      */
-    suspend fun open(crypto: SignalCrypto, files: MediaFiles, key: ByteArray, sealedFile: String, plainFile: String): OpenResult {
+    suspend fun open(
+        crypto: SignalCrypto, files: MediaFiles, key: ByteArray, sealedFile: String, plainFile: String,
+        /** Chunks opened so far and how many there are, after each one (a download's ring runs through this too). */
+        onProgress: (done: Long, total: Long) -> Unit = { _, _ -> },
+    ): OpenResult {
         val total = files.size(sealedFile) ?: return OpenResult.Missing
         val boxBytes = (ChunkBytes + ChunkOverhead).toLong()
         val chunks = if (total <= 0) 0 else (total + boxBytes - 1) / boxBytes
@@ -94,6 +98,7 @@ object ChunkedFileCipher {
                 runCatching { crypto.aesGcmOpen(key, box, associatedData(i, i == chunks - 1)) }.getOrNull()
             } ?: return OpenResult.Damaged.also { files.delete(plainFile) }
             files.append(plainFile, plain)
+            onProgress(i + 1, chunks)
         }
         // An empty file is one empty last chunk: make sure its (empty) plaintext exists.
         if (files.size(plainFile) == null) files.append(plainFile, ByteArray(0))

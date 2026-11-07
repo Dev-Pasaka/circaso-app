@@ -178,7 +178,7 @@ fun ThreadScreen(
         onLoadOlder = viewModel::onLoadOlder, onSavePeer = viewModel::onSavePeer, onOpenMoment = onOpenMoment, onReactTo = viewModel::onReactTo,
         media = viewModel.media?.let { m ->
             ThreadMediaActions(
-                canShareLocation = m.canShareLocation, onCompose = onComposeMedia, uploading = m.progress, onLocation = viewModel::onSendLocation,
+                canShareLocation = m.canShareLocation, onCompose = onComposeMedia, uploading = m.progress, downloading = m.downloading, onLocation = viewModel::onSendLocation,
                 onVoiceStart = viewModel::onVoiceStart, onVoiceEnd = viewModel::onVoiceEnd, load = { d -> m.load(d) }, openDocument = { d -> m.videoFile(d) }, mapPicture = m::mapPicture,
                 onShareLive = viewModel::onShareLive, onStopLive = viewModel::onStopLive,
                 onPlayVideo = viewModel::onPlayVideo, onCloseVideo = viewModel::onCloseVideo,
@@ -324,6 +324,8 @@ fun ThreadContent(
     var attaching by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(false) }
     // Collected here but read only inside each media row, so a percent step redraws that row, not the thread.
     val uploading = media?.uploading?.collectAsState()
+    // The same for files coming in, by attachment id: the bubble or album tile reads its own (LocalDownloading).
+    val downloading = media?.downloading?.collectAsState()
     var viewing by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf<ByteArray?>(null) }
     // An album open full screen (its items and the one tapped), and a failed album's options (all its items).
     var viewingAlbum by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf<Pair<List<Message.Media>, Int>?>(null) }
@@ -391,7 +393,7 @@ fun ThreadContent(
     val lastOutgoingPayment = state.messages.lastOrNull { it is Message.Payment && it.outgoing }?.localId
 
     // Location tiles draw the server's map picture when there is one (MAP1).
-    androidx.compose.runtime.CompositionLocalProvider(LocalMapPicture provides media?.mapPicture, LocalOpenDocument provides media?.openDocument) {
+    androidx.compose.runtime.CompositionLocalProvider(LocalMapPicture provides media?.mapPicture, LocalOpenDocument provides media?.openDocument, LocalDownloading provides downloading) {
     CircasoScaffold(
         banner = {
             // Someone I chat with but haven't saved: one tap saves them (moments need both sides saved).
@@ -682,12 +684,23 @@ fun ThreadContent(
             // Back to the latest, once the person has scrolled up through older messages.
             androidx.compose.animation.AnimatedVisibility(
                 awayFromLatest,
-                modifier = Modifier.align(Alignment.BottomEnd).padding(end = CircasoSpacing.s4, bottom = CircasoSpacing.s3),
+                // The 44 dp target's extra 4 dp a side comes out of the margin, so the 36 dp disc sits where it did.
+                modifier = Modifier.align(Alignment.BottomEnd).padding(end = CircasoSpacing.s3, bottom = CircasoSpacing.s2),
                 enter = fadeIn(tween(CircasoMotion.QuickMs)) + androidx.compose.animation.scaleIn(tween(CircasoMotion.QuickMs)),
                 exit = fadeOut(tween(CircasoMotion.QuickMs)) + androidx.compose.animation.scaleOut(tween(CircasoMotion.QuickMs)),
             ) {
-                Box(Modifier.shadow(8.dp, com.circaso.designsystem.theme.CircasoShapes.circle).clip(com.circaso.designsystem.theme.CircasoShapes.circle).background(c.surface)) {
-                    CircasoIconButton(CircasoIcon.ArrowDown, "Jump to the latest message", { listScope.launch { listState.animateScrollToItem(0) } })
+                // 36 dp to look at (the icon button), 44 dp to hit (the minimum touch target).
+                Box(
+                    Modifier.size(CircasoSizes.controlMd).clip(com.circaso.designsystem.theme.CircasoShapes.circle)
+                        .pressable(role = androidx.compose.ui.semantics.Role.Button, onClick = { listScope.launch { listState.animateScrollToItem(0) } })
+                        .semantics { contentDescription = "Jump to the latest message" },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Box(
+                        Modifier.size(CircasoSizes.iconButton).shadow(CircasoSpacing.s2, com.circaso.designsystem.theme.CircasoShapes.circle)
+                            .clip(com.circaso.designsystem.theme.CircasoShapes.circle).background(c.surface),
+                        contentAlignment = Alignment.Center,
+                    ) { CircasoIconImage(CircasoIcon.ArrowDown, c.ink, Modifier.size(18.dp)) }
                 }
             }
             }
@@ -1001,6 +1014,8 @@ class ThreadMediaActions(
     val onCompose: (ChatComposeStart) -> Unit,
     /** How far each outgoing file's upload has got, by row (MediaMessages.progress); each row reads only its own. */
     val uploading: kotlinx.coroutines.flow.StateFlow<Map<Long, Float>> = kotlinx.coroutines.flow.MutableStateFlow(emptyMap()),
+    /** How far each incoming file's download has got, by attachment id (MediaMessages.downloading). */
+    val downloading: kotlinx.coroutines.flow.StateFlow<Map<String, Float>> = kotlinx.coroutines.flow.MutableStateFlow(emptyMap()),
     val onLocation: () -> Unit,
     val onVoiceStart: () -> Unit,
     val onVoiceEnd: (send: Boolean) -> Unit,
@@ -1087,6 +1102,9 @@ private fun FileBubble(
     val size = m.details.size?.let { com.circaso.feature.mediacompose.sizeLabel(it) }
     val failed = m.state == DeliveryState.Failed
     val going = m.state == DeliveryState.Sending || m.state == DeliveryState.Waiting
+    // Coming in (this tap, or one before the bubble scrolled away): the ring fills round the tile as it arrives.
+    val incoming = downloadProgress(m)
+    val fetching = incoming != null || opening
     Column(
         bubble.pressable(
             role = androidx.compose.ui.semantics.Role.Button, onLongClick = options,
@@ -1109,7 +1127,8 @@ private fun FileBubble(
                 }
             },
         ).semantics(mergeDescendants = true) {
-            contentDescription = "Document $name, $kind" + (size?.let { ", $it" } ?: "") + (m.details.caption?.let { ". $it" } ?: "")
+            contentDescription = "Document $name, $kind" + (size?.let { ", $it" } ?: "") + (m.details.caption?.let { ". $it" } ?: "") +
+                (if (fetching) ". " + downloadLabel(incoming) else "")
         }.padding(CircasoSpacing.s3),
         verticalArrangement = Arrangement.spacedBy(CircasoSpacing.s2),
     ) {
@@ -1121,17 +1140,18 @@ private fun FileBubble(
                     else -> Box(Modifier.size(MediaIconSize).clip(com.circaso.designsystem.theme.CircasoShapes.circle).background(if (m.outgoing) c.onAction else c.fillStrong), contentAlignment = Alignment.Center) {
                         val glyph = if (m.outgoing) c.action else c.ink
                         when {
-                            opening -> com.circaso.designsystem.components.Spinner(glyph, Modifier.size(18.dp))
+                            fetching -> CircasoIconImage(CircasoIcon.ArrowDown, glyph, Modifier.size(20.dp))
                             m.state == DeliveryState.Waiting && progress == null -> CircasoIconImage(CircasoIcon.Clock, glyph, Modifier.size(20.dp))
                             else -> CircasoIconImage(CircasoIcon.Document, glyph, Modifier.size(22.dp))
                         }
                     }
                 }
                 if (going && !(m.state == DeliveryState.Waiting && progress == null)) com.circaso.feature.mediacompose.UploadRing(progress, Modifier.matchParentSize(), ink = ink)
+                else if (fetching && !failed) com.circaso.feature.mediacompose.UploadRing(incoming, Modifier.matchParentSize(), ink = ink)
             }
             Column(Modifier.weight(1f)) {
                 BasicText(name, style = t.callout.copy(color = ink, fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold), maxLines = 2, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
-                BasicText(problem ?: listOfNotNull(kind, size).joinToString(" · "), style = t.footnote.copy(color = inkSoft, fontFeatureSettings = "tnum"))
+                BasicText(problem ?: incoming?.let { p -> m.details.size?.let { "${com.circaso.feature.mediacompose.sizeLabel((it * p).toLong())} of ${com.circaso.feature.mediacompose.sizeLabel(it)}" } } ?: listOfNotNull(kind, size).joinToString(" · "), style = t.footnote.copy(color = inkSoft, fontFeatureSettings = "tnum"))
             }
         }
         m.details.caption?.let { BasicText(it, style = t.body.copy(color = ink)) }
@@ -1251,6 +1271,9 @@ private val TerminalMediaErrors = setOf("messaging.attachment_too_large")
 internal val MediaBubbleWidth = 240.dp
 private val MapTileHeight = 120.dp
 private val MediaIconSize = 40.dp
+
+/** The play disc on a video in the chat; the download ring fills inside it. */
+internal val PlayDiscSize = 52.dp
 
 /** While a voice note records: a pulsing dot, the running time, and how to send or drop it. */
 @Composable
@@ -1412,22 +1435,29 @@ private fun MediaRow(
                     val thumb = androidx.compose.runtime.remember(m.details.thumb) {
                         m.details.thumb?.let { runCatching { @OptIn(kotlin.io.encoding.ExperimentalEncodingApi::class) kotlin.io.encoding.Base64.decode(it) }.getOrNull() }
                     }
+                    // Coming in: the ring fills on the play disc, here or wherever the bubble scrolled to and back.
+                    val incoming = downloadProgress(m)
+                    val fetching = incoming != null || videoLoading
                     Column(
                         bubble.padding(3.dp).combinedClickable(
                             onClickLabel = "Play video", onLongClick = options,
                             onClick = { if (failed) onOptions() else onPlayVideo() },
-                        ).semantics(mergeDescendants = true) { contentDescription = "Video" + (m.details.durationMs?.let { ", ${clock(it / 1000)}" } ?: "") + (m.details.caption?.let { ". $it" } ?: "") },
+                        ).semantics(mergeDescendants = true) {
+                            contentDescription = "Video" + (m.details.durationMs?.let { ", ${clock(it / 1000)}" } ?: "") + (m.details.caption?.let { ". $it" } ?: "") +
+                                (if (fetching) ". " + downloadLabel(incoming) else "")
+                        },
                     ) {
                         Box(Modifier.fillMaxWidth().aspectRatio(ratio).clip(com.circaso.designsystem.components.bubbleShape(m.outgoing)).background(c.fillStrong), contentAlignment = Alignment.Center) {
                             thumb?.let { coil3.compose.AsyncImage(model = it, contentDescription = null, contentScale = androidx.compose.ui.layout.ContentScale.Crop, modifier = Modifier.fillMaxSize()) }
-                            Box(Modifier.size(52.dp).clip(com.circaso.designsystem.theme.CircasoShapes.circle).background(androidx.compose.ui.graphics.Color.Black.copy(alpha = 0.45f)), contentAlignment = Alignment.Center) {
-                                if (videoLoading) com.circaso.designsystem.components.Spinner(androidx.compose.ui.graphics.Color.White, Modifier.size(22.dp))
-                                else CircasoIconImage(CircasoIcon.Play, androidx.compose.ui.graphics.Color.White, Modifier.size(22.dp))
+                            if (fetching && !m.outgoing) DownloadDisc(incoming, PlayDiscSize)
+                            else Box(Modifier.size(PlayDiscSize).clip(com.circaso.designsystem.theme.CircasoShapes.circle).background(com.circaso.designsystem.theme.DarkColors.scrim), contentAlignment = Alignment.Center) {
+                                if (fetching) com.circaso.feature.mediacompose.UploadRing(incoming, Modifier.matchParentSize().padding(3.dp), ink = com.circaso.designsystem.theme.DarkColors.ink)
+                                CircasoIconImage(CircasoIcon.Play, com.circaso.designsystem.theme.DarkColors.ink, Modifier.size(22.dp))
                             }
                             m.details.durationMs?.let {
                                 // A scrim under the length so it reads on a bright frame.
-                                Box(Modifier.align(Alignment.BottomCenter).fillMaxWidth().height(32.dp).background(androidx.compose.ui.graphics.Brush.verticalGradient(listOf(androidx.compose.ui.graphics.Color.Transparent, c.scrim))))
-                                BasicText(clock(it / 1000), style = t.caption1.copy(color = androidx.compose.ui.graphics.Color.White, fontFeatureSettings = "tnum"), modifier = Modifier.align(Alignment.BottomStart).padding(8.dp))
+                                Box(Modifier.align(Alignment.BottomCenter).fillMaxWidth().height(CircasoSpacing.s8).background(androidx.compose.ui.graphics.Brush.verticalGradient(listOf(androidx.compose.ui.graphics.Color.Transparent, c.scrim))))
+                                BasicText(clock(it / 1000), style = t.caption1.copy(color = com.circaso.designsystem.theme.DarkColors.ink, fontFeatureSettings = "tnum"), modifier = Modifier.align(Alignment.BottomStart).padding(CircasoSpacing.s2))
                             }
                             SendState(m.state, uploadProgress)
                         }

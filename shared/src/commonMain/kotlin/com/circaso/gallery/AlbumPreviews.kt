@@ -61,6 +61,10 @@ internal fun AlbumPreview(name: String) {
         load = { d -> d.file?.let { library.read(it) }?.let { MediaLoad.Loaded(it) } ?: MediaLoad.Failed },
         onPlay = {}, onRetry = {}, onConfirmLocation = {}, onCancelLocation = {},
         uploading = kotlinx.coroutines.flow.MutableStateFlow(mapOf(sending to 0.6f)),
+        // Their videos coming in: the download ring on the tile.
+        downloading = kotlinx.coroutines.flow.MutableStateFlow(
+            messages.filterIsInstance<Message.Media>().filter { it.isVideo && !it.outgoing }.mapNotNull { it.details.attachmentId }.associateWith { 0.35f },
+        ),
     )
     ThreadContent(ThreadUiState(chat = chat, messages = messages), {}, {}, null, {}, {}, {}, {}, {}, {}, {}, media = actions)
 }

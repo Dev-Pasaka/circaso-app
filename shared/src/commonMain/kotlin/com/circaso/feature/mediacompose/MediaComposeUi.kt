@@ -141,6 +141,8 @@ fun MediaComposeStage(
         CircasoTheme(darkTheme = true, highContrast = CircasoTheme.colors.isHighContrast) {
             val c = CircasoTheme.colors
             val toast = rememberToastState()
+            // The stage is dark in every theme: the status bar's icons go light while it is up.
+            com.circaso.core.platform.StatusBarIcons(light = true)
             LaunchedEffect(state.error) { state.error?.let { toast.show(it); composer.errorShown() } }
             Box(Modifier.fillMaxSize().background(c.bg)) {
                 val capture = state.capture
@@ -168,19 +170,12 @@ fun MediaComposeStage(
                     if (state.item?.video?.path != null && !locked) StageButton(CircasoIcon.Scissors, "Trim video") { composer.openTrim() }
                 }
 
-                if (state.recordingVideo) {
-                    Row(
-                        Modifier.align(Alignment.TopCenter).statusBarsPadding().padding(top = 8.dp).clip(CircasoShapes.pill).background(c.ink).padding(horizontal = 12.dp, vertical = 6.dp)
-                            .semantics { contentDescription = "Recording"; liveRegion = androidx.compose.ui.semantics.LiveRegionMode.Polite },
-                        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    ) {
-                        Box(Modifier.size(8.dp).clip(CircasoShapes.circle).background(c.critical))
-                        BasicText(elapsedLabel(state.recordingSince), style = CircasoTheme.typography.subhead.copy(color = c.bg, fontWeight = FontWeight.SemiBold, fontFeatureSettings = "tnum"))
-                    }
-                }
+                if (state.recordingVideo) RecordingPill(state, composer)
 
                 Column(Modifier.align(Alignment.BottomCenter).fillMaxWidth().navigationBarsPadding().imePadding().padding(bottom = CircasoSpacing.s3), verticalArrangement = Arrangement.spacedBy(14.dp)) {
                     if (reviewing) {
+                        // Just above the strip, beside the marked tile (clear of the toasts at the top).
+                        state.item?.overLimit?.let { size -> if (capture != null && state.trim == null) OverLimitNote(size, state.item?.video != null, composer) }
                         if (state.items.size > 1) PickedStrip(state, copy, composer, locked)
                         if (capture != null) CaptionField(state.caption, composer::onCaption, enabled = !locked)
                         // Under the caption, once (design M4): what happens to it.
@@ -267,6 +262,40 @@ private fun SelectionBar(state: MediaComposeState, composer: MediaComposer) {
     }
 }
 
+/** The critical badge on an item over the size limit: on its strip tile (the reason shows on the stage). */
+@Composable
+private fun OverLimitBadge(modifier: Modifier = Modifier, size: androidx.compose.ui.unit.Dp = OverLimitBadgeSize) {
+    val c = CircasoTheme.colors
+    Box(modifier.size(size).clip(CircasoShapes.circle).background(c.critical), contentAlignment = Alignment.Center) {
+        CircasoIconImage(CircasoIcon.Warning, c.onAction, Modifier.size(size * 0.65f))
+    }
+}
+
+private val OverLimitBadgeSize = 16.dp
+private val OverLimitBadgeInset = 2.dp
+
+/**
+ * Why the item on the stage won't go: over the size limit, with its size and what to do. Stays while it is on the
+ * stage (a toast would fade before it is read), so tapping a marked tile on the strip shows the reason.
+ */
+@Composable
+private fun OverLimitNote(size: Long, video: Boolean, composer: MediaComposer) {
+    val c = CircasoTheme.colors
+    Row(
+        Modifier.padding(horizontal = CircasoSpacing.s4).widthIn(max = 480.dp).fillMaxWidth().clip(CircasoShapes.md).background(c.glass)
+            .padding(horizontal = CircasoSpacing.s3, vertical = CircasoSpacing.s3)
+            .semantics(mergeDescendants = true) { liveRegion = androidx.compose.ui.semantics.LiveRegionMode.Polite },
+        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(CircasoSpacing.s3),
+    ) {
+        OverLimitBadge(size = CircasoSpacing.s6)
+        BasicText(
+            "${overLimitLabel(size, composer.maxBytes).replaceFirstChar { it.uppercase() }}, over the ${composer.limitLabel} limit. It won’t be sent: " +
+                (if (video) "trim it shorter or remove it." else "remove it to send the rest."),
+            style = CircasoTheme.typography.subhead.copy(color = c.ink),
+        )
+    }
+}
+
 /** M4: several picked; tap one to put it on the stage (and edit its caption), the bin takes it out. */
 @Composable
 private fun PickedStrip(state: MediaComposeState, copy: MediaComposeCopy, composer: MediaComposer, locked: Boolean) {
@@ -281,13 +310,23 @@ private fun PickedStrip(state: MediaComposeState, copy: MediaComposeCopy, compos
                     Modifier.size(CircasoSizes.controlMd).clip(CircasoShapes.sm).background(c.fill)
                         .then(if (on) Modifier.border(2.dp, c.ink, CircasoShapes.sm) else Modifier)
                         .pressable(enabled = !locked, onClick = { composer.select(i) })
-                        .semantics { contentDescription = "${copy.itemNoun} ${i + 1} of ${state.items.size}" + if (state.needsTrim(item)) ", needs trimming" else ""; selected = on; role = Role.Tab },
+                        .semantics {
+                            contentDescription = "${copy.itemNoun} ${i + 1} of ${state.items.size}" + when {
+                                item.overLimit != null -> ", over ${composer.limitLabel}, left out"
+                                state.needsTrim(item) -> ", needs trimming"
+                                else -> ""
+                            }
+                            selected = on; role = Role.Tab
+                        },
                     contentAlignment = Alignment.Center,
                 ) {
                     val picture = media?.thumb ?: media?.bytes?.takeIf { media.mime.startsWith("image") }
-                    if (picture != null) coil3.compose.AsyncImage(picture, null, Modifier.fillMaxSize().graphicsLayer { alpha = if (on) 1f else 0.7f }, contentScale = ContentScale.Crop)
+                    // Over the limit: dimmed, so the marked ones read as out of the send at a glance.
+                    val dim = when { item.overLimit != null -> 0.4f; on -> 1f; else -> 0.7f }
+                    if (picture != null) coil3.compose.AsyncImage(picture, null, Modifier.fillMaxSize().graphicsLayer { alpha = dim }, contentScale = ContentScale.Crop)
                     if (item.capture is ComposerCapture.Document) CircasoIconImage(CircasoIcon.Document, c.ink, Modifier.size(20.dp))
                     if (state.needsTrim(item)) CircasoIconImage(CircasoIcon.Scissors, c.ink, Modifier.size(16.dp))
+                    if (item.overLimit != null) OverLimitBadge(Modifier.align(Alignment.TopEnd).padding(OverLimitBadgeInset))
                 }
             }
         }
@@ -303,7 +342,7 @@ private fun CameraControls(state: MediaComposeState, composer: MediaComposer) {
         // Tap for a photo (Photo mode); hold for a video up to 60 s in either mode (M1b). Lifting stops it, even when
         // the recording was still starting. Screen readers get the same as plain actions: photo, start and stop video.
         val ready = state.camera == CameraStart.Started
-        val progress = recordingProgress(state.recordingSince)
+        val progress = recordingProgress(state)
         val latest by androidx.compose.runtime.rememberUpdatedState(state)
         Box(
             Modifier.size(78.dp)
@@ -457,7 +496,9 @@ private fun RecentsStrip(state: MediaComposeState, composer: MediaComposer) {
             val item = state.recents[i]
             if (audio) {
                 Column(
-                    Modifier.size(120.dp, 56.dp).clip(CircasoShapes.md).background(c.glass).pressable(onClick = { composer.useRecent(item) }).padding(horizontal = 10.dp, vertical = 6.dp)
+                    // At least the strip's height, growing with large text rather than clipping it.
+                    Modifier.width(StripWideTile).heightIn(min = StripTileSize).clip(CircasoShapes.md).background(c.glass).pressable(onClick = { composer.useRecent(item) })
+                        .padding(horizontal = CircasoSpacing.s3, vertical = 6.dp)
                         .semantics(mergeDescendants = true) { contentDescription = "Audio ${item.title.orEmpty()}, ${clock(item.durationMs ?: 0)}"; role = Role.Button },
                     verticalArrangement = Arrangement.Center,
                 ) {
@@ -467,7 +508,7 @@ private fun RecentsStrip(state: MediaComposeState, composer: MediaComposer) {
             } else {
                 val order = state.selection.indexOfFirst { it.id == item.id }
                 LibraryTile(
-                    item, Modifier.size(56.dp), number = if (order >= 0) order + 1 else null, showTick = state.selecting,
+                    item, Modifier.size(StripTileSize), number = if (order >= 0) order + 1 else null, showTick = state.selecting,
                     onClick = { composer.useRecent(item) }, onLongClick = { composer.startSelecting(item) },
                 )
             }
@@ -479,18 +520,24 @@ private fun RecentsStrip(state: MediaComposeState, composer: MediaComposer) {
 @Composable
 private fun StripTile(label: String, icon: CircasoIcon, description: String, wide: Boolean, busy: Boolean = false, onClick: () -> Unit) {
     val c = CircasoTheme.colors
+    // At least the strip's size; with large text it grows taller (and a narrow one wider) instead of clipping its label.
     Column(
-        Modifier.size(if (wide) 120.dp else 56.dp, 56.dp).clip(CircasoShapes.md).background(c.glass).pressable(onClick = onClick)
-            .semantics(mergeDescendants = true) { contentDescription = description; role = Role.Button },
-        horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center,
+        Modifier.widthIn(min = if (wide) StripWideTile else StripTileSize).heightIn(min = StripTileSize).clip(CircasoShapes.md).background(c.glass).pressable(onClick = onClick)
+            .semantics(mergeDescendants = true) { contentDescription = description; role = Role.Button }
+            .padding(horizontal = CircasoSpacing.s2, vertical = CircasoSpacing.s1),
+        horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(2.dp, Alignment.CenterVertically),
     ) {
         if (busy) com.circaso.designsystem.components.Spinner(c.ink)
         else {
             CircasoIconImage(icon, c.ink, Modifier.size(18.dp))
-            BasicText(label, style = CircasoTheme.typography.caption2.copy(color = c.ink), maxLines = 1)
+            BasicText(label, style = CircasoTheme.typography.caption2.copy(color = c.ink, textAlign = TextAlign.Center), maxLines = 2)
         }
     }
 }
+
+/** The recents strip's tiles: a photo's square, and the wider glass tiles (Files, Allow access, an audio file). */
+private val StripTileSize = 56.dp
+private val StripWideTile = 120.dp
 
 /**
  * One photo or video in the strip or the gallery: its thumbnail, a video's length, and when picking several the
@@ -563,6 +610,44 @@ internal fun longClock(ms: Long): String {
     return if (h > 0) "$h:${m.toString().padStart(2, '0')}:$sec" else "$m:$sec"
 }
 
+/**
+ * The pill over the camera while a video records. A moment: "0:14 / 1:00". A chat (any length, up to its size limit):
+ * the running time and size, "3:12 · 41 MB"; from [MediaComposer.RecordingWarnShare] of the limit it turns to the
+ * warning colour and says it is nearly full, once, politely, so the stop at the limit is never a surprise.
+ */
+@Composable
+private fun BoxScope.RecordingPill(state: MediaComposeState, composer: MediaComposer) {
+    val c = CircasoTheme.colors
+    val t = CircasoTheme.typography
+    val limits = state.recordingLimits
+    val maxBytes = limits.maxBytes
+    val near = maxBytes != null && state.recordingBytes >= maxBytes * MediaComposer.RecordingWarnShare
+    val time = if (limits.maxMs != null) elapsedLabel(state.recordingSince) else runningClock(state.recordingSince)
+    val text = when {
+        maxBytes == null -> time
+        near -> "$time · Nearly ${composer.limitLabel}, it stops at the limit"
+        state.recordingBytes > 0 -> "$time · ${sizeLabel(state.recordingBytes)}"
+        else -> time
+    }
+    val ink = if (near) com.circaso.designsystem.theme.LightColors.ink else c.bg
+    Row(
+        Modifier.align(Alignment.TopCenter).statusBarsPadding().padding(top = CircasoSpacing.s2).padding(horizontal = CircasoSizes.controlMd + CircasoSpacing.s6)
+            .clip(CircasoShapes.pill).background(if (near) c.warning else c.ink).padding(horizontal = CircasoSpacing.s3, vertical = 6.dp)
+            .semantics(mergeDescendants = true) { contentDescription = if (near) "Recording, nearly ${composer.limitLabel}" else "Recording"; liveRegion = androidx.compose.ui.semantics.LiveRegionMode.Polite },
+        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(CircasoSpacing.s2),
+    ) {
+        Box(Modifier.size(CircasoSpacing.s2).clip(CircasoShapes.circle).background(if (near) ink else c.critical))
+        BasicText(text, style = t.subhead.copy(color = ink, fontWeight = FontWeight.SemiBold, fontFeatureSettings = "tnum"))
+    }
+}
+
+/** "3:12", "1:02:05": a recording's running time with no end. */
+@Composable
+private fun runningClock(since: Long?): String {
+    val now by androidx.compose.runtime.produceState(com.circaso.core.sync.nowMillis(), since) { while (since != null) { value = com.circaso.core.sync.nowMillis(); kotlinx.coroutines.delay(250) } }
+    return longClock(if (since == null) 0 else now - since)
+}
+
 /** "0:14 / 1:00" for the recording in progress; it ticks every second. */
 @Composable
 internal fun elapsedLabel(since: Long?): String {
@@ -570,11 +655,15 @@ internal fun elapsedLabel(since: Long?): String {
     return "${clock(if (since == null) 0 else now - since)} / 1:00"
 }
 
-/** How far a recording is towards 1:00, for the shutter ring (M1b). */
+/** How far a recording is towards its limit, for the shutter ring (M1b): a moment's 1:00, or a chat's size. */
 @Composable
-private fun recordingProgress(since: Long?): Float {
+private fun recordingProgress(state: MediaComposeState): Float {
+    val since = state.recordingSince
+    val maxMs = state.recordingLimits.maxMs
+    val maxBytes = state.recordingLimits.maxBytes
+    if (maxMs == null) return if (since == null || maxBytes == null) 0f else (state.recordingBytes.toFloat() / maxBytes).coerceIn(0f, 1f)
     val now by androidx.compose.runtime.produceState(com.circaso.core.sync.nowMillis(), since) { while (since != null) { value = com.circaso.core.sync.nowMillis(); kotlinx.coroutines.delay(100) } }
-    return if (since == null) 0f else ((now - since) / com.circaso.core.platform.MomentVideoMaxMs.toFloat()).coerceIn(0f, 1f)
+    return if (since == null) 0f else ((now - since) / maxMs.toFloat()).coerceIn(0f, 1f)
 }
 
 /** M1c: camera not allowed or not there; the gallery still works. */
@@ -622,6 +711,8 @@ private fun GalleryScreen(gallery: GalleryState, state: MediaComposeState, compo
     // The gallery is a list screen: the person's own theme, not the dark stage.
     CircasoTheme(darkTheme = LocalPersonalDark.current, highContrast = CircasoTheme.colors.isHighContrast) {
         val cc = CircasoTheme.colors
+        // Over the dark stage (which lights the icons) in the person's theme: icons to suit it.
+        com.circaso.core.platform.StatusBarIcons(light = cc.isDark)
         Column(Modifier.fillMaxSize().background(cc.bg).statusBarsPadding().navigationBarsPadding()) {
             // Design M3's bar: Close, "Recents", Next.
             Row(
@@ -655,7 +746,8 @@ private fun GalleryScreen(gallery: GalleryState, state: MediaComposeState, compo
             }
             val items = androidx.compose.runtime.remember(gallery.photos, gallery.videos, gallery.tab) { gallery.items }
             when {
-                gallery.loading -> Box(Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.Center) { com.circaso.designsystem.components.Spinner(cc.inkSecondary) }
+                // The grid's own shape while the library answers, so the photos land where the eye already is.
+                gallery.loading -> GalleryPlaceholder(Modifier.fillMaxWidth().weight(1f))
                 gallery.access == LibraryAccess.Denied -> Column(
                     Modifier.fillMaxWidth().weight(1f).padding(horizontal = 32.dp), horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.spacedBy(12.dp, Alignment.CenterVertically),
@@ -671,8 +763,8 @@ private fun GalleryScreen(gallery: GalleryState, state: MediaComposeState, compo
                         style = t.body.copy(color = cc.inkSecondary, textAlign = TextAlign.Center))
                 }
                 else -> androidx.compose.foundation.lazy.grid.LazyVerticalGrid(
-                    androidx.compose.foundation.lazy.grid.GridCells.Fixed(3), Modifier.fillMaxWidth().weight(1f),
-                    horizontalArrangement = Arrangement.spacedBy(2.dp), verticalArrangement = Arrangement.spacedBy(2.dp),
+                    androidx.compose.foundation.lazy.grid.GridCells.Fixed(GalleryColumns), Modifier.fillMaxWidth().weight(1f),
+                    horizontalArrangement = Arrangement.spacedBy(GalleryGap), verticalArrangement = Arrangement.spacedBy(GalleryGap),
                 ) {
                     items(items.size, key = { items[it].id }) { i ->
                         val item = items[i]
@@ -684,6 +776,22 @@ private fun GalleryScreen(gallery: GalleryState, state: MediaComposeState, compo
         }
     }
 }
+
+/** The gallery's grid as blank tiles (three across, the same gaps), shown while the library is read. */
+@Composable
+private fun GalleryPlaceholder(modifier: Modifier) {
+    val cc = CircasoTheme.colors
+    androidx.compose.foundation.lazy.grid.LazyVerticalGrid(
+        androidx.compose.foundation.lazy.grid.GridCells.Fixed(GalleryColumns), modifier.semantics { contentDescription = "Loading your gallery" },
+        horizontalArrangement = Arrangement.spacedBy(GalleryGap), verticalArrangement = Arrangement.spacedBy(GalleryGap), userScrollEnabled = false,
+    ) {
+        items(GalleryPlaceholderTiles) { Box(Modifier.fillMaxWidth().aspectRatio(1f).background(cc.fill)) }
+    }
+}
+
+private const val GalleryColumns = 3
+private const val GalleryPlaceholderTiles = 24
+private val GalleryGap = 2.dp
 
 /**
  * M3b: trim a video. The video itself on the stage, held at the edge being dragged, Cancel and Done at the top,

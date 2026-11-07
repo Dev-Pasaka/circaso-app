@@ -133,6 +133,34 @@ private val mediaThread = listOf(
     media(17, D(D.File, file = "z", label = "Lease agreement 2026.pdf", mime = "application/pdf", size = 2_480_000, caption = "Signed copy"), true, 1, DeliveryState.Sending),
     media(18, D(D.File, attachmentId = "a4", label = "Budget.xlsx", mime = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", size = 48_200), false, 1),
 )
+/**
+ * Big files coming in (`--es preview chat-downloads`): a video and a document downloading, their rings filling as a
+ * real download's would (MediaMessages.downloading), and one still asking for its link (the ring turning).
+ */
+@androidx.compose.runtime.Composable
+private fun DownloadsPreview() {
+    val flow = androidx.compose.runtime.remember { kotlinx.coroutines.flow.MutableStateFlow(mapOf("dv1" to 0.1f, "dd1" to 0.3f)) }
+    androidx.compose.runtime.LaunchedEffect(Unit) {
+        while (true) {
+            kotlinx.coroutines.delay(400)
+            flow.value = flow.value.mapValues { (_, v) -> if (v >= 0.98f) 0.05f else (v + 0.03f).coerceAtMost(0.98f) }
+        }
+    }
+    ThreadContent(
+        ThreadUiState(chat = direct("2", "Mum"), messages = listOf(
+            text(40, "2", "Here's the whole recital, and the programme", false, 6),
+            media(41, D(D.Video, attachmentId = "dv1", width = 1280, height = 720, durationMs = 754_000, size = 96_400_000, caption = "The whole recital"), false, 5),
+            media(42, D(D.File, attachmentId = "dd1", label = "Recital programme and photos.zip", mime = "application/zip", size = 84_200_000), false, 5),
+            media(43, D(D.Video, attachmentId = "dv2", width = 720, height = 1280, durationMs = 61_000), false, 4),
+        ), videoLoading = 43),
+        {}, {}, null, {}, {}, {}, {}, {}, {}, {},
+        media = com.circaso.feature.messaging.presentation.ThreadMediaActions(
+            canShareLocation = true, onCompose = {}, onLocation = {}, onVoiceStart = {}, onVoiceEnd = {}, load = { com.circaso.feature.messaging.data.repository.MediaLoad.Failed }, onPlay = {}, onRetry = {},
+            onConfirmLocation = {}, onCancelLocation = {}, downloading = flow,
+        ),
+    )
+}
+
 /** Media actions for previews: nothing loads, so photos show their "couldn't load" state. */
 private val previewMedia = com.circaso.feature.messaging.presentation.ThreadMediaActions(
     canShareLocation = true, onCompose = {}, onLocation = {}, onVoiceStart = {}, onVoiceEnd = {}, load = { com.circaso.feature.messaging.data.repository.MediaLoad.Failed }, onPlay = {}, onRetry = {},
@@ -357,6 +385,7 @@ fun PreviewScreens(name: String) {
             media(31, D(D.Video, attachmentId = "v1", width = 720, height = 1280, durationMs = 42_000, caption = "Goal!"), false, 30),
             media(32, D(D.Video, file = "x", width = 1280, height = 720, durationMs = 8_000), true, 2, DeliveryState.Sending),
         )), {}, {}, null, {}, {}, {}, {}, {}, {}, {}, media = previewMedia)
+        "chat-downloads" -> DownloadsPreview()
         "chat-live" -> ThreadContent(ThreadUiState(chat = direct("2", "Mum"), messages = liveThread), {}, {}, null, {}, {}, {}, {}, {}, {}, {}, media = previewMedia)
         "location-map" -> com.circaso.feature.messaging.presentation.map.LocationMapContent(
             com.circaso.feature.messaging.presentation.map.LocationMapUiState(direct("2", "Mum"), mapEntries, 22), {}, {},

@@ -82,10 +82,15 @@ private class ChatLibrary : MediaLibrary {
 
 private class Camera : MomentCamera {
     var opens = 0
+    val limits = mutableListOf<com.circaso.core.platform.RecordingLimits>()
+    var status: com.circaso.core.platform.RecordingStatus? = null
+    var stops = 0
     override suspend fun open(): CameraStart { opens++; return CameraStart.Started }
     override suspend fun takePhoto(): CapturedMedia? = jpeg(4)
     override suspend fun startVideo() = true
-    override suspend fun stopVideo(): CapturedMedia? = null
+    override suspend fun startVideo(limits: com.circaso.core.platform.RecordingLimits): Boolean { this.limits += limits; return true }
+    override fun recordingStatus() = status
+    override suspend fun stopVideo(): CapturedMedia? { stops++; return clip("/rec", 300_000) }
     override fun flip() = Unit
     override fun setFlash(on: Boolean) = Unit
     override fun close() = Unit
@@ -212,28 +217,87 @@ class ChatMediaComposerViewModelTest {
         assertEquals(listOf(com.circaso.core.platform.ChatFileMaxBytes), library.trimLimits)
     }
 
-    @Test fun aVideoOverTheLimitIsSaidWhenPickedAndStopsTheSendOnIt() = runTest(dispatcher) {
+    @Test fun aVideoOverTheLimitIsMarkedAndSendAsksBeforeLeavingItOut() = runTest(dispatcher) {
         library.media += mapOf("a" to jpeg(3), "big" to clip("/big", 900_000))
         library.sizes["/big"] = com.circaso.core.platform.ChatFileMaxBytes + 1
         val vm = composer(ChatComposeStart.Camera)
         vm.composer.toggle(photo("a")); vm.composer.toggle(video("big", 900_000))
         vm.composer.useSelection()
-        // Said at once, with its size, and on the stage so it can be taken out.
+        // Said at once, with its size, on the stage, and marked on its item for as long as it is there.
         assertEquals("This video is just over 100 MB. Videos up to 100 MB can be sent: trim it shorter or take it out.", vm.state.value.media.error)
         assertEquals(1, vm.state.value.media.current)
+        assertEquals(listOf(null, com.circaso.core.platform.ChatFileMaxBytes + 1), vm.state.value.media.items.map { it.overLimit })
+        assertTrue(vm.state.value.canSend, "the photo can still go")
         vm.composer.errorShown()
         vm.send()
-        // Nothing goes, not even the photo before it, and nothing is re-encoded.
+        // Asked first: nothing goes yet, nothing is re-encoded.
+        assertEquals(1, vm.state.value.askLeaveOut)
         assertTrue(queue.sent.isEmpty())
         assertTrue(library.trims.isEmpty())
-        assertFalse(vm.state.value.sending)
+        // Go Back: still nothing sent, the marked one on the stage.
+        vm.leaveOutCancelled()
+        assertNull(vm.state.value.askLeaveOut)
         assertEquals(1, vm.state.value.media.current)
-        assertEquals("This video is just over 100 MB. Videos up to 100 MB can be sent: trim it shorter or take it out.", vm.state.value.media.error)
-        // Taken out, the rest goes.
-        vm.composer.removeCurrent()
+        assertTrue(queue.sent.isEmpty())
+        // Send the other one: only the photo goes.
         vm.send()
+        vm.leaveOutConfirmed()
         assertEquals(1, queue.sent.size)
+        assertTrue(queue.sent.single().second is PreparedItem.Shot)
         assertTrue(vm.state.value.sent)
+    }
+
+    @Test fun severalOverTheLimitAreEachMarkedAndAllOverMeansNoSend() = runTest(dispatcher) {
+        library.media += mapOf("b1" to clip("/b1", 900_000), "b2" to clip("/b2", 900_000))
+        library.sizes["/b1"] = 150L * 1024 * 1024
+        library.sizes["/b2"] = 120L * 1024 * 1024
+        val vm = composer(ChatComposeStart.Camera)
+        vm.composer.toggle(video("b1", 900_000)); vm.composer.toggle(video("b2", 900_000))
+        vm.composer.useSelection()
+        assertEquals("2 videos are over 100 MB. They’re marked, and won’t be sent.", vm.state.value.media.error)
+        assertEquals(2, vm.state.value.media.overLimitCount)
+        assertFalse(vm.state.value.canSend, "nothing left to send")
+        vm.send()
+        assertNull(vm.state.value.askLeaveOut)
+        assertTrue(queue.sent.isEmpty())
+    }
+
+    @Test fun oneFoundOverTheLimitOnlyAtSendIsMarkedAndAskedAbout() = runTest(dispatcher) {
+        library.media += mapOf("a" to jpeg(3), "v" to clip("/v", 60_000))
+        library.sizes["/v"] = 10L * 1024 * 1024
+        val vm = composer(ChatComposeStart.Camera)
+        vm.composer.toggle(photo("a")); vm.composer.toggle(video("v", 60_000))
+        vm.composer.useSelection()
+        assertEquals(0, vm.state.value.media.overLimitCount)
+        // The file grew past the limit after it was picked (or its size wasn't known then).
+        library.sizes["/v"] = com.circaso.core.platform.ChatFileMaxBytes + 5
+        vm.send()
+        assertTrue(queue.sent.isEmpty())
+        assertEquals(1, vm.state.value.askLeaveOut)
+        assertEquals(1, vm.state.value.media.current)
+        assertEquals(com.circaso.core.platform.ChatFileMaxBytes + 5, vm.state.value.media.items[1].overLimit)
+        vm.leaveOutConfirmed()
+        assertEquals(1, queue.sent.size)
+    }
+
+    @Test fun aChatsCameraRecordsAnyLengthUpToTheSizeLimit() = runTest(dispatcher) {
+        val vm = composer(ChatComposeStart.Camera)
+        vm.composer.holdStart()
+        val limits = camera.limits.single()
+        assertNull(limits.maxMs, "no length limit in a chat")
+        val max = limits.maxBytes!!
+        assertTrue(max < com.circaso.core.platform.ChatFileMaxBytes && max > com.circaso.core.platform.ChatFileMaxBytes * 9 / 10)
+        // Its size shows as it records; the camera stopping at the limit puts the clip on the review and says why.
+        camera.status = com.circaso.core.platform.RecordingStatus(max - 10, stopped = false)
+        dispatcher.scheduler.advanceTimeBy(300)
+        assertEquals(max - 10, vm.state.value.media.recordingBytes)
+        camera.status = com.circaso.core.platform.RecordingStatus(max, stopped = true)
+        dispatcher.scheduler.advanceTimeBy(300)
+        assertFalse(vm.state.value.media.recordingVideo)
+        assertEquals(1, camera.stops)
+        assertEquals("The video stopped at 100 MB, the most a chat can send.", vm.state.value.media.error)
+        vm.composer.holdEnd() // the finger lifting after it stopped changes nothing
+        assertEquals(1, camera.stops)
     }
 
     @Test fun aVideoJustUnderTheLimitGoesAsItIs() = runTest(dispatcher) {
