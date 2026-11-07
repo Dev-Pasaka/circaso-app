@@ -45,6 +45,8 @@ interface AshaRemote {
     /** A13: a short sample of a voice (MP3), free of the allowance, for the voice picker. */
     suspend fun voiceSample(voiceId: String): AppResult<ByteArray>
     suspend fun usage(): AppResult<UsageResponse>
+    /** A14: whether Asha can answer now (2026-11-07). */
+    suspend fun status(): AppResult<AssistantStatusResponse> = AppResult.Success(AssistantStatusResponse())
 
     /** Posts the question and streams the answer. Failures before any text arrive as a single failed result. */
     fun stream(request: SendMessageRequest): Flow<AppResult<SseEvent>>
@@ -81,6 +83,11 @@ class KtorAshaRemote(
         url("/v1/assistant/chat/messages/$turnId/tool-results")
         contentType(ContentType.Application.Json)
         setBody(request)
+    }
+
+    override suspend fun status() = api.call<AssistantStatusResponse> {
+        method = HttpMethod.Get
+        url("/v1/assistant/status")
     }
 
     override suspend fun transcribe(audio: ByteArray, contentType: String, seconds: Int) = api.call<TranscriptResponse> {

@@ -64,6 +64,13 @@ sealed interface VoiceEnding {
     data object NoMicrophone : VoiceEnding
     /** `assistant.model_unavailable`, or the microphone failed: try again, or type. */
     data class Failed(val message: String) : VoiceEnding
+    /**
+     * `assistant.unavailable`: Asha is down for maintenance (2026-11-07), said by her or already known when the call was
+     * asked for. [toldWhenBack] when the server will push "Asha is back" to this person. Turns into [AshaBack].
+     */
+    data class Maintenance(val toldWhenBack: Boolean = true) : VoiceEnding
+    /** She is back from maintenance while this screen was open: one tap talks again. */
+    data object AshaBack : VoiceEnding
 }
 
 /**
@@ -162,7 +169,11 @@ class VoiceViewModel(
     private val connection: Flow<ConnectionStatus>? = null,
     /** Milliseconds, for the microphone gate; a test clock in tests. */
     private val clock: () -> Long = { nowMillis() },
+    /** Whether Asha is down for maintenance (A14); absent in previews and tests that don't need it. */
+    private val availability: com.circaso.feature.assistant.domain.AshaAvailability? = null,
 ) : ViewModel() {
+    private val availabilityWatch = com.circaso.feature.assistant.domain.AvailabilityWatch(availability)
+
     /** When this phone got the turn, and how long until its first sound played; for the debug timing line. */
     private var turnAt = 0L
     private var heardAfterMs: Long? = null
@@ -198,6 +209,13 @@ class VoiceViewModel(
         everLive = false
         reopenFailures = 0
         local.value = VoiceUiState()
+        // Already known to be down: no microphone, no call that can only apologise. The same calm ending instead.
+        val a = availability
+        if (a != null && a.isDown.value) {
+            finishNow(VoiceEnding.Maintenance(a.willTellWhenBack))
+            awaitBack(a)
+            return
+        }
         conversation = viewModelScope.launch { converse() }
     }
 
@@ -292,7 +310,7 @@ class VoiceViewModel(
                 viewModelScope.launch { refreshHistory() }
             }
             is LiveVoiceEvent.Error -> Diagnostics.note("voice: error ${event.code}").also { resetDucking(); local.update { it.copy(phase = VoicePhase.Listening, status = null, notice = noticeFor(event.code), turns = VoiceTranscript.failed(it.turns)) } }
-            is LiveVoiceEvent.Closing -> { Diagnostics.note("voice: closing ${event.reason}"); finish(endingFor(event)) }
+            is LiveVoiceEvent.Closing -> { Diagnostics.note("voice: closing ${event.reason}"); if (event.reason == com.circaso.feature.assistant.domain.AshaAvailability.UnavailableCode) signedOff(); finish(endingFor(event)) }
             // A refused sign-in ends the call; any other close is the line dropping, which [converse] reconnects.
             is LiveVoiceEvent.Closed -> if (!ended) closedEnding(event)?.let { finish(it) }
             is LiveVoiceEvent.ToolRequest -> Unit // answered inside the use case
@@ -452,8 +470,31 @@ class VoiceViewModel(
         "assistant.quota_exceeded" -> VoiceEnding.OutOfVoice(c.retryAfterSeconds)
         "assistant.language_not_supported" -> VoiceEnding.UseClips
         "assistant.model_unavailable" -> VoiceEnding.Failed("Asha's voice isn't available right now. Try again in a moment, or type.")
+        com.circaso.feature.assistant.domain.AshaAvailability.UnavailableCode -> VoiceEnding.Maintenance()
         else -> VoiceEnding.Failed(c.message ?: "The conversation ended.")
     }
+
+    /**
+     * Asha has just said she is down for maintenance: let her line finish playing (it is the whole message), tell the
+     * app she is down, and once she is back turn the ending into [VoiceEnding.AshaBack].
+     */
+    private suspend fun signedOff() {
+        withTimeoutOrNull(SignOffMillis) { speaker.playing.first { !it } }
+        val a = availability ?: return
+        a.reportDown()
+        awaitBack(a)
+    }
+
+    /** Turns a maintenance ending into [VoiceEnding.AshaBack] once she is back (the store polls while this is visible). */
+    private fun awaitBack(a: com.circaso.feature.assistant.domain.AshaAvailability) {
+        viewModelScope.launch {
+            a.isDown.first { !it }
+            local.update { if (it.ending is VoiceEnding.Maintenance) it.copy(ending = VoiceEnding.AshaBack) else it }
+        }
+    }
+
+    /** The voice screen is visible or not: while it is and Asha is down, the app checks whether she is back. */
+    fun onVisible(visible: Boolean) = availabilityWatch.set(visible)
 
     /** The ending a close means, or null when it is only the line dropping (reconnected, or Offline if it never got going). */
     private fun closedEnding(c: LiveVoiceEvent.Closed): VoiceEnding? {
@@ -472,6 +513,7 @@ class VoiceViewModel(
 
     @OptIn(DelicateCoroutinesApi::class)
     override fun onCleared() {
+        availabilityWatch.set(false)
         val s = session
         microphone.stop()
         speaker.stop()
@@ -480,6 +522,8 @@ class VoiceViewModel(
     }
 
     private companion object {
+        /** The longest the maintenance line may keep playing before the call ends anyway. */
+        const val SignOffMillis = 6_000L
         /** Her volume while the person may be talking over her: low enough to hear yourself, not gone. */
         const val DuckedVolume = 0.25f
         /** Down fast (an answer to the person), back up gently (it was nothing). */

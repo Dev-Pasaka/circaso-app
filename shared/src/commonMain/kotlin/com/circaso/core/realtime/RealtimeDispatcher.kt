@@ -22,6 +22,8 @@ class RealtimeDispatcher(
     private val onCallsFrame: suspend (type: String, data: kotlinx.serialization.json.JsonObject?) -> Unit = { _, _ -> },
     /** Moments (`status.posted`, `status.deleted`, `status.viewed`); also called on its `resync` with type `resync`. */
     private val onStatusFrame: suspend (type: String, data: kotlinx.serialization.json.JsonObject?) -> Unit = { _, _ -> },
+    /** `assistant` / `status` (2026-11-07): Asha is back from maintenance when `available` is true. */
+    private val onAshaBack: suspend () -> Unit = {},
 ) {
     fun start() {
         scope.launch { frames.collect { handle(it) } }
@@ -42,6 +44,8 @@ class RealtimeDispatcher(
             frame.module == "chama" -> onChamaFrame(frame.type, frame.data)
             frame.module == "calls" -> onCallsFrame(frame.type, frame.data)
             frame.module == "status" -> onStatusFrame(frame.type, frame.data)
+            frame.module == "assistant" && frame.type == "status" ->
+                if (frame.data?.get("available")?.jsonPrimitive?.content == "true") onAshaBack()
             frame.module == "users" && frame.type in setOf("contact.joined", "connection.added") -> refreshContacts()
             frame.module == "users" && frame.type == "profile.updated" -> {
                 val userId = frame.data?.get("userId")?.jsonPrimitive?.content

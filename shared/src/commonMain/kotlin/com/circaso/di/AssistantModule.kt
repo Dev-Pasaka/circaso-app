@@ -50,6 +50,8 @@ val assistantModule = module {
     factory { TranscribeVoiceUseCase(get()) }
     factory { SpeakUseCase(get()) }
     factory { GetAshaUsageUseCase(get()) }
+    // Asha down for maintenance (2026-11-07): one app-wide answer, fed by A14, failed turns and the socket.
+    single<com.circaso.feature.assistant.domain.AshaAvailability> { com.circaso.feature.assistant.data.repository.AshaAvailabilityImpl(get(), get(), isOnline = { get<com.circaso.core.sync.ConnectionState>().status.value == com.circaso.core.platform.ConnectionStatus.Online }) }
 
     // Live voice (A11): its own socket, open only while the voice screen is up.
     single<LiveSocketFactory> { KtorLiveSocketFactory(get()) }

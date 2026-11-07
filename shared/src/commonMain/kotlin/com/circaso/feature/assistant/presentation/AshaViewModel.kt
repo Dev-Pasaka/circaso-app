@@ -12,7 +12,9 @@ import com.circaso.core.platform.MaxVoiceSeconds
 import com.circaso.core.platform.RecordingStart
 import com.circaso.core.sync.ConnectionState
 import com.circaso.feature.assistant.domain.AskAshaUseCase
+import com.circaso.feature.assistant.domain.AshaAvailability
 import com.circaso.feature.assistant.domain.AshaEvent
+import com.circaso.feature.assistant.domain.AvailabilityWatch
 import com.circaso.feature.assistant.domain.AshaMessage
 import com.circaso.feature.assistant.domain.DeleteAshaHistoryUseCase
 import com.circaso.feature.assistant.domain.GetAshaUsageUseCase
@@ -28,6 +30,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
@@ -81,6 +84,15 @@ data class AshaUiState(
     val carried: String = "",
     /** The connection just came back: the offline line says "Back online" for a moment, then goes. */
     val backOnline: Boolean = false,
+    /**
+     * Asha is down for maintenance (the server's `assistant.unavailable`, 2026-11-07): a calm line says so, the composer
+     * and voice wait, and the question stays in the draft. It clears by itself when she is back.
+     */
+    val maintenance: Boolean = false,
+    /** The server will tell this person when she is back (their own turn met her down): only then is it promised. */
+    val toldWhenBack: Boolean = false,
+    /** She just came back: the line says "Asha is back" for a moment, then goes. */
+    val ashaBack: Boolean = false,
 ) {
     /** The open conversation's id: the one chosen, else the latest. */
     val shownConversation: String? get() = currentConversation ?: conversations.firstOrNull()?.id
@@ -88,9 +100,11 @@ data class AshaUiState(
     /** The open conversation's title, for the header; "New chat" until it has one. */
     val conversationTitle: String? get() = (currentConversation?.let { id -> conversations.firstOrNull { it.id == id } } ?: conversations.firstOrNull())?.title
     val sending get() = pendingQuestion != null
-    val canSend get() = online && !sending && waiting == null && voice == VoiceState.Idle && draft.isNotBlank()
-    /** Voice needs the server for both directions, so it is offered only online. */
-    val canUseVoice get() = online && !sending && voice != VoiceState.Transcribing
+    val canSend get() = online && !maintenance && !sending && waiting == null && voice == VoiceState.Idle && draft.isNotBlank()
+    /** Voice needs the server for both directions, so it is offered only online, and not while Asha is down. */
+    val canUseVoice get() = online && !maintenance && !sending && voice != VoiceState.Transcribing
+    /** Asking (typing, chips, voice) is possible: online, and Asha isn't down for maintenance. */
+    val canAsk get() = online && !maintenance
 }
 
 /** Asha (design F1). Reading the history works offline; asking needs the server, and says so before the person types. */
@@ -108,9 +122,19 @@ class AshaViewModel(
     private val chats: com.circaso.feature.assistant.domain.AshaRepository? = null,
     /** This period's usage (A7) for the menu; absent in tests that don't need it. */
     private val usage: GetAshaUsageUseCase? = null,
+    /** Whether Asha is down for maintenance (A14); absent in tests that don't need it. */
+    private val availability: AshaAvailability? = null,
 ) : ViewModel() {
     // `online` lives here, set by the same collector that sets `backOnline`, so the two change in one frame.
-    private val local = MutableStateFlow(AshaUiState(online = connection.status.value == ConnectionStatus.Online))
+    private val local = MutableStateFlow(
+        AshaUiState(
+            online = connection.status.value == ConnectionStatus.Online,
+            // Known down already (the voice screen, an earlier visit): never an enabled "Ask Asha" for a frame.
+            maintenance = availability?.isDown?.value == true,
+            toldWhenBack = availability?.willTellWhenBack == true,
+        ),
+    )
+    private val watch = AvailabilityWatch(availability)
     private var job: Job? = null
     private var timer: Job? = null
     private var speaking: Job? = null
@@ -200,6 +224,7 @@ class AshaViewModel(
 
     init {
         viewModelScope.launch { refreshHistory() }
+        watchAvailability()
         // The one signal that the connection is back: the app's ConnectionState, never a poll.
         viewModelScope.launch {
             var last = connection.status.value
@@ -222,13 +247,57 @@ class AshaViewModel(
         // The waiting question refreshes the history itself before it asks again.
         if (local.value.waiting == null) viewModelScope.launch { refreshHistory() }
         if (local.value.usage is UsageUi.Offline || local.value.usage is UsageUi.Failed) loadUsage()
+        checkAvailability()
     }
+
+    private var ashaBackJob: Job? = null
+
+    /**
+     * Follows Asha's availability: down shows the maintenance line; back (from down) says "Asha is back" for a moment.
+     * While she is down and this screen is visible, the store reads A14 every [AshaAvailability.PollMillis] (online
+     * only), so the state clears by itself.
+     */
+    private fun watchAvailability() {
+        val a = availability ?: return
+        checkAvailability()
+        viewModelScope.launch {
+            var wasDown = a.isDown.value
+            a.isDown.collectLatest { down ->
+                val back = wasDown && !down
+                wasDown = down
+                local.update { it.copy(maintenance = down, toldWhenBack = a.willTellWhenBack, ashaBack = if (back) true else it.ashaBack && !down) }
+                if (back) {
+                    ashaBackJob?.cancel()
+                    ashaBackJob = viewModelScope.launch {
+                        delay(AshaBackMillis)
+                        local.update { it.copy(ashaBack = false) }
+                    }
+                }
+            }
+        }
+    }
+
+    /** Reads A14 now (opening, resuming, back online); offline it waits for the next chance. */
+    private fun checkAvailability() {
+        val a = availability ?: return
+        if (connection.status.value != ConnectionStatus.Online) return
+        viewModelScope.launch { a.refresh() }
+    }
+
+    /** Asha's screen is visible again: has she come back meanwhile? And keep checking while she is down. */
+    fun onResume() {
+        watch.set(true)
+        checkAvailability()
+    }
+
+    /** Asha's screen went to the background (or away): no polling for it. */
+    fun onPause() = watch.set(false)
 
     fun onDraft(text: String) = local.update { it.copy(draft = text, error = null) }
 
     /** A suggestion chip: asked at once, as if typed and sent. */
     fun onSuggestion(text: String) {
-        if (!state.value.online || state.value.sending) return
+        if (!state.value.canAsk || state.value.sending) return
         local.update { it.copy(draft = text, error = null) }
         onSend()
     }
@@ -264,6 +333,19 @@ class AshaViewModel(
             // The stream ended with neither an answer nor an error: the line was cut mid-answer.
             if (!done && failed == null) failed = AppError.Network
             val error = failed
+            if (error is AppError.Api && error.code == AshaAvailability.UnavailableCode) {
+                // Asha is down for maintenance: not an error. The question goes back to the draft, untouched, and
+                // the maintenance line says the rest.
+                availability?.reportDown()
+                local.update {
+                    it.copy(
+                        pendingQuestion = null, streaming = "", status = null, carried = "", error = null,
+                        maintenance = true, toldWhenBack = true,
+                        draft = listOf(question, it.draft.trim()).filter(String::isNotEmpty).joinToString(" "),
+                    )
+                }
+                return@launch
+            }
             if (error != null && isConnectionDrop(error) && tries < MaxAsks) {
                 local.update {
                     it.copy(
@@ -406,10 +488,13 @@ class AshaViewModel(
         const val SettleMillis = 3_000L
         /** Asks of one question in all (the person's, then automatic ones) before it goes back to the draft. */
         const val MaxAsks = 3
+        /** How long "Asha is back" shows once she is back (as "Back online" does). */
+        const val AshaBackMillis = 3_000L
     }
 
     @OptIn(DelicateCoroutinesApi::class)
     override fun onCleared() {
+        watch.set(false)
         timer?.cancel()
         player.stop()
         // The scope is already cancelled here, and the microphone must be released.
