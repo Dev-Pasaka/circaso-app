@@ -51,6 +51,7 @@ val realtimeModule = module {
                 val field = { k: String -> (data?.get(k) as? kotlinx.serialization.json.JsonPrimitive)?.content }
                 get<com.circaso.feature.status.domain.MomentsRepository>().onFrame(type, field("momentId"), field("posterId"), field("requesterId"))
             },
+            onAshaBack = { get<com.circaso.feature.assistant.domain.AshaAvailability>().reportBack() },
         )
     }
 }

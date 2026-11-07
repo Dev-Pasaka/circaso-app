@@ -430,6 +430,21 @@ fun PreviewScreens(name: String) {
             AshaUiState(messages = listOf(msg("1", "USER", "How do I add a friend?"), msg("2", "ASHA", "Open Contacts from the You tab.")), online = false),
             {}, {}, {}, {}, {}, {},
         )
+        "asha-maintenance" -> AshaContent(
+            AshaUiState(messages = listOf(msg("1", "USER", "How do I add a friend?"), msg("2", "ASHA", "Open Contacts from the You tab.")), draft = "What did I spend on transport this week?", maintenance = true, toldWhenBack = true),
+            {}, {}, {}, {}, {}, {},
+        )
+        "asha-maintenance-empty" -> AshaContent(AshaUiState(maintenance = true), {}, {}, {}, {}, {}, {})
+        "asha-back" -> AshaContent(
+            AshaUiState(messages = listOf(msg("1", "USER", "How do I add a friend?"), msg("2", "ASHA", "Open Contacts from the You tab.")), draft = "What did I spend on transport this week?", ashaBack = true),
+            {}, {}, {}, {}, {}, {},
+        )
+        "voice-maintenance" -> VoiceContent(
+            VoiceUiState(phase = VoicePhase.Ended, ending = VoiceEnding.Maintenance(), turns = listOf(com.circaso.feature.assistant.presentation.VoiceTurn("What's my balance?", listOf("I'm down for maintenance at the moment. I'll let you know as soon as I'm back."), done = true))),
+            {}, {}, {}, {},
+        )
+        "voice-maintenance-empty" -> VoiceContent(VoiceUiState(phase = VoicePhase.Ended, ending = VoiceEnding.Maintenance(toldWhenBack = false)), {}, {}, {}, {})
+        "voice-asha-back" -> VoiceContent(VoiceUiState(phase = VoicePhase.Ended, ending = VoiceEnding.AshaBack), {}, {}, {}, {})
         "voice" -> VoiceContent(VoiceUiState(phase = VoicePhase.Listening, heard = "What did I spend on lunch this", micLevel = 0.6f, voiceSecondsLeft = 118), {}, {}, {}, {})
         "voice-speaking" -> VoiceContent(
             VoiceUiState(phase = VoicePhase.Speaking, turns = listOf(com.circaso.feature.assistant.presentation.VoiceTurn("How does Circaso keep my chats private?", listOf("Every message is locked on your phone before it leaves.", "Only the people in the chat hold the keys, so Circaso can't read along."))), voiceLevel = 0.7f),

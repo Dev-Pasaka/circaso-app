@@ -21,6 +21,8 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.animation.animateContentSize
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.foundation.layout.heightIn
 import com.circaso.designsystem.motion.pressable
 import com.circaso.designsystem.chrome.CircasoSheet
@@ -66,6 +68,8 @@ import kotlinx.coroutines.launch
 fun AshaScreen(viewModel: AshaViewModel, onBack: () -> Unit, onVoice: (() -> Unit)? = null, onVoiceSettings: (() -> Unit)? = null) {
     val state by viewModel.state.collectAsState()
     DisposableEffect(viewModel) { onDispose { viewModel.onCancelRecording() } }
+    // Back in the foreground: Asha may have come back from maintenance meanwhile.
+    androidx.lifecycle.compose.LifecycleResumeEffect(viewModel) { viewModel.onResume(); onPauseOrDispose { viewModel.onPause() } }
     AshaContent(
         state, onBack, viewModel::onDraft, viewModel::onSend, viewModel::onClearRequested, viewModel::onClearConfirmed, viewModel::onClearDismissed,
         onMic = viewModel::onMic, onSpeak = viewModel::onSpeak, onSuggestion = viewModel::onSuggestion, onVoice = onVoice,
@@ -164,7 +168,7 @@ fun AshaContent(
             val send = { scope.launch { follow.jump(!still) }; onSend() }
             val suggest = { text: String -> scope.launch { follow.jump(!still) }; onSuggestion(text) }
             if (shown.isEmpty()) {
-                EmptyAsha(Modifier.weight(1f).fillMaxWidth(), online = state.online, onSuggestion = suggest)
+                EmptyAsha(Modifier.weight(1f).fillMaxWidth(), online = state.canAsk, onSuggestion = suggest)
             } else {
                 Box(Modifier.weight(1f).fillMaxWidth()) {
                     LazyColumn(
@@ -187,24 +191,29 @@ fun AshaContent(
                 placeholder = when {
                     state.voice == VoiceState.Recording -> "Listening… ${clock(state.recordedSeconds)}"
                     state.voice == VoiceState.Transcribing -> "Turning your voice into words…"
-                    state.online -> "Ask Asha"
-                    else -> "Offline"
+                    !state.online -> "Offline"
+                    state.maintenance -> "Asha's on a short break"
+                    else -> "Ask Asha"
                 },
-                enabled = state.online && !state.sending && state.voice == VoiceState.Idle,
+                enabled = state.canAsk && !state.sending && state.voice == VoiceState.Idle,
                 canSend = state.canSend,
                 onSend = { send() },
                 trailing = {
                     val recording = state.voice == VoiceState.Recording
                     when {
                         // Live voice: the waveform opens the conversation screen (the design's "Ask by voice" button).
-                        onVoice != null && !recording -> if (state.online && !state.sending) CircasoIconButton(CircasoIcon.Waveform, "Talk to Asha", onVoice)
+                        onVoice != null && !recording -> if (state.canAsk && !state.sending) CircasoIconButton(CircasoIcon.Waveform, "Talk to Asha", onVoice)
                         state.canUseVoice || recording ->
                             CircasoIconButton(if (recording) CircasoIcon.Stop else CircasoIcon.Mic, if (recording) "Stop recording" else "Ask by voice", onMic, emphasised = recording)
                     }
                 },
                 above = {
-                    ConnectionLine(online = state.online, backOnline = state.backOnline, waiting = state.waiting != null)
-                    if (state.online && !state.backOnline && shown.isNotEmpty() && !state.sending && state.waiting == null) {
+                    ConnectionLine(
+                        online = state.online, backOnline = state.backOnline, waiting = state.waiting != null,
+                        maintenance = if (state.maintenance) maintenanceText(questionKept = state.draft.isNotBlank(), toldWhenBack = state.toldWhenBack) else null,
+                        ashaBack = state.ashaBack,
+                    )
+                    if (state.canAsk && !state.backOnline && !state.ashaBack && shown.isNotEmpty() && !state.sending && state.waiting == null) {
                         LazyRow(contentPadding = PaddingValues(horizontal = CircasoSpacing.s3), horizontalArrangement = Arrangement.spacedBy(CircasoSpacing.s2), modifier = Modifier.padding(top = 10.dp)) {
                             items(Suggestions) { SuggestionChip(it, { suggest(it) }) }
                         }
@@ -236,9 +245,13 @@ private data class Bubble(
  * where the person was reading, with nothing new popping over the thread; it shows on every return while Asha is open
  * because asking needs the connection. With a question waiting it adds "Asking Asha again", never "asked" before an
  * answer exists. The words and timing follow G4; reduced motion swaps them without the fade and fold.
+ *
+ * Asha down for maintenance (2026-11-07) uses the same line, in the same calm voice: no design frame exists, and an
+ * error toast or a red line would read as something the person did wrong. Offline wins over it (the app can't know).
+ * When she is back it turns into "Asha is back" with a check that springs in once, then folds away like "Back online".
  */
 @Composable
-private fun ConnectionLine(online: Boolean, backOnline: Boolean, waiting: Boolean) {
+private fun ConnectionLine(online: Boolean, backOnline: Boolean, waiting: Boolean, maintenance: String? = null, ashaBack: Boolean = false) {
     val c = CircasoTheme.colors
     val t = CircasoTheme.typography
     val still = CircasoTheme.reduceMotion
@@ -249,6 +262,8 @@ private fun ConnectionLine(online: Boolean, backOnline: Boolean, waiting: Boolea
         !online -> "Asha needs a connection. You can still read your past conversation."
         backOnline && waiting -> "Back online · Asking Asha again"
         backOnline -> "Back online"
+        maintenance != null -> maintenance
+        ashaBack -> AshaBackText
         else -> null
     }
     // A stable node carries the live region, so TalkBack and VoiceOver hear each change of words.
@@ -261,18 +276,53 @@ private fun ConnectionLine(online: Boolean, backOnline: Boolean, waiting: Boolea
             // The last words stay while the line folds away.
             val last = remember { mutableStateOf("") }
             androidx.compose.runtime.SideEffect { words?.let { last.value = it } }
-            Crossfade(words ?: last.value, animationSpec = tween(enterMs), label = "connection line") { text ->
+            // The height eases between a long line and a short one, so the thread and composer never jump.
+            Crossfade(words ?: last.value, Modifier.animateContentSize(tween(enterMs)), animationSpec = tween(enterMs), label = "connection line") { text ->
+                val long = text.startsWith(MaintenancePrefix)
                 Row(
                     Modifier.fillMaxWidth().padding(start = CircasoSpacing.s4, end = CircasoSpacing.s4, top = CircasoSpacing.s2).clearAndSetSemantics {},
                     horizontalArrangement = Arrangement.spacedBy(CircasoSpacing.s1),
-                    verticalAlignment = Alignment.CenterVertically,
+                    // A paragraph keeps its icon on its first line.
+                    verticalAlignment = if (long) Alignment.Top else Alignment.CenterVertically,
                 ) {
                     if (text.startsWith("Back online")) CircasoIconImage(CircasoIcon.Check, c.inkSecondary, Modifier.size(16.dp))
+                    if (text == AshaBackText) BackCheck(still)
+                    if (long) CircasoIconImage(CircasoIcon.Clock, c.inkSecondary, Modifier.padding(top = 1.dp).size(16.dp))
                     BasicText(text, style = t.footnote.copy(color = c.inkSecondary))
                 }
             }
         }
     }
+}
+
+internal const val MaintenancePrefix = "Asha's taking a short break for maintenance."
+
+/**
+ * What the line says while Asha is down for maintenance: calm, saying the question is kept when there is one, and
+ * promising "we'll let you know" only when the server will (it recorded this person's turn and sends one push).
+ */
+internal fun maintenanceText(questionKept: Boolean, toldWhenBack: Boolean): String = MaintenancePrefix + when {
+    questionKept && toldWhenBack -> " Your question is saved, and we'll let you know when she's back."
+    questionKept -> " Your question is saved for when she's back."
+    toldWhenBack -> " We'll let you know when she's back."
+    else -> " She'll be back soon."
+}
+
+/** What it says for a moment once she is back. */
+internal const val AshaBackText = "Asha is back"
+
+/** The "Asha is back" check: springs in once (a small, positive beat); with reduced motion it is simply there. */
+@Composable
+private fun BackCheck(still: Boolean) {
+    val c = CircasoTheme.colors
+    val scale = remember { androidx.compose.animation.core.Animatable(if (still) 1f else 0.8f) }
+    androidx.compose.runtime.LaunchedEffect(Unit) {
+        if (!still) scale.animateTo(1f, androidx.compose.animation.core.spring(dampingRatio = androidx.compose.animation.core.Spring.DampingRatioMediumBouncy, stiffness = androidx.compose.animation.core.Spring.StiffnessMedium))
+    }
+    CircasoIconImage(
+        CircasoIcon.Check, c.inkSecondary,
+        Modifier.size(16.dp).graphicsLayer { scaleX = scale.value; scaleY = scale.value },
+    )
 }
 
 @Composable

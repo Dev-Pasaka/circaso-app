@@ -56,6 +56,7 @@ object ErrorMessages {
         // assistant
         "assistant.quota_exceeded" to "You've used today's questions for Asha. They reset tomorrow.",
         "assistant.model_unavailable" to "Asha isn't available right now. Please try again in a moment.",
+        "assistant.unavailable" to "Asha's taking a short break for maintenance. We'll let you know when she's back.",
         "assistant.turn_not_found" to "That question has timed out. Ask again.",
         "assistant.voice_too_long" to "Voice messages can be up to 60 seconds.",
         // wallet and payments

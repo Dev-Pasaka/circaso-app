@@ -36,6 +36,10 @@ data class ChatMessageDto(
  * `resetsAt`) and the day one A7 first shipped with (`textTurnsUsed`/`Left`, `voiceSecondsUsed`/`Left`). Every field
  * is optional so either decodes.
  */
+/** A14 (2026-11-07): whether Asha can answer now; `available` false is "down for maintenance". */
+@Serializable
+data class AssistantStatusResponse(val available: Boolean = true, val since: String? = null)
+
 @Serializable
 data class UsageResponse(
     val plan: String = "free",

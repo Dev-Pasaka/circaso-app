@@ -26,6 +26,6 @@ val homeModule = module {
     viewModel { SecurityViewModel(get(), get(), get(), get(), get(), get(), get(), get(), get()) }
     viewModel { com.circaso.feature.home.presentation.NotificationsViewModel(get(), get(), get(), get(), get(), get()) }
     viewModel { SecurityLogViewModel(get(), get()) }
-    viewModel { AshaViewModel(get(), get(), get(), get(), get(), get(), get(), get(), get(), chats = get(), usage = get()) }
-    viewModel { VoiceViewModel(get(), get(), get(), get(), getOrNull(), connection = get<com.circaso.core.sync.ConnectionState>().status, vadLoader = getOrNull<com.circaso.feature.assistant.voice.VadEngine>()?.let { com.circaso.feature.assistant.voice.VadLoader(it) }) }
+    viewModel { AshaViewModel(get(), get(), get(), get(), get(), get(), get(), get(), get(), chats = get(), usage = get(), availability = get()) }
+    viewModel { VoiceViewModel(get(), get(), get(), get(), getOrNull(), connection = get<com.circaso.core.sync.ConnectionState>().status, availability = get(), vadLoader = getOrNull<com.circaso.feature.assistant.voice.VadEngine>()?.let { com.circaso.feature.assistant.voice.VadLoader(it) }) }
 }

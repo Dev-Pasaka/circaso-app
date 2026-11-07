@@ -2,6 +2,7 @@ package com.circaso.feature.assistant.presentation
 
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.Crossfade
+import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
@@ -70,6 +71,8 @@ fun VoiceScreen(viewModel: VoiceViewModel, onBack: () -> Unit) {
     val state by viewModel.state.collectAsState()
     // The person hung up (or the server said `ended`): nothing to read, straight back to the chat.
     LaunchedEffect(state.ending) { if (state.ending == VoiceEnding.HungUp) onBack() }
+    // Visible: if Asha is down for maintenance, the app checks whether she is back (never in the background).
+    androidx.lifecycle.compose.LifecycleResumeEffect(viewModel) { viewModel.onVisible(true); onPauseOrDispose { viewModel.onVisible(false) } }
     VoiceContent(state, onEnd = { viewModel.onEnd(); onBack() }, onMute = viewModel::onMute, onAgain = viewModel::start, onLeave = onBack, onNoticeShown = viewModel::onNoticeShown)
 }
 
@@ -124,18 +127,24 @@ fun VoiceContent(
                 Transcript(state, Modifier.weight(1f).fillMaxWidth())
             } else {
                 Spacer(Modifier.height(CircasoSpacing.s4))
-                BasicText(
-                    hint(state),
-                    Modifier.padding(horizontal = CircasoSpacing.s8),
-                    style = t.body.copy(color = if (state.phase == VoicePhase.Ended) c.ink else c.inkSecondary, textAlign = TextAlign.Center),
-                )
+                // Crossfades when the words change (Asha back from maintenance); instant with reduced motion.
+                Crossfade(hint(state), animationSpec = tween(if (CircasoTheme.reduceMotion) 0 else CircasoMotion.BaseMs), label = "hint") { words ->
+                    BasicText(
+                        words,
+                        Modifier.padding(horizontal = CircasoSpacing.s8),
+                        style = t.body.copy(color = if (state.phase == VoicePhase.Ended) c.ink else c.inkSecondary, textAlign = TextAlign.Center),
+                    )
+                }
                 Spacer(Modifier.weight(0.6f))
             }
             if (hasTranscript && (state.phase == VoicePhase.Ended || state.phase == VoicePhase.Reconnecting)) {
-                BasicText(if (state.phase == VoicePhase.Reconnecting) ReconnectingText else endingText(state.ending), Modifier.padding(horizontal = CircasoSpacing.s6, vertical = CircasoSpacing.s2), style = t.footnote.copy(color = c.inkSecondary, textAlign = TextAlign.Center))
+                Crossfade(if (state.phase == VoicePhase.Reconnecting) ReconnectingText else endingText(state.ending), Modifier.animateContentSize(tween(if (CircasoTheme.reduceMotion) 0 else CircasoMotion.BaseMs)), animationSpec = tween(if (CircasoTheme.reduceMotion) 0 else CircasoMotion.BaseMs), label = "ending") { words ->
+                    BasicText(words, Modifier.padding(horizontal = CircasoSpacing.s6, vertical = CircasoSpacing.s2), style = t.footnote.copy(color = c.inkSecondary, textAlign = TextAlign.Center))
+                }
             }
             Box(Modifier.padding(horizontal = CircasoSpacing.s6, vertical = CircasoSpacing.s4)) {
-                Crossfade(state.phase == VoicePhase.Ended, label = "controls") { ended ->
+                // Keyed on the ended actions too, so "Talk Again" fades in when Asha is back rather than popping.
+                Crossfade((state.phase == VoicePhase.Ended) to (state.ending == VoiceEnding.AshaBack), animationSpec = tween(if (CircasoTheme.reduceMotion) 0 else CircasoMotion.BaseMs), label = "controls") { (ended, _) ->
                     if (ended) EndedActions(state.ending, onAgain, onLeave) else LiveControls(state.muted, onMute, onEnd)
                 }
             }
@@ -168,7 +177,11 @@ private fun statusLine(s: VoiceUiState): String = when (s.visual) {
     VoiceVisual.Thinking -> s.status ?: "Thinking…"
     VoiceVisual.Speaking -> "Speaking"
     VoiceVisual.Error -> if (s.ending == VoiceEnding.Offline) "Offline" else "Not connected"
-    VoiceVisual.Ended -> "Ended"
+    VoiceVisual.Ended -> when (s.ending) {
+        is VoiceEnding.Maintenance -> "On a short break"
+        VoiceEnding.AshaBack -> AshaBackText
+        else -> "Ended"
+    }
 }
 
 /** While the line is down: calm, and says the conversation will carry on. */
@@ -286,13 +299,15 @@ private fun endingText(e: VoiceEnding?): String = when (e) {
     VoiceEnding.UseClips -> "Live voice isn't available here. You can still record a question in the chat."
     VoiceEnding.NoMicrophone -> "Allow the microphone in Settings to talk to Asha."
     is VoiceEnding.Failed -> e.message
+    is VoiceEnding.Maintenance -> maintenanceText(questionKept = false, toldWhenBack = e.toldWhenBack)
+    VoiceEnding.AshaBack -> "$AshaBackText. Tap to talk again."
     VoiceEnding.HungUp, null -> "Ended."
 }
 
 @Composable
 private fun EndedActions(ending: VoiceEnding?, onAgain: () -> Unit, onLeave: () -> Unit) {
     Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(CircasoSpacing.s2)) {
-        val again = ending == VoiceEnding.Quiet || ending == VoiceEnding.Offline || ending is VoiceEnding.Failed
+        val again = ending == VoiceEnding.Quiet || ending == VoiceEnding.Offline || ending is VoiceEnding.Failed || ending == VoiceEnding.AshaBack
         if (again) CircasoButton("Talk Again", onAgain, size = ButtonSize.Large, block = true)
         CircasoButton("Back to the Chat", onLeave, style = if (again) ButtonStyle.Plain else ButtonStyle.Secondary, size = ButtonSize.Large, block = true)
     }
