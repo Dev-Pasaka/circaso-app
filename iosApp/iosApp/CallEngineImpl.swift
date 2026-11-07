@@ -22,6 +22,10 @@ final class CallEngineImpl: NSObject, CallEngineProvider, RTCPeerConnectionDeleg
     private var remote: [String: RTCVideoTrack] = [:]
     private var remoteListener: (([String]) -> Void)?
     private var connectionListener: ((KotlinInt) -> Void)?
+    private var receivingListener: (([String]) -> Void)?
+    /// Pulled mids whose packets have arrived; see `CallEngine.receivingMids`.
+    private var receiving: Set<String> = []
+    private var statsTimer: Timer?
     private let constraints = RTCMediaConstraints(mandatoryConstraints: nil, optionalConstraints: nil)
 
     func start(iceServersJson: String, video: Bool, userId: String, completion: @escaping (String?, String?) -> Void) {
@@ -87,7 +91,39 @@ final class CallEngineImpl: NSObject, CallEngineProvider, RTCPeerConnectionDeleg
             pc.answer(for: self.constraints) { answer, error in
                 guard let answer else { DispatchQueue.main.async { completion(nil, error?.localizedDescription ?? "answer") }; return }
                 pc.setLocalDescription(answer) { error in
-                    DispatchQueue.main.async { completion(error == nil ? (pc.localDescription?.sdp ?? answer.sdp) : nil, error?.localizedDescription) }
+                    DispatchQueue.main.async {
+                        if error == nil { self.watchReceiving(pc) }
+                        completion(error == nil ? (pc.localDescription?.sdp ?? answer.sdp) : nil, error?.localizedDescription)
+                    }
+                }
+            }
+        }
+    }
+
+    /// Polls the inbound RTP stats while a pulled track hasn't had a packet yet, so the call only counts as connected
+    /// once the other side is really heard or seen. Quiet once every pulled track is receiving.
+    private func watchReceiving(_ connection: RTCPeerConnection) {
+        guard statsTimer == nil else { return }
+        statsTimer = Timer.scheduledTimer(withTimeInterval: 0.3, repeats: true) { [weak self] _ in
+            guard let self else { return }
+            guard self.pc === connection else { self.statsTimer?.invalidate(); self.statsTimer = nil; return }
+            let live = connection.transceivers.filter { !$0.isStopped && $0.direction == .recvOnly }
+            let pending = live.map(\.mid).filter { !self.receiving.contains($0) }
+            if pending.isEmpty { return }
+            var midOfTrack: [String: String] = [:]
+            for t in live { if let id = t.receiver.track?.trackId { midOfTrack[id] = t.mid } }
+            connection.statistics { report in
+                var heard: Set<String> = []
+                for stat in report.statistics.values where stat.type == "inbound-rtp" {
+                    let packets = (stat.values["packetsReceived"] as? NSNumber)?.intValue ?? 0
+                    guard packets > 0 else { continue }
+                    if let mid = stat.values["mid"] as? String { heard.insert(mid) }
+                    else if let id = stat.values["trackIdentifier"] as? String, let mid = midOfTrack[id] { heard.insert(mid) }
+                }
+                DispatchQueue.main.async {
+                    guard self.pc === connection, !heard.isSubset(of: self.receiving) else { return }
+                    self.receiving.formUnion(heard)
+                    self.receivingListener?(Array(self.receiving))
                 }
             }
         }
@@ -148,6 +184,10 @@ final class CallEngineImpl: NSObject, CallEngineProvider, RTCPeerConnectionDeleg
         videoSource = nil
         remote.removeAll()
         remoteListener?([])
+        statsTimer?.invalidate()
+        statsTimer = nil
+        receiving.removeAll()
+        receivingListener?([])
         let session = RTCAudioSession.sharedInstance()
         session.lockForConfiguration()
         try? session.setActive(false)
@@ -167,6 +207,8 @@ final class CallEngineImpl: NSObject, CallEngineProvider, RTCPeerConnectionDeleg
     func setRemoteVideoListener(listener: @escaping ([String]) -> Void) { remoteListener = listener }
 
     func setConnectionListener(listener: @escaping (KotlinInt) -> Void) { connectionListener = listener }
+
+    func setReceivingListener(listener: @escaping ([String]) -> Void) { receivingListener = listener }
 
     private func configureAudio(speaker: Bool) {
         let session = RTCAudioSession.sharedInstance()

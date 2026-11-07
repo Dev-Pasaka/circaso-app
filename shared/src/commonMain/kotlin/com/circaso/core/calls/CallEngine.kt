@@ -40,6 +40,12 @@ interface CallEngine {
     /** The media connection to the SFU: true while up, false when it dropped or failed, null before it starts. */
     val connected: StateFlow<Boolean?>
 
+    /**
+     * The pulled tracks (by transceiver mid) whose packets have really arrived: someone is heard or seen only once
+     * their mid is in here, which can be seconds after the SFU says they joined. Null when the engine can't tell.
+     */
+    val receivingMids: StateFlow<Set<String>>? get() = null
+
     fun setMicrophone(on: Boolean)
     /** Turns the camera on (asking for permission) or off; false when it couldn't be turned on. */
     suspend fun setCamera(on: Boolean): Boolean

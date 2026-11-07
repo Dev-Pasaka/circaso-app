@@ -35,7 +35,12 @@ import kotlinx.serialization.json.jsonPrimitive
 enum class CallPhase { Incoming, Ringing, Connecting, Active, Reconnecting, Ended }
 
 /** [name] is the full name; [handle] the "@username" shown under it, as X does (Pasaka, 2026-10-30). */
-data class CallPerson(val userId: String, val name: String, val joined: Boolean, val audio: Boolean, val video: Boolean, val ringing: Boolean, val videoMid: String?, val handle: String? = null)
+data class CallPerson(
+    val userId: String, val name: String, val joined: Boolean, val audio: Boolean, val video: Boolean, val ringing: Boolean, val videoMid: String?,
+    val handle: String? = null,
+    /** Joined and their audio or video is really arriving; until then their tile says "connecting". */
+    val live: Boolean = joined,
+)
 
 /** One call as the screens see it. */
 data class CallUi(
@@ -50,7 +55,7 @@ data class CallUi(
     val camera: Boolean = false,
     val speaker: Boolean = false,
     val frontCamera: Boolean = true,
-    /** When the call became active (H2's timer). */
+    /** When someone's audio or video first really arrived (H2's timer); never while the call is only connecting. */
     val activeSince: Long? = null,
     val endReason: String? = null,
     val minimised: Boolean = false,
@@ -85,6 +90,8 @@ class CallController(
     /** Whether the phone is online; a call rejoins when it comes back. */
     private val online: kotlinx.coroutines.flow.Flow<Boolean> = kotlinx.coroutines.flow.flowOf(true),
     private val reconnectGiveUpMillis: Long = 40_000,
+    /** How long a joined call may wait for media before it counts as connected anyway (stats can be missing). */
+    private val mediaGraceMillis: Long = 15_000,
     /** Writes a finished call into its chat's history (WhatsApp-style); see [logEnded]. */
     private val log: suspend (CallLogEntry) -> Unit = {},
 ) {
@@ -101,6 +108,12 @@ class CallController(
     private val pulled = mutableMapOf<String, String?>()
     private var watchJob: Job? = null
     private val midOf = mutableMapOf<String, String>()
+    /** Every pulled mid (audio and video) by its owner, to tell from [CallEngine.receivingMids] who is really heard. */
+    private val mediaMids = mutableMapOf<String, Set<String>>()
+    private var receivingJob: Job? = null
+    private var graceJob: Job? = null
+    /** Set when [mediaGraceMillis] ran out while connecting: the engine's stats can't be trusted for this call. */
+    private var graceOver = false
     private var clearJob: Job? = null
 
     val available get() = engine.available
@@ -307,7 +320,10 @@ class CallController(
         if (fresh.isEmpty()) return
         val r = remote.pull(c.callId, PullRequest(session, fresh.flatMap { p -> p.tracks.map { PullTrackRequest(p.userId, it.trackName) } }))
         val pull = (r as? AppResult.Success)?.value ?: return
-        pull.tracks.forEach { t -> if (t.trackName.startsWith("video") && t.mid != null) midOf[t.userId] = t.mid }
+        pull.tracks.forEach { t ->
+            if (t.trackName.startsWith("video") && t.mid != null) midOf[t.userId] = t.mid
+            t.mid?.let { mediaMids[t.userId] = mediaMids[t.userId].orEmpty() + it }
+        }
         com.circaso.core.common.Diagnostics.note("calls: pulled ${pull.tracks.joinToString { it.trackName.substringBefore('-') + "@" + (it.mid ?: "none") }} renegotiate=${pull.requiresRenegotiation}")
         val offer = pull.offer
         if (offer != null) {
@@ -326,17 +342,35 @@ class CallController(
         com.circaso.core.common.Diagnostics.note("calls: state=${c.state} people=${c.participants.joinToString { it.state + "/v=" + it.video + "/mid=" + (midOf[it.userId] ?: "-") }}")
         if (c.iceServers.isNotEmpty()) ice = c.iceServers.map { IceServerSpec(it.urls, it.username, it.credential) }
         val me = myUserId()
+        val receiving = engine.receivingMids?.value
         val people = c.participants.filter { it.userId != me }.map { p ->
-            CallPerson(p.userId, p.displayName.ifBlank { labelOf[p.userId] ?: "Someone" }, p.state == "JOINED", p.audio, p.video, p.state == "INVITED", midOf[p.userId], handle = labelOf[p.userId])
+            val joined = p.state == "JOINED"
+            val heard = receiving == null || graceOver || mediaMids[p.userId].orEmpty().any { it in receiving }
+            CallPerson(
+                p.userId, p.displayName.ifBlank { labelOf[p.userId] ?: "Someone" }, joined, p.audio, p.video, p.state == "INVITED", midOf[p.userId],
+                handle = labelOf[p.userId], live = joined && heard,
+            )
         }
         val othersJoined = people.any { it.joined }
+        val someoneLive = people.any { it.live }
+        if (othersJoined && sessionId != null && !someoneLive && !graceOver && graceJob?.isActive != true && _state.value?.activeSince == null) {
+            graceJob = scope.launch {
+                delay(mediaGraceMillis)
+                com.circaso.core.common.Diagnostics.note("calls: no media after ${mediaGraceMillis}ms, counting the call as connected")
+                graceOver = true
+                publish()
+            }
+        }
+        if (someoneLive) graceJob?.cancel()
         _state.update { s ->
             val base = s ?: CallUi(c.callId, c.chatId, people.firstOrNull()?.name.orEmpty(), c.kind == "VIDEO", people.size > 1, CallPhase.Incoming)
             val phase = when {
                 c.state == "ENDED" -> CallPhase.Ended
                 base.phase == CallPhase.Incoming -> CallPhase.Incoming
                 base.phase == CallPhase.Reconnecting -> CallPhase.Reconnecting
-                c.state == "ACTIVE" && othersJoined && sessionId != null -> CallPhase.Active
+                // Joined isn't heard: the timer starts only once someone's audio or video really arrives.
+                c.state == "ACTIVE" && othersJoined && sessionId != null ->
+                    if (someoneLive || base.activeSince != null) CallPhase.Active else CallPhase.Connecting
                 sessionId == null -> base.phase
                 else -> CallPhase.Ringing
             }
@@ -376,6 +410,10 @@ class CallController(
      * If it can't within [reconnectGiveUpMillis] it hangs up, so nobody is left alone on a call.
      */
     private fun watch() {
+        val receivingFlow = engine.receivingMids
+        if (receivingFlow != null && receivingJob?.isActive != true) {
+            receivingJob = scope.launch { receivingFlow.collect { if (it.isNotEmpty()) publish() } }
+        }
         if (watchJob?.isActive == true) return
         watchJob = scope.launch {
             kotlinx.coroutines.flow.combine(engine.connected, online) { media, net -> net && media != false }
@@ -426,6 +464,7 @@ class CallController(
                     remote.media(c.callId, s?.mic ?: true, s?.camera ?: false)
                     pulled.clear()
                     midOf.clear()
+                    mediaMids.clear()
                 }
                 is AppResult.Failure -> return@withLock false
             }
@@ -439,6 +478,10 @@ class CallController(
     private fun reset() {
         watchJob?.cancel()
         reconnectJob?.cancel()
+        receivingJob?.cancel()
+        graceJob?.cancel()
+        graceOver = false
+        mediaMids.clear()
         call = null
         ice = emptyList()
         labelOf = emptyMap()

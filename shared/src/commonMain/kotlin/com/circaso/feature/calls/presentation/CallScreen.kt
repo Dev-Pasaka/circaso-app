@@ -337,7 +337,8 @@ private fun BoxScope.VideoCall(call: CallUi, actions: CallActions, money: String
 @Composable
 private fun GroupCall(call: CallUi, actions: CallActions, chama: Chama?, fiat: FiatValue?, landed: String?, onContribute: (() -> Unit)?) {
     val t = CircasoTheme.typography
-    val onCall = call.joined.size + 1
+    // Only people who are really heard count as on the call.
+    val onCall = call.people.count { it.live } + 1
     Column(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing).padding(horizontal = CircasoSpacing.s4, vertical = CircasoSpacing.s4), verticalArrangement = Arrangement.spacedBy(CircasoSpacing.s3)) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             RoundIcon(CircasoIcon.Minimise, "Minimise call") { actions.onMinimise(true) }
@@ -401,6 +402,7 @@ private fun Tile(p: CallPerson) {
             BasicText(p.name.substringBefore(' '), style = t.footnote.copy(color = CallColors.Ink, fontWeight = FontWeight.SemiBold))
             if (!p.audio && p.joined) CircasoIconImage(CircasoIcon.MicOff, CallColors.Ink, Modifier.size(14.dp))
             if (p.ringing) BasicText("· ringing", style = t.footnote.copy(color = CallColors.InkSoft))
+            else if (p.joined && !p.live) BasicText("· connecting", style = t.footnote.copy(color = CallColors.InkSoft))
         }
     }
 }
@@ -648,13 +650,20 @@ private fun Status(call: CallUi) {
 }
 
 @Composable
-private fun statusText(call: CallUi): String = when (call.phase) {
+private fun statusText(call: CallUi, short: Boolean = false): String = when (call.phase) {
     CallPhase.Incoming -> "Incoming…"
     CallPhase.Ringing -> "Ringing…"
-    CallPhase.Connecting -> "Connecting…"
+    // Joined isn't heard: until their audio or video arrives it says who it's reaching, and no timer runs.
+    CallPhase.Connecting -> connectingTo(call).takeUnless { short }?.let { "Connecting to $it…" } ?: "Connecting…"
     CallPhase.Reconnecting -> "Reconnecting…"
     CallPhase.Active -> elapsedText(call.activeSince)
     CallPhase.Ended -> when (call.endReason) { "DECLINED" -> "Declined"; "MISSED" -> "No answer"; "CANCELLED" -> "Cancelled"; "FAILED" -> "Call failed"; else -> "Call ended" }
+}
+
+/** Who a call is still reaching: the other person, or in a group the first who joined but isn't heard yet. */
+private fun connectingTo(call: CallUi): String? {
+    val name = if (call.group) call.people.firstOrNull { it.joined && !it.live }?.name else call.people.firstOrNull()?.name ?: call.title
+    return name?.substringBefore(' ')?.takeIf { it.isNotBlank() }
 }
 
 /** "04:12", ticking once a second. */
@@ -710,7 +719,7 @@ private fun CallPill(call: CallUi, onOpen: () -> Unit) {
         horizontalArrangement = Arrangement.spacedBy(CircasoSpacing.s2), verticalAlignment = Alignment.CenterVertically,
     ) {
         CircasoIconImage(CircasoIcon.Phone, c.onMoney, Modifier.size(16.dp))
-        BasicText("${call.title.substringBefore(' ')} · ${statusText(call)}", style = t.footnote.copy(color = c.onMoney, fontWeight = FontWeight.SemiBold))
+        BasicText("${call.title.substringBefore(' ')} · ${statusText(call, short = true)}", style = t.footnote.copy(color = c.onMoney, fontWeight = FontWeight.SemiBold))
     }
 }
 
