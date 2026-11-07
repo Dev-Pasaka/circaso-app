@@ -68,6 +68,8 @@ data class MediaDetails(
     val liveStopSent: Boolean? = null,
     /** A video's first frame, a small base64 JPEG carried in the message so the bubble shows before the file loads. */
     val thumb: String? = null,
+    /** Sent together with other photos and videos: their shared album id (ChatPayload.albumId). */
+    val album: String? = null,
     /** How far this phone's upload of the file got, so a send cut off by the process dying resumes it. Never sent. */
     val upload: com.circaso.core.platform.UploadState? = null,
 ) {
@@ -105,6 +107,7 @@ internal fun MediaDetails.toPayload(sentAt: String): ChatPayload = ChatPayload(
     attachmentId = attachmentId, mediaKey = key, digest = digest, size = size, mime = mime, width = width, height = height, durationMs = durationMs,
     latitude = latitude, longitude = longitude, accuracy = accuracy, label = label,
     liveId = liveId, liveUntil = liveUntil, liveAt = liveAt, thumb = thumb,
+    albumId = album?.takeIf { kind == MediaDetails.Image || kind == MediaDetails.Video },
 )
 
 /** The details an incoming media payload carries; null when it isn't complete enough to show. */
@@ -118,6 +121,7 @@ internal fun ChatPayload.toMediaDetails(): MediaDetails? = when (type) {
         attachmentId = attachmentId, key = mediaKey, digest = digest, size = size, mime = mime, width = width, height = height, durationMs = durationMs, caption = text,
         thumb = thumb?.takeIf { type == ChatPayload.Video },
         label = label?.takeIf { type == ChatPayload.File }?.let(::safeFileName),
+        album = albumId?.takeIf { (type == ChatPayload.Image || type == ChatPayload.Video) && it.length in 1..64 },
     ) else null
     else -> null
 }
@@ -228,11 +232,11 @@ class MediaMessages(
         return localId
     }
 
-    suspend fun sendImage(chatId: String, bytes: ByteArray, mime: String, width: Int?, height: Int?, caption: String?): AppResult<Unit> =
-        sendFile(chatId, bytes, MediaDetails(MediaDetails.Image, size = bytes.size.toLong(), mime = mime, width = width, height = height, caption = caption?.takeIf { it.isNotBlank() }))
+    suspend fun sendImage(chatId: String, bytes: ByteArray, mime: String, width: Int?, height: Int?, caption: String?, album: String? = null): AppResult<Unit> =
+        sendFile(chatId, bytes, MediaDetails(MediaDetails.Image, size = bytes.size.toLong(), mime = mime, width = width, height = height, caption = caption?.takeIf { it.isNotBlank() }, album = album))
 
-    suspend fun sendVideo(chatId: String, bytes: ByteArray, mime: String, width: Int?, height: Int?, durationMs: Long?, thumb: String?, caption: String?): AppResult<Unit> =
-        sendFile(chatId, bytes, MediaDetails(MediaDetails.Video, size = bytes.size.toLong(), mime = mime, width = width, height = height, durationMs = durationMs, thumb = thumb, caption = caption?.takeIf { it.isNotBlank() }))
+    suspend fun sendVideo(chatId: String, bytes: ByteArray, mime: String, width: Int?, height: Int?, durationMs: Long?, thumb: String?, caption: String?, album: String? = null): AppResult<Unit> =
+        sendFile(chatId, bytes, MediaDetails(MediaDetails.Video, size = bytes.size.toLong(), mime = mime, width = width, height = height, durationMs = durationMs, thumb = thumb, caption = caption?.takeIf { it.isNotBlank() }, album = album))
 
     /** A document (any file) under its own [name], with an optional caption: the same queue, encryption and upload as a photo. */
     suspend fun sendDocument(chatId: String, bytes: ByteArray, mime: String, name: String, caption: String?): AppResult<Unit> =

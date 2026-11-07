@@ -323,7 +323,13 @@ fun ThreadContent(
     // Collected here but read only inside each media row, so a percent step redraws that row, not the thread.
     val uploading = media?.uploading?.collectAsState()
     var viewing by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf<ByteArray?>(null) }
+    // An album open full screen (its items and the one tapped), and a failed album's options (all its items).
+    var viewingAlbum by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf<Pair<List<Message.Media>, Int>?>(null) }
+    var selectedAlbum by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf<List<Message.Media>?>(null) }
     var selectedMedia by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf<Message.Media?>(null) }
+    val threadRowList = androidx.compose.runtime.remember(state.messages) { threadRows(state.messages) }
+    // The options sheet closed (any button, or dismissed): the album it was for is let go too.
+    LaunchedEffect(selectedMedia) { if (selectedMedia == null) selectedAlbum = null }
     var reactingTo by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf<String?>(null) }
     // A new message moves the list under the open reaction bubble: close it rather than leave it beside nothing.
     LaunchedEffect(state.messages.lastOrNull()?.localId) { reactingTo = null }
@@ -355,11 +361,12 @@ fun ThreadContent(
     LaunchedEffect(rows) {
         if (rows == 0) return@LaunchedEffect
         if (!focused) {
-            val at = state.messages.indexOfFirst { it.localId == focusLocalId }
+            // By row: an album is one row however many items it holds.
+            val at = threadRowList.indexOfFirst { r -> r.first.localId == focusLocalId || (r is ThreadRow.Album && r.items.any { it.localId == focusLocalId }) }
             if (at >= 0) {
                 focused = true
-                listState.scrollToItem(tail + state.messages.lastIndex - at)
-                highlight = focusLocalId
+                listState.scrollToItem(tail + threadRowList.lastIndex - at)
+                highlight = threadRowList[at].key
                 kotlinx.coroutines.delay(1_600)
                 highlight = null
             }
@@ -547,10 +554,16 @@ fun ThreadContent(
                 }
             }
             // A photo, voice note or location: send again or discard when it failed, delete for everyone when sent.
-            CircasoSheet(visible = selectedMedia != null, onDismiss = { selectedMedia = null }, label = "Message") {
+            CircasoSheet(visible = selectedMedia != null, onDismiss = { selectedMedia = null; selectedAlbum = null }, label = "Message") {
                 val sm = selectedMedia
+                // An album's options act on its items: send again or discard the ones that failed, delete them all.
+                val album = selectedAlbum
+                val failedOnes = album?.filter { it.state == DeliveryState.Failed } ?: listOfNotNull(sm)
+                val onRetryMedia: (Message.Media) -> Unit = { if (album != null) failedOnes.forEach(onRetryMedia) else onRetryMedia(it) }
+                val onDiscard: (Message.Media) -> Unit = { if (album != null) failedOnes.forEach(onDiscard) else onDiscard(it) }
+                val onDeleteForEveryone: (Message.Media) -> Unit = { if (album != null) album.filter { a -> a.state != DeliveryState.Failed }.forEach(onDeleteForEveryone) else onDeleteForEveryone(it) }
                 if (sm != null) {
-                    BasicText(mediaLabel(sm), style = t.body.copy(color = c.ink))
+                    BasicText(if (album != null) "Album · ${album.size} items" + (if (failedOnes.isNotEmpty() && sm.state == DeliveryState.Failed) " · ${failedOnes.size} not sent" else "") else mediaLabel(sm), style = t.body.copy(color = c.ink))
                     if (sm.state == DeliveryState.Failed) {
                         BasicText(failureText(sm.errorCode), style = t.footnote.copy(color = c.inkSecondary))
                         // A file the server refuses for what it is (too big) fails the same way every time: no false promise.
@@ -565,6 +578,7 @@ fun ThreadContent(
                 }
             }
             ImageViewer(viewing) { viewing = null }
+            AlbumViewer(viewingAlbum, loadMedia, onPlayVideo = { m -> media?.onPlayVideo?.invoke(m) }) { viewingAlbum = null }
             // Fades in and out like the photo viewer; the last path is kept through the fade out.
             var lastVideo by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf<String?>(null) }
             state.videoPath?.let { lastVideo = it }
@@ -608,8 +622,10 @@ fun ThreadContent(
             ) {
                 // Bottom up: what sits under the conversation first, then the messages newest to oldest.
                 threadTail(state, supportReplies, chama, onDecide, onPayRequest, onQuickReply, onCallSupport, onSupportDone)
-                itemsIndexed(state.messages.asReversed(), key = { _, m -> m.localId }) { reversedIndex, m ->
-                    val index = state.messages.lastIndex - reversedIndex
+                // Photos and videos sent together are one row: their album (ThreadAlbums).
+                itemsIndexed(threadRowList.asReversed(), key = { _, row -> row.key }) { _, row ->
+                    val m = row.first
+                    val index = row.index
                     val lit by androidx.compose.animation.animateColorAsState(if (highlight == m.localId) c.fill else androidx.compose.ui.graphics.Color.Transparent, tween(CircasoMotion.BaseMs), label = "found")
                     Box(Modifier.fillMaxWidth().background(lit)) {
                     val previous = state.messages.getOrNull(index - 1)
@@ -633,7 +649,17 @@ fun ThreadContent(
                         is Message.Unreadable -> MessageColumn(false) { ChatBubble("A message from ${m.senderName} this phone can't show", false, quiet = true) }
                         is Message.System -> SystemLine(m.text)
                         is Message.Call -> CallRow(m, onCallBack = onCall?.let { call -> { call(m.video) } })
-                        is Message.Media -> {
+                        is Message.Media -> if (row is ThreadRow.Album) {
+                            val firstOfRun = !(previous is Message.Media && previous.senderId == m.senderId && previous.outgoing == m.outgoing) &&
+                                !(previous is Message.Text && previous.senderId == m.senderId && previous.outgoing == m.outgoing)
+                            val items = row.items
+                            AlbumRow(
+                                items, state.isGroup, firstOfRun, load = loadMedia,
+                                progress = uploading?.let { u -> androidx.compose.runtime.remember(items, u) { androidx.compose.runtime.derivedStateOf { albumProgress(items) { id -> u.value[id] } } }.value },
+                                onOpen = { i -> viewingAlbum = items to i },
+                                onOptions = { selectedAlbum = items; selectedMedia = items.firstOrNull { it.state == DeliveryState.Failed } ?: items.last() },
+                            )
+                        } else {
                             val firstOfRun = !(previous is Message.Media && previous.senderId == m.senderId && previous.outgoing == m.outgoing) &&
                                 !(previous is Message.Text && previous.senderId == m.senderId && previous.outgoing == m.outgoing)
                             MediaRow(
@@ -1012,7 +1038,7 @@ private fun AttachOption(icon: CircasoIcon, title: String, sub: String, onClick:
  * Nothing once it has gone.
  */
 @Composable
-private fun androidx.compose.foundation.layout.BoxScope.SendState(state: DeliveryState, progress: Float?) {
+internal fun androidx.compose.foundation.layout.BoxScope.SendState(state: DeliveryState, progress: Float?) {
     val ink = com.circaso.designsystem.theme.DarkColors.ink
     when (state) {
         DeliveryState.Sending, DeliveryState.Waiting -> Box(Modifier.matchParentSize().background(com.circaso.designsystem.theme.DarkColors.scrim), contentAlignment = Alignment.Center) {
@@ -1026,7 +1052,7 @@ private fun androidx.compose.foundation.layout.BoxScope.SendState(state: Deliver
 
 /** The moment ring's "not posted" badge, on a chat's media that didn't send. */
 @Composable
-private fun FailedBadge(modifier: Modifier = Modifier) {
+internal fun FailedBadge(modifier: Modifier = Modifier) {
     val c = CircasoTheme.colors
     Box(modifier.size(com.circaso.designsystem.theme.CircasoSizes.controlMd).clip(com.circaso.designsystem.theme.CircasoShapes.circle).background(c.critical), contentAlignment = Alignment.Center) {
         CircasoIconImage(CircasoIcon.Warning, c.onAction, Modifier.size(22.dp))
@@ -1213,7 +1239,7 @@ internal fun splitAssetTag(text: String): Pair<String?, String> {
 /** Media failures that sending again can't fix. */
 private val TerminalMediaErrors = setOf("messaging.attachment_too_large")
 
-private val MediaBubbleWidth = 240.dp
+internal val MediaBubbleWidth = 240.dp
 private val MapTileHeight = 120.dp
 private val MediaIconSize = 40.dp
 

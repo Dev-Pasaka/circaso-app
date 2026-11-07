@@ -41,7 +41,8 @@ enum class ChatComposeStart { Camera, Gallery, Document }
  * queue it.
  */
 fun interface ChatMediaSender {
-    suspend fun send(chatId: String, item: PreparedItem): Boolean
+    /** [album]: the id the photos and videos sent together share, so the chat shows them as one album; null alone. */
+    suspend fun send(chatId: String, item: PreparedItem, album: String?): Boolean
 }
 
 data class ChatMediaUiState(
@@ -145,8 +146,10 @@ class ChatMediaComposerViewModel(
                     }
                 }
                 _state.update { it.copy(media = it.media.copy(preparing = false)) }
+                // Two or more photos and videos go as one album (WhatsApp-style); documents always go on their own.
+                val album = if (ready.count { it is PreparedItem.Shot } >= 2) newAlbumId() else null
                 for ((index, p) in ready.withIndex()) {
-                    if (!sender.send(chatId, p)) {
+                    if (!sender.send(chatId, p, album.takeIf { p is PreparedItem.Shot })) {
                         _state.update { st ->
                             val left = st.media.items.drop(index)
                             val why = if (index == 0) "This couldn’t be saved to send. Try again." else "$index sent. The rest couldn’t be saved to send. Try again."
@@ -240,3 +243,6 @@ private fun androidx.compose.foundation.layout.BoxScope.OpeningFiles(busy: Boole
         if (busy) com.circaso.designsystem.components.Spinner(c.ink)
     }
 }
+
+/** A random album id: 16 random bytes as hex, never derived from anything about the items. */
+internal fun newAlbumId(): String = kotlin.random.Random.Default.nextBytes(16).joinToString("") { (it.toInt() and 0xff).toString(16).padStart(2, '0') }

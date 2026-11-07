@@ -178,7 +178,7 @@ val messagingModule = module {
     single<com.circaso.feature.messaging.presentation.ChatMediaSender> {
         val media = get<com.circaso.feature.messaging.data.repository.MediaMessages>()
         val library = get<com.circaso.core.platform.MediaLibrary>()
-        com.circaso.feature.messaging.presentation.ChatMediaSender { chatId, item -> sendPrepared(media, library, chatId, item) }
+        com.circaso.feature.messaging.presentation.ChatMediaSender { chatId, item, album -> sendPrepared(media, library, chatId, item, album) }
     }
     viewModel { params ->
         com.circaso.feature.messaging.presentation.ChatMediaComposerViewModel(
@@ -212,14 +212,15 @@ private suspend fun sendPrepared(
     library: com.circaso.core.platform.MediaLibrary,
     chatId: String,
     item: com.circaso.feature.mediacompose.PreparedItem,
+    album: String?,
 ): Boolean {
     val r = when (item) {
         is com.circaso.feature.mediacompose.PreparedItem.Shot -> {
             val m = item.media
             if (m.mime.startsWith("video")) {
                 val poster = m.path?.let { library.poster(it) } ?: m.thumb
-                media.sendVideo(chatId, item.bytes, m.mime, m.width, m.height, m.durationMs, poster?.let { kotlin.io.encoding.Base64.encode(it) }, item.caption)
-            } else media.sendImage(chatId, item.bytes, m.mime, m.width, m.height, item.caption)
+                media.sendVideo(chatId, item.bytes, m.mime, m.width, m.height, m.durationMs, poster?.let { kotlin.io.encoding.Base64.encode(it) }, item.caption, album)
+            } else media.sendImage(chatId, item.bytes, m.mime, m.width, m.height, item.caption, album)
         }
         is com.circaso.feature.mediacompose.PreparedItem.Document -> media.sendDocument(chatId, item.bytes, item.file.mime, item.file.name, item.caption)
         is com.circaso.feature.mediacompose.PreparedItem.Voice -> media.sendVoice(chatId, item.capture.bytes, item.capture.mime, item.capture.durationMs)

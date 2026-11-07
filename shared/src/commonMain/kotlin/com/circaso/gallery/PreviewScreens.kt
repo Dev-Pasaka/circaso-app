@@ -347,6 +347,7 @@ fun PreviewScreens(name: String) {
             ThreadUiState(chat = direct("2", "Mum"), online = false, messages = thread + listOf(text(5, "2", "Not yet, on my way home", true, 2, DeliveryState.Waiting), text(6, "2", "I'll send lunch money once I have network", true, 1, DeliveryState.Waiting))),
             {}, {}, null, {}, {}, {}, {}, {}, {}, {},
         )
+        "albums-direct", "albums-group" -> AlbumPreview(name)
         "compose-moment", "compose-chat-camera", "compose-chat-gallery", "compose-chat-document" -> MediaComposePreview(name)
         "chat-media" -> ThreadContent(ThreadUiState(chat = direct("2", "Mum"), messages = mediaThread, playing = 12, playingSince = now - 4_000), {}, {}, null, {}, {}, {}, {}, {}, {}, {}, media = previewMedia)
         "chat-video" -> ThreadContent(ThreadUiState(chat = direct("2", "Mum"), messages = listOf(

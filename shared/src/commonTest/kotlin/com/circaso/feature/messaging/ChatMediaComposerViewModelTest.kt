@@ -107,9 +107,11 @@ private class OneChat(title: String, kind: ChatKind) : ChatsRepository {
 /** Records what reaches the chat's queue; [failFrom] makes the nth send (0-based) and later fail. */
 private class Queue(var failFrom: Int = Int.MAX_VALUE) : ChatMediaSender {
     val sent = mutableListOf<Pair<String, PreparedItem>>()
-    override suspend fun send(chatId: String, item: PreparedItem): Boolean {
+    val albums = mutableListOf<String?>()
+    override suspend fun send(chatId: String, item: PreparedItem, album: String?): Boolean {
         if (sent.size >= failFrom) return false
         sent += chatId to item
+        albums += album
         return true
     }
 }
@@ -158,6 +160,9 @@ class ChatMediaComposerViewModelTest {
         assertEquals(listOf("first", "", "third"), items.map { it.caption })
         // The video's bytes are read from its file only when it is sent.
         assertEquals(9, items[1].bytes.size)
+        // Sent together: one album id, shared by all three, so the chat draws one album.
+        assertNotNull(queue.albums.first())
+        assertEquals(1, queue.albums.distinct().size)
     }
 
     @Test fun closingTheGalleryWithoutAPickStartsTheCamera() = runTest(dispatcher) {
@@ -206,6 +211,7 @@ class ChatMediaComposerViewModelTest {
         assertEquals("Lease.pdf", sent.file.name)
         assertEquals("Signed", sent.caption)
         assertEquals(12, sent.bytes.size)
+        assertNull(queue.albums.single())
     }
 
     @Test fun closingFilesWithNothingChosenClosesTheComposer() = runTest(dispatcher) {
@@ -252,7 +258,7 @@ class ChatMediaComposerViewModelTest {
     @Test fun nothingCanBeLetGoWhileItIsBeingSent() = runTest(dispatcher) {
         library.media["a"] = jpeg(3)
         val gate = kotlinx.coroutines.CompletableDeferred<Unit>()
-        val held = ChatMediaSender { _, _ -> gate.await(); true }
+        val held = ChatMediaSender { _, _, _ -> gate.await(); true }
         val vm = ChatMediaComposerViewModel("c1", ChatComposeStart.Camera, library, camera, OneChat("Wanjiru", ChatKind.Direct), held, now = { 0 })
         vm.composer.useRecent(photo("a"))
         vm.send()

@@ -30,7 +30,7 @@ internal fun MediaComposePreview(name: String) {
             val library = org.koin.compose.koinInject<com.circaso.core.platform.MediaLibrary>()
             val camera = org.koin.compose.koinInject<com.circaso.core.platform.MomentCamera>()
             val vm = androidx.compose.runtime.remember(name) {
-                ChatMediaComposerViewModel("preview", start, library, camera, PreviewChat, { _, _ -> true })
+                ChatMediaComposerViewModel("preview", start, library, camera, PreviewChat, { _, _, _ -> true })
             }
             ChatMediaComposerScreen(vm, onClose = {})
         }
