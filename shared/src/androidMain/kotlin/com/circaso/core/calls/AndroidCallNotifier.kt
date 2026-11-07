@@ -12,8 +12,9 @@ import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 
 /**
- * Design H1 while Circaso is in the background: the ringing push is data-only, so the app shows its own high-priority
- * call notification with the ringtone. Tapping it opens the app straight onto the incoming call; it stops after the
+ * Design H1 while Circaso is in the background or closed: the ringing push is data-only, so the app shows its own call
+ * notification (Android's call style: Answer and Decline) with the ringtone. On a locked or idle phone it opens full
+ * screen straight onto the answer screen, as a phone call does; over another app it's a heads-up. It stops after the
  * backend's 45-second ring.
  */
 class AndroidCallNotifier(private val context: Context) {
@@ -37,18 +38,28 @@ class AndroidCallNotifier(private val context: Context) {
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP)
             putExtra(ExtraCallId, callId)
         }
-        val tap = open?.let { PendingIntent.getActivity(context, callId.hashCode(), it, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE) }
+        val tap = open?.let { PendingIntent.getActivity(context, callId.hashCode(), it, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE) } ?: return
+        val decline = PendingIntent.getBroadcast(
+            context, callId.hashCode(),
+            Intent(context, CallDeclineReceiver::class.java).putExtra(ExtraCallId, callId),
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+        )
+        val caller = androidx.core.app.Person.Builder().setName(title).setImportant(true).build()
         val n = NotificationCompat.Builder(context, ChannelId)
             .setSmallIcon(com.circaso.shared.R.drawable.ic_stat_circaso)
             .setContentTitle(title)
             .setContentText(text)
+            .setStyle(NotificationCompat.CallStyle.forIncomingCall(caller, decline, tap))
             .setCategory(NotificationCompat.CATEGORY_CALL)
             .setPriority(NotificationCompat.PRIORITY_MAX)
+            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
             .setOngoing(true)
             .setAutoCancel(true)
             .setTimeoutAfter(RingMillis)
             .setContentIntent(tap)
-            .addAction(0, "Answer", tap)
+            // Full screen on a locked or idle phone. Android 14+ lets the person turn this off for an app; then it's a
+            // heads-up notification that still rings.
+            .setFullScreenIntent(tap, true)
             .build()
         runCatching { manager.notify(callId.hashCode(), n) }
     }

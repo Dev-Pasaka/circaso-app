@@ -73,6 +73,7 @@ fun initKoinAndroid(context: Context) {
             single<com.circaso.core.calls.CallEngine> { com.circaso.core.calls.AndroidCallEngine(app) }
             single { com.circaso.core.calls.AndroidCallNotifier(app).also { n -> ringing = { id -> n.clear(id) } } }
             single(createdAtStart = true) { com.circaso.core.calls.CallKeepAlive(app, get(), get()).also { it.start() } }
+            single(createdAtStart = true) { com.circaso.core.calls.CallRinger(app, get(), get()).also { it.start() } }
             single<com.circaso.core.platform.LocationProvider> { com.circaso.core.platform.AndroidLocation(app) }
             single<com.circaso.feature.messaging.data.repository.LiveTracker> { com.circaso.core.platform.AndroidLiveTracker(app) }
             single<com.circaso.core.sync.BackgroundSync> { com.circaso.core.sync.AndroidBackgroundSync(app) }
@@ -106,6 +107,12 @@ fun currentActivityProvider(): () -> android.app.Activity? {
     val activities = KoinPlatform.getKoin().get<com.circaso.core.platform.CurrentActivity>()
     return { activities.get() }
 }
+
+/** Whether a call is ringing or on: the activity shows over the lock screen while it is (see MainActivity). */
+fun callOnScreen(): kotlinx.coroutines.flow.Flow<Boolean> =
+    runCatching { org.koin.mp.KoinPlatform.getKoin().get<com.circaso.feature.calls.CallController>().state }.getOrNull()
+        ?.let { state -> kotlinx.coroutines.flow.flow { state.collect { s -> emit(s != null && s.phase != com.circaso.feature.calls.CallPhase.Ended) } } }
+        ?: kotlinx.coroutines.flow.flowOf(false)
 
 /** The incoming-call notification was tapped: load that call and show its answer screen (design H1). */
 fun openRingingCall(callId: String) {
