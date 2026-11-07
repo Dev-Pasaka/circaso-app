@@ -226,20 +226,26 @@ private fun AlbumTile(m: Message.Media, load: suspend (MediaDetails) -> MediaLoa
     val c = CircasoTheme.colors
     val t = CircasoTheme.typography
     val picture = rememberPicture(m, load)
+    // A video coming in fills its ring on the tile, and still does when the album scrolls away and back.
+    val incoming = if (m.isVideo) downloadProgress(m) else null
     Box(
         modifier.background(c.fillStrong).pressable(role = Role.Button, onClick = onClick)
-            .semantics { contentDescription = (if (m.isVideo) "Video" + (m.details.durationMs?.let { ", ${longDuration(it)}" } ?: "") else "Photo") + if (more > 0) ", and $more more" else "" },
+            .semantics {
+                contentDescription = (if (m.isVideo) "Video" + (m.details.durationMs?.let { ", ${longDuration(it)}" } ?: "") else "Photo") +
+                    (if (more > 0) ", and $more more" else "") + (incoming?.let { ". " + downloadLabel(it) } ?: "")
+            },
         contentAlignment = Alignment.Center,
     ) {
         picture?.let { coil3.compose.AsyncImage(it, null, Modifier.fillMaxSize(), contentScale = androidx.compose.ui.layout.ContentScale.Crop) }
         if (picture == null && m.isImage) CircasoIconImage(CircasoIcon.Photo, c.inkSecondary, Modifier.size(22.dp))
         if (m.isVideo && more == 0) {
-            Box(Modifier.size(36.dp).clip(CircasoShapes.circle).background(DarkColors.scrim), contentAlignment = Alignment.Center) {
+            if (incoming != null) DownloadDisc(incoming, CircasoSizes.iconButton)
+            else Box(Modifier.size(CircasoSizes.iconButton).clip(CircasoShapes.circle).background(DarkColors.scrim), contentAlignment = Alignment.Center) {
                 CircasoIconImage(CircasoIcon.Play, DarkColors.ink, Modifier.size(16.dp))
             }
             m.details.durationMs?.let {
                 BasicText(
-                    longDuration(it), Modifier.align(Alignment.BottomStart).padding(6.dp),
+                    longDuration(it), Modifier.align(Alignment.BottomStart).padding(CircasoSpacing.s2),
                     style = t.caption1.copy(
                         color = DarkColors.ink, fontFeatureSettings = "tnum",
                         shadow = androidx.compose.ui.graphics.Shadow(DarkColors.scrim, androidx.compose.ui.geometry.Offset(0f, 1f), 4f),
@@ -249,6 +255,7 @@ private fun AlbumTile(m: Message.Media, load: suspend (MediaDetails) -> MediaLoa
         }
         if (more > 0) {
             Box(Modifier.matchParentSize().background(DarkColors.scrim), contentAlignment = Alignment.Center) {
+                if (incoming != null) com.circaso.feature.mediacompose.UploadRing(incoming, Modifier.size(CircasoSizes.controlMd), ink = DarkColors.ink)
                 BasicText("+$more", style = t.title2.copy(color = DarkColors.ink, fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold))
             }
         }
@@ -290,6 +297,8 @@ internal fun BoxScope.AlbumViewer(
         val (items, start) = last ?: return@AnimatedVisibility
         val pager = androidx.compose.foundation.pager.rememberPagerState(initialPage = start) { items.size }
         val t = CircasoTheme.typography
+        // Dark in every theme: the status bar's icons go light while it is open.
+        com.circaso.core.platform.StatusBarIcons(light = true)
         Box(Modifier.fillMaxSize().background(DarkColors.bg)) {
             androidx.compose.foundation.pager.HorizontalPager(pager, Modifier.fillMaxSize(), key = { items[it].localId }) { page ->
                 val m = items[page]
@@ -298,9 +307,12 @@ internal fun BoxScope.AlbumViewer(
                     picture?.let { coil3.compose.AsyncImage(it, if (m.isVideo) "Video" else m.details.caption ?: "Photo", Modifier.fillMaxSize(), contentScale = androidx.compose.ui.layout.ContentScale.Fit) }
                     if (picture == null && m.isImage) com.circaso.designsystem.components.Spinner(DarkColors.ink)
                     if (m.isVideo) {
-                        Box(
-                            Modifier.size(CircasoSizes.controlMd + 16.dp).clip(CircasoShapes.circle).background(DarkColors.scrim)
-                                .pressable(role = Role.Button, onClick = { onPlayVideo(m) }).semantics { contentDescription = "Play video" },
+                        val incoming = downloadProgress(m)
+                        val disc = Modifier.pressable(role = Role.Button, onClick = { onPlayVideo(m) })
+                            .semantics { contentDescription = if (incoming != null) downloadLabel(incoming) else "Play video" }
+                        if (incoming != null) DownloadDisc(incoming, CircasoSizes.controlMd + CircasoSpacing.s4, disc)
+                        else Box(
+                            disc.size(CircasoSizes.controlMd + CircasoSpacing.s4).clip(CircasoShapes.circle).background(DarkColors.scrim),
                             contentAlignment = Alignment.Center,
                         ) { CircasoIconImage(CircasoIcon.Play, DarkColors.ink, Modifier.size(26.dp)) }
                     }

@@ -40,7 +40,16 @@ sealed interface ComposerCapture {
  * One picked or captured item before sending (M4). Several picked at once go in order, each with its own caption.
  * [unplayable]: this phone couldn't preview the video (it still sends).
  */
-data class ComposerItem(val capture: ComposerCapture, val caption: String = "", val unplayable: Boolean = false) {
+data class ComposerItem(
+    val capture: ComposerCapture,
+    val caption: String = "",
+    val unplayable: Boolean = false,
+    /**
+     * Its size when it is over the limit (a chat's 100 MB): marked on the strip with why, left out of the send (Send
+     * asks first). Null when it fits or its size isn't known yet.
+     */
+    val overLimit: Long? = null,
+) {
     val video: CapturedMedia? get() = (capture as? ComposerCapture.Shot)?.takeIf { it.video }?.media
     /**
      * Longer than [maxMs] (a moment's minute): it opens the trimmer, and can't be sent until it has been trimmed (M3b).
@@ -130,6 +139,10 @@ data class MediaComposeState(
     val recordingVideo: Boolean = false,
     /** When the current recording began (M1b, M5b: the elapsed time and the ring filling to 1:00). */
     val recordingSince: Long? = null,
+    /** How large the recording in progress is so far, where the camera says (a chat's runs to its size limit). */
+    val recordingBytes: Long = 0L,
+    /** The limits the recording in progress runs to: a moment's minute, a chat's size. */
+    val recordingLimits: com.circaso.core.platform.RecordingLimits = com.circaso.core.platform.RecordingLimits.Moment,
     /** The recents strip for the current mode (WhatsApp-style), newest first; empty without library access. */
     val recents: List<LibraryItem> = emptyList(),
     /** What the phone lets the strip show for this mode; null until it has answered. */
@@ -156,6 +169,12 @@ data class MediaComposeState(
     val caption: String get() = item?.caption.orEmpty()
     /** Every item can go: nothing is waiting for the trimmer, nothing is still being made smaller. */
     val ready: Boolean get() = items.isNotEmpty() && items.none { needsTrim(it) } && trim == null && !preparing
+
+    /** How many are marked over the size limit (left out of a send). */
+    val overLimitCount: Int get() = items.count { it.overLimit != null }
+
+    /** At least one item can go once the over-limit ones are left out. */
+    val anySendable: Boolean get() = items.any { it.overLimit == null }
 }
 
 /** What one item came to when it was read for sending; see [MediaComposer.prepare]. */
@@ -195,6 +214,8 @@ class MediaComposer(
      * into memory; one over [maxBytes] is refused, item by item, with its size. A moment re-encodes a video too large.
      */
     private val sendAsIs: Boolean = false,
+    /** How long or large the in-app camera may record: a moment's minute; a chat's size, any length. */
+    private val recordingLimits: com.circaso.core.platform.RecordingLimits = com.circaso.core.platform.RecordingLimits.Moment,
 ) {
     /** "100 MB": the limit as people read it. */
     val limitLabel: String get() = limitLabel(maxBytes)
@@ -206,6 +227,7 @@ class MediaComposer(
     // remembered, and the recording stops as soon as it has started, never left running.
     private var videoStarting = false
     private var videoReleaseAsked = false
+    private var recordingWatch: Job? = null
 
     private val state get() = read()
     private fun update(f: (MediaComposeState) -> MediaComposeState) = write(f)
@@ -391,7 +413,8 @@ class MediaComposer(
                         s.copy(loadingPick = false, error = "Voice moments are up to a minute long. Pick a shorter one.")
                     audio != null -> s.copy(loadingPick = false, items = listOf(ComposerItem(ComposerCapture.Voice(audio.bytes, audio.mime, audio.durationMs ?: 0))), current = 0)
                     else -> {
-                        val added = media.take(maxItems - s.items.size).map { m -> ComposerItem(ComposerCapture.Shot(m)) }
+                        val sizes = tooBig.toMap()
+                        val added = media.take(maxItems - s.items.size).map { m -> ComposerItem(ComposerCapture.Shot(m), overLimit = m.path?.let { sizes[it] }) }
                         // The first one over a minute goes on the stage, so its trimmer opens straight away.
                         val long = added.indexOfFirst { s.needsTrim(it) }
                         // The first one over the limit goes on the stage, with its size said, so it can be taken out.
@@ -399,11 +422,8 @@ class MediaComposer(
                         s.copy(
                             loadingPick = false, items = s.items + added, current = s.items.size + (if (big >= 0) big else long.coerceAtLeast(0)),
                             gallery = null, selecting = false, selection = emptyList(),
-                            error = when {
-                                tooBig.size == 1 -> tooLargeVideo(tooBig.single().second)
-                                tooBig.size > 1 -> "${tooBig.size} videos are over $limitLabel, so they can’t be sent. Take them out to send the rest."
-                                else -> s.error
-                            },
+                            // Marked on the strip, with the reason above it and the count by Send: no toast as well.
+                            error = s.error,
                         )
                     }
                 }
@@ -493,7 +513,7 @@ class MediaComposer(
             val cut = library.trim(path, t.startMs, t.endMs, maxBytes)
             update { s ->
                 if (cut == null) s.copy(trim = s.trim?.copy(working = false), error = "This video couldn’t be trimmed on this phone. Try a shorter one.")
-                else s.copy(trim = null, items = s.items.mapIndexed { i, it -> if (i == t.index) it.copy(capture = ComposerCapture.Shot(cut), unplayable = false) else it })
+                else s.copy(trim = null, items = s.items.mapIndexed { i, it -> if (i == t.index) it.copy(capture = ComposerCapture.Shot(cut), unplayable = false, overLimit = null) else it })
             }
         }
     }
@@ -525,11 +545,32 @@ class MediaComposer(
         videoStarting = true
         videoReleaseAsked = false
         scope.launch {
-            val ok = cam.startVideo()
+            val ok = cam.startVideo(recordingLimits)
             videoStarting = false
             if (!ok) { update { it.copy(error = "The video didn’t start. Try again.") }; return@launch }
-            update { it.copy(recordingVideo = true, recordingSince = now()) }
-            if (videoReleaseAsked) stopVideo()
+            update { it.copy(recordingVideo = true, recordingSince = now(), recordingBytes = 0L, recordingLimits = recordingLimits) }
+            if (videoReleaseAsked) stopVideo() else watchRecording(cam)
+        }
+    }
+
+    /**
+     * While it records: its size for the screen (a chat's runs to 100 MB, warned as it nears), and when the camera
+     * stopped it by itself at a limit, the clip goes on the review as if the finger had lifted.
+     */
+    private fun watchRecording(cam: MomentCamera) {
+        recordingWatch?.cancel()
+        recordingWatch = scope.launch {
+            while (state.recordingVideo) {
+                val status = cam.recordingStatus()
+                if (status != null && status.bytes != state.recordingBytes) update { it.copy(recordingBytes = status.bytes) }
+                if (status?.stopped == true) {
+                    val bySize = recordingLimits.maxBytes != null
+                    stopVideo()
+                    if (bySize) update { it.copy(error = "The video stopped at ${limitLabel(maxBytes)}, the most a chat can send.") }
+                    return@launch
+                }
+                kotlinx.coroutines.delay(RecordingPollMs)
+            }
         }
     }
 
@@ -540,7 +581,9 @@ class MediaComposer(
 
     private fun stopVideo() {
         val cam = camera ?: return
-        update { it.copy(recordingVideo = false, recordingSince = null) }
+        recordingWatch?.cancel()
+        recordingWatch = null
+        update { it.copy(recordingVideo = false, recordingSince = null, recordingBytes = 0L) }
         scope.launch {
             val clip = cam.stopVideo()
             if (clip != null) { setSingle(ComposerCapture.Shot(clip)); update { it.copy(mode = ComposerMode.Video) } }
@@ -608,6 +651,10 @@ class MediaComposer(
     companion object {
         /** Frames in the trim bar's filmstrip (design M3b shows eight). */
         const val TrimFrames = 8
+        /** How often a recording's size is read while it runs. */
+        const val RecordingPollMs = 250L
+        /** From this share of a chat's size limit, the recording pill says it is nearly full. */
+        const val RecordingWarnShare = 0.85f
         /** The shortest clip the trimmer keeps. */
         const val MinTrimMs = TrimWindow.MinMs
         const val MaxCaption = 700

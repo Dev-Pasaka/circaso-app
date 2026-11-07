@@ -35,8 +35,14 @@ interface MomentCameraProvider {
     fun takePhoto(completion: (MomentShot?) -> Unit)
     /** The still exactly as the sensor gave it (no downscale, no thumb; sizes 0), for a profile photo. */
     fun takeFullPhoto(completion: (MomentShot?) -> Unit)
-    fun startVideo(completion: (Boolean) -> Unit)
-    /** Also answers with the clip after a recording stopped by itself at [MomentVideoMaxMs]. */
+    /**
+     * Records until stopped, or by itself at [maxMs] long or [maxBytes] on disk (0: no limit; a moment's minute, a
+     * chat's size).
+     */
+    fun startVideo(maxMs: Long, maxBytes: Long, completion: (Boolean) -> Unit)
+    /** Bytes written so far by the recording in progress, or -1 when nothing is recording; -2 once it stopped by itself. */
+    fun recordedBytes(): Long
+    /** Also answers with the clip after a recording stopped by itself at a limit. */
     fun stopVideo(completion: (MomentShot?) -> Unit)
     fun flip()
     fun setFlash(on: Boolean)
@@ -86,9 +92,24 @@ class IosMomentCamera : MomentCamera {
         }
     }
 
-    override suspend fun startVideo(): Boolean {
+    override suspend fun startVideo(): Boolean = startVideo(RecordingLimits.Moment)
+
+    override suspend fun startVideo(limits: RecordingLimits): Boolean {
         val p = MomentCameraBridge.provider ?: return false
-        return suspendCancellableCoroutine { cont -> p.startVideo { if (cont.isActive) cont.resume(it) } }
+        lastBytes = 0L
+        return suspendCancellableCoroutine { cont -> p.startVideo(limits.maxMs ?: 0L, limits.maxBytes ?: 0L) { if (cont.isActive) cont.resume(it) } }
+    }
+
+    /** The last size seen while it recorded: AVFoundation says only "finished" once it stops by itself. */
+    private var lastBytes = 0L
+
+    override fun recordingStatus(): RecordingStatus? {
+        val p = MomentCameraBridge.provider ?: return null
+        return when (val b = p.recordedBytes()) {
+            -1L -> null
+            -2L -> RecordingStatus(lastBytes, stopped = true)
+            else -> RecordingStatus(b, stopped = false).also { lastBytes = b }
+        }
     }
 
     override suspend fun stopVideo(): CapturedMedia? {

@@ -25,6 +25,9 @@ class ThreadMedia(
     /** How far each outgoing file's upload has got, by row: the ring on its thumbnail. */
     val progress get() = media.progress
 
+    /** How far each incoming file's download has got, by attachment id: the ring on its bubble or album tile. */
+    val downloading get() = media.downloading
+
     /**
      * A video's (or document's) file to play or open, downloading and decrypting it first if needed, streamed to disk;
      * null with why when it can't be had.

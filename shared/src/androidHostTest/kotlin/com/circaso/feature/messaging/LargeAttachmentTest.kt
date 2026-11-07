@@ -27,6 +27,9 @@ import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpMethod
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.headersOf
+import kotlinx.coroutines.async
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.Json
 import kotlin.random.Random
@@ -192,6 +195,98 @@ class LargeAttachmentTest {
         // The first try was cut off; the second asked only for the rest.
         assertEquals(listOf(null, "bytes=${5 * 1024 * 1024}-"), ranges)
         assertNull(other.stored.keys.firstOrNull { it.startsWith("dl-") || it.endsWith(".part") }, "nothing left behind")
+    }
+
+    @Test fun aDownloadOutlivesTheBubbleThatAskedForItAndFillsItsRing() = runBlocking {
+        val size = 3 * 1024 * 1024 + 7
+        val doc = Random(11).nextBytes(size)
+        var uploaded: ByteArray? = null
+        val gate = kotlinx.coroutines.CompletableDeferred<Unit>()
+        var gets = 0
+        val storage = HttpClient(MockEngine { request ->
+            if (request.method == HttpMethod.Put) { uploaded = request.body.toByteArray(); respond("", HttpStatusCode.OK) }
+            else { gets++; gate.await(); respond(uploaded!!, HttpStatusCode.OK) }
+        })
+        val attachments = object : AttachmentsRemote {
+            var promised = 0L
+            override suspend fun create(chatId: String, sizeBytes: Long, kind: String): AppResult<NewAttachmentResponse> {
+                promised = sizeBytes
+                return AppResult.Success(NewAttachmentResponse("att2", "https://r2/put"))
+            }
+            override suspend fun complete(attachmentId: String) = AppResult.Success(AttachmentReadyResponse(attachmentId, promised))
+            override suspend fun download(attachmentId: String) = AppResult.Success(AttachmentDownloadResponse("https://r2/get", sizeBytes = promised))
+        }
+        val chats = FakeChatsDao()
+        val dao = FakeMessagesDao(chats)
+        val mine = MediaMessages(dao, chats, Outbox(FakeOutboxDao()) { 1L }, {}, crypto, LargeFiles(), attachments, storage, Json, { "me" }, { 1L })
+        assertIs<AppResult.Success<Unit>>(mine.sendDocument("c1", doc, "application/pdf", "Report.pdf", null))
+        val row = dao.rows.value.single()
+        assertIs<AppResult.Success<Unit>>(mine.uploadPending(row.localId))
+        val received = assertNotNull(MediaDetails.read(dao.byLocalId(row.localId)!!.text)!!.toPayload("t").toMediaDetails())
+
+        // The other phone, its downloads in the app's scope.
+        val appScope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.Default)
+        val other = LargeFiles()
+        val theirs = MediaMessages(
+            FakeMessagesDao(), FakeChatsDao(), Outbox(FakeOutboxDao()) { 1L }, {}, crypto, other, attachments, storage, Json, { "them" }, { 1L },
+            downloadScope = appScope,
+        )
+        val seen = java.util.Collections.synchronizedList(mutableListOf<Float?>())
+        val watch = launch(kotlinx.coroutines.Dispatchers.Unconfined) { theirs.downloading.collect { seen += it["att2"] } }
+        // The bubble asks, then scrolls away before the bytes come.
+        val bubble = launch(kotlinx.coroutines.Dispatchers.Default) { theirs.file(received) }
+        kotlinx.coroutines.withTimeout(5_000) { while (theirs.downloading.value["att2"] == null) kotlinx.coroutines.delay(10) }
+        bubble.cancel()
+        bubble.join()
+        gate.complete(Unit)
+        // It carries on anyway, and the ring fills on the way.
+        kotlinx.coroutines.withTimeout(10_000) { while (other.read("att2") == null || theirs.downloading.value.isNotEmpty()) kotlinx.coroutines.delay(10) }
+        assertContentEquals(doc, other.read("att2"))
+        assertEquals(0f, seen.filterNotNull().first())
+        assertTrue(seen.filterNotNull().any { it > 0f && it < 1f }, "progress between: $seen")
+        assertTrue(theirs.downloading.value.isEmpty(), "the ring goes once it's done")
+        // Back on screen: the file is there, nothing is fetched again.
+        val (path, why) = theirs.file(received)
+        assertNull(why)
+        assertEquals("mem:att2", path)
+        assertEquals(1, gets)
+        watch.cancel()
+        appScope.cancel()
+    }
+
+    @Test fun twoAskingForOneFileShareOneDownload() = runBlocking {
+        val size = 1024 * 1024
+        val doc = Random(12).nextBytes(size)
+        var uploaded: ByteArray? = null
+        val gate = kotlinx.coroutines.CompletableDeferred<Unit>()
+        var links = 0
+        val storage = HttpClient(MockEngine { request ->
+            if (request.method == HttpMethod.Put) { uploaded = request.body.toByteArray(); respond("", HttpStatusCode.OK) }
+            else { gate.await(); respond(uploaded!!, HttpStatusCode.OK) }
+        })
+        val attachments = object : AttachmentsRemote {
+            var promised = 0L
+            override suspend fun create(chatId: String, sizeBytes: Long, kind: String): AppResult<NewAttachmentResponse> { promised = sizeBytes; return AppResult.Success(NewAttachmentResponse("att3", "https://r2/put")) }
+            override suspend fun complete(attachmentId: String) = AppResult.Success(AttachmentReadyResponse(attachmentId, promised))
+            override suspend fun download(attachmentId: String): AppResult<AttachmentDownloadResponse> { links++; return AppResult.Success(AttachmentDownloadResponse("https://r2/get", sizeBytes = promised)) }
+        }
+        val chats = FakeChatsDao()
+        val dao = FakeMessagesDao(chats)
+        val mine = MediaMessages(dao, chats, Outbox(FakeOutboxDao()) { 1L }, {}, crypto, LargeFiles(), attachments, storage, Json, { "me" }, { 1L })
+        mine.sendDocument("c1", doc, "application/pdf", "A.pdf", null)
+        mine.uploadPending(dao.rows.value.single().localId)
+        val received = assertNotNull(MediaDetails.read(dao.rows.value.single().text)!!.toPayload("t").toMediaDetails())
+        val appScope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.Default)
+        val other = LargeFiles()
+        val theirs = MediaMessages(FakeMessagesDao(), FakeChatsDao(), Outbox(FakeOutboxDao()) { 1L }, {}, crypto, other, attachments, storage, Json, { "them" }, { 1L }, downloadScope = appScope)
+        val a = async(kotlinx.coroutines.Dispatchers.Default) { theirs.file(received) }
+        val b = async(kotlinx.coroutines.Dispatchers.Default) { theirs.file(received) }
+        kotlinx.coroutines.delay(200)
+        gate.complete(Unit)
+        assertEquals("mem:att3", a.await().first)
+        assertEquals("mem:att3", b.await().first)
+        assertEquals(1, links, "one download, joined by the second")
+        appScope.cancel()
     }
 
     @Test fun aFileOverTheLimitIsNotQueued() = runBlocking {

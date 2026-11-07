@@ -47,7 +47,7 @@ import kotlin.math.roundToInt
 /**
  * CameraX for Moments (M1). The viewfinder binds preview, photo and video to its own lifecycle while it is on screen;
  * this controller holds the bound use cases and takes the shots. Photos come back as JPEG with the long side at most
- * [MomentPhotoMaxSide]; videos as MP4, stopped by CameraX at [MomentVideoMaxMs].
+ * [MomentPhotoMaxSide]; videos as MP4, stopped by CameraX at the [RecordingLimits] asked for (a moment's minute, a chat's size).
  */
 class AndroidMomentCamera(private val context: Context) : MomentCamera {
     private var provider: ProcessCameraProvider? = null
@@ -58,6 +58,9 @@ class AndroidMomentCamera(private val context: Context) : MomentCamera {
     private var finished: CompletableDeferred<File?>? = null
     private var videoFile: File? = null
     private var startedAt = 0L
+    /** Bytes written so far and whether CameraX stopped it at a limit; written on the main executor, read anywhere. */
+    @Volatile private var recordedBytes = 0L
+    @Volatile private var stoppedBySelf = false
     private var front = false
     private var flash = false
     /** The profile camera ([openForPhoto]): preview and stills only, at the sensor's best quality. */
@@ -159,19 +162,30 @@ class AndroidMomentCamera(private val context: Context) : MomentCamera {
         }
     }
 
+    override suspend fun startVideo(): Boolean = startVideo(RecordingLimits.Moment)
+
+    override fun recordingStatus(): RecordingStatus? = if (finished == null) null else RecordingStatus(recordedBytes, stoppedBySelf)
+
     @SuppressLint("MissingPermission") // checked just before: without the microphone the video records silent
-    override suspend fun startVideo(): Boolean {
+    override suspend fun startVideo(limits: RecordingLimits): Boolean {
         val capture = videoCapture ?: return false
         val file = File(context.cacheDir, "moment-${System.currentTimeMillis()}.mp4")
         val withAudio = ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
         val done = CompletableDeferred<File?>()
-        val options = FileOutputOptions.Builder(file).setDurationLimitMillis(MomentVideoMaxMs).build()
+        val options = FileOutputOptions.Builder(file).apply {
+            limits.maxMs?.let { setDurationLimitMillis(it) }
+            limits.maxBytes?.let { setFileSizeLimit(it) }
+        }.build()
+        recordedBytes = 0L
+        stoppedBySelf = false
         val pending = capture.output.prepareRecording(context, options).let { if (withAudio) it.withAudioEnabled() else it }
         if (flash) camera?.cameraControl?.enableTorch(true)
         recording = pending.start(ContextCompat.getMainExecutor(context)) { event ->
+            recordedBytes = event.recordingStats.numBytesRecorded
             if (event is VideoRecordEvent.Finalize) {
-                val ok = !event.hasError() || event.error == VideoRecordEvent.Finalize.ERROR_DURATION_LIMIT_REACHED
-                done.complete(if (ok) file else null)
+                val limit = event.error == VideoRecordEvent.Finalize.ERROR_DURATION_LIMIT_REACHED || event.error == VideoRecordEvent.Finalize.ERROR_FILE_SIZE_LIMIT_REACHED
+                stoppedBySelf = limit
+                done.complete(if (!event.hasError() || limit) file else null)
             }
         }
         finished = done
@@ -192,8 +206,9 @@ class AndroidMomentCamera(private val context: Context) : MomentCamera {
                 retriever.setDataSource(file.absolutePath)
                 val duration = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull() ?: (System.currentTimeMillis() - startedAt)
                 val frame = retriever.getFrameAtTime(0)
+                // From its file, never read into memory (a chat's can be up to 100 MB): prepare reads the path.
                 CapturedMedia(
-                    file.readBytes(), "video/mp4", frame?.width, frame?.height, durationMs = duration,
+                    ByteArray(0), "video/mp4", frame?.width, frame?.height, durationMs = duration,
                     thumb = frame?.scaledTo(MomentThumbSide)?.jpeg(50), path = file.absolutePath,
                 )
             } catch (e: Exception) {
