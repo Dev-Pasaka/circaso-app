@@ -29,6 +29,9 @@
     <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
     <uses-feature android:name="android.hardware.camera" android:required="false" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- An incoming call opens full screen over the lock screen (CallStyle + full-screen intent), and rings. -->
+    <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
+    <uses-permission android:name="android.permission.VIBRATE" />
     <!-- A call keeps going when Circaso is in the background: a foreground service holding the microphone and camera. -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
@@ -108,6 +111,9 @@
             <meta-data android:name="com.circaso.SHARE_HOST" android:value="${shareHost}" />
         </activity>
         <!-- Keeps a call alive while Circaso is in the background (designs H2–H4). -->
+        <receiver
+            android:name="com.circaso.core.calls.CallDeclineReceiver"
+            android:exported="false" />
         <service
             android:name="com.circaso.core.calls.CallService"
             android:exported="false"

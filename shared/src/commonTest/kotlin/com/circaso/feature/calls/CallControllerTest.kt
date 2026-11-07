@@ -84,6 +84,9 @@ private class FakeEngine : CallEngine {
     override val remoteVideoMids: StateFlow<Set<String>> = MutableStateFlow(emptySet())
     val link = MutableStateFlow<Boolean?>(null)
     override val connected: StateFlow<Boolean?> = link
+    /** Set to report which pulled mids have had packets; null is an engine that can't tell. */
+    var receiving: MutableStateFlow<Set<String>>? = null
+    override val receivingMids: StateFlow<Set<String>>? get() = receiving
     override fun setMicrophone(on: Boolean) { events += "mic:$on" }
     var cameraAllowed = true
     override suspend fun setCamera(on: Boolean): Boolean { events += "camera:$on"; return !on || cameraAllowed }
@@ -129,6 +132,42 @@ class CallControllerTest {
         cc.onFrame("call.updated", frame("call.updated", remote.current))
         advanceUntilIdle()
         assertEquals(1, remote.calls.count { it.startsWith("pull") })
+    }
+
+    @Test fun joinedIsOnlyConnectingUntilTheirMediaArrivesThenTheTimerStarts() = runTest(UnconfinedTestDispatcher()) {
+        engine.receiving = MutableStateFlow(emptySet())
+        val cc = controller()
+        cc.start("chat1", video = false)
+        advanceUntilIdle()
+        remote.current = call("ACTIVE", person("me", "JOINED"), person("mum", "JOINED"))
+        cc.onFrame("call.updated", frame("call.updated", remote.current))
+        runCurrent()
+        cc.state.value!!.let { s ->
+            assertEquals(CallPhase.Connecting, s.phase)
+            assertNull(s.activeSince)
+            assertEquals(false, s.people.single().live)
+        }
+        engine.receiving!!.value = setOf("2") // Mum's audio track (mid 2 from CL4) has had packets
+        runCurrent()
+        cc.state.value!!.let { s ->
+            assertEquals(CallPhase.Active, s.phase)
+            assertTrue(s.activeSince != null)
+            assertEquals(true, s.people.single().live)
+        }
+    }
+
+    @Test fun withNoMediaStatsTheCallStillConnectsAfterTheGrace() = runTest(UnconfinedTestDispatcher()) {
+        engine.receiving = MutableStateFlow(emptySet())
+        val cc = controller()
+        cc.start("chat1", video = false)
+        advanceUntilIdle()
+        remote.current = call("ACTIVE", person("me", "JOINED"), person("mum", "JOINED"))
+        cc.onFrame("call.updated", frame("call.updated", remote.current))
+        runCurrent()
+        assertEquals(CallPhase.Connecting, cc.state.value!!.phase)
+        advanceTimeBy(15_001)
+        runCurrent()
+        assertEquals(CallPhase.Active, cc.state.value!!.phase)
     }
 
     @Test fun anIncomingCallRingsAndAcceptJoins() = runTest(UnconfinedTestDispatcher()) {

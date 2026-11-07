@@ -15,8 +15,15 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
 import com.circaso.core.platform.PermissionBridge
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
 import org.koin.compose.koinInject
 import org.webrtc.AudioTrack
@@ -72,6 +79,10 @@ class AndroidCallEngine(private val context: Context) : CallEngine {
     override val remoteVideoMids: StateFlow<Set<String>> = _remoteMids
     private val _connected = MutableStateFlow<Boolean?>(null)
     override val connected: StateFlow<Boolean?> = _connected
+    private val _receiving = MutableStateFlow<Set<String>>(emptySet())
+    override val receivingMids: StateFlow<Set<String>> = _receiving
+    private val statsScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    private var statsJob: Job? = null
     private var previousMode = AudioManager.MODE_NORMAL
 
     fun remoteTrack(mid: String): VideoTrack? = remote[mid]
@@ -118,7 +129,49 @@ class AndroidCallEngine(private val context: Context) : CallEngine {
         set { o -> live(connection) { connection.setRemoteDescription(o, SessionDescription(SessionDescription.Type.OFFER, sdp)) } }
         val answer = sdp { o -> live(connection) { connection.createAnswer(o, MediaConstraints()) } }
         set { o -> live(connection) { connection.setLocalDescription(o, answer) } }
-        return synchronized(guard) { if (pc !== connection) throw CallEngineException("closed"); connection.localDescription.description }
+        return synchronized(guard) {
+            if (pc !== connection) throw CallEngineException("closed")
+            watchReceiving(connection)
+            connection.localDescription.description
+        }
+    }
+
+    /**
+     * Polls the inbound RTP stats while a pulled track hasn't had a packet yet, so the call only counts as connected
+     * once the other side is really heard or seen. Quiet once every pulled track is receiving.
+     */
+    private fun watchReceiving(connection: PeerConnection) {
+        if (statsJob?.isActive == true) return
+        statsJob = statsScope.launch {
+            while (isActive) {
+                val pending = synchronized(guard) {
+                    if (pc !== connection) return@launch
+                    connection.transceivers.filter { !it.isStopped && (it.currentDirection ?: it.direction) == RtpTransceiver.RtpTransceiverDirection.RECV_ONLY }.mapNotNull { it.mid }
+                        .filter { it !in _receiving.value }
+                        .let { mids -> if (mids.isEmpty()) null else connection.transceivers.associate { (it.receiver.track()?.id() ?: "") to it.mid } }
+                }
+                if (pending != null) {
+                    val heard = suspendCancellableCoroutine<Set<String>> { cont ->
+                        val ok = runCatching {
+                            synchronized(guard) {
+                                if (pc !== connection) throw CallEngineException("closed")
+                                connection.getStats { report ->
+                                    val mids = report.statsMap.values.filter { it.type == "inbound-rtp" }.mapNotNull { s ->
+                                        val packets = (s.members["packetsReceived"] as? Number)?.toLong() ?: 0
+                                        if (packets <= 0) null
+                                        else (s.members["mid"] as? String) ?: pending[s.members["trackIdentifier"] as? String]
+                                    }.toSet()
+                                    if (cont.isActive) cont.resume(mids)
+                                }
+                            }
+                        }.isSuccess
+                        if (!ok && cont.isActive) cont.resume(emptySet())
+                    }
+                    if (heard.any { it !in _receiving.value }) _receiving.value = _receiving.value + heard
+                }
+                delay(300)
+            }
+        }
     }
 
     override fun setMicrophone(on: Boolean) { audio?.setEnabled(on) }
@@ -166,6 +219,9 @@ class AndroidCallEngine(private val context: Context) : CallEngine {
         remote.clear()
         _remoteMids.value = emptySet()
         _connected.value = null
+        statsJob?.cancel()
+        statsJob = null
+        _receiving.value = emptySet()
         runCatching { pc?.close() }
         pc?.dispose()
         pc = null

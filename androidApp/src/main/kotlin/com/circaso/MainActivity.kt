@@ -13,6 +13,9 @@ import com.circaso.core.platform.PermissionBridge
 import com.circaso.di.isStartupReady
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.tooling.preview.Preview
+import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -38,6 +41,7 @@ class MainActivity : ComponentActivity() {
         setContent {
             App()
         }
+        showOverLockScreenDuringCalls()
         shareHost()?.let(com.circaso.feature.share.domain.IncomingLinks::addHost)
         openCall(intent)
         // A tapped notification that started Circaso (cold start); not again when the activity is only recreated.
@@ -102,7 +106,27 @@ class MainActivity : ComponentActivity() {
     /** From the incoming-call notification (design H1): show that call's answer screen. */
     private fun openCall(intent: android.content.Intent?) {
         val callId = intent?.getStringExtra(com.circaso.core.calls.AndroidCallNotifier.ExtraCallId) ?: return
+        overLockScreen(true) // the full-screen intent may be opening us on a locked phone
         com.circaso.di.openRingingCall(callId)
+    }
+
+    /**
+     * While a call rings or is on, Circaso shows over the lock screen and wakes the screen, as a phone call does;
+     * the rest of the app stays behind the lock once the call ends.
+     */
+    private fun showOverLockScreenDuringCalls() {
+        lifecycleScope.launch { com.circaso.di.callOnScreen().distinctUntilChanged().collect(::overLockScreen) }
+    }
+
+    private fun overLockScreen(on: Boolean) {
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O_MR1) {
+            setShowWhenLocked(on)
+            setTurnScreenOn(on)
+        } else {
+            @Suppress("DEPRECATION")
+            val flags = android.view.WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED or android.view.WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON
+            if (on) window.addFlags(flags) else window.clearFlags(flags)
+        }
     }
 }
 

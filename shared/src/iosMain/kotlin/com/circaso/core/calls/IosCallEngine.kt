@@ -37,6 +37,8 @@ interface CallEngineProvider {
     fun setRemoteVideoListener(listener: (List<String>) -> Unit)
     /** Kotlin sets this to hear the media connection: 1 up, 0 dropped or failed. */
     fun setConnectionListener(listener: (Int) -> Unit)
+    /** Kotlin sets this to hear which pulled mids have had packets (see [CallEngine.receivingMids]). */
+    fun setReceivingListener(listener: (List<String>) -> Unit)
 }
 
 object CallEngineBridge {
@@ -53,6 +55,8 @@ class IosCallEngine : CallEngine {
     override val remoteVideoMids: StateFlow<Set<String>> = _mids
     private val _connected = MutableStateFlow<Boolean?>(null)
     override val connected: StateFlow<Boolean?> = _connected
+    private val _receiving = MutableStateFlow<Set<String>>(emptySet())
+    override val receivingMids: StateFlow<Set<String>> = _receiving
     override val available: Boolean get() = CallEngineBridge.provider != null
     private val p get() = CallEngineBridge.provider ?: throw CallEngineException("unavailable")
 
@@ -60,6 +64,7 @@ class IosCallEngine : CallEngine {
         val provider = p
         provider.setRemoteVideoListener { _mids.value = it.toSet() }
         provider.setConnectionListener { _connected.value = it == 1 }
+        provider.setReceivingListener { _receiving.value = it.toSet() }
         val ice = json.encodeToString(kotlinx.serialization.builtins.ListSerializer(WireIce.serializer()), iceServers.map { WireIce(it.urls, it.username, it.credential) })
         val raw = suspendCancellableCoroutine<String> { cont ->
             provider.start(ice, video, userId) { offer, error ->
@@ -86,7 +91,7 @@ class IosCallEngine : CallEngine {
     }
     override fun flipCamera() { CallEngineBridge.provider?.flipCamera() }
     override fun setSpeaker(on: Boolean) { CallEngineBridge.provider?.setSpeaker(on) }
-    override fun close() { CallEngineBridge.provider?.close(); _mids.value = emptySet(); _connected.value = null }
+    override fun close() { CallEngineBridge.provider?.close(); _mids.value = emptySet(); _connected.value = null; _receiving.value = emptySet() }
 }
 
 @OptIn(kotlinx.cinterop.ExperimentalForeignApi::class)
