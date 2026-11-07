@@ -244,13 +244,14 @@ final class MediaLibraryImpl: NSObject, MediaLibraryProvider, PHPickerViewContro
     }
 
     /// MP4 in tmp: remuxed (passthrough) when the tracks fit MP4, otherwise re-encoded at the highest quality. With
-    /// [range] (the trimmer), only that part, and re-encoded at 1280x720 when the passthrough copy is over the limit.
+    /// [range] (the trimmer, or the shrink before posting), only that part: as it was shot when the passthrough copy
+    /// fits the limit, else re-encoded by MomentVideoTranscoder (up to 1080p, the bit rate the limit allows).
     /// The file stays on disk and is handed over by path (no bytes): the shared code reads it when it is posted.
     private nonisolated static func video(_ asset: AVAsset, range: CMTimeRange? = nil) async -> LibraryMedia? {
         let mp4 = FileManager.default.temporaryDirectory.appendingPathComponent("moment-\(UUID().uuidString).mp4")
         var exported = false
         let presets = range == nil ? [AVAssetExportPresetPassthrough, AVAssetExportPresetHighestQuality]
-                                   : [AVAssetExportPresetPassthrough, AVAssetExportPreset1280x720]
+                                   : [AVAssetExportPresetPassthrough]
         for preset in presets where !exported {
             try? FileManager.default.removeItem(at: mp4)
             guard let export = AVAssetExportSession(asset: asset, presetName: preset),
@@ -260,8 +261,11 @@ final class MediaLibraryImpl: NSObject, MediaLibraryProvider, PHPickerViewContro
             exported = (try? await export.export(to: mp4, as: .mp4)) != nil
             if exported, range != nil, preset == AVAssetExportPresetPassthrough,
                let size = (try? FileManager.default.attributesOfItem(atPath: mp4.path)[.size]) as? Int, size > mediaMaxBytes {
-                exported = false // too large for a moment as it is: the next preset shrinks it
+                exported = false // too large for a moment as it is: re-encoded below
             }
+        }
+        if !exported, let range {
+            exported = await MomentVideoTranscoder.transcode(asset, range: range, to: mp4)
         }
         guard exported, FileManager.default.fileExists(atPath: mp4.path) else { try? FileManager.default.removeItem(at: mp4); return nil }
         let duration: Double

@@ -56,6 +56,7 @@ import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.circaso.core.platform.CameraStart
 import com.circaso.core.platform.CameraViewfinder
@@ -64,6 +65,7 @@ import com.circaso.core.platform.LibraryItem
 import com.circaso.core.platform.LibraryKind
 import com.circaso.core.platform.MomentCamera
 import com.circaso.core.platform.openAppSettings
+import com.circaso.core.platform.excludeSystemGestures
 import com.circaso.designsystem.chrome.ToastHost
 import com.circaso.designsystem.chrome.rememberToastState
 import com.circaso.designsystem.components.ButtonSize
@@ -273,13 +275,13 @@ private fun PickedStrip(state: MediaComposeState, copy: MediaComposeCopy, compos
                     Modifier.size(CircasoSizes.controlMd).clip(CircasoShapes.sm).background(c.fill)
                         .then(if (on) Modifier.border(2.dp, c.ink, CircasoShapes.sm) else Modifier)
                         .pressable(enabled = !locked, onClick = { composer.select(i) })
-                        .semantics { contentDescription = "${copy.itemNoun} ${i + 1} of ${state.items.size}" + if (item.tooLong) ", needs trimming" else ""; selected = on; role = Role.Tab },
+                        .semantics { contentDescription = "${copy.itemNoun} ${i + 1} of ${state.items.size}" + if (state.needsTrim(item)) ", needs trimming" else ""; selected = on; role = Role.Tab },
                     contentAlignment = Alignment.Center,
                 ) {
                     val picture = media?.thumb ?: media?.bytes?.takeIf { media.mime.startsWith("image") }
                     if (picture != null) coil3.compose.AsyncImage(picture, null, Modifier.fillMaxSize().graphicsLayer { alpha = if (on) 1f else 0.7f }, contentScale = ContentScale.Crop)
                     if (item.capture is ComposerCapture.Document) CircasoIconImage(CircasoIcon.Document, c.ink, Modifier.size(20.dp))
-                    if (item.tooLong) CircasoIconImage(CircasoIcon.Scissors, c.ink, Modifier.size(16.dp))
+                    if (state.needsTrim(item)) CircasoIconImage(CircasoIcon.Scissors, c.ink, Modifier.size(16.dp))
                 }
             }
         }
@@ -499,7 +501,7 @@ private fun LibraryTile(
     Box(
         modifier.clip(shape).background(c.fill).pressable(onLongClick = onLongClick, onClick = onClick)
             .semantics(mergeDescendants = true) {
-                contentDescription = (if (video) "Video, ${clock(item.durationMs ?: 0)}" else "Photo") + if (number != null) ", selected, $number" else ""
+                contentDescription = (if (video) "Video, ${longClock(item.durationMs ?: 0)}" else "Photo") + if (number != null) ", selected, $number" else ""
                 role = if (showTick) Role.Checkbox else Role.Button
                 if (showTick) selected = number != null
             },
@@ -678,18 +680,34 @@ private fun GalleryScreen(gallery: GalleryState, state: MediaComposeState, compo
 }
 
 /**
- * M3b: trim a video. The frame on the stage, Cancel and Done at the top, "0:58 selected of 2:14" and the filmstrip with
- * two handles below. The window is at most a minute and at least a second; the trimmed copy stays on this phone until
- * it is sent.
+ * M3b: trim a video. The video itself on the stage, held at the edge being dragged, Cancel and Done at the top,
+ * "0:58 selected of 2:14" and the filmstrip with two handles below. The window is at most the limit and at least a
+ * second; the trimmed copy stays on this phone until it is sent.
  */
 @Composable
 private fun TrimScreen(trim: TrimState, state: MediaComposeState, copy: MediaComposeCopy, composer: MediaComposer) {
     val c = CircasoTheme.colors
     val t = CircasoTheme.typography
     Box(Modifier.fillMaxSize().background(c.bg).pointerInput(Unit) { detectTapGestures { } }) {
-        val thumb = (state.items.getOrNull(trim.index)?.capture as? ComposerCapture.Shot)?.media?.thumb
-        val still = trim.frames.getOrNull(trim.frames.size / 2) ?: thumb
-        if (still != null) coil3.compose.AsyncImage(still, null, Modifier.fillMaxSize().graphicsLayer { alpha = 0.9f }, contentScale = ContentScale.Crop)
+        val media = (state.items.getOrNull(trim.index)?.capture as? ComposerCapture.Shot)?.media
+        // The stage is the video itself, held at the edge being dragged, at full resolution: never a filmstrip frame
+        // blown up (they are 160 px), so what the person sees is exactly the picture they will send.
+        val path = media?.path
+        if (path != null) {
+            com.circaso.core.platform.MomentVideo(
+                path, playing = false, muted = true, poster = media.thumb, positionMs = trim.previewMs,
+                modifier = Modifier.fillMaxSize().semantics { contentDescription = "Video at ${longClock(trim.previewMs)}" },
+            )
+        } else {
+            (trim.frames.getOrNull(trim.frames.size / 2) ?: media?.thumb)?.let { coil3.compose.AsyncImage(it, null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop) }
+        }
+        // Shades behind Cancel and Done, and under the clock, the strip and the hint, so they read on any picture
+        // (design shade-top/bot, the viewer's heights).
+        Box(Modifier.fillMaxWidth().height(200.dp).background(androidx.compose.ui.graphics.Brush.verticalGradient(listOf(c.scrim, androidx.compose.ui.graphics.Color.Transparent))))
+        Box(
+            Modifier.align(Alignment.BottomCenter).fillMaxWidth().height(260.dp)
+                .background(androidx.compose.ui.graphics.Brush.verticalGradient(listOf(androidx.compose.ui.graphics.Color.Transparent, c.scrim))),
+        )
         Row(
             Modifier.fillMaxWidth().statusBarsPadding().padding(horizontal = CircasoSpacing.s4, vertical = CircasoSpacing.s2),
             verticalAlignment = Alignment.CenterVertically,
@@ -704,8 +722,7 @@ private fun TrimScreen(trim: TrimState, state: MediaComposeState, copy: MediaCom
         ) {
             BasicText(
                 if (trim.working) "Trimming…" else "${longClock(trim.selectedMs)} selected of ${longClock(trim.durationMs)}",
-                Modifier.clip(CircasoShapes.pill).background(c.scrim).padding(horizontal = 12.dp, vertical = 4.dp)
-                    .semantics { liveRegion = androidx.compose.ui.semantics.LiveRegionMode.Polite },
+                Modifier.semantics { liveRegion = androidx.compose.ui.semantics.LiveRegionMode.Polite },
                 style = t.subhead.copy(color = c.ink, fontWeight = FontWeight.SemiBold, fontFeatureSettings = "tnum"),
             )
             TrimBar(trim, composer)
@@ -714,23 +731,32 @@ private fun TrimScreen(trim: TrimState, state: MediaComposeState, copy: MediaCom
     }
 }
 
-/** The filmstrip with its two handles (design M3b): drag an edge to move it, the middle to slide the whole window. */
+/**
+ * The filmstrip with its two handles (design M3b): drag an edge to move it, the middle to slide the whole window. The
+ * strip sits [HandleReach] in from its touch area on each side, so the handles are clear of the screen edges, where the
+ * phone's back swipe takes the touch first (Pasaka, 2026-11-07: on a clip under a minute both handles sat on the edges
+ * and wouldn't move); on Android the area is also excluded from that swipe. Each drag is measured from where it began,
+ * so no movement is lost between frames.
+ */
 @Composable
 private fun TrimBar(trim: TrimState, composer: MediaComposer) {
     val c = CircasoTheme.colors
     val handle = 12.dp
+    val density = androidx.compose.ui.platform.LocalDensity.current
+    val reachPx = with(density) { HandleReach.toPx() }
     var widthPx by androidx.compose.runtime.remember { androidx.compose.runtime.mutableIntStateOf(1) }
     val latest by androidx.compose.runtime.rememberUpdatedState(trim)
     Box(
-        Modifier.fillMaxWidth().height(56.dp).clip(CircasoShapes.sm).background(c.fill)
-            .onSizeChanged { widthPx = it.width.coerceAtLeast(1) }
+        Modifier.fillMaxWidth().height(56.dp)
+            .excludeSystemGestures()
+            .onSizeChanged { widthPx = (it.width - 2 * reachPx).toInt().coerceAtLeast(1) }
             .semantics {
                 contentDescription = "Trim"
                 stateDescription = "${longClock(trim.startMs)} to ${longClock(trim.endMs)}"
                 // Screen readers: move the window a few seconds at a time.
                 customActions = listOf(
-                    androidx.compose.ui.semantics.CustomAccessibilityAction("Later by 5 seconds") { val x = latest; composer.setTrim(x.startMs + 5_000, x.endMs + 5_000); true },
-                    androidx.compose.ui.semantics.CustomAccessibilityAction("Earlier by 5 seconds") { val x = latest; composer.setTrim(x.startMs - 5_000, x.endMs - 5_000); true },
+                    androidx.compose.ui.semantics.CustomAccessibilityAction("Later by 5 seconds") { val x = latest; composer.slideTrim(x.startMs, x.endMs, 5_000); true },
+                    androidx.compose.ui.semantics.CustomAccessibilityAction("Earlier by 5 seconds") { val x = latest; composer.slideTrim(x.startMs, x.endMs, -5_000); true },
                     androidx.compose.ui.semantics.CustomAccessibilityAction("Shorter by 5 seconds") { val x = latest; composer.setTrim(x.startMs, x.endMs - 5_000); true },
                     androidx.compose.ui.semantics.CustomAccessibilityAction("Longer by 5 seconds") { val x = latest; composer.setTrim(x.startMs, x.endMs + 5_000); true },
                 )
@@ -738,46 +764,54 @@ private fun TrimBar(trim: TrimState, composer: MediaComposer) {
             .pointerInput(trim.durationMs) {
                 val edge = 28.dp.toPx()
                 var grab = 0 // -1 start, 1 end, 0 the window
+                var fromStart = 0L
+                var fromEnd = 0L
+                var travelled = 0f
                 detectHorizontalDragGestures(
                     onDragStart = { at ->
                         val x = latest
-                        val startX = x.startMs.toFloat() / x.durationMs * widthPx
-                        val endX = x.endMs.toFloat() / x.durationMs * widthPx
-                        grab = when { kotlin.math.abs(at.x - startX) < edge -> -1; kotlin.math.abs(at.x - endX) < edge -> 1; else -> 0 }
+                        fromStart = x.startMs; fromEnd = x.endMs; travelled = 0f
+                        val startX = reachPx + x.startMs.toFloat() / x.durationMs * widthPx
+                        val endX = reachPx + x.endMs.toFloat() / x.durationMs * widthPx
+                        val toStart = kotlin.math.abs(at.x - startX)
+                        val toEnd = kotlin.math.abs(at.x - endX)
+                        // The nearer edge wins, so a short window's two handles can both be caught.
+                        grab = when { toStart < edge && toStart <= toEnd -> -1; toEnd < edge -> 1; else -> 0 }
                     },
                 ) { change, dx ->
                     change.consume()
-                    val x = latest
-                    val dMs = (dx / widthPx * x.durationMs).toLong()
+                    travelled += dx
+                    val dMs = (travelled / widthPx * latest.durationMs).toLong()
                     when (grab) {
-                        -1 -> composer.setTrim(x.startMs + dMs, x.endMs)
-                        1 -> composer.setTrim(x.startMs, x.endMs + dMs)
-                        else -> {
-                            val shift = dMs.coerceIn(-x.startMs, x.durationMs - x.endMs)
-                            composer.setTrim(x.startMs + shift, x.endMs + shift)
-                        }
+                        -1 -> composer.setTrim(fromStart + dMs, fromEnd)
+                        1 -> composer.setTrim(fromStart, fromEnd + dMs)
+                        else -> composer.slideTrim(fromStart, fromEnd, dMs)
                     }
                 }
             },
     ) {
-        Row(Modifier.fillMaxSize()) {
-            if (trim.frames.isEmpty()) Box(Modifier.fillMaxSize())
-            trim.frames.forEach { f ->
-                coil3.compose.AsyncImage(f, null, Modifier.weight(1f).fillMaxHeight().graphicsLayer { alpha = 0.45f }, contentScale = ContentScale.Crop)
+        Box(Modifier.fillMaxSize().padding(horizontal = HandleReach).clip(CircasoShapes.sm).background(c.fill)) {
+            Row(Modifier.fillMaxSize()) {
+                if (trim.frames.isEmpty()) Box(Modifier.fillMaxSize())
+                trim.frames.forEach { f ->
+                    coil3.compose.AsyncImage(f, null, Modifier.weight(1f).fillMaxHeight().graphicsLayer { alpha = 0.45f }, contentScale = ContentScale.Crop)
+                }
             }
-        }
-        val density = androidx.compose.ui.platform.LocalDensity.current
-        val left = with(density) { (trim.startMs.toFloat() / trim.durationMs * widthPx).toDp() }
-        val width = with(density) { ((trim.endMs - trim.startMs).toFloat() / trim.durationMs * widthPx).toDp() }
-        Box(
-            Modifier.offset(x = left).width(width).fillMaxHeight()
-                .border(androidx.compose.foundation.BorderStroke(3.dp, c.ink), CircasoShapes.sm),
-        ) {
-            Box(Modifier.align(Alignment.CenterStart).width(handle).fillMaxHeight().background(c.ink))
-            Box(Modifier.align(Alignment.CenterEnd).width(handle).fillMaxHeight().background(c.ink))
+            val left = with(density) { (trim.startMs.toFloat() / trim.durationMs * widthPx).toDp() }
+            val width = with(density) { ((trim.endMs - trim.startMs).toFloat() / trim.durationMs * widthPx).toDp() }
+            Box(
+                Modifier.offset(x = left).width(width).fillMaxHeight()
+                    .border(androidx.compose.foundation.BorderStroke(3.dp, c.ink), CircasoShapes.sm),
+            ) {
+                Box(Modifier.align(Alignment.CenterStart).width(handle).fillMaxHeight().background(c.ink))
+                Box(Modifier.align(Alignment.CenterEnd).width(handle).fillMaxHeight().background(c.ink))
+            }
         }
     }
 }
+
+/** How far the trim strip sits inside its touch area on each side (clear of the edge swipes, and easy to grab). */
+private val HandleReach = CircasoSpacing.s5
 
 /** A full-screen layer over the stage: in with a short rise and fade, out with a fade; the last value draws the exit. */
 @Composable
@@ -796,13 +830,21 @@ private fun <T : Any> Layer(value: T?, content: @Composable (T) -> Unit) {
 }
 
 /**
- * Upload progress on a thumbnail while it goes (the moment ring's M6 language, on a chat's photo, video or file): a
- * faint track and the real share of bytes sent filling clockwise; before the first byte, a quarter arc turning.
+ * Upload progress while something goes (M6): a track and the real share of bytes sent filling clockwise, eased between
+ * steps and never running backwards; before the first byte, an arc turning. The same ring on my moment's avatar
+ * (drawn [outset] outside it) and on a chat's photo, video or file. Both animations are read only while drawing.
  */
 @Composable
-fun UploadRing(progress: Float?, modifier: Modifier = Modifier, ink: androidx.compose.ui.graphics.Color = CircasoTheme.colors.ink) {
+fun UploadRing(
+    progress: Float?,
+    modifier: Modifier = Modifier,
+    ink: androidx.compose.ui.graphics.Color = CircasoTheme.colors.ink,
+    track: androidx.compose.ui.graphics.Color = ink.copy(alpha = 0.3f),
+    stroke: Dp = 3.dp,
+    outset: Dp = 0.dp,
+    spinSweep: Float = 90f,
+) {
     val reduce = CircasoTheme.reduceMotion
-    // Both are read only while drawing, so a turning or filling ring redraws without recomposing the bubble.
     val angle = if (reduce || progress != null) null else androidx.compose.animation.core.rememberInfiniteTransition().animateFloat(
         0f, 360f, androidx.compose.animation.core.infiniteRepeatable(
             androidx.compose.animation.core.tween(CircasoMotion.MomentMs * 2, easing = androidx.compose.animation.core.LinearEasing),
@@ -818,12 +860,12 @@ fun UploadRing(progress: Float?, modifier: Modifier = Modifier, ink: androidx.co
     androidx.compose.foundation.Canvas(
         modifier.semantics { if (progress != null) progressBarRangeInfo = androidx.compose.ui.semantics.ProgressBarRangeInfo(progress, 0f..1f) },
     ) {
-        val w = 3.dp.toPx()
-        val inset = w / 2
-        val arc = androidx.compose.ui.geometry.Size(size.width - w, size.height - w)
-        val topLeft = androidx.compose.ui.geometry.Offset(inset, inset)
-        drawArc(ink.copy(alpha = 0.3f), 0f, 360f, false, topLeft, arc, style = androidx.compose.ui.graphics.drawscope.Stroke(w))
+        val w = stroke.toPx()
+        val out = outset.toPx() + (if (outset > 0.dp) w / 2 else -w / 2)
+        val arc = androidx.compose.ui.geometry.Size(size.width + 2 * out, size.height + 2 * out)
+        val topLeft = androidx.compose.ui.geometry.Offset(-out, -out)
+        drawArc(track, 0f, 360f, false, topLeft, arc, style = androidx.compose.ui.graphics.drawscope.Stroke(w))
         if (progress != null) drawArc(ink, -90f, 360f * fill.value, false, topLeft, arc, style = androidx.compose.ui.graphics.drawscope.Stroke(w, cap = androidx.compose.ui.graphics.StrokeCap.Round))
-        else drawArc(ink, (angle?.value ?: 0f) - 90f, 90f, false, topLeft, arc, style = androidx.compose.ui.graphics.drawscope.Stroke(w, cap = androidx.compose.ui.graphics.StrokeCap.Round))
+        else drawArc(ink, (angle?.value ?: 0f) - 90f, spinSweep, false, topLeft, arc, style = androidx.compose.ui.graphics.drawscope.Stroke(w, cap = androidx.compose.ui.graphics.StrokeCap.Round))
     }
 }

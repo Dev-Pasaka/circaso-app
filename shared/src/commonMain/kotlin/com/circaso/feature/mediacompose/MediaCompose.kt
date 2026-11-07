@@ -42,8 +42,8 @@ sealed interface ComposerCapture {
  */
 data class ComposerItem(val capture: ComposerCapture, val caption: String = "", val unplayable: Boolean = false) {
     val video: CapturedMedia? get() = (capture as? ComposerCapture.Shot)?.takeIf { it.video }?.media
-    /** Longer than a minute: it opens the trimmer, and can't be sent until it has been trimmed (M3b). */
-    val tooLong: Boolean get() = (video?.durationMs ?: 0) > MomentMediaMaxMs + 500
+    /** Longer than [maxMs] (a moment's minute): it opens the trimmer, and can't be sent until it has been trimmed (M3b). */
+    fun tooLong(maxMs: Long): Boolean = (video?.durationMs ?: 0) > maxMs + 500
 }
 
 /** The gallery's tabs (M3). */
@@ -77,8 +77,45 @@ data class TrimState(
     /** The video was over a minute: Cancel takes it out instead of keeping the long one. */
     val required: Boolean,
     val working: Boolean = false,
+    /** The moment the stage shows: the edge last dragged, so the person sees exactly where the cut falls. */
+    val previewMs: Long = startMs,
 ) {
     val selectedMs: Long get() = endMs - startMs
+}
+
+/**
+ * The trim window's maths (M3b), apart from any screen. [maxMs] (a moment's minute, [MaxMs]) is the most a clip may be,
+ * not a fixed window: any clip, short or long, can be cut to anything from [MinMs] to [maxMs], with either edge or the
+ * whole window moved.
+ */
+object TrimWindow {
+    const val MinMs = 1_000L
+    val MaxMs get() = MomentMediaMaxMs
+
+    /** Where the window opens: the whole clip when it fits, else its first [maxMs]. */
+    fun initial(durationMs: Long, maxMs: Long = MaxMs): Pair<Long, Long> = 0L to minOf(durationMs, maxMs)
+
+    /**
+     * [startMs] and [endMs] asked for, given the window was [oldStart]..[oldEnd]: kept inside the clip, at least [MinMs]
+     * (or the whole clip, if shorter) and at most [maxMs]. Under the minimum the edge being dragged stops; past the
+     * maximum the other edge follows it.
+     */
+    fun clamp(durationMs: Long, oldStart: Long, startMs: Long, endMs: Long, maxMs: Long = MaxMs): Pair<Long, Long> {
+        val min = minOf(MinMs, durationMs)
+        var start = startMs.coerceIn(0, durationMs)
+        var end = endMs.coerceIn(0, durationMs)
+        val movedStart = start != oldStart
+        if (end - start < min) { if (movedStart) start = (end - min).coerceAtLeast(0) else end = (start + min).coerceAtMost(durationMs) }
+        if (end - start < min) { start = (end - min).coerceAtLeast(0); end = (start + min).coerceAtMost(durationMs) }
+        if (end - start > maxMs) { if (movedStart) end = start + maxMs else start = end - maxMs }
+        return start to end
+    }
+
+    /** The whole window slid by [deltaMs], stopping at either end of the clip; its length never changes. */
+    fun slide(durationMs: Long, startMs: Long, endMs: Long, deltaMs: Long): Pair<Long, Long> {
+        val shift = deltaMs.coerceIn(-startMs, durationMs - endMs)
+        return (startMs + shift) to (endMs + shift)
+    }
 }
 
 /** Everything the shared composer shows: the camera, the strip, the gallery, the trimmer and the review. */
@@ -105,12 +142,16 @@ data class MediaComposeState(
     /** Re-encoding a video that is too large to send as it is. */
     val preparing: Boolean = false,
     val error: String? = null,
+    /** The longest video that may go untrimmed: a moment's minute, or the chat's limit ([ChatVideoMaxMs]). */
+    val maxVideoMs: Long = MomentMediaMaxMs,
 ) {
     val item: ComposerItem? get() = items.getOrNull(current)
+    /** Over [maxVideoMs]: opens the trimmer, and holds Send until it is trimmed. */
+    fun needsTrim(item: ComposerItem): Boolean = item.tooLong(maxVideoMs)
     val capture: ComposerCapture? get() = item?.capture
     val caption: String get() = item?.caption.orEmpty()
     /** Every item can go: nothing is waiting for the trimmer, nothing is still being made smaller. */
-    val ready: Boolean get() = items.isNotEmpty() && items.none { it.tooLong } && trim == null && !preparing
+    val ready: Boolean get() = items.isNotEmpty() && items.none { needsTrim(it) } && trim == null && !preparing
 }
 
 /** What one item came to when it was read for sending; see [MediaComposer.prepare]. */
@@ -142,6 +183,7 @@ class MediaComposer(
     /** The largest file that may be sent: the server's attachment limit, less encryption. */
     private val maxBytes: Long = MomentMediaMaxBytes,
 ) {
+    // The video limit lives in the state ([MediaComposeState.maxVideoMs]), so the screen and Send read the same one.
     private var recentsJob: Job? = null
     private var trimJob: Job? = null
     // A release can arrive while the recording is still starting (a permission prompt, the encoder warming up). It is
@@ -307,7 +349,7 @@ class MediaComposer(
             leftOut.takeIf { it > 0 }?.let { "Moments are photos and videos, so ${if (it == 1) "the document was" else "$it documents were"} left out." },
         )
         update { s ->
-            val long = added.indexOfFirst { it.tooLong }
+            val long = added.indexOfFirst { s.needsTrim(it) }
             s.copy(
                 loadingPick = false, items = s.items + added, current = s.items.size + long.coerceAtLeast(0),
                 error = notes.joinToString(" ").ifBlank { null } ?: s.error,
@@ -332,7 +374,7 @@ class MediaComposer(
                     else -> {
                         val added = media.take(maxItems - s.items.size).map { m -> ComposerItem(ComposerCapture.Shot(m)) }
                         // The first one over a minute goes on the stage, so its trimmer opens straight away.
-                        val long = added.indexOfFirst { it.tooLong }
+                        val long = added.indexOfFirst { s.needsTrim(it) }
                         s.copy(loadingPick = false, items = s.items + added, current = s.items.size + long.coerceAtLeast(0), gallery = null, selecting = false, selection = emptyList())
                     }
                 }
@@ -373,7 +415,7 @@ class MediaComposer(
 
     private fun openTrimIfNeeded() {
         val s = state
-        if (s.trim == null && s.item?.tooLong == true) openTrim(required = true)
+        if (s.trim == null && s.item?.let(s::needsTrim) == true) openTrim(required = true)
     }
 
     /** The trimmer for the video on the stage: a minute from the start to begin with. */
@@ -383,7 +425,8 @@ class MediaComposer(
         val video = item.video ?: return
         val path = video.path ?: return
         val duration = video.durationMs?.takeIf { it > 0 } ?: return
-        update { it.copy(trim = TrimState(s.current, duration, 0, minOf(duration, MomentMediaMaxMs), required = required || item.tooLong)) }
+        val (start, end) = TrimWindow.initial(duration, s.maxVideoMs)
+        update { it.copy(trim = TrimState(s.current, duration, start, end, required = required || s.needsTrim(item))) }
         trimJob?.cancel()
         trimJob = scope.launch {
             val frames = library.filmstrip(path, TrimFrames)
@@ -391,15 +434,21 @@ class MediaComposer(
         }
     }
 
-    /** Dragging a handle: the window stays between 1 s and a minute, inside the video. */
+    /** Dragging a handle: the window stays between 1 s and the limit, inside the video ([TrimWindow]). */
     fun setTrim(startMs: Long, endMs: Long) = update { s ->
         val t = s.trim ?: return@update s
-        var start = startMs.coerceIn(0, t.durationMs)
-        var end = endMs.coerceIn(0, t.durationMs)
-        val movedStart = start != t.startMs
-        if (end - start < MinTrimMs) { if (movedStart) start = (end - MinTrimMs).coerceAtLeast(0) else end = (start + MinTrimMs).coerceAtMost(t.durationMs) }
-        if (end - start > MomentMediaMaxMs) { if (movedStart) end = start + MomentMediaMaxMs else start = end - MomentMediaMaxMs }
-        s.copy(trim = t.copy(startMs = start, endMs = end))
+        if (t.working) return@update s
+        val (start, end) = TrimWindow.clamp(t.durationMs, t.startMs, startMs, endMs, s.maxVideoMs)
+        // The stage follows the edge that moved (the start when both did: the window slid).
+        val preview = if (end != t.endMs && start == t.startMs) end else start
+        s.copy(trim = t.copy(startMs = start, endMs = end, previewMs = preview))
+    }
+
+    /** Sliding the whole window by [deltaMs] from where it was when the drag began ([fromStart]..[fromEnd]). */
+    fun slideTrim(fromStart: Long, fromEnd: Long, deltaMs: Long) {
+        val t = state.trim ?: return
+        val (start, end) = TrimWindow.slide(t.durationMs, fromStart, fromEnd, deltaMs)
+        setTrim(start, end)
     }
 
     /** Done: the trimmed copy replaces the original on this phone until it is sent. */
@@ -409,7 +458,7 @@ class MediaComposer(
         val item = state.items.getOrNull(t.index) ?: return
         val path = item.video?.path ?: return
         // The whole video, already a minute or less: nothing to cut.
-        if (t.startMs == 0L && t.endMs >= t.durationMs && !item.tooLong) { update { it.copy(trim = null) }; return }
+        if (t.startMs == 0L && t.endMs >= t.durationMs && !state.needsTrim(item)) { update { it.copy(trim = null) }; return }
         update { it.copy(trim = t.copy(working = true)) }
         scope.launch {
             val cut = library.trim(path, t.startMs, t.endMs)
@@ -511,7 +560,7 @@ class MediaComposer(
         /** Frames in the trim bar's filmstrip (design M3b shows eight). */
         const val TrimFrames = 8
         /** The shortest clip the trimmer keeps. */
-        const val MinTrimMs = 1_000L
+        const val MinTrimMs = TrimWindow.MinMs
         const val MaxCaption = 700
     }
 }

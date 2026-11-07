@@ -1,5 +1,6 @@
 package com.circaso.feature.messaging.presentation
 
+import com.circaso.feature.status.presentation.arcs
 import com.circaso.designsystem.motion.pressable
 import com.circaso.feature.status.presentation.momentRing
 import com.circaso.feature.status.presentation.momentsList
@@ -149,6 +150,10 @@ fun ChatsContent(
     val showMoments = moments != null && state.filter == ChatFilter.Moments
     var mutedOpen by androidx.compose.runtime.saveable.rememberSaveable { androidx.compose.runtime.mutableStateOf(false) }
     val unseenPosters = androidx.compose.runtime.remember(moments?.state?.rings) { moments?.state?.unseenPosters.orEmpty() }
+    // Each poster's arcs, for the ring on their photo in the chat list (one arc per moment, as in Moments).
+    val ringArcs = androidx.compose.runtime.remember(moments?.state?.rings) {
+        moments?.state?.rings.orEmpty().associate { it.posterId to it.arcs() }
+    }
     Box(Modifier.fillMaxSize()) {
     // Room under the last chat for the floating button.
     val fabRoom = if (onNewChat != null) 56.dp + CircasoSpacing.s4 else 0.dp
@@ -218,8 +223,9 @@ fun ChatsContent(
             val peer = summary.chat.peerId?.takeIf { summary.chat.kind != com.circaso.feature.messaging.domain.ChatKind.Group }
             val ringed = peer != null && moments != null && peer in unseenPosters
             ChatRow(
-                summary, now, state.fiat, selected = summary.chat.chatId == selectedChatId,
+                summary, now, state.fiat, selected = summary.chat.chatId == selectedChatId, coinRates = state.coinRates,
                 onAvatar = if (ringed) ({ moments.actions.onOpenRing(peer!!) }) else null,
+                ringArcs = peer?.let { ringArcs[it] },
                 modifier = swap(),
             ) { onOpen(summary.chat.chatId) }
         }
@@ -238,8 +244,11 @@ fun ChatsContent(
 /** [selected]: the chat open in the detail pane beside the list (wide windows), shown as iPad Messages does. */
 private fun ChatRow(
     summary: ChatSummary, now: Long, fiat: com.circaso.feature.wallet.domain.FiatValue? = null, selected: Boolean = false,
+    coinRates: Map<String, String> = emptyMap(),
     /** Set when the person has an unseen moment: their photo has a ring, and tapping it opens the moment. */
     onAvatar: (() -> Unit)? = null,
+    /** The ring's arcs on the photo: one per moment, watched or not (null: no ring). */
+    ringArcs: List<Boolean>? = null,
     modifier: Modifier = Modifier,
     onClick: () -> Unit,
 ) {
@@ -266,7 +275,7 @@ private fun ChatRow(
         // In the person's currency, as on the card itself; a coin with no rate shows as itself.
         is Message.Payment -> (if (latest.outgoing) "You sent" else "${latest.senderName} sent") + " " + run {
             val units = com.circaso.feature.wallet.domain.MinorUnits
-            fiat?.takeIf { units.isDollar(latest.asset) }?.let { f -> com.circaso.feature.wallet.domain.usdcToFiat(latest.amountMinor, f.rate)?.let { com.circaso.feature.wallet.domain.formatFiat(f.currency, it) } }
+            com.circaso.feature.wallet.domain.coinFiatText(latest.amountMinor, latest.asset, fiat, coinRates)
                 ?: units.coinText(latest.amountMinor, latest.asset)
         }
         is Message.Deleted -> "This message was deleted"
@@ -288,7 +297,7 @@ private fun ChatRow(
                 // Round press feedback, and the ring drawn inside the pressable so it moves with the photo on iOS.
                 Modifier.clip(com.circaso.designsystem.theme.CircasoShapes.circle)
                     .pressable(role = androidx.compose.ui.semantics.Role.Button, onClick = onAvatar)
-                    .momentRing(com.circaso.feature.status.presentation.RingStyle.Unseen, c)
+                    .momentRing(ringArcs ?: listOf(false), c)
                     .semantics { contentDescription = "View ${summary.chat.title}'s moment" },
                 imageUrl = summary.chat.avatarUrl,
             )

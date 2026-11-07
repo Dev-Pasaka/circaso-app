@@ -32,6 +32,14 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
+/**
+ * A chat's limits, one named constant each so they are easy to change (Pasaka hasn't decided; 2026-11-07). For now the
+ * same as a moment's: a video up to a minute untrimmed, ten items at once. Chats allowed about 2 minutes and 30 items
+ * before they moved onto the moment composer.
+ */
+const val ChatVideoMaxMs: Long = com.circaso.core.platform.MomentMediaMaxMs
+const val ChatPickMax: Int = com.circaso.core.platform.MomentPickMax
+
 /** Where the attach sheet opens the composer: the camera (with the recents strip), the gallery, or Files. */
 enum class ChatComposeStart {
     Camera, Gallery, Document,
@@ -82,13 +90,14 @@ class ChatMediaComposerViewModel(
     private val shared: () -> List<com.circaso.feature.mediacompose.SharedFile>? = com.circaso.feature.mediacompose.IncomingShares::take,
 ) : ViewModel() {
     private val chatIds = (listOf(chatId) + moreChats).distinct()
-    private val _state = MutableStateFlow(ChatMediaUiState())
+    private val _state = MutableStateFlow(ChatMediaUiState(media = MediaComposeState(maxVideoMs = ChatVideoMaxMs)))
     val state: StateFlow<ChatMediaUiState> = _state.asStateFlow()
 
     val composer = MediaComposer(
         viewModelScope, library, camera, now,
         read = { _state.value.media },
         write = { f -> _state.update { it.copy(media = f(it.media)) } },
+        maxItems = ChatPickMax,
     )
 
     init {

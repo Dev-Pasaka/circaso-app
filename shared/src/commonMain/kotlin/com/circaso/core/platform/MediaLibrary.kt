@@ -111,7 +111,8 @@ expect fun LibraryThumbnail(item: LibraryItem, modifier: Modifier)
  * A moment's video: fills [modifier], no player controls (short-form, Pasaka 2026-11-03). [playing] false pauses
  * (hold to pause), [muted] silences it, [loop] repeats (the composer's review). [poster] (a JPEG, usually the
  * thumbnail) is drawn until the first frame is on screen, and stays if the video can't be played on this phone, so
- * the stage is never a black void; [onUnplayable] tells the screen so it can say so.
+ * the stage is never a black void; [onUnplayable] tells the screen so it can say so. [positionMs], when set, holds the
+ * video still at that moment, at full resolution (the trimmer's stage follows the edge being dragged).
  */
 @Composable
 expect fun MomentVideo(
@@ -122,6 +123,7 @@ expect fun MomentVideo(
     loop: Boolean = false,
     poster: ByteArray? = null,
     onUnplayable: () -> Unit = {},
+    positionMs: Long? = null,
 )
 
 /** Moment audio and video are at most a minute; longer videos open the trimmer, longer audio is refused. */

@@ -10,12 +10,14 @@ import android.media.MediaMetadataRetriever
 import android.net.Uri
 import android.os.Build
 import android.provider.MediaStore
+import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.result.ActivityResultLauncher
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.annotation.OptIn
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
@@ -42,6 +44,7 @@ import androidx.media3.common.MediaItem
 import androidx.media3.common.MimeTypes
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
+import androidx.media3.common.util.Clock
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.effect.Presentation
 import androidx.media3.exoplayer.DefaultRenderersFactory
@@ -50,6 +53,8 @@ import androidx.media3.exoplayer.mediacodec.MediaCodecDecoderException
 import androidx.media3.exoplayer.mediacodec.MediaCodecSelector
 import androidx.media3.exoplayer.mediacodec.MediaCodecUtil
 import androidx.media3.transformer.Composition
+import androidx.media3.transformer.DefaultAssetLoaderFactory
+import androidx.media3.transformer.DefaultDecoderFactory
 import androidx.media3.transformer.DefaultEncoderFactory
 import androidx.media3.transformer.EditedMediaItem
 import androidx.media3.transformer.Effects
@@ -366,44 +371,85 @@ class AndroidMediaLibrary(private val context: Context) : MediaLibrary {
     }
 
     /**
-     * Media3 Transformer (already in the app for chat videos): the clip from [startMs] to [endMs], re-encoded as
-     * H.264 at [MomentVideoBitRate] (720 on the short side at most), so a minute always fits the 32 MiB limit.
+     * Media3 Transformer (already in the app for chat videos): the clip from [startMs] to [endMs], re-encoded as H.264
+     * (High profile where the encoder has it) with [MomentVideoEncoding.plan]: the source's size up to 1080 on the short
+     * side, its frame rate, and a bit rate for that size that the 32 MiB limit allows for this length.
      */
     @OptIn(UnstableApi::class)
     override suspend fun trim(path: String, startMs: Long, endMs: Long): CapturedMedia? {
         val out = File(context.cacheDir, "moment-trim-${System.nanoTime()}.mp4")
-        val meta = withContext(Dispatchers.IO) { metadata(path) }
-        val (inW, inH) = (meta?.width ?: 720) to (meta?.height ?: 1280)
-        val scale = 720f / minOf(inW, inH).coerceAtLeast(1)
-        val (outW, outH) = if (scale >= 1f) (inW / 2 * 2) to (inH / 2 * 2) else ((inW * scale).toInt() / 2 * 2) to ((inH * scale).toInt() / 2 * 2)
+        val source = withContext(Dispatchers.IO) { probeVideo(path) }
+        val plan = MomentVideoEncoding.plan(
+            source?.width ?: 720, source?.height ?: 1280, source?.frameRate, source?.videoBitRate, (endMs - startMs).coerceAtLeast(1),
+        )
         val item = MediaItem.Builder().setUri(Uri.fromFile(File(path)))
             .setClippingConfiguration(MediaItem.ClippingConfiguration.Builder().setStartPositionMs(startMs).setEndPositionMs(endMs).build())
             .build()
+        val resize = source == null || plan.width != source.width || plan.height != source.height
         val edited = EditedMediaItem.Builder(item)
-            .setEffects(Effects(emptyList(), listOf(Presentation.createForWidthAndHeight(outW, outH, Presentation.LAYOUT_SCALE_TO_FIT))))
+            .setEffects(if (resize) Effects(emptyList(), listOf(Presentation.createForWidthAndHeight(plan.width, plan.height, Presentation.LAYOUT_SCALE_TO_FIT))) else Effects.EMPTY)
             .build()
-        val encoder = DefaultEncoderFactory.Builder(context)
-            .setRequestedVideoEncoderSettings(VideoEncoderSettings.Builder().setBitrate(MomentVideoBitRate).build())
-            .build()
+        // A decoder that fails on this phone (the emulator's goldfish H.264 one, some phones' hardware ones) is left
+        // out and the export starts again with the next, as the player does ([failedDecoders]). A hardware encoder that
+        // overshoots its bit rate past the limit gets one more go at four fifths of it.
+        var ok = false
+        var bitRate = plan.bitRate
+        var shrunk = false
+        for (attempt in 0..3) {
+            val encoder = DefaultEncoderFactory.Builder(context)
+                .setRequestedVideoEncoderSettings(VideoEncoderSettings.Builder().setBitrate(bitRate).build())
+                .build()
+            val failed = export(edited, encoder, out)
+            if (failed == null) {
+                if (out.length() > MomentMediaMaxBytes && !shrunk) {
+                    Log.i("MomentVideo", "trim: ${out.length()} bytes is over the limit at ${bitRate / 1000} kbit/s, once more at 80 %")
+                    bitRate = bitRate * 4 / 5; shrunk = true; continue
+                }
+                ok = true; break
+            }
+            if (failed.isEmpty() || !failedDecoders.add(failed)) break
+            Log.i("MomentVideo", "trim: decoder $failed failed, trying the next")
+        }
+        if (!ok || !out.exists()) { out.delete(); return null }
+        return withContext(Dispatchers.IO) {
+            logEncode("trim ${startMs}-${endMs} ms", source, plan, probeVideo(out.absolutePath))
+            val m = metadata(out.absolutePath)
+            CapturedMedia(ByteArray(0), "video/mp4", m?.width, m?.height, durationMs = m?.durationMs ?: (endMs - startMs), thumb = m?.frame?.thumb(), path = out.absolutePath)
+        }
+    }
+
+    /** One Transformer run: null when it worked, else the failed decoder's name ("" for any other failure). */
+    @OptIn(UnstableApi::class)
+    private suspend fun export(edited: EditedMediaItem, encoder: DefaultEncoderFactory, out: File): String? {
+        out.delete()
+        val selector = MediaCodecSelector { mime, secure, tunneling ->
+            MediaCodecUtil.getDecoderInfos(mime, secure, tunneling).filterNot { it.name in failedDecoders }
+        }
+        val decoders = DefaultDecoderFactory.Builder(context).setEnableDecoderFallback(true).setMediaCodecSelector(selector).build()
         // Transformer runs on a thread with a Looper: the main one.
-        val ok = withContext(Dispatchers.Main) {
+        return withContext(Dispatchers.Main) {
             suspendCancellableCoroutine { cont ->
                 val transformer = Transformer.Builder(context)
                     .setVideoMimeType(MimeTypes.VIDEO_H264).setAudioMimeType(MimeTypes.AUDIO_AAC)
                     .setEncoderFactory(encoder)
+                    .setAssetLoaderFactory(DefaultAssetLoaderFactory(
+                        // The five-argument form: the same in the catalog's Media3 and the newer one the app resolves.
+                        context, decoders, Clock.DEFAULT,
+                        androidx.media3.exoplayer.source.DefaultMediaSourceFactory(context),
+                        androidx.media3.datasource.DataSourceBitmapLoader(context),
+                    ))
                     .addListener(object : Transformer.Listener {
-                        override fun onCompleted(composition: Composition, result: ExportResult) { if (cont.isActive) cont.resume(true) }
-                        override fun onError(composition: Composition, result: ExportResult, exception: ExportException) { if (cont.isActive) cont.resume(false) }
+                        override fun onCompleted(composition: Composition, result: ExportResult) { if (cont.isActive) cont.resume(null) }
+                        override fun onError(composition: Composition, result: ExportResult, exception: ExportException) {
+                            Log.w("MomentVideo", "trim failed: ${exception.errorCodeName} ${exception.codecInfo ?: ""}")
+                            val decoder = exception.codecInfo?.takeIf { it.isDecoder }?.name.orEmpty()
+                            if (cont.isActive) cont.resume(decoder)
+                        }
                     })
                     .build()
                 transformer.start(edited, out.absolutePath)
                 cont.invokeOnCancellation { transformer.cancel(); out.delete() }
             }
-        }
-        if (!ok || !out.exists()) { out.delete(); return null }
-        return withContext(Dispatchers.IO) {
-            val m = metadata(out.absolutePath)
-            CapturedMedia(ByteArray(0), "video/mp4", m?.width, m?.height, durationMs = m?.durationMs ?: (endMs - startMs), thumb = m?.frame?.thumb(), path = out.absolutePath)
         }
     }
 
@@ -465,11 +511,13 @@ private val failedDecoders: MutableSet<String> = Collections.synchronizedSet(mut
 
 @OptIn(UnstableApi::class)
 @Composable
-actual fun MomentVideo(path: String, playing: Boolean, muted: Boolean, modifier: Modifier, loop: Boolean, poster: ByteArray?, onUnplayable: () -> Unit) {
+actual fun MomentVideo(path: String, playing: Boolean, muted: Boolean, modifier: Modifier, loop: Boolean, poster: ByteArray?, onUnplayable: () -> Unit, positionMs: Long?) {
     val context = LocalContext.current
     val unplayableNow by rememberUpdatedState(onUnplayable)
     var attempt by remember(path) { mutableIntStateOf(0) }
     var firstFrame by remember(path) { mutableStateOf(false) }
+    // Filled (cropped) or letterboxed: MomentVideoEncoding.fills, decided once the video's size and the view's are known.
+    var fills by remember(path) { mutableStateOf(true) }
     val player = remember(path, attempt) {
         val selector = MediaCodecSelector { mime, secure, tunneling ->
             MediaCodecUtil.getDecoderInfos(mime, secure, tunneling).filterNot { it.name in failedDecoders }
@@ -493,21 +541,43 @@ actual fun MomentVideo(path: String, playing: Boolean, muted: Boolean, modifier:
         player.addListener(listener)
         onDispose { player.removeListener(listener); player.release() }
     }
-    LaunchedEffect(player, playing) { player.playWhenReady = playing }
+    LaunchedEffect(player, playing, positionMs) { player.playWhenReady = playing && positionMs == null }
+    // Scrubbing: the exact frame while the finger rests, the nearest key frame while it moves fast (no queue of seeks).
+    LaunchedEffect(player, positionMs) {
+        val at = positionMs ?: return@LaunchedEffect
+        player.setSeekParameters(androidx.media3.exoplayer.SeekParameters.CLOSEST_SYNC)
+        player.seekTo(at)
+        kotlinx.coroutines.delay(120)
+        player.setSeekParameters(androidx.media3.exoplayer.SeekParameters.EXACT)
+        player.seekTo(at)
+    }
     LaunchedEffect(player, muted) { player.volume = if (muted) 0f else 1f }
     val posterImage = remember(poster) { poster?.let { runCatching { BitmapFactory.decodeByteArray(it, 0, it.size)?.asImageBitmap() }.getOrNull() } }
     Box(modifier) {
-        // A bare TextureView, no PlayerView: nothing of Media3's own UI can ever show (Pasaka, 2026-11-03). The video
-        // is scaled to fill and cropped, centred, as a short-form clip should be. A new player gets a new view.
+        // Behind a letterboxed video: its own poster, blurred, so the bars are the clip's colours and never a void.
+        // Darkened like iOS's dark blur; before Android 12 there is no blur, so no picture there, only the dark stage.
+        if (!fills) {
+            if (posterImage != null && Build.VERSION.SDK_INT >= 31) {
+                Image(posterImage, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize().blur(24.dp).graphicsLayer { scaleX = 1.2f; scaleY = 1.2f })
+            }
+            Box(Modifier.fillMaxSize().background(com.circaso.designsystem.theme.CircasoTheme.colors.scrim))
+        }
+        // A bare TextureView, no PlayerView: nothing of Media3's own UI can ever show (Pasaka, 2026-11-03). A clip
+        // shaped like the screen fills it and is cropped, centred, as short-form video should be; one that would be
+        // cropped and blown up far past fitting (a landscape clip on a phone held upright) fits, letterboxed, so it
+        // stays as sharp as it was shot (Pasaka, 2026-11-07). A new player gets a new view.
         key(player) {
             AndroidView(
                 factory = { ctx ->
                     android.view.TextureView(ctx).also { view ->
+                        view.isOpaque = false // a letterboxed clip shows what is behind it, not undefined pixels
                         player.setVideoTextureView(view)
                         fun crop(videoW: Int, videoH: Int) {
                             if (videoW == 0 || videoH == 0 || view.width == 0 || view.height == 0) return
                             val vw = view.width.toFloat(); val vh = view.height.toFloat()
-                            val scale = max(vw / videoW, vh / videoH)
+                            val fill = MomentVideoEncoding.fills(videoW, videoH, view.width, view.height)
+                            if (fill != fills) fills = fill
+                            val scale = if (fill) max(vw / videoW, vh / videoH) else kotlin.math.min(vw / videoW, vh / videoH)
                             view.setTransform(android.graphics.Matrix().apply {
                                 setScale(videoW * scale / vw, videoH * scale / vh)
                                 postTranslate((vw - videoW * scale) / 2f, (vh - videoH * scale) / 2f)

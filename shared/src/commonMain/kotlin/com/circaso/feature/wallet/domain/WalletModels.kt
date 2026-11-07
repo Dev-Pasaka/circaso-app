@@ -297,6 +297,32 @@ fun multiplyDecimal(a: String, b: String): String? {
  * What one whole coin is in the person's money: its US dollar price × the wallet's rate (USD → local). Null when the
  * coin has no price. Display and typing only: what moves is always the coin amount.
  */
+/**
+ * Every coin this wallet holds, by upper-case symbol, at one whole coin's value in the person's money
+ * ([unitFiatRate]): so a card or line in EURC, ETH… reads in their currency the way USDC does (Pasaka, 2026-11-07).
+ */
+fun coinUnitRates(wallet: Wallet?): Map<String, String> {
+    val usdRate = wallet?.fiat?.rate ?: return emptyMap()
+    return wallet.chains.flatMap { it.assets }.groupBy { it.symbol.uppercase() }
+        .mapNotNull { (symbol, list) -> list.firstNotNullOfOrNull { unitFiatRate(it, usdRate) }?.let { symbol to it } }.toMap()
+}
+
+/** [amountMinor] of [asset] in the person's money ("KES 1,200"), or null when there's no rate for it. */
+fun coinFiatText(amountMinor: String, asset: String, fiat: FiatValue?, unitRates: Map<String, String>): String? {
+    val f = fiat ?: return null
+    val local = if (MinorUnits.isDollar(asset)) usdcToFiat(amountMinor, f.rate)
+    else unitRates[asset.uppercase()]?.let { coinToFiat(amountMinor, MinorUnits.decimalsOf(asset), it) }
+    return local?.let { formatFiat(f.currency, wholeFiat(it)) }
+}
+
+/** The cards' rounding (as USDC's): from 100 up, whole units to the nearest; below that, the cents stay. */
+fun wholeFiat(fiat: String): String {
+    val units = fiat.substringBefore('.').toLongOrNull() ?: return fiat
+    if (units < 100) return fiat
+    val cents = fiat.substringAfter('.', "0").padEnd(2, '0').take(2).toIntOrNull() ?: 0
+    return (if (cents >= 50) units + 1 else units).toString()
+}
+
 fun unitFiatRate(asset: Asset?, usdRate: String?): String? {
     val price = asset?.dollarPrice ?: if (asset == null) "1" else return null
     return usdRate?.let { multiplyDecimal(price, it) }?.takeIf { r -> decimalParts(r)?.let { !MinorUnits.isZero(it.first) } == true }

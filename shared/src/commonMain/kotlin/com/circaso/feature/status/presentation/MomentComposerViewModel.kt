@@ -84,7 +84,7 @@ data class MomentComposerUiState(
     val caption: String get() = media.caption
     val nobody: Boolean get() = audienceCount == 0
     val canShare: Boolean get() = !sharing && !preparing && !nobody && trim == null && when {
-        items.isNotEmpty() -> items.none { it.tooLong }
+        items.isNotEmpty() -> items.none { media.needsTrim(it) }
         mode == ComposerMode.Text -> text.isNotBlank()
         else -> false
     }
@@ -187,6 +187,8 @@ class MomentComposerViewModel(
 
     fun openTrim(required: Boolean = false) = composer.openTrim(required)
     fun setTrim(startMs: Long, endMs: Long) = composer.setTrim(startMs, endMs)
+    /** Sliding the whole window by [deltaMs] from where it was when the drag began ([fromStart]..[fromEnd]). */
+    fun slideTrim(fromStart: Long, fromEnd: Long, deltaMs: Long) = composer.slideTrim(fromStart, fromEnd, deltaMs)
     fun applyTrim() = composer.applyTrim()
     fun cancelTrim() = composer.cancelTrim()
 

@@ -156,11 +156,50 @@ internal fun momentTime(at: Long, now: Long): String {
  * A ring around an avatar, drawn just outside it so a ringed photo is the same size as every other one in its list. Unseen is the action colour, seen a quiet one.
  */
 fun Modifier.momentRing(style: RingStyle, colors: com.circaso.designsystem.theme.CircasoColors): Modifier =
-    if (style == RingStyle.None) this else drawBehind {
+    when (style) {
+        RingStyle.None -> this
+        RingStyle.Unseen -> momentRing(listOf(false), colors)
+        RingStyle.Seen -> momentRing(listOf(true), colors)
+    }
+
+/**
+ * One arc per moment, oldest first, clockwise from the top (Pasaka, 2026-11-07, as WhatsApp's statuses): a moment not
+ * watched yet is drawn in [CircasoColors.ink] (white in dark), a watched one in `fillStrong`. One moment is a whole
+ * ring; the gaps narrow as moments add up so ten still read as a ring.
+ */
+fun Modifier.momentRing(seen: List<Boolean>, colors: com.circaso.designsystem.theme.CircasoColors): Modifier =
+    if (seen.isEmpty()) this else drawBehind {
         val w = 2.dp.toPx()
         val gap = 2.5.dp.toPx()
-        drawCircle(if (style == RingStyle.Unseen) colors.action else colors.fillStrong, radius = size.minDimension / 2 + gap + w / 2, style = Stroke(w))
+        val r = size.minDimension / 2 + gap + w / 2
+        val n = seen.size.coerceAtMost(MaxRingArcs)
+        if (n == 1) {
+            drawCircle(if (seen[0]) colors.fillStrong else colors.ink, radius = r, style = Stroke(w))
+            return@drawBehind
+        }
+        // The visible gap between arcs (the round caps eat into it), narrower when there are many.
+        val gapPx = (if (n <= 8) 3.dp.toPx() else 2.dp.toPx()) + w
+        val gapDeg = (gapPx / r * (180f / kotlin.math.PI.toFloat())).coerceAtMost(360f / n * 0.5f)
+        val step = 360f / n
+        val topLeft = androidx.compose.ui.geometry.Offset(center.x - r, center.y - r)
+        val box = androidx.compose.ui.geometry.Size(r * 2, r * 2)
+        val stroke = Stroke(w, cap = androidx.compose.ui.graphics.StrokeCap.Round)
+        for (i in 0 until n) {
+            // Past the cap, the last arc stands for the newest moments: unseen if any of them is.
+            val watched = if (i == n - 1 && seen.size > n) seen.drop(n - 1).all { it } else seen[i]
+            drawArc(
+                if (watched) colors.fillStrong else colors.ink,
+                startAngle = -90f + i * step + gapDeg / 2, sweepAngle = (step - gapDeg).coerceAtLeast(1f),
+                useCenter = false, topLeft = topLeft, size = box, style = stroke,
+            )
+        }
     }
+
+/** More than this and each arc would be a dot: the ring stops splitting. */
+private const val MaxRingArcs = 30
+
+/** A ring's arcs: each moment, oldest first, watched or not. */
+fun MomentRing.arcs(): List<Boolean> = moments.sortedBy { it.postedAt }.map { it.viewed }
 
 @Composable
 private fun SectionLabel(text: String, modifier: Modifier) {
@@ -218,9 +257,12 @@ private fun MyMomentRow(state: MomentsUiState, actions: MomentsActions, now: Lon
         onClick = if (ring == MyRing.Seen) actions.onOpenMine else actions.onCompose,
         leading = {
             Box(Modifier.size(MomentAvatar)) {
-                Avatar(state.myName.ifBlank { "Me" }, Modifier.momentRing(if (ring == MyRing.Seen) RingStyle.Seen else RingStyle.None, c), size = MomentAvatar, imageUrl = state.myAvatarUrl)
+                Avatar(state.myName.ifBlank { "Me" }, Modifier.momentRing(if (ring == MyRing.Seen) state.myMoments.sortedBy { it.postedAt }.map { true } else emptyList(), c), size = MomentAvatar, imageUrl = state.myAvatarUrl)
                 when (ring) {
-                    MyRing.Posting -> PostingArc(state.postingProgress, MomentAvatar)
+                    // The shared upload ring (MediaComposeUi), drawn just outside the avatar as the moment ring is.
+                    MyRing.Posting -> com.circaso.feature.mediacompose.UploadRing(
+                        state.postingProgress, Modifier.size(MomentAvatar), c.ink, track = c.fillStrong, stroke = 2.dp, outset = 2.5.dp, spinSweep = 220f,
+                    )
                     MyRing.Waiting -> Badge(c.fillStrong) { CircasoIconImage(CircasoIcon.Clock, c.ink, Modifier.size(BadgeGlyph)) }
                     MyRing.Failed -> Badge(c.critical) { CircasoIconImage(CircasoIcon.Warning, c.bg, Modifier.size(BadgeGlyph)) }
                     // Its own target (Pasaka, 2026-11-03): the plus always opens the camera, even when the row opens my moments.
@@ -250,7 +292,7 @@ private fun RingRow(ring: MomentRing, style: RingStyle, now: Long, modifier: Mod
         modifier,
         label = "${ring.name}, $what, $time" + if (count > 1) ", $count moments" else "",
         onClick = onClick,
-        leading = { Avatar(ring.name, Modifier.momentRing(style, c).alpha(if (dimmed) 0.5f else 1f), size = MomentAvatar, imageUrl = ring.avatarUrl) },
+        leading = { Avatar(ring.name, Modifier.momentRing(ring.arcs(), c).alpha(if (dimmed) 0.5f else 1f), size = MomentAvatar, imageUrl = ring.avatarUrl) },
     ) {
         BasicText(ring.name, style = t.body.copy(color = if (dimmed) c.inkSecondary else c.ink), maxLines = 1, overflow = TextOverflow.Ellipsis)
         BasicText(time, style = t.subhead.copy(color = c.inkSecondary), maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -342,32 +384,6 @@ private fun BoxScope.Badge(color: Color, onClick: (() -> Unit)? = null, label: S
     }
 }
 
-/**
- * Upload progress around my avatar while a moment posts (M6): the real share of bytes sent, filling clockwise from
- * the top. Before any byte has gone (or for a text moment) the arc turns slowly, so it never looks stuck.
- */
-@Composable
-private fun PostingArc(progress: Float?, size: Dp = MomentAvatar) {
-    val c = CircasoTheme.colors
-    val reduce = CircasoTheme.reduceMotion
-    val angle = if (reduce || progress != null) 0f else rememberInfiniteTransition().animateFloat(0f, 360f, infiniteRepeatable(tween(CircasoMotion.MomentMs * 2, easing = LinearEasing), RepeatMode.Restart)).value
-    // Eased between the steps the upload reports, never jumping; straight to the value with reduced motion.
-    val shown = animateFloatAsState(progress ?: 0f, if (reduce) snap() else tween(CircasoMotion.BaseMs)).value
-    Canvas(
-        Modifier.size(size).semantics {
-            // The row's label already says "Posting… 40%"; the arc only adds the progress itself.
-            if (progress != null) progressBarRangeInfo = ProgressBarRangeInfo(progress, 0f..1f)
-        },
-    ) {
-        val w = 2.dp.toPx()
-        val out = 2.5.dp.toPx() + w / 2
-        val topLeft = Offset(-out, -out)
-        val arc = Size(this.size.width + 2 * out, this.size.height + 2 * out)
-        drawArc(c.fillStrong, 0f, 360f, false, topLeft, arc, style = Stroke(w))
-        if (progress != null) drawArc(c.ink, -90f, 360f * shown, false, topLeft, arc, style = Stroke(w, cap = StrokeCap.Round))
-        else drawArc(c.ink, angle - 90f, 220f, false, topLeft, arc, style = Stroke(w))
-    }
-}
 
 /** S1d: skeleton rows, only on the very first open before anything is stored or answered. */
 @Composable
