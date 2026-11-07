@@ -4,64 +4,30 @@ import com.circaso.core.common.AppResult
 import com.circaso.core.platform.AudioPlayer
 import com.circaso.core.platform.AudioRecorder
 import com.circaso.core.platform.GeoPoint
-import com.circaso.core.platform.ImagePicker
 import com.circaso.core.platform.LocationProvider
-import com.circaso.core.platform.PickedImage
 import com.circaso.core.platform.RecordingStart
 import com.circaso.feature.messaging.data.repository.MediaDetails
 import com.circaso.feature.messaging.data.repository.MediaMessages
 
-/** What a thread can send and play besides text (WhatsApp-style): photos, voice notes, the current location. */
+/**
+ * What a thread can play and send besides text (WhatsApp-style): voice notes and the current location. Photos, videos
+ * and documents are sent from ChatMediaComposer (the moment composer's screens).
+ */
 @OptIn(kotlin.io.encoding.ExperimentalEncodingApi::class)
 class ThreadMedia(
     private val media: MediaMessages,
-    private val picker: ImagePicker,
     private val location: LocationProvider,
     private val recorder: AudioRecorder,
     private val player: AudioPlayer,
     private val maps: com.circaso.feature.messaging.data.repository.MapPictures,
     private val live: com.circaso.feature.messaging.data.repository.LiveLocations,
-    private val gallery: com.circaso.core.platform.MediaGallery = com.circaso.core.platform.NoMediaGallery,
-    /** Shrinking a video runs as background work too, so leaving the thread mid-way doesn't stop it (BackgroundUploads). */
-    private val uploads: com.circaso.core.platform.BackgroundUploads = com.circaso.core.platform.NoBackgroundUploads,
 ) {
-    val hasGallery get() = gallery.available
-
-    /** The recent grid (asks for library access the first time); empty when refused. */
-    suspend fun recentMedia(): List<com.circaso.core.platform.GalleryItem> = if (gallery.requestAccess()) gallery.recent() else emptyList()
-
-    suspend fun galleryThumbnail(item: com.circaso.core.platform.GalleryItem, sizePx: Int) = gallery.thumbnail(item, sizePx)
-
-    /**
-     * Each chosen photo or video goes into the queue in the order it was ticked, the caption on the first. A video is
-     * shrunk first (a few seconds a minute of video). Null = all queued fine.
-     */
-    suspend fun sendGalleryMedia(chatId: String, items: List<com.circaso.core.platform.GalleryItem>, caption: String?): String? {
-        items.forEachIndexed { i, item ->
-            val note = caption.takeIf { i == 0 }
-            if (item.video) {
-                val video = uploads.keep(com.circaso.core.platform.UploadKind.Video) { gallery.loadVideo(item) } ?: return "That video couldn't be prepared. Videos up to about 2 minutes can be sent."
-                val thumb = video.thumbJpeg?.let { kotlin.io.encoding.Base64.encode(it) }
-                (media.sendVideo(chatId, video.bytes, video.contentType, video.width, video.height, video.durationMs, thumb, note) as? AppResult.Failure)
-                    ?.let { return "The video couldn't be saved to send. Try again." }
-            } else {
-                val picked = gallery.loadImage(item) ?: return "A photo couldn't be opened. Try another."
-                sendPhoto(chatId, picked, note)?.let { return it }
-            }
-        }
-        return null
-    }
+    /** How far each outgoing file's upload has got, by row: the ring on its thumbnail. */
+    val progress get() = media.progress
 
     /** A video's file to play, downloading and decrypting it first if needed; null with why when it can't be had. */
     suspend fun videoFile(details: MediaDetails) = media.file(details)
     val canShareLocation get() = location.available
-
-    /** The system photo picker; null when nothing was chosen. */
-    suspend fun pickPhoto(): PickedImage? = picker.pick()
-
-    /** The chosen photo, with its caption, goes into the queue (encrypted and uploaded in order). Null = queued fine. */
-    suspend fun sendPhoto(chatId: String, picked: PickedImage, caption: String?): String? =
-        (media.sendImage(chatId, picked.bytes, picked.contentType, picked.width, picked.height, caption) as? AppResult.Failure)?.let { "The photo couldn't be saved to send. Try again." }
 
     /** Where the phone is now (asked only when the person taps Location); null = refused or no fix. */
     suspend fun locate(): GeoPoint? = location.current()

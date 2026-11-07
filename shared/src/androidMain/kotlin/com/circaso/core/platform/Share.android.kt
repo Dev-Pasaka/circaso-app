@@ -50,3 +50,34 @@ actual fun sharePdf(title: String, lines: List<String>) {
         activity.startActivity(Intent.createChooser(send, title))
     }
 }
+
+actual suspend fun openFile(bytes: ByteArray, name: String, mime: String): Boolean {
+    val activity = runCatching { KoinPlatform.getKoin().get<CurrentActivity>().get() }.getOrNull() ?: return false
+    // Up to 32 MB: written off the main thread; only the chooser is shown from it.
+    val file = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+        runCatching {
+            val dir = java.io.File(activity.cacheDir, "shared/open-${System.nanoTime()}").apply { mkdirs() }
+            java.io.File(dir, name.replace(Regex("[/\\\\:*?\"<>|]"), "_").ifBlank { "File" }).also { it.writeBytes(bytes) }
+        }.getOrNull()
+    } ?: return false
+    return runCatching {
+        // The shared cache folder the FileProvider serves (res/xml/shared_files.xml); one folder per open, so two
+        // files with the same name never overwrite each other while one is still open elsewhere.
+        val uri = androidx.core.content.FileProvider.getUriForFile(activity, activity.packageName + ".files", file)
+        val view = Intent(Intent.ACTION_VIEW).apply {
+            setDataAndType(uri, mime.ifBlank { "application/octet-stream" })
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+        if (view.resolveActivity(activity.packageManager) != null) activity.startActivity(Intent.createChooser(view, name))
+        else {
+            // Nothing opens this type: hand it to another app (Files, Drive, email) instead.
+            val send = Intent(Intent.ACTION_SEND).apply {
+                type = mime.ifBlank { "application/octet-stream" }
+                putExtra(Intent.EXTRA_STREAM, uri)
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+            activity.startActivity(Intent.createChooser(send, name))
+        }
+        true
+    }.getOrDefault(false)
+}

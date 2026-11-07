@@ -328,6 +328,7 @@ class ChatSendHandler(
             MediaDetails.Image -> com.circaso.core.platform.UploadKind.Photo
             MediaDetails.Video -> com.circaso.core.platform.UploadKind.Video
             MediaDetails.Voice -> com.circaso.core.platform.UploadKind.VoiceNote
+            MediaDetails.File -> com.circaso.core.platform.UploadKind.File
             else -> null
         } else null
         if (kind == null) return sendNow(item, job)
@@ -619,7 +620,7 @@ class InboxProcessor(
                 chats.touch(dto.chatId, at)
                 if (payment) onPaymentReceived(payload.transferId!!)
             }
-            ChatPayload.Image, ChatPayload.Voice, ChatPayload.Video, ChatPayload.Location, ChatPayload.LiveLocation -> {
+            ChatPayload.Image, ChatPayload.Voice, ChatPayload.Video, ChatPayload.File, ChatPayload.Location, ChatPayload.LiveLocation -> {
                 val details = payload.toMediaDetails() ?: return refuse(dto, "incomplete ${payload.type}")
                 val at = isoToMillis(dto.sentAt) ?: now()
                 dao.insert(

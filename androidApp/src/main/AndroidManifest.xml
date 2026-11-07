@@ -88,6 +88,22 @@
                 <category android:name="android.intent.category.BROWSABLE" />
                 <data android:scheme="circaso" android:host="s" />
             </intent-filter>
+            <!-- Photos, videos and files shared from other apps (2026-11-07): one or several, any type; images and videos
+                 go to the shared media editor, anything else as a document. -->
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="image/*" />
+                <data android:mimeType="video/*" />
+                <data android:mimeType="application/*" />
+                <data android:mimeType="text/*" />
+                <data android:mimeType="audio/*" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.SEND_MULTIPLE" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="*/*" />
+            </intent-filter>
             <!-- The share host IncomingLinks accepts, the same as the filter above. -->
             <meta-data android:name="com.circaso.SHARE_HOST" android:value="${shareHost}" />
         </activity>

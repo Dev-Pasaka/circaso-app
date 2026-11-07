@@ -49,10 +49,10 @@ import com.circaso.feature.status.domain.MomentViewer
 import com.circaso.feature.status.domain.MomentsRepository
 import com.circaso.feature.status.domain.PendingMoment
 import com.circaso.feature.status.domain.PendingState
-import com.circaso.feature.status.presentation.ComposerCapture
-import com.circaso.feature.status.presentation.ComposerMode
+import com.circaso.feature.mediacompose.ComposerCapture
+import com.circaso.feature.mediacompose.ComposerMode
 import com.circaso.feature.status.presentation.ForwardMedia
-import com.circaso.feature.status.presentation.GalleryTab
+import com.circaso.feature.mediacompose.GalleryTab
 import com.circaso.feature.status.presentation.MomentComposerViewModel
 import com.circaso.feature.status.presentation.MomentForwardViewModel
 import com.circaso.feature.status.presentation.MomentForwarder

@@ -117,6 +117,11 @@ data class ChatPayload(
     val liveAt: Long? = null,
     /** A video's first frame (type [Video]): a small base64 JPEG, so the bubble shows before the file loads. */
     val thumb: String? = null,
+    /**
+     * Photos and videos sent together (2026-11-07): the same random id on each, so the receiver shows them as one album.
+     * Optional: an older app ignores it and shows each on its own; each item is still its own message and attachment.
+     */
+    val albumId: String? = null,
     /** A moment's body sealed again for one person (type [MomentBody]): which moment; [text] is the body JSON. */
     val momentId: String? = null,
     /**
@@ -132,6 +137,8 @@ data class ChatPayload(
         const val Voice = "voice"
         const val Location = "location"
         const val Video = "video"
+        /** A document (any file): an attachment like [Image], its name in [label] (2026-11-07). */
+        const val File = "file"
         const val LiveLocation = "liveLocation"
         const val LiveUpdate = "liveUpdate"
         const val LiveStop = "liveStop"

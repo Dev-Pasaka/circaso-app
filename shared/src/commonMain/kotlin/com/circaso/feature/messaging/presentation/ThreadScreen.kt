@@ -146,6 +146,8 @@ fun ThreadScreen(
     onMoneyPromptHandled: () -> Unit = {},
     focusLocalId: Long? = null,
     onOpenMoment: (posterId: String?, momentId: String) -> Unit = { _, _ -> },
+    /** Photos, videos and documents go through the moment composer's screens (2026-11-07): Camera, Gallery or Files. */
+    onComposeMedia: (ChatComposeStart) -> Unit = {},
 ) {
     val state by viewModel.state.collectAsState()
     val pay = quickPay?.let { vm ->
@@ -176,15 +178,12 @@ fun ThreadScreen(
         onLoadOlder = viewModel::onLoadOlder, onSavePeer = viewModel::onSavePeer, onOpenMoment = onOpenMoment, onReactTo = viewModel::onReactTo,
         media = viewModel.media?.let { m ->
             ThreadMediaActions(
-                canShareLocation = m.canShareLocation, onPhoto = viewModel::onSendPhoto, onLocation = viewModel::onSendLocation,
+                canShareLocation = m.canShareLocation, onCompose = onComposeMedia, uploading = m.progress, onLocation = viewModel::onSendLocation,
                 onVoiceStart = viewModel::onVoiceStart, onVoiceEnd = viewModel::onVoiceEnd, load = { d -> m.load(d) }, mapPicture = m::mapPicture,
                 onShareLive = viewModel::onShareLive, onStopLive = viewModel::onStopLive,
                 onPlayVideo = viewModel::onPlayVideo, onCloseVideo = viewModel::onCloseVideo,
-                onGalleryOpen = viewModel::onGalleryOpen, onGalleryToggle = viewModel::onGalleryToggle, onGallerySend = viewModel::onGallerySend,
-                galleryThumb = if (m.hasGallery) m::galleryThumbnail else null,
                 onPlay = viewModel::onPlay, onRetry = viewModel::onRetryMedia,
                 onConfirmLocation = viewModel::onConfirmLocation, onCancelLocation = viewModel::onCancelLocation,
-                onPhotoCaption = viewModel::onPhotoCaption, onConfirmPhoto = viewModel::onConfirmPhoto, onCancelPhoto = viewModel::onCancelPhoto,
             )
         },
     )
@@ -323,8 +322,16 @@ fun ThreadContent(
     val onPlay: (Message.Media) -> Unit = media?.onPlay ?: {}
     val onRetryMedia: (Message.Media) -> Unit = media?.onRetry ?: {}
     var attaching by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(false) }
+    // Collected here but read only inside each media row, so a percent step redraws that row, not the thread.
+    val uploading = media?.uploading?.collectAsState()
     var viewing by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf<ByteArray?>(null) }
+    // An album open full screen (its items and the one tapped), and a failed album's options (all its items).
+    var viewingAlbum by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf<Pair<List<Message.Media>, Int>?>(null) }
+    var selectedAlbum by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf<List<Message.Media>?>(null) }
     var selectedMedia by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf<Message.Media?>(null) }
+    val threadRowList = androidx.compose.runtime.remember(state.messages) { threadRows(state.messages) }
+    // The options sheet closed (any button, or dismissed): the album it was for is let go too.
+    LaunchedEffect(selectedMedia) { if (selectedMedia == null) selectedAlbum = null }
     var reactingTo by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf<String?>(null) }
     // A new message moves the list under the open reaction bubble: close it rather than leave it beside nothing.
     LaunchedEffect(state.messages.lastOrNull()?.localId) { reactingTo = null }
@@ -356,11 +363,12 @@ fun ThreadContent(
     LaunchedEffect(rows) {
         if (rows == 0) return@LaunchedEffect
         if (!focused) {
-            val at = state.messages.indexOfFirst { it.localId == focusLocalId }
+            // By row: an album is one row however many items it holds.
+            val at = threadRowList.indexOfFirst { r -> r.first.localId == focusLocalId || (r is ThreadRow.Album && r.items.any { it.localId == focusLocalId }) }
             if (at >= 0) {
                 focused = true
-                listState.scrollToItem(tail + state.messages.lastIndex - at)
-                highlight = focusLocalId
+                listState.scrollToItem(tail + threadRowList.lastIndex - at)
+                highlight = threadRowList[at].key
                 kotlinx.coroutines.delay(1_600)
                 highlight = null
             }
@@ -490,33 +498,15 @@ fun ThreadContent(
                     CircasoButton("Cancel", { onSelect(null) }, style = ButtonStyle.Plain, size = ButtonSize.Large, block = true)
                 }
             }
-            // Attach (WhatsApp-style): a photo or the current location.
-            LaunchedEffect(attaching) { if (attaching) media?.onGalleryOpen?.invoke() }
+            // Attach: photos, videos and documents open the moment composer's screens (the same camera, strip, gallery,
+            // trimmer, caption and Send, Pasaka 2026-11-07); a location is confirmed on its own sheet below.
             CircasoSheet(visible = attaching, onDismiss = { attaching = false }, label = "Share") {
-              Column(Modifier.fillMaxWidth().animateContentSize(tween(CircasoMotion.BaseMs)), verticalArrangement = Arrangement.spacedBy(CircasoSpacing.s3)) {
+              Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(CircasoSpacing.s1)) {
                 com.circaso.designsystem.chrome.SheetHead("Share", { attaching = false })
-                // WhatsApp's recent grid: tap to tick (numbered in order), send several at once.
-                if (state.gallery.isNotEmpty() && media?.galleryThumb != null) {
-                    GalleryGrid(state.gallery, state.gallerySelected, media.galleryThumb, media.onGalleryToggle)
-                } else if (state.galleryLoading) {
-                    // The grid's own shape while it loads, so the sheet doesn't jump when the photos arrive.
-                    androidx.compose.foundation.lazy.grid.LazyVerticalGrid(
-                        columns = androidx.compose.foundation.lazy.grid.GridCells.Fixed(3),
-                        modifier = Modifier.fillMaxWidth().height(360.dp).clip(com.circaso.designsystem.theme.CircasoShapes.md),
-                        horizontalArrangement = Arrangement.spacedBy(2.dp), verticalArrangement = Arrangement.spacedBy(2.dp), userScrollEnabled = false,
-                    ) { items(9) { Box(Modifier.aspectRatio(1f).background(c.fill)) } }
-                }
-                var caption by androidx.compose.runtime.remember(attaching) { androidx.compose.runtime.mutableStateOf("") }
-                if (state.gallerySelected.isNotEmpty()) {
-                    com.circaso.designsystem.components.CircasoTextField(caption, { caption = it.take(1000) }, label = "Caption", placeholder = "Add a caption")
-                    val n = state.gallerySelected.size
-                    val videos = state.gallerySelected.count { id -> state.gallery.any { it.id == id && it.video } }
-                    val what = when { videos == 0 -> if (n == 1) "Photo" else "$n Photos"; videos == n -> if (n == 1) "Video" else "$n Videos"; else -> "$n Items" }
-                    CircasoButton("Send $what", { attaching = false; media?.onGallerySend?.invoke(caption.trim().takeIf { it.isNotEmpty() }) }, size = ButtonSize.Large, block = true)
-                } else {
-                    AttachOption(CircasoIcon.Photo, "All Photos", "Choose from your library") { attaching = false; media?.onPhoto?.invoke() }
-                    if (media?.canShareLocation == true) AttachOption(CircasoIcon.Pin, "Location", "Your current location") { attaching = false; media.onLocation() }
-                }
+                AttachOption(CircasoIcon.Camera, "Camera", "Take a photo, or hold for a video") { attaching = false; media?.onCompose?.invoke(ChatComposeStart.Camera) }
+                AttachOption(CircasoIcon.Photo, "Photos and Videos", "Choose from your gallery") { attaching = false; media?.onCompose?.invoke(ChatComposeStart.Gallery) }
+                AttachOption(CircasoIcon.Document, "Document", "Send a file, up to 32 MB") { attaching = false; media?.onCompose?.invoke(ChatComposeStart.Document) }
+                if (media?.canShareLocation == true) AttachOption(CircasoIcon.Pin, "Location", "Your current location") { attaching = false; media.onLocation() }
               }
             }
             // A location is only shared after the person sees where it is and confirms.
@@ -565,28 +555,17 @@ fun ThreadContent(
                     }
                 }
             }
-            // The picked photo, with an optional caption, before it goes.
-            CircasoSheet(visible = state.pendingPhoto != null, onDismiss = { media?.onCancelPhoto?.invoke() }, label = "Send photo") {
-                val photo = state.pendingPhoto
-                Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(CircasoSpacing.s3)) {
-                    BasicText("Send photo", style = t.title3.copy(color = c.ink))
-                    if (photo != null) {
-                        val ratio = photo.width?.let { w -> photo.height?.takeIf { it > 0 }?.let { h -> (w.toFloat() / h).coerceIn(0.6f, 1.6f) } } ?: 1f
-                        coil3.compose.AsyncImage(
-                            model = photo.bytes, contentDescription = "The photo you picked", contentScale = androidx.compose.ui.layout.ContentScale.Crop,
-                            modifier = Modifier.fillMaxWidth().heightIn(max = 360.dp).aspectRatio(ratio, matchHeightConstraintsFirst = true).align(Alignment.CenterHorizontally).clip(com.circaso.designsystem.theme.CircasoShapes.lg).background(c.fill),
-                        )
-                    }
-                    com.circaso.designsystem.components.CircasoTextField(state.photoCaption, { media?.onPhotoCaption?.invoke(it) }, "Caption", placeholder = "Add a caption", singleLine = false)
-                    CircasoButton("Send", { media?.onConfirmPhoto?.invoke() }, size = ButtonSize.Large, block = true, enabled = photo != null)
-                    CircasoButton("Cancel", { media?.onCancelPhoto?.invoke() }, style = ButtonStyle.Plain, size = ButtonSize.Large, block = true)
-                }
-            }
             // A photo, voice note or location: send again or discard when it failed, delete for everyone when sent.
-            CircasoSheet(visible = selectedMedia != null, onDismiss = { selectedMedia = null }, label = "Message") {
+            CircasoSheet(visible = selectedMedia != null, onDismiss = { selectedMedia = null; selectedAlbum = null }, label = "Message") {
                 val sm = selectedMedia
+                // An album's options act on its items: send again or discard the ones that failed, delete them all.
+                val album = selectedAlbum
+                val failedOnes = album?.filter { it.state == DeliveryState.Failed } ?: listOfNotNull(sm)
+                val onRetryMedia: (Message.Media) -> Unit = { if (album != null) failedOnes.forEach(onRetryMedia) else onRetryMedia(it) }
+                val onDiscard: (Message.Media) -> Unit = { if (album != null) failedOnes.forEach(onDiscard) else onDiscard(it) }
+                val onDeleteForEveryone: (Message.Media) -> Unit = { if (album != null) album.filter { a -> a.state != DeliveryState.Failed }.forEach(onDeleteForEveryone) else onDeleteForEveryone(it) }
                 if (sm != null) {
-                    BasicText(mediaLabel(sm), style = t.body.copy(color = c.ink))
+                    BasicText(if (album != null) "Album · ${album.size} items" + (if (failedOnes.isNotEmpty() && sm.state == DeliveryState.Failed) " · ${failedOnes.size} not sent" else "") else mediaLabel(sm), style = t.body.copy(color = c.ink))
                     if (sm.state == DeliveryState.Failed) {
                         BasicText(failureText(sm.errorCode), style = t.footnote.copy(color = c.inkSecondary))
                         // A file the server refuses for what it is (too big) fails the same way every time: no false promise.
@@ -601,6 +580,7 @@ fun ThreadContent(
                 }
             }
             ImageViewer(viewing) { viewing = null }
+            AlbumViewer(viewingAlbum, loadMedia, onPlayVideo = { m -> media?.onPlayVideo?.invoke(m) }) { viewingAlbum = null }
             // Fades in and out like the photo viewer; the last path is kept through the fade out.
             var lastVideo by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf<String?>(null) }
             state.videoPath?.let { lastVideo = it }
@@ -644,8 +624,10 @@ fun ThreadContent(
             ) {
                 // Bottom up: what sits under the conversation first, then the messages newest to oldest.
                 threadTail(state, supportReplies, chama, onDecide, onPayRequest, onQuickReply, onCallSupport, onSupportDone)
-                itemsIndexed(state.messages.asReversed(), key = { _, m -> m.localId }) { reversedIndex, m ->
-                    val index = state.messages.lastIndex - reversedIndex
+                // Photos and videos sent together are one row: their album (ThreadAlbums).
+                itemsIndexed(threadRowList.asReversed(), key = { _, row -> row.key }) { _, row ->
+                    val m = row.first
+                    val index = row.index
                     val lit by androidx.compose.animation.animateColorAsState(if (highlight == m.localId) c.fill else androidx.compose.ui.graphics.Color.Transparent, tween(CircasoMotion.BaseMs), label = "found")
                     Box(Modifier.fillMaxWidth().background(lit)) {
                     val previous = state.messages.getOrNull(index - 1)
@@ -669,7 +651,17 @@ fun ThreadContent(
                         is Message.Unreadable -> MessageColumn(false) { ChatBubble("A message from ${m.senderName} this phone can't show", false, quiet = true) }
                         is Message.System -> SystemLine(m.text)
                         is Message.Call -> CallRow(m, onCallBack = onCall?.let { call -> { call(m.video) } })
-                        is Message.Media -> {
+                        is Message.Media -> if (row is ThreadRow.Album) {
+                            val firstOfRun = !(previous is Message.Media && previous.senderId == m.senderId && previous.outgoing == m.outgoing) &&
+                                !(previous is Message.Text && previous.senderId == m.senderId && previous.outgoing == m.outgoing)
+                            val items = row.items
+                            AlbumRow(
+                                items, state.isGroup, firstOfRun, load = loadMedia,
+                                progress = uploading?.let { u -> androidx.compose.runtime.remember(items, u) { androidx.compose.runtime.derivedStateOf { albumProgress(items) { id -> u.value[id] } } }.value },
+                                onOpen = { i -> viewingAlbum = items to i },
+                                onOptions = { selectedAlbum = items; selectedMedia = items.firstOrNull { it.state == DeliveryState.Failed } ?: items.last() },
+                            )
+                        } else {
                             val firstOfRun = !(previous is Message.Media && previous.senderId == m.senderId && previous.outgoing == m.outgoing) &&
                                 !(previous is Message.Text && previous.senderId == m.senderId && previous.outgoing == m.outgoing)
                             MediaRow(
@@ -679,6 +671,7 @@ fun ThreadContent(
                                 avatarUrl = state.chat?.members?.firstOrNull { it.userId == m.senderId }?.avatarUrl,
                                 onOpenLocation = { onOpenLocation(m) }, onStopLive = { media?.onStopLive?.invoke(m) }, now = liveNow,
                                 onPlayVideo = { media?.onPlayVideo?.invoke(m) }, videoLoading = state.videoLoading == m.localId,
+                                uploadProgress = uploading?.let { u -> androidx.compose.runtime.remember(m.localId, u) { androidx.compose.runtime.derivedStateOf { u.value[m.localId] } }.value },
                                 react = reactUi(m.messageId, options = if (m.state == DeliveryState.Failed || m.outgoing) ({ selectedMedia = m }) else null),
                             )
                         }
@@ -1004,27 +997,23 @@ private fun CallRow(m: Message.Call, onCallBack: (() -> Unit)?) {
 /** What the thread can do with media; the screen's own slice of ThreadMedia. */
 class ThreadMediaActions(
     val canShareLocation: Boolean,
-    val onPhoto: () -> Unit,
+    /** Opens the shared media composer (the moment composer's screens) for photos, videos or a document. */
+    val onCompose: (ChatComposeStart) -> Unit,
+    /** How far each outgoing file's upload has got, by row (MediaMessages.progress); each row reads only its own. */
+    val uploading: kotlinx.coroutines.flow.StateFlow<Map<Long, Float>> = kotlinx.coroutines.flow.MutableStateFlow(emptyMap()),
     val onLocation: () -> Unit,
     val onVoiceStart: () -> Unit,
     val onVoiceEnd: (send: Boolean) -> Unit,
     val load: suspend (com.circaso.feature.messaging.data.repository.MediaDetails) -> com.circaso.feature.messaging.data.repository.MediaLoad,
     val mapPicture: MapPictureLoader? = null,
     val onShareLive: (durationMs: Long) -> Unit = {},
-    val onGalleryOpen: () -> Unit = {},
     val onPlayVideo: (Message.Media) -> Unit = {},
     val onCloseVideo: () -> Unit = {},
-    val onGalleryToggle: (com.circaso.core.platform.GalleryItem) -> Unit = {},
-    val onGallerySend: (caption: String?) -> Unit = {},
-    val galleryThumb: (suspend (com.circaso.core.platform.GalleryItem, Int) -> ByteArray?)? = null,
     val onStopLive: (Message.Media) -> Unit = {},
     val onPlay: (Message.Media) -> Unit,
     val onRetry: (Message.Media) -> Unit,
     val onConfirmLocation: () -> Unit,
     val onCancelLocation: () -> Unit,
-    val onPhotoCaption: (String) -> Unit,
-    val onConfirmPhoto: () -> Unit,
-    val onCancelPhoto: () -> Unit,
 )
 
 /** "Photo", "Voice message (0:12)", "Location": how media reads in the chat list. */
@@ -1032,6 +1021,7 @@ internal fun mediaLabel(m: Message.Media): String = when {
     m.isImage -> m.details.caption?.let { "Photo · $it" } ?: "Photo"
     m.isVoice -> "Voice message" + (m.details.durationMs?.let { " (${clock(it / 1000)})" } ?: "")
     m.isVideo -> (m.details.caption?.let { "Video · $it" } ?: "Video") + (m.details.durationMs?.let { " (${clock(it / 1000)})" } ?: "")
+    m.isFile -> "Document · " + (m.details.caption ?: m.details.label ?: "File")
     else -> m.details.label?.let { "Location · $it" } ?: "Location"
 }
 
@@ -1047,53 +1037,99 @@ private fun AttachOption(icon: CircasoIcon, title: String, sub: String, onClick:
 }
 
 /**
- * The attach sheet's grid of recent photos and videos (WhatsApp-style): three across, a hollow ring that becomes a
- * numbered tick when chosen, and a video's length on its tile.
+ * How an outgoing photo or video is going, on the picture itself (the moment composer's language): a soft scrim with the
+ * upload ring filling while it goes, a clock while it waits for a connection, the critical badge when it didn't send.
+ * Nothing once it has gone.
  */
 @Composable
-private fun GalleryGrid(
-    items: List<com.circaso.core.platform.GalleryItem>,
-    selected: List<String>,
-    thumb: suspend (com.circaso.core.platform.GalleryItem, Int) -> ByteArray?,
-    onToggle: (com.circaso.core.platform.GalleryItem) -> Unit,
+internal fun androidx.compose.foundation.layout.BoxScope.SendState(state: DeliveryState, progress: Float?) {
+    val ink = com.circaso.designsystem.theme.DarkColors.ink
+    when (state) {
+        DeliveryState.Sending, DeliveryState.Waiting -> Box(Modifier.matchParentSize().background(com.circaso.designsystem.theme.DarkColors.scrim), contentAlignment = Alignment.Center) {
+            if (state == DeliveryState.Waiting && progress == null) CircasoIconImage(CircasoIcon.Clock, ink, Modifier.size(28.dp))
+            else com.circaso.feature.mediacompose.UploadRing(progress, Modifier.size(com.circaso.designsystem.theme.CircasoSizes.controlMd), ink = ink)
+        }
+        DeliveryState.Failed -> FailedBadge(Modifier.align(Alignment.Center))
+        else -> Unit
+    }
+}
+
+/** The moment ring's "not posted" badge, on a chat's media that didn't send. */
+@Composable
+internal fun FailedBadge(modifier: Modifier = Modifier) {
+    val c = CircasoTheme.colors
+    Box(modifier.size(com.circaso.designsystem.theme.CircasoSizes.controlMd).clip(com.circaso.designsystem.theme.CircasoShapes.circle).background(c.critical), contentAlignment = Alignment.Center) {
+        CircasoIconImage(CircasoIcon.Warning, c.onAction, Modifier.size(22.dp))
+    }
+}
+
+/**
+ * A document in the chat: the page in a tile, its name, its type and size, and a caption under it. Tap to open it with
+ * the apps on this phone (it is downloaded and decrypted first); while it goes out, the upload ring turns round the tile.
+ */
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
+@Composable
+private fun FileBubble(
+    m: Message.Media, bubble: Modifier, options: (() -> Unit)?, onOptions: () -> Unit,
+    load: suspend (com.circaso.feature.messaging.data.repository.MediaDetails) -> com.circaso.feature.messaging.data.repository.MediaLoad,
+    ink: androidx.compose.ui.graphics.Color, inkSoft: androidx.compose.ui.graphics.Color, progress: Float?,
 ) {
     val c = CircasoTheme.colors
     val t = CircasoTheme.typography
-    val px = with(androidx.compose.ui.platform.LocalDensity.current) { 128.dp.roundToPx() }
-    androidx.compose.foundation.lazy.grid.LazyVerticalGrid(
-        columns = androidx.compose.foundation.lazy.grid.GridCells.Fixed(3),
-        modifier = Modifier.fillMaxWidth().height(360.dp).clip(com.circaso.designsystem.theme.CircasoShapes.md),
-        horizontalArrangement = Arrangement.spacedBy(2.dp), verticalArrangement = Arrangement.spacedBy(2.dp),
+    val scope = androidx.compose.runtime.rememberCoroutineScope()
+    var opening by androidx.compose.runtime.remember(m.localId) { androidx.compose.runtime.mutableStateOf(false) }
+    var problem by androidx.compose.runtime.remember(m.localId) { androidx.compose.runtime.mutableStateOf<String?>(null) }
+    val name = m.details.label ?: "File"
+    val kind = com.circaso.feature.mediacompose.fileKind(name, m.details.mime.orEmpty())
+    val size = m.details.size?.let { com.circaso.feature.mediacompose.sizeLabel(it) }
+    val failed = m.state == DeliveryState.Failed
+    val going = m.state == DeliveryState.Sending || m.state == DeliveryState.Waiting
+    Column(
+        bubble.pressable(
+            role = androidx.compose.ui.semantics.Role.Button, onLongClick = options,
+            onClick = {
+                if (failed) onOptions()
+                else if (!opening) scope.launch {
+                    opening = true
+                    problem = null
+                    when (val r = load(m.details)) {
+                        is com.circaso.feature.messaging.data.repository.MediaLoad.Loaded ->
+                            if (!com.circaso.core.platform.openFile(r.bytes, name, m.details.mime ?: "application/octet-stream")) problem = "No app here can open this file"
+                        com.circaso.feature.messaging.data.repository.MediaLoad.Offline -> problem = "Opens when you're back online"
+                        com.circaso.feature.messaging.data.repository.MediaLoad.Gone -> problem = "No longer available"
+                        com.circaso.feature.messaging.data.repository.MediaLoad.Damaged -> problem = "This file couldn't be opened safely"
+                        com.circaso.feature.messaging.data.repository.MediaLoad.Failed -> problem = "Couldn't open · Tap to try again"
+                    }
+                    opening = false
+                }
+            },
+        ).semantics(mergeDescendants = true) {
+            contentDescription = "Document $name, $kind" + (size?.let { ", $it" } ?: "") + (m.details.caption?.let { ". $it" } ?: "")
+        }.padding(CircasoSpacing.s3),
+        verticalArrangement = Arrangement.spacedBy(CircasoSpacing.s2),
     ) {
-        items(items.size, key = { items[it].id }) { i ->
-            val item = items[i]
-            val order = selected.indexOf(item.id)
-            val bytes by androidx.compose.runtime.produceState<ByteArray?>(null, item.id) { value = thumb(item, px) }
-            Box(
-                Modifier.aspectRatio(1f).background(c.fill)
-                    .pressable(role = androidx.compose.ui.semantics.Role.Checkbox, pressedScale = 0.96f, onClick = { onToggle(item) })
-                    .semantics {
-                        contentDescription = if (item.video) "Video" else "Photo"
-                        toggleableState = if (order >= 0) androidx.compose.ui.state.ToggleableState.On else androidx.compose.ui.state.ToggleableState.Off
-                        if (order >= 0) stateDescription = "Selected ${order + 1}"
-                    },
-            ) {
-                bytes?.let { coil3.compose.AsyncImage(model = it, contentDescription = null, contentScale = androidx.compose.ui.layout.ContentScale.Crop, modifier = Modifier.fillMaxSize()) }
-                if (item.video) {
-                    Box(Modifier.align(Alignment.BottomCenter).fillMaxWidth().height(28.dp).background(androidx.compose.ui.graphics.Brush.verticalGradient(listOf(androidx.compose.ui.graphics.Color.Transparent, c.scrim))))
-                    Row(Modifier.align(Alignment.BottomStart).padding(6.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(2.dp)) {
-                        CircasoIconImage(CircasoIcon.Play, androidx.compose.ui.graphics.Color.White, Modifier.size(12.dp))
-                        item.durationMs?.let { BasicText(clock(it / 1000), style = t.caption2.copy(color = androidx.compose.ui.graphics.Color.White, fontFeatureSettings = "tnum")) }
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(CircasoSpacing.s3)) {
+            // A round tile, so the upload ring sits round it as it does on a photo; the same clock and failed badge too.
+            Box(Modifier.size(MediaIconSize + 8.dp), contentAlignment = Alignment.Center) {
+                when {
+                    failed -> FailedBadge(Modifier.size(MediaIconSize))
+                    else -> Box(Modifier.size(MediaIconSize).clip(com.circaso.designsystem.theme.CircasoShapes.circle).background(if (m.outgoing) c.onAction else c.fillStrong), contentAlignment = Alignment.Center) {
+                        val glyph = if (m.outgoing) c.action else c.ink
+                        when {
+                            opening -> com.circaso.designsystem.components.Spinner(glyph, Modifier.size(18.dp))
+                            m.state == DeliveryState.Waiting && progress == null -> CircasoIconImage(CircasoIcon.Clock, glyph, Modifier.size(20.dp))
+                            else -> CircasoIconImage(CircasoIcon.Document, glyph, Modifier.size(22.dp))
+                        }
                     }
                 }
-                Box(
-                    Modifier.align(Alignment.TopEnd).padding(6.dp).size(22.dp).clip(com.circaso.designsystem.theme.CircasoShapes.circle)
-                        .background(if (order >= 0) c.action else androidx.compose.ui.graphics.Color.Black.copy(alpha = 0.2f))
-                        .border(1.5.dp, androidx.compose.ui.graphics.Color.White, com.circaso.designsystem.theme.CircasoShapes.circle),
-                    contentAlignment = Alignment.Center,
-                ) { if (order >= 0) BasicText("${order + 1}", style = t.caption1.copy(color = c.onAction, fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold)) }
+                if (going && !(m.state == DeliveryState.Waiting && progress == null)) com.circaso.feature.mediacompose.UploadRing(progress, Modifier.matchParentSize(), ink = ink)
+            }
+            Column(Modifier.weight(1f)) {
+                BasicText(name, style = t.callout.copy(color = ink, fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold), maxLines = 2, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
+                BasicText(problem ?: listOfNotNull(kind, size).joinToString(" · "), style = t.footnote.copy(color = inkSoft, fontFeatureSettings = "tnum"))
             }
         }
+        m.details.caption?.let { BasicText(it, style = t.body.copy(color = ink)) }
     }
 }
 
@@ -1207,7 +1243,7 @@ internal fun splitAssetTag(text: String): Pair<String?, String> {
 /** Media failures that sending again can't fix. */
 private val TerminalMediaErrors = setOf("messaging.attachment_too_large")
 
-private val MediaBubbleWidth = 240.dp
+internal val MediaBubbleWidth = 240.dp
 private val MapTileHeight = 120.dp
 private val MediaIconSize = 40.dp
 
@@ -1300,6 +1336,8 @@ private fun MediaRow(
     avatarUrl: String? = null, onOpenLocation: () -> Unit = {}, onStopLive: () -> Unit = {}, now: Long = 0L,
     onPlayVideo: () -> Unit = {}, videoLoading: Boolean = false,
     react: ReactUi? = null,
+    /** How far its upload has got (0..1) while it goes; null before the first byte or when it isn't uploading. */
+    uploadProgress: Float? = null,
 ) {
     val c = CircasoTheme.colors
     val t = CircasoTheme.typography
@@ -1315,7 +1353,10 @@ private fun MediaRow(
         }
         MessageColumn(m.outgoing, Modifier.weight(1f, fill = false)) {
             if (group && !m.outgoing && firstOfRun) BasicText(m.senderName, style = t.caption1.copy(color = c.inkSecondary), modifier = Modifier.padding(bottom = 2.dp))
-            val bubble = Modifier.width(MediaBubbleWidth).alpha(if (waiting || sending) 0.6f else 1f).clip(com.circaso.designsystem.components.bubbleShape(m.outgoing))
+            // A photo, video or file says how it is going on its own thumbnail (the moment composer's ring); a voice note
+            // or a place fades while it waits, as before.
+            val onThumb = m.isImage || m.isVideo || m.isFile
+            val bubble = Modifier.width(MediaBubbleWidth).alpha(if ((waiting || sending) && !onThumb) 0.6f else 1f).clip(com.circaso.designsystem.components.bubbleShape(m.outgoing))
                 .background(if (m.outgoing) c.action else c.fill)
             // A long press reacts (the bubble's ⋯ has the options); before it is sent it opens the options as before.
             val options = react?.onOpen ?: if (failed || m.outgoing) onOptions else null
@@ -1356,7 +1397,7 @@ private fun MediaRow(
                                     )
                                 }
                             }
-                            if (sending && photo is PhotoLoad.Loaded) Box(Modifier.matchParentSize().background(c.scrim), contentAlignment = Alignment.Center) { com.circaso.designsystem.components.Spinner(c.onAction, Modifier.size(24.dp)) }
+                            if (photo is PhotoLoad.Loaded) SendState(m.state, uploadProgress)
                         }
                         m.details.caption?.let { BasicText(it, style = t.body.copy(color = ink), modifier = Modifier.padding(horizontal = CircasoSpacing.s3, vertical = CircasoSpacing.s2)) }
                     }
@@ -1383,11 +1424,12 @@ private fun MediaRow(
                                 Box(Modifier.align(Alignment.BottomCenter).fillMaxWidth().height(32.dp).background(androidx.compose.ui.graphics.Brush.verticalGradient(listOf(androidx.compose.ui.graphics.Color.Transparent, c.scrim))))
                                 BasicText(clock(it / 1000), style = t.caption1.copy(color = androidx.compose.ui.graphics.Color.White, fontFeatureSettings = "tnum"), modifier = Modifier.align(Alignment.BottomStart).padding(8.dp))
                             }
-                            if (sending) Box(Modifier.matchParentSize().background(c.scrim), contentAlignment = Alignment.Center) { com.circaso.designsystem.components.Spinner(c.onAction, Modifier.size(24.dp)) }
+                            SendState(m.state, uploadProgress)
                         }
                         m.details.caption?.let { BasicText(it, style = t.body.copy(color = ink), modifier = Modifier.padding(horizontal = CircasoSpacing.s3, vertical = CircasoSpacing.s2)) }
                     }
                 }
+                m.isFile -> FileBubble(m, bubble, options, onOptions, load, ink, inkSoft, uploadProgress)
                 m.isVoice -> Row(
                     bubble.then(if (options != null) Modifier.combinedClickable(onLongClick = options, onClick = { if (failed) onOptions() }) else Modifier)
                         .padding(horizontal = CircasoSpacing.s3, vertical = CircasoSpacing.s2),

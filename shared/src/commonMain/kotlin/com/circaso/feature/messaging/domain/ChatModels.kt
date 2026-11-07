@@ -102,6 +102,7 @@ sealed interface Message {
         val isVoice get() = details.kind == com.circaso.feature.messaging.data.repository.MediaDetails.Voice
         val isVideo get() = details.kind == com.circaso.feature.messaging.data.repository.MediaDetails.Video
         val isLocation get() = details.kind == com.circaso.feature.messaging.data.repository.MediaDetails.Location
+        val isFile get() = details.kind == com.circaso.feature.messaging.data.repository.MediaDetails.File
     }
 
     /**

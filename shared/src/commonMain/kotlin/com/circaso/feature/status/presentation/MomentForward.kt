@@ -47,6 +47,7 @@ import com.circaso.designsystem.theme.CircasoTheme
 import com.circaso.feature.messaging.domain.ChatKind
 import com.circaso.feature.messaging.domain.ChatsRepository
 import com.circaso.feature.status.domain.MomentKind
+import com.circaso.feature.mediacompose.Tick
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -220,29 +221,3 @@ fun forwardedNotice(chats: List<String>): String = when (chats.size) {
     else -> "On its way to ${chats.size} chats"
 }
 
-/**
- * The round tick (as the design's selection circles): filled with a check, or the pick's [number], when chosen.
- * [onMedia]: drawn over a photo, so the ring is the light stage ink on a soft scrim in every theme (design M3).
- */
-@Composable
-internal fun Tick(on: Boolean, number: Int? = null, onMedia: Boolean = false) {
-    val c = CircasoTheme.colors
-    val ring = if (onMedia) com.circaso.designsystem.theme.DarkColors.ink else c.inkTertiary
-    Box(
-        Modifier.size(24.dp).clip(CircasoShapes.circle)
-            .then(
-                when {
-                    on && onMedia -> Modifier.border(2.dp, ring, CircasoShapes.circle).padding(2.dp).clip(CircasoShapes.circle).background(c.action)
-                    on -> Modifier.background(c.action)
-                    onMedia -> Modifier.background(com.circaso.designsystem.theme.DarkColors.scrim).border(2.dp, ring, CircasoShapes.circle)
-                    else -> Modifier.border(2.dp, ring, CircasoShapes.circle)
-                },
-            ),
-        contentAlignment = Alignment.Center,
-    ) {
-        if (on) {
-            if (number != null) BasicText("$number", style = CircasoTheme.typography.footnote.copy(color = c.onAction, fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold, fontFeatureSettings = "tnum"))
-            else CircasoIconImage(CircasoIcon.Check, c.onAction, Modifier.size(16.dp))
-        }
-    }
-}

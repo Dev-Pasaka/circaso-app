@@ -259,7 +259,10 @@ private fun MyMomentRow(state: MomentsUiState, actions: MomentsActions, now: Lon
             Box(Modifier.size(MomentAvatar)) {
                 Avatar(state.myName.ifBlank { "Me" }, Modifier.momentRing(if (ring == MyRing.Seen) state.myMoments.sortedBy { it.postedAt }.map { true } else emptyList(), c), size = MomentAvatar, imageUrl = state.myAvatarUrl)
                 when (ring) {
-                    MyRing.Posting -> PostingArc(state.postingProgress, MomentAvatar)
+                    // The shared upload ring (MediaComposeUi), drawn just outside the avatar as the moment ring is.
+                    MyRing.Posting -> com.circaso.feature.mediacompose.UploadRing(
+                        state.postingProgress, Modifier.size(MomentAvatar), c.ink, track = c.fillStrong, stroke = 2.dp, outset = 2.5.dp, spinSweep = 220f,
+                    )
                     MyRing.Waiting -> Badge(c.fillStrong) { CircasoIconImage(CircasoIcon.Clock, c.ink, Modifier.size(BadgeGlyph)) }
                     MyRing.Failed -> Badge(c.critical) { CircasoIconImage(CircasoIcon.Warning, c.bg, Modifier.size(BadgeGlyph)) }
                     // Its own target (Pasaka, 2026-11-03): the plus always opens the camera, even when the row opens my moments.
@@ -381,32 +384,6 @@ private fun BoxScope.Badge(color: Color, onClick: (() -> Unit)? = null, label: S
     }
 }
 
-/**
- * Upload progress around my avatar while a moment posts (M6): the real share of bytes sent, filling clockwise from
- * the top. Before any byte has gone (or for a text moment) the arc turns slowly, so it never looks stuck.
- */
-@Composable
-private fun PostingArc(progress: Float?, size: Dp = MomentAvatar) {
-    val c = CircasoTheme.colors
-    val reduce = CircasoTheme.reduceMotion
-    val angle = if (reduce || progress != null) 0f else rememberInfiniteTransition().animateFloat(0f, 360f, infiniteRepeatable(tween(CircasoMotion.MomentMs * 2, easing = LinearEasing), RepeatMode.Restart)).value
-    // Eased between the steps the upload reports, never jumping; straight to the value with reduced motion.
-    val shown = animateFloatAsState(progress ?: 0f, if (reduce) snap() else tween(CircasoMotion.BaseMs)).value
-    Canvas(
-        Modifier.size(size).semantics {
-            // The row's label already says "Posting… 40%"; the arc only adds the progress itself.
-            if (progress != null) progressBarRangeInfo = ProgressBarRangeInfo(progress, 0f..1f)
-        },
-    ) {
-        val w = 2.dp.toPx()
-        val out = 2.5.dp.toPx() + w / 2
-        val topLeft = Offset(-out, -out)
-        val arc = Size(this.size.width + 2 * out, this.size.height + 2 * out)
-        drawArc(c.fillStrong, 0f, 360f, false, topLeft, arc, style = Stroke(w))
-        if (progress != null) drawArc(c.ink, -90f, 360f * shown, false, topLeft, arc, style = Stroke(w, cap = StrokeCap.Round))
-        else drawArc(c.ink, angle - 90f, 220f, false, topLeft, arc, style = Stroke(w))
-    }
-}
 
 /** S1d: skeleton rows, only on the very first open before anything is stored or answered. */
 @Composable

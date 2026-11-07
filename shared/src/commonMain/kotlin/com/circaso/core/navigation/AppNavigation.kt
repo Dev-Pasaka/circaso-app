@@ -190,6 +190,16 @@ fun AppNavigation(forceUpdate: Boolean, home: @Composable () -> Unit) {
             com.circaso.feature.share.domain.IncomingLinks.take()?.let { code -> backStack.add(SharedLinkRoute(code)) }
         }
     }
+    // Something shared in from another app waits the same way (kept through sign-in), then opens where it goes.
+    val pendingShare by com.circaso.feature.mediacompose.IncomingShares.pending.collectAsState()
+    LaunchedEffect(state, pendingShare, forceUpdate) {
+        if (state == AuthState.Active && !forceUpdate && pendingShare != null) {
+            androidx.compose.runtime.snapshotFlow { backStack.firstOrNull() }.first { it == HomeRoute }
+            // A newer share replaces the one being chosen for: the picker starts again on top.
+            backStack.removeAll { it == ShareTargetRoute }
+            backStack.add(ShareTargetRoute)
+        }
+    }
     val shareUi by shareLinks.state.collectAsState()
     val shareStatus = com.circaso.feature.share.presentation.ShareLinksStatus(
         busy = shareUi.target?.kind?.takeIf { shareUi.creating && !shareUi.sheetOpen },
@@ -322,6 +332,37 @@ fun AppNavigation(forceUpdate: Boolean, home: @Composable () -> Unit) {
                 com.circaso.feature.support.presentation.LostAccessScreen(koinViewModel(key = "lost-" + route.phone, parameters = { parametersOf(route.phone) }), onBack = ::pop)
             }
             entry<ContactsRoute> { ContactsScreen(koinViewModel(), onBack = ::pop) }
+            // A chat's photos, videos and documents: the moment composer's screens, sent to this chat (2026-11-07).
+            entry<ChatMediaRoute> { route ->
+                com.circaso.feature.messaging.presentation.ChatMediaComposerScreen(
+                    koinViewModel(key = "chat-media-${route.chatId}-${route.start}-${route.more.joinToString()}", parameters = { parametersOf(route.chatId, route.start, route.more) }),
+                    onClose = {
+                        // A share sent to one chat lands in that chat (WhatsApp-style); to several, back where it started.
+                        pop()
+                        if (route.start == com.circaso.feature.messaging.presentation.ChatComposeStart.Shared.name && route.more.isEmpty() && backStack.lastOrNull() !is ChatRoute) backStack.add(ChatRoute(route.chatId))
+                    },
+                )
+            }
+            entry<ShareTargetRoute> {
+                com.circaso.feature.messaging.presentation.ShareTargetScreen(
+                    koinViewModel(), onClose = { com.circaso.feature.mediacompose.IncomingShares.clear(); pop() },
+                    onGo = { to ->
+                        pop()
+                        when (to) {
+                            com.circaso.feature.mediacompose.ShareDestination.Moment -> backStack.add(SharedMomentRoute)
+                            is com.circaso.feature.mediacompose.ShareDestination.Chats -> backStack.add(
+                                ChatMediaRoute(to.chatIds.first(), com.circaso.feature.messaging.presentation.ChatComposeStart.Shared.name, to.chatIds.drop(1)),
+                            )
+                        }
+                    },
+                )
+            }
+            entry<SharedMomentRoute> {
+                com.circaso.feature.status.presentation.MomentComposerScreen(
+                    koinViewModel(key = "moment-shared", parameters = { parametersOf(true) }), onClose = ::pop,
+                    onAudience = { backStack.add(MomentsPrivacyRoute) }, onFindPeople = { backStack.add(ContactsRoute) },
+                )
+            }
             entry<MomentComposerRoute> { com.circaso.feature.status.presentation.MomentComposerScreen(koinViewModel(), onClose = ::pop, onAudience = { backStack.add(MomentsPrivacyRoute) }, onFindPeople = { backStack.add(ContactsRoute) }) }
             entry<MomentViewerRoute> { key ->
                 val chats = koinInject<com.circaso.feature.messaging.domain.ChatsRepository>()
@@ -402,6 +443,7 @@ fun AppNavigation(forceUpdate: Boolean, home: @Composable () -> Unit) {
                     onReturnToCall = { calls.minimise(false) },
                     focusLocalId = route.focusLocalId,
                     onOpenLocation = { m -> backStack.add(LocationMapRoute(route.chatId, m.localId)) },
+                    onComposeMedia = { start -> backStack.add(ChatMediaRoute(route.chatId, start.name)) },
                     // C3: `#500` pays without leaving the chat; the chat's money card is the review. One per chat, reset after each payment.
                     quickPay = when {
                         peer != null -> koinViewModel<com.circaso.feature.wallet.presentation.PayViewModel>(

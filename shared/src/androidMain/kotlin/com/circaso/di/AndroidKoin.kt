@@ -82,7 +82,6 @@ fun initKoinAndroid(context: Context) {
             single<com.circaso.core.platform.GroupPhotoEncoder> { com.circaso.core.platform.AndroidGroupPhotoEncoder() }
             single<com.circaso.core.platform.MomentCamera> { com.circaso.core.platform.AndroidMomentCamera(app) }
             single<com.circaso.core.platform.MediaLibrary> { com.circaso.core.platform.AndroidMediaLibrary(app) }
-            single<com.circaso.core.platform.MediaGallery> { com.circaso.core.platform.AndroidMediaGallery(app) }
             single<PushTokenProvider> { AndroidPushTokenProvider() }
             single<SocialSignIn> { AndroidSocialSignIn(get(), SocialConfig.GoogleWebClientId) }
             single<DeviceKeyStore> { AndroidDeviceKeyStore() }

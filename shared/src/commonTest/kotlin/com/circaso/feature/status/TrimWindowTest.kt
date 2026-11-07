@@ -1,6 +1,6 @@
 package com.circaso.feature.status
 
-import com.circaso.feature.status.presentation.TrimWindow
+import com.circaso.feature.mediacompose.TrimWindow
 import kotlin.test.Test
 import kotlin.test.assertEquals
 

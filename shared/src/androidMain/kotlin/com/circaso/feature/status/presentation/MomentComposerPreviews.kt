@@ -20,6 +20,12 @@ import com.circaso.core.platform.PickedImage
 import com.circaso.core.platform.Recording
 import com.circaso.core.platform.RecordingStart
 import com.circaso.designsystem.theme.CircasoTheme
+import com.circaso.feature.mediacompose.ComposerCapture
+import com.circaso.feature.mediacompose.ComposerItem
+import com.circaso.feature.mediacompose.ComposerMode
+import com.circaso.feature.mediacompose.GalleryState
+import com.circaso.feature.mediacompose.MediaComposeState
+import com.circaso.feature.mediacompose.TrimState
 import com.circaso.feature.contacts.domain.Connection
 import com.circaso.feature.contacts.domain.ConnectVia
 import com.circaso.feature.contacts.domain.Contact
@@ -159,42 +165,42 @@ private fun PreviewComposer(initial: MomentComposerUiState, dark: Boolean = true
     CircasoTheme(darkTheme = dark, highContrast = highContrast) { MomentComposerScreen(vm, onClose = {}, onAudience = {}) }
 }
 
-private val twoPhotos = List(2) { ComposerItem(ComposerCapture.Shot(CapturedMedia(ByteArray(0), "image/jpeg", 1080, 1920), MomentKind.Image), caption = if (it == 0) "Graduation day!" else "") }
+private val twoPhotos = List(2) { ComposerItem(ComposerCapture.Shot(CapturedMedia(ByteArray(0), "image/jpeg", 1080, 1920)), caption = if (it == 0) "Graduation day!" else "") }
 private val longVideo = CapturedMedia(ByteArray(0), "video/mp4", 720, 1280, durationMs = 134_000, path = "/preview/long.mp4")
 
 @Preview(name = "M1 · Photo, several ticked on the strip")
 @Composable
-private fun ComposerSelectingPreview() = PreviewComposer(MomentComposerUiState(selecting = true, selection = previewPhotos.take(3)))
+private fun ComposerSelectingPreview() = PreviewComposer(MomentComposerUiState(MediaComposeState(selecting = true, selection = previewPhotos.take(3))))
 
 @Preview(name = "M1 · Video, access off")
 @Composable
-private fun ComposerVideoNoAccessPreview() = PreviewComposer(MomentComposerUiState(mode = ComposerMode.Video, recentsAccess = LibraryAccess.Denied))
+private fun ComposerVideoNoAccessPreview() = PreviewComposer(MomentComposerUiState(MediaComposeState(mode = ComposerMode.Video, recentsAccess = LibraryAccess.Denied)))
 
 @Preview(name = "M3 · Gallery, light")
 @Composable
-private fun GalleryLightPreview() = PreviewComposer(MomentComposerUiState(gallery = GalleryState(photos = previewPhotos, videos = previewVideos, access = LibraryAccess.Granted), selecting = true, selection = listOf(previewPhotos[0], previewPhotos[2])), dark = false)
+private fun GalleryLightPreview() = PreviewComposer(MomentComposerUiState(MediaComposeState(gallery = GalleryState(photos = previewPhotos, videos = previewVideos, access = LibraryAccess.Granted), selecting = true, selection = listOf(previewPhotos[0], previewPhotos[2]))), dark = false)
 
 @Preview(name = "M3 · Gallery, dark")
 @Composable
-private fun GalleryDarkPreview() = PreviewComposer(MomentComposerUiState(gallery = GalleryState(photos = previewPhotos, videos = previewVideos, access = LibraryAccess.Granted), selecting = true, selection = listOf(previewPhotos[0])), dark = true)
+private fun GalleryDarkPreview() = PreviewComposer(MomentComposerUiState(MediaComposeState(gallery = GalleryState(photos = previewPhotos, videos = previewVideos, access = LibraryAccess.Granted), selecting = true, selection = listOf(previewPhotos[0]))), dark = true)
 
 @Preview(name = "M3c · Gallery, limited, light high contrast")
 @Composable
-private fun GalleryLimitedPreview() = PreviewComposer(MomentComposerUiState(gallery = GalleryState(photos = previewPhotos.take(3), access = LibraryAccess.Limited), selecting = true), dark = false, highContrast = true)
+private fun GalleryLimitedPreview() = PreviewComposer(MomentComposerUiState(MediaComposeState(gallery = GalleryState(photos = previewPhotos.take(3), access = LibraryAccess.Limited), selecting = true)), dark = false, highContrast = true)
 
 @Preview(name = "M3c · Gallery, access off, dark high contrast")
 @Composable
-private fun GalleryDeniedPreview() = PreviewComposer(MomentComposerUiState(gallery = GalleryState(access = LibraryAccess.Denied), selecting = true), dark = true, highContrast = true)
+private fun GalleryDeniedPreview() = PreviewComposer(MomentComposerUiState(MediaComposeState(gallery = GalleryState(access = LibraryAccess.Denied), selecting = true)), dark = true, highContrast = true)
 
 @Preview(name = "M3b · Trim a video")
 @Composable
 private fun TrimPreview() = PreviewComposer(
-    MomentComposerUiState(items = listOf(ComposerItem(ComposerCapture.Shot(longVideo, MomentKind.Video))), trim = TrimState(0, 134_000, 21_000, 79_000, required = true)),
+    MomentComposerUiState(MediaComposeState(items = listOf(ComposerItem(ComposerCapture.Shot(longVideo))), trim = TrimState(0, 134_000, 21_000, 79_000, required = true))),
 )
 
 @Preview(name = "M4 · Two picked, caption and share")
 @Composable
-private fun ReviewSeveralPreview() = PreviewComposer(MomentComposerUiState(items = twoPhotos))
+private fun ReviewSeveralPreview() = PreviewComposer(MomentComposerUiState(MediaComposeState(items = twoPhotos)))
 
 @Composable
 private fun PreviewForward(dark: Boolean, highContrast: Boolean) {
@@ -225,27 +231,27 @@ private val previewLevels = List(48) { i -> (0.2f + 0.8f * kotlin.math.abs(kotli
 @Preview(name = "M5 · Voice review, chosen background")
 @Composable
 private fun VoiceReviewPreview() = PreviewComposer(
-    MomentComposerUiState(mode = ComposerMode.Voice, voiceBackground = "g-ocean", items = listOf(ComposerItem(ComposerCapture.Voice(ByteArray(0), "audio/mp4", 23_000, previewLevels)))),
+    MomentComposerUiState(MediaComposeState(mode = ComposerMode.Voice, items = listOf(ComposerItem(ComposerCapture.Voice(ByteArray(0), "audio/mp4", 23_000, previewLevels)))), voiceBackground = "g-ocean"),
 )
 
 @Preview(name = "M5 · Voice review on Lemon, no levels, person in light theme, large text", fontScale = 1.6f)
 @Composable
 private fun VoiceReviewLightPreview() = PreviewComposer(
-    MomentComposerUiState(mode = ComposerMode.Voice, voiceBackground = "c-lemon", items = listOf(ComposerItem(ComposerCapture.Voice(ByteArray(0), "audio/mp4", 23_000, null)))),
+    MomentComposerUiState(MediaComposeState(mode = ComposerMode.Voice, items = listOf(ComposerItem(ComposerCapture.Voice(ByteArray(0), "audio/mp4", 23_000, null)))), voiceBackground = "c-lemon"),
     dark = false,
 )
 
 @Preview(name = "M5b · Recording a voice moment")
 @Composable
-private fun VoiceRecordingPreview() = PreviewComposer(MomentComposerUiState(mode = ComposerMode.Voice, recordingVoice = true, recordingSince = 0))
+private fun VoiceRecordingPreview() = PreviewComposer(MomentComposerUiState(MediaComposeState(mode = ComposerMode.Voice, recordingSince = 0), recordingVoice = true))
 
 @Preview(name = "M5b · Recording on a light background, dark high contrast")
 @Composable
-private fun VoiceRecordingLemonPreview() = PreviewComposer(MomentComposerUiState(mode = ComposerMode.Voice, voiceBackground = "c-lemon"), dark = true, highContrast = true)
+private fun VoiceRecordingLemonPreview() = PreviewComposer(MomentComposerUiState(MediaComposeState(mode = ComposerMode.Voice), voiceBackground = "c-lemon"), dark = true, highContrast = true)
 
 @Preview(name = "M5 · Voice review on Lemon, light high contrast")
 @Composable
 private fun VoiceReviewLemonHcPreview() = PreviewComposer(
-    MomentComposerUiState(mode = ComposerMode.Voice, voiceBackground = "c-lemon", items = listOf(ComposerItem(ComposerCapture.Voice(ByteArray(0), "audio/mp4", 23_000, previewLevels)))),
+    MomentComposerUiState(MediaComposeState(mode = ComposerMode.Voice, items = listOf(ComposerItem(ComposerCapture.Voice(ByteArray(0), "audio/mp4", 23_000, previewLevels)))), voiceBackground = "c-lemon"),
     dark = false, highContrast = true,
 )

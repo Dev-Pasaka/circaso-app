@@ -78,6 +78,7 @@ object MomentPickerBridge {
     private var visual: ActivityResultLauncher<PickVisualMediaRequest>? = null
     private var visualMany: ActivityResultLauncher<PickVisualMediaRequest>? = null
     private var audio: ActivityResultLauncher<String>? = null
+    private var document: ActivityResultLauncher<Array<String>>? = null
     private var pending: CompletableDeferred<Uri?>? = null
     private var pendingMany: CompletableDeferred<List<Uri>>? = null
 
@@ -85,6 +86,14 @@ object MomentPickerBridge {
         visual = activity.registerForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri -> pending?.complete(uri) }
         visualMany = activity.registerForActivityResult(ActivityResultContracts.PickMultipleVisualMedia(MomentPickMax)) { uris -> pendingMany?.complete(uris) }
         audio = activity.registerForActivityResult(ActivityResultContracts.GetContent()) { uri -> pending?.complete(uri) }
+        document = activity.registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> pending?.complete(uri) }
+    }
+
+    /** The system's Files picker for any document (a chat's Document); no permission needed. */
+    suspend fun pickDocument(): Uri? {
+        val answer = CompletableDeferred<Uri?>().also { pending = it }
+        document?.launch(arrayOf("*/*")) ?: return null
+        return answer.await()
     }
 
     suspend fun pick(kind: LibraryKind): Uri? {
@@ -265,6 +274,81 @@ class AndroidMediaLibrary(private val context: Context) : MediaLibrary {
         }.getOrNull()
     }
 
+    override suspend fun loadFile(path: String, mime: String): CapturedMedia? = withContext(Dispatchers.IO) {
+        runCatching {
+            if (mime.startsWith("video")) {
+                val meta = metadata(path)
+                CapturedMedia(ByteArray(0), mime, meta?.width, meta?.height, durationMs = meta?.durationMs ?: 0L, thumb = meta?.frame?.thumb(), path = path)
+            } else {
+                val bitmap = decodeScaled(context, Uri.fromFile(File(path)), MomentPhotoMaxSide) ?: return@runCatching null
+                CapturedMedia(bitmap.toJpeg(90), "image/jpeg", bitmap.width, bitmap.height, thumb = bitmap.thumb())
+            }
+        }.getOrNull()
+    }
+
+    /**
+     * A document from Files: its own name and size from the provider, copied into this app's cache (the picker's grant
+     * ends with the activity), read again when it is sent. Null when nothing was chosen or it can't be read.
+     */
+    override suspend fun pickFile(): PickedFile? {
+        val uri = MomentPickerBridge.pickDocument() ?: return null
+        return withContext(Dispatchers.IO) {
+            runCatching {
+                val resolver = context.contentResolver
+                var name: String? = null
+                var size = -1L
+                resolver.query(uri, arrayOf(android.provider.OpenableColumns.DISPLAY_NAME, android.provider.OpenableColumns.SIZE), null, null, null)?.use { c ->
+                    if (c.moveToFirst()) {
+                        name = c.getString(0)
+                        if (!c.isNull(1)) size = c.getLong(1)
+                    }
+                }
+                val mime = resolver.getType(uri) ?: "application/octet-stream"
+                val shownName = name?.takeIf { it.isNotBlank() } ?: "File"
+                // Over the limit by the provider's own count: refused at once, nothing is copied.
+                if (size > MomentMediaMaxBytes) return@runCatching PickedFile(shownName, mime, size)
+                val dir = File(context.cacheDir, "picked").apply { mkdirs() }
+                val out = File(dir, "doc-${System.nanoTime()}")
+                // Stop reading past the attachment limit: the composer refuses it by its size anyway.
+                val copied = resolver.openInputStream(uri)?.use { input -> out.outputStream().use { o -> copyCapped(input, o, MomentMediaMaxBytes + 1) } } ?: return@runCatching null
+                PickedFile(shownName, mime, if (size >= 0) maxOf(size, copied) else copied, path = out.absolutePath)
+            }.getOrNull()
+        }
+    }
+
+    private fun copyCapped(input: java.io.InputStream, output: java.io.OutputStream, cap: Long): Long {
+        val buffer = ByteArray(64 * 1024)
+        var total = 0L
+        while (total < cap) {
+            val n = input.read(buffer, 0, minOf(buffer.size.toLong(), cap - total).toInt())
+            if (n < 0) break
+            output.write(buffer, 0, n)
+            total += n
+        }
+        return total
+    }
+
+    override suspend fun poster(path: String): ByteArray? = withContext(Dispatchers.IO) {
+        val retriever = MediaMetadataRetriever()
+        try {
+            retriever.setDataSource(path)
+            val frame = if (Build.VERSION.SDK_INT >= 27) retriever.getScaledFrameAtTime(0, MediaMetadataRetriever.OPTION_CLOSEST_SYNC, PosterSide, PosterSide)
+            else retriever.getFrameAtTime(0)
+            frame?.let { f ->
+                val scale = PosterSide.toFloat() / max(f.width, f.height)
+                val small = if (scale < 1f) Bitmap.createScaledBitmap(f, (f.width * scale).roundToInt().coerceAtLeast(1), (f.height * scale).roundToInt().coerceAtLeast(1), true) else f
+                var quality = 70
+                var bytes: ByteArray
+                do { bytes = small.toJpeg(quality); quality -= 15 } while (bytes.size > 12_000 && quality > 20)
+                bytes
+            }
+        } catch (_: Throwable) {
+            null
+        } finally {
+            runCatching { retriever.release() }
+        }
+    }
+
     override suspend fun read(path: String): ByteArray? = withContext(Dispatchers.IO) { runCatching { File(path).takeIf { it.exists() }?.readBytes() }.getOrNull() }
 
     override suspend fun filmstrip(path: String, count: Int): List<ByteArray> = withContext(Dispatchers.IO) {
@@ -388,6 +472,9 @@ class AndroidMediaLibrary(private val context: Context) : MediaLibrary {
         }
     }.getOrNull()
 }
+
+/** A chat video's poster: the long side in pixels (as the chat's own first-frame thumb has been). */
+private const val PosterSide = 240
 
 private fun Bitmap.toJpeg(quality: Int): ByteArray = ByteArrayOutputStream().also { compress(Bitmap.CompressFormat.JPEG, quality, it) }.toByteArray()
 
