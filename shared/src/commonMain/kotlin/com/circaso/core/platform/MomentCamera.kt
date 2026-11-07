@@ -65,7 +65,11 @@ const val MomentVideoMaxMs = 60_000L
  * so 96 px; as a JPEG it stays a few KB inside the encrypted body.
  */
 const val MomentThumbSide = 96
-/** Video bit rate for moments, so 60 s fits the server's 32 MiB media limit with room for audio and encryption. */
-const val MomentVideoBitRate = 3_500_000
+/**
+ * What the camera records a moment at: 1080p30's bit rate ([MomentVideoEncoding.BitRate1080p30]). About 30 s fits the
+ * 32 MiB limit as recorded; a longer clip is re-encoded to fit before it is posted (Pasaka, 2026-11-07: 3.5 Mbit/s at
+ * 720p was visibly softer than the phone's own camera).
+ */
+const val MomentVideoBitRate = MomentVideoEncoding.BitRate1080p30
 /** The server's limit for a moment's encrypted media (ST1); checked before sharing so nobody waits for a refusal. */
 const val MomentMediaMaxBytes = 32L * 1024 * 1024 - 64

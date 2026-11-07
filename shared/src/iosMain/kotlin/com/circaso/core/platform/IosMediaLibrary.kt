@@ -26,14 +26,21 @@ import androidx.compose.ui.viewinterop.UIKitInteropProperties
 import androidx.compose.ui.viewinterop.UIKitView
 import kotlinx.cinterop.ExperimentalForeignApi
 import kotlinx.cinterop.readValue
+import kotlinx.cinterop.useContents
+import com.circaso.core.crypto.toNSData
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
+import platform.AVFoundation.AVLayerVideoGravityResizeAspect
 import platform.AVFoundation.AVLayerVideoGravityResizeAspectFill
 import platform.AVFoundation.AVPlayerItem
+import platform.AVFoundation.presentationSize
+import platform.AVFoundation.seekToTime
+import platform.CoreMedia.CMTimeMake
+import platform.CoreMedia.kCMTimeZero
 import platform.AVFoundation.AVPlayerItemStatusFailed
 import platform.AVFoundation.AVPlayerLayer
 import platform.AVFoundation.AVPlayerLooper
@@ -64,7 +71,13 @@ import platform.Photos.PHImageRequestOptionsDeliveryModeOpportunistic
 import platform.Photos.PHImageRequestOptionsResizeModeFast
 import platform.Photos.PHPhotoLibrary
 import platform.QuartzCore.CATransaction
+import platform.UIKit.UIBlurEffect
+import platform.UIKit.UIBlurEffectStyle
 import platform.UIKit.UIColor
+import platform.UIKit.UIImage
+import platform.UIKit.UIImageView
+import platform.UIKit.UIViewContentMode
+import platform.UIKit.UIVisualEffectView
 import platform.UIKit.UIImageJPEGRepresentation
 import platform.UIKit.UIView
 import kotlin.coroutines.resume
@@ -264,15 +277,30 @@ actual fun LibraryThumbnail(item: LibraryItem, modifier: Modifier) {
     }
 }
 
-/** A plain view whose player layer follows its bounds (aspect fill), without implicit animations. */
+/**
+ * A plain view whose player layer follows its bounds, without implicit animations. A clip shaped like the screen fills
+ * it (aspect fill, cropped); one that would be cropped and blown up far past fitting (landscape on an upright phone)
+ * fits, letterboxed over its own poster, blurred ([MomentVideoEncoding.fills], Pasaka 2026-11-07).
+ */
 private class MomentPlayerView : UIView(frame = CGRectZero.readValue()) {
     val playerLayer = AVPlayerLayer()
+    private val backdrop = UIImageView(frame = CGRectZero.readValue())
+    private val blur = UIVisualEffectView(effect = UIBlurEffect.effectWithStyle(UIBlurEffectStyle.UIBlurEffectStyleDark))
 
     init {
         backgroundColor = UIColor.blackColor
         clipsToBounds = true
+        backdrop.contentMode = UIViewContentMode.UIViewContentModeScaleAspectFill
+        backdrop.setHidden(true)
+        blur.setHidden(true)
+        addSubview(backdrop)
+        addSubview(blur)
         playerLayer.videoGravity = AVLayerVideoGravityResizeAspectFill
         layer.addSublayer(playerLayer)
+    }
+
+    fun setPoster(jpeg: ByteArray?) {
+        backdrop.image = jpeg?.let { UIImage.imageWithData(it.toNSData()) }
     }
 
     override fun layoutSubviews() {
@@ -280,6 +308,14 @@ private class MomentPlayerView : UIView(frame = CGRectZero.readValue()) {
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         playerLayer.frame = bounds
+        backdrop.setFrame(bounds)
+        blur.setFrame(bounds)
+        val video = playerLayer.player?.currentItem?.presentationSize?.useContents { width.toInt() to height.toInt() }
+        val view = bounds.useContents { size.width.toInt() to size.height.toInt() }
+        val fills = video == null || MomentVideoEncoding.fills(video.first, video.second, view.first, view.second)
+        playerLayer.videoGravity = if (fills) AVLayerVideoGravityResizeAspectFill else AVLayerVideoGravityResizeAspect
+        backdrop.setHidden(fills || backdrop.image == null)
+        blur.setHidden(backdrop.isHidden())
         CATransaction.commit()
     }
 }
@@ -289,9 +325,10 @@ private class MomentPlayerView : UIView(frame = CGRectZero.readValue()) {
  * The poster covers the layer until it has a frame to show (`readyForDisplay`), and stays if the item fails.
  */
 @Composable
-actual fun MomentVideo(path: String, playing: Boolean, muted: Boolean, modifier: Modifier, loop: Boolean, poster: ByteArray?, onUnplayable: () -> Unit) {
+actual fun MomentVideo(path: String, playing: Boolean, muted: Boolean, modifier: Modifier, loop: Boolean, poster: ByteArray?, onUnplayable: () -> Unit, positionMs: Long?) {
     val player = remember(path) { AVQueuePlayer() }
     val view = remember(path) { MomentPlayerView().also { it.playerLayer.player = player } }
+    LaunchedEffect(view, poster) { view.setPoster(poster); view.setNeedsLayout() }
     var shown by remember(path) { mutableStateOf(false) }
     DisposableEffect(player, loop) {
         val item = AVPlayerItem(uRL = NSURL.fileURLWithPath(path))
@@ -304,11 +341,20 @@ actual fun MomentVideo(path: String, playing: Boolean, muted: Boolean, modifier:
         }
     }
     LaunchedEffect(player, muted) { player.muted = muted }
-    LaunchedEffect(player, playing, loop) { if (playing) player.play() else player.pause() }
+    LaunchedEffect(player, playing, loop, positionMs) { if (playing && positionMs == null) player.play() else player.pause() }
+    // Scrubbing: the exact frame, at full resolution (the trimmer's stage follows the edge being dragged).
+    LaunchedEffect(player, positionMs) {
+        val at = positionMs ?: return@LaunchedEffect
+        // As on Android: the nearest frame within half a second while the finger moves, the exact one once it rests.
+        val near = CMTimeMake(value = 500, timescale = 1000)
+        player.seekToTime(CMTimeMake(value = at, timescale = 1000), toleranceBefore = near, toleranceAfter = near)
+        kotlinx.coroutines.delay(120)
+        player.seekToTime(CMTimeMake(value = at, timescale = 1000), toleranceBefore = kCMTimeZero.readValue(), toleranceAfter = kCMTimeZero.readValue())
+    }
     // No KVO from Compose: a light check until the first frame is ready, or the item has failed.
     LaunchedEffect(view) {
         while (!shown) {
-            if (view.playerLayer.readyForDisplay) { shown = true; break }
+            if (view.playerLayer.readyForDisplay) { shown = true; view.setNeedsLayout(); break }
             if (player.currentItem?.status == AVPlayerItemStatusFailed) { onUnplayable(); break }
             kotlinx.coroutines.delay(80)
         }

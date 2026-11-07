@@ -177,7 +177,10 @@ fun PreviewScreens(name: String) {
         // The Moments viewer (V1, V4, V5) and its reaction picker: sample moments, nothing loads.
         "moment-text" -> MomentPreview(sampleMoment(com.circaso.feature.status.domain.MomentKind.Text))
         "moment-photo" -> MomentPreview(sampleMoment(com.circaso.feature.status.domain.MomentKind.Image), photo = true)
-        "moment-video" -> MomentPreview(sampleMoment(com.circaso.feature.status.domain.MomentKind.Video))
+        // With `--es video <path>` (a file this app can read): the viewer playing that file, as a posted moment plays.
+        "moment-video" -> MomentPreview(sampleMoment(com.circaso.feature.status.domain.MomentKind.Video), videoPath = launchValue("video"))
+        // The real composer (its own view model): pick a video and trim it, to check the trimmer on a device.
+        "moment-composer" -> com.circaso.feature.status.presentation.MomentComposerScreen(org.koin.compose.viewmodel.koinViewModel(), onClose = {}, onAudience = {})
         "moment-mine" -> MomentPreview(sampleMoment(com.circaso.feature.status.domain.MomentKind.Image).copy(mine = true, viewCount = 14, reactionCount = 3), photo = true)
         // V4: my moment with Seen by open; one viewer reacted with a heart, one with any emoji, one only looked.
         "moment-mine-viewers" -> MomentPreview(
@@ -545,12 +548,14 @@ private fun MomentPreview(
     photo: Boolean = false,
     picking: Boolean = false,
     viewers: List<com.circaso.feature.status.presentation.ViewerRow>? = null,
+    videoPath: String? = null,
 ) {
     val bytes = androidx.compose.runtime.remember { kotlin.io.encoding.Base64.decode(SamplePhoto) }
     val ring = com.circaso.feature.status.domain.MomentRing(if (moment.mine) "me" else "w", if (moment.mine) "My moment" else "Wanjiru Kamau", null, listOf(moment, moment.copy(momentId = "next")), muted = false)
     val media = when {
         moment.kind == com.circaso.feature.status.domain.MomentKind.Text -> com.circaso.feature.status.presentation.ViewerMedia.None
         photo -> com.circaso.feature.status.presentation.ViewerMedia.Ready(bytes, null)
+        videoPath != null -> com.circaso.feature.status.presentation.ViewerMedia.Ready(ByteArray(0), videoPath)
         else -> com.circaso.feature.status.presentation.ViewerMedia.Loading
     }
     com.circaso.feature.status.presentation.MomentViewerContent(
