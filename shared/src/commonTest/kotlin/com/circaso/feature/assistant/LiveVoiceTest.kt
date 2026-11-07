@@ -23,6 +23,8 @@ import com.circaso.feature.assistant.domain.TalkToAshaUseCase
 import com.circaso.feature.assistant.presentation.VoiceEnding
 import com.circaso.feature.assistant.presentation.VoicePhase
 import com.circaso.feature.assistant.presentation.VoiceViewModel
+import com.circaso.feature.assistant.presentation.VoiceVisual
+import com.circaso.feature.assistant.presentation.VoiceActivity
 import androidx.lifecycle.ViewModelStore
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -259,6 +261,10 @@ private class FakeSpeaker : LiveSpeaker {
     override suspend fun start(sampleRate: Int) { startedAt = sampleRate }
     override fun play(pcm: ShortArray) { played += pcm }
     override fun flush() { flushed++ }
+    /** Every volume set, in order; [volume] is the latest. */
+    val volumes = mutableListOf<Float>()
+    val volume get() = volumes.lastOrNull() ?: 1f
+    override fun setVolume(volume: Float) { volumes += volume }
     override val playing = MutableStateFlow(false)
     override val level = MutableStateFlow(0f)
     override fun stop() { stopped++ }
@@ -450,75 +456,115 @@ class VoiceViewModelTest {
         }
     }
 
-    @Test fun whileAshaSpeaksOnlyAClearVoiceReachesTheSocket() = runTest(timeout = 15.seconds) {
-        val vm = viewModel()
-        with(vm) {
-            repo.session.fromServer.emit(LiveVoiceEvent.Ready(118, "mulaw", 8000))
-            speaker.playing.value = true
-            mic.level.value = 0.2f
-            mic.out.emit(byteArrayOf(1))
-            assertEquals(0, repo.session.audio.size, "her echo stays on the phone")
-            mic.level.value = 0.8f
-            mic.out.emit(byteArrayOf(2))
-            mic.level.value = 0.2f
-            mic.out.emit(byteArrayOf(3))
-            assertEquals(listOf<Byte>(2, 3), repo.session.audio.map { it.single() }, "a clear voice opens the stream and keeps it open a moment")
-            speaker.playing.value = false
-            repo.session.fromServer.emit(LiveVoiceEvent.ReplyDone(msg("m2", "ASHA", "Done."), spoken = true))
-            now += VoiceTailMillis + 1_000
-            mic.level.value = 0.1f
-            mic.out.emit(byteArrayOf(4))
-            assertEquals(listOf<Byte>(2, 3, 4), repo.session.audio.map { it.single() }, "with her turn over and quiet, everything streams")
-        }
+    /** Microphone packets every 20 ms for [millis] at [level], on the test clock. */
+    private suspend fun talk(level: Float, millis: Long) {
+        mic.level.value = level
+        repeat((millis / 20).toInt()) { now += 20; mic.out.emit(byteArrayOf(level.times(100).toInt().toByte())) }
     }
 
-    @Test fun noiseDuringHerWholeTurnStaysOnThePhone() = runTest(timeout = 15.seconds) {
+    /** Ready, a question, and her voice playing. */
+    private suspend fun ashaSpeaking() {
+        repo.session.fromServer.emit(LiveVoiceEvent.Ready(118, "mulaw", 8000))
+        repo.session.fromServer.emit(LiveVoiceEvent.Turn("Tell me a story"))
+        repo.session.fromServer.emit(LiveVoiceEvent.Audio(byteArrayOf(0xFF.toByte())))
+        repo.session.fromServer.emit(LiveVoiceEvent.Reply("Once upon a time"))
+        speaker.playing.value = true
+    }
+
+    @Test fun theMicrophoneStreamsThroughHerWholeTurn() = runTest(timeout = 15.seconds) {
         val vm = viewModel()
         with(vm) {
             repo.session.fromServer.emit(LiveVoiceEvent.Ready(118, "mulaw", 8000))
-            mic.level.value = 0.2f
-            mic.out.emit(byteArrayOf(1))
-            assertEquals(1, repo.session.audio.size, "before her turn, everything streams")
-
+            talk(0.05f, 40)
             repo.session.fromServer.emit(LiveVoiceEvent.Turn("What did I spend?"))
-            now += 20; mic.out.emit(byteArrayOf(2))
-            assertEquals(1, repo.session.audio.size, "while she thinks, before any audio, room noise is not sent")
-
+            talk(0.05f, 40) // while she thinks
             repo.session.fromServer.emit(LiveVoiceEvent.Audio(byteArrayOf(0xFF.toByte())))
             speaker.playing.value = true
-            now += 20; mic.out.emit(byteArrayOf(3))
-            speaker.playing.value = false // the gap between two sentences
-            now += 300; mic.out.emit(byteArrayOf(4))
-            now += 900; mic.out.emit(byteArrayOf(5))
-            assertEquals(1, repo.session.audio.size, "her echo and the gaps between her sentences are not sent")
-
-            mic.level.value = 0.8f
-            now += 20; mic.out.emit(byteArrayOf(6))
-            mic.level.value = 0.2f
-            now += 300; mic.out.emit(byteArrayOf(7))
-            now += 400; mic.out.emit(byteArrayOf(8))
-            assertEquals(listOf<Byte>(1, 6, 7), repo.session.audio.map { it.single() }, "a loud voice is sent and held open a moment, then the gate closes")
-
+            talk(0.2f, 40) // a quiet voice under her, after the echo canceller
+            speaker.playing.value = false
             repo.session.fromServer.emit(LiveVoiceEvent.ReplyDone(msg("m2", "ASHA", "About 500."), spoken = true))
-            now += VoiceTailMillis + 1; mic.out.emit(byteArrayOf(9))
-            assertEquals(listOf<Byte>(1, 6, 7, 9), repo.session.audio.map { it.single() }, "after her turn and the echo tail, everything streams")
+            talk(0.05f, 40) // the echo tail
+            assertEquals(listOf<Byte>(5, 5, 5, 5, 20, 20, 5, 5), repo.session.audio.map { it.single() }, "no loudness gate: the server decides what is the person")
         }
     }
 
-    @Test fun theEchoTailGatesRightAfterHerVoiceStops() = runTest(timeout = 15.seconds) {
+    @Test fun theirVoiceOverHersDucksHerAndShowsListening() = runTest(timeout = 15.seconds) {
+        val vm = viewModel()
+        with(vm) {
+            ashaSpeaking()
+            talk(0.05f, 200) // a quiet room under her voice
+            talk(0.6f, 100) // a click: too short
+            assertFalse(vm.state.value.ducked)
+            talk(0.05f, 100)
+            assertEquals(1f, speaker.volume)
+            assertEquals(VoiceVisual.Speaking, vm.state.value.visual)
+
+            talk(0.6f, 180) // a voice, held past the attack
+            assertTrue(vm.state.value.ducked, "ducked as soon as the person is heard")
+            assertEquals(VoiceVisual.Listening, vm.state.value.visual, "the screen listens at once")
+            assertEquals(VoicePhase.Speaking, vm.state.value.phase, "she has not been told to stop yet")
+            advanceTimeBy(100)
+            assertEquals(0.25f, speaker.volume, 0.001f, "her voice dips to a quarter in about 80 ms")
+            assertTrue(speaker.volumes.size > 2, "as a ramp, not a jump")
+            assertEquals(0, speaker.flushed, "ducked, not stopped")
+
+            repo.session.fromServer.emit(LiveVoiceEvent.Interrupted)
+            assertEquals(1, speaker.flushed, "the server's interrupted flushes her voice")
+            assertEquals(1f, speaker.volume, "and the next reply plays at full volume")
+            assertFalse(vm.state.value.ducked)
+            assertEquals(VoicePhase.Listening, vm.state.value.phase)
+            assertTrue(vm.state.value.turns.last().interrupted, "the cut-off reply is marked talked over")
+        }
+    }
+
+    @Test fun withoutConfirmationSheComesBackUp() = runTest(timeout = 15.seconds) {
+        val vm = viewModel()
+        with(vm) {
+            ashaSpeaking()
+            talk(0.05f, 200)
+            talk(0.6f, 300) // a cough, or a word to someone in the room
+            assertTrue(vm.state.value.ducked)
+            advanceTimeBy(100)
+            talk(0.05f, 1_000) // quiet again: the voice ends after its release, then the wait for `interrupted`
+            assertTrue(vm.state.value.ducked, "still waiting on the server")
+            assertEquals(0.25f, speaker.volume, 0.001f)
+            talk(0.05f, 200)
+            assertFalse(vm.state.value.ducked, "no interrupted: she carries on")
+            assertEquals(VoiceVisual.Speaking, vm.state.value.visual)
+            advanceTimeBy(200)
+            assertEquals(1f, speaker.volume, 0.001f, "back to full volume in about 150 ms")
+            assertEquals(0, speaker.flushed)
+        }
+    }
+
+    @Test fun duckingIsOnlyForHerVoice() = runTest(timeout = 15.seconds) {
         val vm = viewModel()
         with(vm) {
             repo.session.fromServer.emit(LiveVoiceEvent.Ready(118, "mulaw", 8000))
-            repo.session.fromServer.emit(LiveVoiceEvent.Turn("Hi"))
-            speaker.playing.value = true
-            now += 20; mic.out.emit(byteArrayOf(1))
-            repo.session.fromServer.emit(LiveVoiceEvent.ReplyDone(msg("m2", "ASHA", "Hello."), spoken = true))
-            speaker.playing.value = false
-            mic.level.value = 0.2f
-            now += 200; mic.out.emit(byteArrayOf(2))
-            assertTrue(repo.session.audio.isEmpty(), "her turn is over, but the room still rings for a moment")
-            now += VoiceTailMillis; mic.out.emit(byteArrayOf(3))
-            assertEquals(listOf<Byte>(3), repo.session.audio.map { it.single() })
+            talk(0.6f, 400)
+            assertFalse(vm.state.value.ducked, "nothing to duck while she is quiet")
+            assertTrue(speaker.volumes.isEmpty())
+        }
+    }
+
+    @Test fun muteStopsEverything() = runTest(timeout = 15.seconds) {
+        val vm = viewModel()
+        with(vm) {
+            ashaSpeaking()
+            talk(0.05f, 200)
+            talk(0.6f, 200)
+            assertTrue(vm.state.value.ducked)
+            val sent = repo.session.audio.size
+            vm.onMute()
+            assertFalse(vm.state.value.ducked, "muting undoes the duck")
+            assertEquals(1f, speaker.volume)
+            assertEquals(VoiceVisual.Speaking, vm.state.value.visual)
+            talk(0.6f, 400)
+            assertEquals(sent, repo.session.audio.size, "muted, nothing is sent")
+            assertFalse(vm.state.value.ducked, "and nothing ducks her")
+            vm.onMute()
+            talk(0.05f, 40)
+            assertEquals(sent + 2, repo.session.audio.size, "unmuted, it streams again")
         }
     }
 
@@ -571,7 +617,6 @@ class VoiceViewModelTest {
 }
 
 /** Mirrors VoiceViewModel's echo tail (private there). */
-private const val VoiceTailMillis = 500L
 
 private typealias TestScopeLike = kotlinx.coroutines.test.TestScope
 
@@ -589,4 +634,29 @@ private object NoAsha : AshaRepository {
     override suspend fun transcribe(audio: ByteArray, contentType: String, durationSeconds: Int): AppResult<String> = AppResult.Success("")
     override suspend fun speak(text: String, language: String?): AppResult<ByteArray> = AppResult.Success(ByteArray(0))
     override suspend fun usage(): AppResult<com.circaso.feature.assistant.domain.AshaUsage> = AppResult.Success(com.circaso.feature.assistant.domain.AshaUsage("free", com.circaso.feature.assistant.domain.UsageMeter(0, 0), com.circaso.feature.assistant.domain.UsageMeter(0, 0), null))
+}
+
+class VoiceActivityTest {
+    @Test fun aSustainedVoiceIsActiveAfterTheAttackAndEndsAfterTheRelease() {
+        val v = VoiceActivity()
+        var t = 0L
+        fun feed(level: Float, millis: Long): Boolean { var a = false; repeat((millis / 20).toInt()) { t += 20; a = v.update(level, t) }; return a }
+        assertFalse(feed(0.05f, 500), "a quiet room")
+        assertFalse(feed(0.6f, 100), "a click is too short")
+        assertFalse(feed(0.05f, 100))
+        assertTrue(feed(0.6f, 180), "a voice past ~150 ms")
+        assertTrue(feed(0.05f, 200), "the gap between two words doesn't end it")
+        assertFalse(feed(0.05f, 100), "it ends after the release")
+    }
+
+    @Test fun aSteadySoundRaisesTheFloorInsteadOfStayingAVoice() {
+        val v = VoiceActivity()
+        var t = 0L
+        fun feed(level: Float, millis: Long): Boolean { var a = false; repeat((millis / 20).toInt()) { t += 20; a = v.update(level, t) }; return a }
+        assertFalse(feed(0.25f, 200), "under the minimum level: never a voice")
+        assertTrue(feed(0.38f, 400), "a steady hum at first reads as a voice")
+        assertFalse(feed(0.38f, 10_000), "the floor learns it within seconds")
+        assertTrue(v.floor <= VoiceActivity.MaxFloor)
+        assertTrue(feed(0.7f, 200), "a real voice over it still counts")
+    }
 }

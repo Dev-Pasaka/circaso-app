@@ -175,6 +175,7 @@ class AndroidLiveSpeaker(private val context: Context) : LiveSpeaker {
             .build()
         if (t.state != AudioTrack.STATE_INITIALIZED) { t.release(); VoiceRoute.release(context); Diagnostics.note("voice: speaker failed"); return }
         track = t
+        t.setVolume(1f)
         t.play()
         val gen = ++generation
         worker = Thread({ drain(t, gen, sampleRate) }, "asha-voice").also { it.start() }
@@ -225,6 +226,11 @@ class AndroidLiveSpeaker(private val context: Context) : LiveSpeaker {
     override fun play(pcm: ShortArray) {
         if (track == null || pcm.isEmpty()) return
         synchronized(lock) { queue.addLast(pcm); _playing.value = true; lock.notifyAll() }
+    }
+
+    /** `AudioTrack.setVolume`: the mixer ramps each change over a buffer, so small steps are click-free. */
+    override fun setVolume(volume: Float) {
+        runCatching { track?.setVolume(volume.coerceIn(0f, 1f)) }
     }
 
     override fun flush() {

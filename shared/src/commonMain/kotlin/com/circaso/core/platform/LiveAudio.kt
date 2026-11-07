@@ -43,6 +43,12 @@ interface LiveSpeaker {
     /** Barge-in: drops everything queued and stops the sound at once. */
     fun flush()
 
+    /**
+     * Her volume, 0..1, applied at once to what is playing and what follows (the caller ramps it in small steps).
+     * Ducking while the person may be talking over her. [start] begins at 1.
+     */
+    fun setVolume(volume: Float)
+
     /** True while there is sound queued or playing. */
     val playing: StateFlow<Boolean>
 
