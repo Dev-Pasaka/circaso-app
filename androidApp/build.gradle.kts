@@ -36,7 +36,7 @@ val shareHost: String = (findProperty("share.host") as String?)
     ?: Properties().apply {
         rootProject.file("local.properties").takeIf { it.exists() }?.inputStream()?.use { load(it) }
     }.getProperty("share.host")
-    ?: "sandbox.circaso.com"
+    ?: "links.circaso.com" // the share host since 2026-11-07 (sandbox.circaso.com links still open the app)
 
 android {
     namespace = "com.circaso"

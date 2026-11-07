@@ -26,7 +26,7 @@
 		</dict>
 	</array>
 	<key>CircasoShareHost</key>
-	<string>sandbox.circaso.com</string>
+	<string>links.circaso.com</string>
 	<key>FacebookAdvertiserIDCollectionEnabled</key>
 	<false/>
 	<key>FacebookAutoInitEnabled</key>

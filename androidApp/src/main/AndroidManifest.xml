@@ -74,6 +74,13 @@
                 <category android:name="android.intent.category.BROWSABLE" />
                 <data android:scheme="https" android:host="${shareHost}" android:pathPrefix="/s/" />
             </intent-filter>
+            <!-- Links made before links.circaso.com (2026-11-07) keep opening the app. -->
+            <intent-filter android:autoVerify="true">
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="https" android:host="sandbox.circaso.com" android:pathPrefix="/s/" />
+            </intent-filter>
             <!-- The page's "Open in Circaso" button: circaso://s/{code}. -->
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />

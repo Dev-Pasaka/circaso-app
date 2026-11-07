@@ -12,7 +12,7 @@ import kotlinx.coroutines.flow.asStateFlow
  */
 object IncomingLinks {
     /** The dev host; the build adds the others (Android manifest meta-data, iOS Info.plist `CircasoShareHost`). */
-    private val hosts = mutableSetOf("sandbox.circaso.com")
+    private val hosts = mutableSetOf("links.circaso.com", "sandbox.circaso.com")
 
     private val _pending = MutableStateFlow<String?>(null)
     val pending: StateFlow<String?> = _pending.asStateFlow()
