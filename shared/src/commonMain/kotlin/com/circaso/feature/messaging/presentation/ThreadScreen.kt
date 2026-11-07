@@ -297,7 +297,8 @@ fun ThreadContent(
     fun cardMax() = threadHeightPx.intValue.let { h -> if (h > 0) with(density) { h.toDp() } - CircasoSpacing.s2 else androidx.compose.ui.unit.Dp.Unspecified }
     val cardMotion = if (CircasoTheme.reduceMotion) Modifier else Modifier.animateContentSize(tween(CircasoMotion.BaseMs))
     // "@" after the amount: the coins this wallet holds, the most valuable first, narrowing as the person types.
-    val coinQuery = if (payChip != null || typingAmount != null) coinQuery(state.draft) else null
+    // Anywhere in the message, before or after the amount (Pasaka, 2026-11-07), in any chat money can go to.
+    val coinQuery = if (payout == null && (payChip != null || (payable && quickPay != null))) coinQuery(state.draft) else null
     val coinChoices = coinQuery?.let { q -> heldCoins(quickPay?.state?.wallet).filter { it.symbol.startsWith(q, ignoreCase = true) }.take(4) }.orEmpty()
     // Sent (the SDK came back and the card is in the chat): the composer is ready for the next message.
     LaunchedEffect(quickPay?.state?.step) { if (quickPay?.state?.step == com.circaso.feature.wallet.presentation.PayStep.Done) clearPay() }
@@ -710,10 +711,14 @@ fun ThreadContent(
                         stripped != null && onAsha != null -> { onDraft(stripped); onAsha() }
                         amount != null && payable && quickPay != null -> {
                             chipHaptics.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.TextHandleMove)
-                            payChip = "#$amount"; onDraft(""); quickPay.onAmount(amount); quickPay.onNote("")
+                            // The words around the amount stay in the composer: the note, and any @coin already picked.
+                            val (amountText, rest) = amount
+                            val (tag, note) = splitAssetTag(rest)
+                            payChip = "#$amountText"; onDraft(rest)
+                            quickPay.onAssetTag(tag); quickPay.onAmount(amountText); quickPay.onNote(note)
                         }
-                        amount != null && onPay != null && !state.isGroup && !state.isSupport -> { onDraft(""); onPay(amount) }
-                        amount != null && onContribute != null && state.canContribute -> { onDraft(""); onContribute(amount) }
+                        amount != null && onPay != null && !state.isGroup && !state.isSupport -> { onDraft(amount.second); onPay(amount.first) }
+                        amount != null && onContribute != null && state.canContribute -> { onDraft(amount.second); onContribute(amount.first) }
                         else -> onDraft(text)
                     }
                 },
@@ -764,7 +769,7 @@ fun ThreadContent(
                     // Support never takes money (so nobody pretending to be Circaso can ask for it): say so the moment
                     // someone types an amount here, instead of quietly sending it as text.
                     AnimatedVisibility(
-                        state.isSupport && Regex("""^#\d""").containsMatchIn(state.draft),
+                        state.isSupport && Regex("""(?:^|\s)#\d""").containsMatchIn(state.draft),
                         enter = fadeIn(tween(CircasoMotion.QuickMs)), exit = fadeOut(tween(CircasoMotion.QuickMs)),
                     ) {
                         BasicText(
@@ -844,10 +849,14 @@ internal fun groupPayoutCard(m: Message.Payment, money: com.circaso.feature.cham
     return m.senderId == signer && com.circaso.feature.wallet.presentation.isGroupPayoutNote(m.note)
 }
 
-/** Design C3: `#500` followed by a space in the composer opens the Send sheet with 500 filled in. */
-internal fun amountShortcut(text: String): String? {
-    val m = Regex("^#(\\d+(?:\\.\\d{1,2})?)\\s$").find(text) ?: return null
-    return m.groupValues[1]
+/**
+ * Design C3: `#500` followed by a space opens the money card with 500 filled in, wherever it is typed in the message
+ * ("lunch #500 " too). The amount, and the rest of the message (the note and any `@coin`), or null.
+ */
+internal fun amountShortcut(text: String): Pair<String, String>? {
+    val m = Regex("""(?:^|(?<=\s))#(\d+(?:\.\d{1,2})?)\s$""").find(text) ?: return null
+    val amount = m.groupValues[1].takeIf { it.any { c -> c != '0' && c != '.' } } ?: return null
+    return amount to text.removeRange(m.range).replace(Regex("""\s+"""), " ").trim()
 }
 
 /** A payment card in the thread (designs C3–C7): the money colour for money received, `fill` for money sent. */
@@ -1109,12 +1118,16 @@ class QuickPay(
     val onRetryPrice: () -> Unit = {},
 )
 
-/** The amount while it is still being typed: "#5", "#12.", "#12.5" (no space yet). */
-internal fun typingAmount(draft: String): String? =
-    Regex("""^#(\d+(?:\.\d{0,2})?)(?:\s.*)?$""").find(draft)?.groupValues?.get(1)?.trimEnd('.')?.takeIf { it.isNotEmpty() && it.any { c -> c != '0' && c != '.' } }
+/** `#amount` anywhere in the message, as its own word: "#5", "lunch #12.5 @eth" (Pasaka, 2026-11-07: not only at the start). */
+private val AmountToken = Regex("""(?:^|(?<=\s))#(\d+(?:\.\d{0,2})?)(?=\s|$)""")
 
-/** What follows the amount in "#500 @usdc for lunch" (the coin and the note), while it is still plain text. */
-internal fun afterTypedAmount(draft: String): String = draft.substringAfter(' ', "").trim()
+/** The amount while it is still being typed: "#5", "#12.", "for lunch #12.5" (no space after it needed). */
+internal fun typingAmount(draft: String): String? =
+    AmountToken.find(draft)?.groupValues?.get(1)?.trimEnd('.')?.takeIf { it.isNotEmpty() && it.any { c -> c != '0' && c != '.' } }
+
+/** The message without its amount ("lunch #500 @usdc thanks" → "lunch @usdc thanks"): the coin and the note. */
+internal fun afterTypedAmount(draft: String): String =
+    AmountToken.find(draft)?.let { draft.removeRange(it.range) }.orEmpty().replace(Regex("""\s+"""), " ").trim()
 
 /** The coin being typed after "@" at the end of the note ("for lunch @us" → "us", "@" → ""); null when none is. */
 internal fun coinQuery(draft: String): String? = Regex("""(?:^|\s)@([A-Za-z]*)$""").find(draft)?.groupValues?.get(1)

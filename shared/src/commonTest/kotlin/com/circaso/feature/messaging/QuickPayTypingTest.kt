@@ -1,6 +1,9 @@
 package com.circaso.feature.messaging
 
+import com.circaso.feature.messaging.presentation.afterTypedAmount
+import com.circaso.feature.messaging.presentation.amountShortcut
 import com.circaso.feature.messaging.presentation.coinQuery
+import com.circaso.feature.messaging.presentation.splitAssetTag
 import com.circaso.feature.messaging.presentation.heldCoins
 import com.circaso.feature.messaging.presentation.typingAmount
 import com.circaso.feature.wallet.domain.Asset
@@ -20,7 +23,21 @@ class QuickPayTypingTest {
         assertNull(typingAmount("#"), "nothing to pay yet")
         assertNull(typingAmount("#0"), "zero isn't a payment")
         assertEquals("5", typingAmount("#5 @usdc for lunch"), "the chip turned back into text keeps its preview")
-        assertNull(typingAmount("pay #5"), "only at the start of the message")
+        assertEquals("5", typingAmount("pay #5"), "anywhere in the message, not only at the start")
+        assertEquals("12.5", typingAmount("for lunch #12.5 @eth thanks"))
+        assertNull(typingAmount("room#5"), "only as its own word")
+        assertNull(typingAmount("#5x"), "not part of a longer word")
+    }
+
+    @Test fun theAmountCompletesWhereverItIsTyped() {
+        assertEquals("500" to "", amountShortcut("#500 "))
+        assertEquals("500" to "lunch", amountShortcut("lunch #500 "), "the words before it stay as the note")
+        assertEquals("500" to "lunch @eurc", amountShortcut("lunch @eurc #500 "), "a coin picked before the amount stays")
+        assertNull(amountShortcut("lunch #500"), "still being typed")
+        assertNull(amountShortcut("#0 "), "zero isn't a payment")
+        assertNull(amountShortcut("room#500 "))
+        assertEquals("lunch @eurc thanks", afterTypedAmount("lunch #500 @eurc thanks"))
+        assertEquals("eurc" to "lunch thanks", splitAssetTag(afterTypedAmount("lunch #500 @eurc thanks")))
     }
 
     @Test fun theCoinBeingTypedIsReadAfterTheAt() {
@@ -29,6 +46,7 @@ class QuickPayTypingTest {
         assertNull(coinQuery("for lunch"))
         assertNull(coinQuery("@usdc for lunch"), "already picked, the note goes on")
         assertNull(coinQuery("mail@x"), "not an email")
+        assertEquals("eu", coinQuery("lunch with Amina @eu"), "in the middle of a sentence")
     }
 
     @Test fun heldCoinsComeMostValuableFirstAndEmptyOnesAreLeftOut() {
