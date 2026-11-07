@@ -77,7 +77,7 @@ fun liveVoiceUrl(baseUrl: String): String = baseUrl.trimEnd('/').replaceFirst("h
 
 interface LiveVoiceRemote {
     /** Opens the socket. The auth frame goes out when [LiveVoiceSession.events] is first collected. */
-    suspend fun open(accessToken: String, agentToken: String?, language: String, chatReading: Boolean): LiveVoiceSession
+    suspend fun open(accessToken: String, agentToken: String?, language: String, chatReading: Boolean, conversationId: String? = null): LiveVoiceSession
 }
 
 class KtorLiveVoiceRemote(
@@ -89,8 +89,8 @@ class KtorLiveVoiceRemote(
     /** The Asha conversation the voice chat belongs to (the one open), so its turns land there. */
     private val conversation: () -> String? = { null },
 ) : LiveVoiceRemote {
-    override suspend fun open(accessToken: String, agentToken: String?, language: String, chatReading: Boolean): LiveVoiceSession =
-        LiveVoiceSocketSession(sockets.open(url), json, authFrame(accessToken, agentToken, language, chatReading, currency(), voice(), conversation()))
+    override suspend fun open(accessToken: String, agentToken: String?, language: String, chatReading: Boolean, conversationId: String?): LiveVoiceSession =
+        LiveVoiceSocketSession(sockets.open(url), json, authFrame(accessToken, agentToken, language, chatReading, currency(), voice(), conversationId ?: conversation()))
 }
 
 internal fun authFrame(accessToken: String, agentToken: String?, language: String? = null, chatReading: Boolean? = null, currency: String? = null, voice: String? = null, conversationId: String? = null): JsonObject = buildJsonObject {

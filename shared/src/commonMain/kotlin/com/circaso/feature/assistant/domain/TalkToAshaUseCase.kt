@@ -16,8 +16,9 @@ class TalkToAshaUseCase(
     private val tools: DeviceToolRunner,
     private val tokenCheckMillis: Long = TokenCheckMillis,
 ) {
-    suspend operator fun invoke(language: String = "en", chatReading: Boolean = true): LiveVoiceStart =
-        when (val start = repository.open(language, chatReading)) {
+    /** [conversationId]: carry on in that conversation (a reconnect); null opens in the chat's current one. */
+    suspend operator fun invoke(language: String = "en", chatReading: Boolean = true, conversationId: String? = null): LiveVoiceStart =
+        when (val start = repository.open(language, chatReading, conversationId)) {
             is LiveVoiceStart.Opened -> LiveVoiceStart.Opened(Conversation(start.session))
             else -> start
         }

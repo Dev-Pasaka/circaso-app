@@ -24,6 +24,10 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.first
+import com.circaso.core.platform.ConnectionStatus
 
 /** Where the conversation is, as the animation and the status line show it. */
 enum class VoicePhase {
@@ -35,6 +39,11 @@ enum class VoicePhase {
     Thinking,
     /** Asha's voice is playing. */
     Speaking,
+    /**
+     * The line dropped mid-call (not the person's doing): the microphone and her voice are stopped, the transcript
+     * stays, and the call reopens in the same conversation as soon as the connection is back.
+     */
+    Reconnecting,
     /** The conversation is over: the person hung up, or the server closed it (see [VoiceUiState.ending]). */
     Ended,
 }
@@ -66,12 +75,14 @@ data class VoiceTurn(
     val reply: List<String> = emptyList(),
     val done: Boolean = false,
     val interrupted: Boolean = false,
+    /** The line dropped before the answer was finished: what arrived is shown as cut off, never as a complete answer. */
+    val cutOff: Boolean = false,
 ) {
     val replyText get() = reply.joinToString(" ")
 }
 
 /** What the animated logo shows: the phase, with muted told apart from listening and a dropped line or failure (Error) from a plain end. */
-enum class VoiceVisual { Connecting, Listening, Thinking, Speaking, Muted, Error, Ended }
+enum class VoiceVisual { Connecting, Listening, Thinking, Speaking, Muted, Reconnecting, Error, Ended }
 
 data class VoiceUiState(
     val phase: VoicePhase = VoicePhase.Connecting,
@@ -93,7 +104,7 @@ data class VoiceUiState(
     /** Debug builds only: the last turn's delays ("model 420 · voice 610 · sent 780 · heard 830 ms"). */
     val timing: String? = null,
 ) {
-    val live get() = phase != VoicePhase.Connecting && phase != VoicePhase.Ended
+    val live get() = phase != VoicePhase.Connecting && phase != VoicePhase.Ended && phase != VoicePhase.Reconnecting
 
     /** The question Asha is on (the latest turn's). */
     val question: String? get() = turns.lastOrNull()?.question
@@ -106,6 +117,7 @@ data class VoiceUiState(
             VoicePhase.Listening -> if (muted) VoiceVisual.Muted else VoiceVisual.Listening
             VoicePhase.Thinking -> VoiceVisual.Thinking
             VoicePhase.Speaking -> VoiceVisual.Speaking
+            VoicePhase.Reconnecting -> VoiceVisual.Reconnecting
             VoicePhase.Ended -> when (ending) {
                 VoiceEnding.Offline, is VoiceEnding.Failed, VoiceEnding.NoMicrophone -> VoiceVisual.Error
                 else -> VoiceVisual.Ended
@@ -132,6 +144,13 @@ class VoiceViewModel(
     private val microphone: LiveMicrophone,
     private val speaker: LiveSpeaker,
     private val client: com.circaso.core.platform.ClientInfo? = null,
+    /**
+     * The app's one answer to "are we online?" ([com.circaso.core.sync.ConnectionState.status]): a dropped call waits
+     * on it before reopening. Null (previews) reopens on the backoff alone.
+     */
+    private val connection: Flow<ConnectionStatus>? = null,
+    /** Milliseconds, for the microphone gate; a test clock in tests. */
+    private val clock: () -> Long = { nowMillis() },
 ) : ViewModel() {
     /** When this phone got the turn, and how long until its first sound played; for the debug timing line. */
     private var turnAt = 0L
@@ -142,6 +161,15 @@ class VoiceViewModel(
     private var session: LiveVoiceSession? = null
     private var conversation: Job? = null
     private var ended = false
+
+    /** This call got as far as `ready` at least once: only a call that was live is worth reconnecting. */
+    private var everLive = false
+    /** Reopen attempts that failed since the line dropped (reset when a reopened call is live again). */
+    private var reopenFailures = 0
+    /** Ends the call as Offline when reconnecting takes longer than [ReconnectWindowMillis]. */
+    private var giveUp: Job? = null
+    /** The Asha conversation this call's turns went to (from the saved answers), so a reopened call carries on there. */
+    private var conversationId: String? = null
 
     // The server's `reply_done` ends the speaking phase, not a gap between sentences, so the phase is never read off the player.
     val state: StateFlow<VoiceUiState> = combine(local, microphone.level, speaker.level) { ui, mic, voice ->
@@ -156,29 +184,70 @@ class VoiceViewModel(
     fun start() {
         if (conversation?.isActive == true) return
         ended = false
+        everLive = false
+        reopenFailures = 0
         local.value = VoiceUiState()
         conversation = viewModelScope.launch { converse() }
     }
 
     private suspend fun converse() {
         if (!microphone.supported) return finish(VoiceEnding.UseClips)
-        val opened = when (val start = talk()) {
-            is LiveVoiceStart.Opened -> start.session
-            LiveVoiceStart.Offline -> return finish(VoiceEnding.Offline)
-            LiveVoiceStart.SignedOut -> return finish(VoiceEnding.Offline)
+        while (true) {
+            val reconnecting = local.value.phase == VoicePhase.Reconnecting
+            if (reconnecting) {
+                // Nothing is tried while the app knows it is offline; the moment it is back, a short pause, then reopen.
+                connection?.first { it == ConnectionStatus.Online }
+                delay(ReopenBackoffMillis[reopenFailures.coerceAtMost(ReopenBackoffMillis.lastIndex)])
+                if (ended) return
+            }
+            val opened = when (val start = talk(conversationId = conversationId)) {
+                is LiveVoiceStart.Opened -> start.session
+                LiveVoiceStart.Offline -> if (!reconnecting) return finish(VoiceEnding.Offline) else {
+                    if (++reopenFailures >= MaxReopenFailures) return finish(VoiceEnding.Offline)
+                    continue
+                }
+                // No session on the phone any more: reconnecting can't fix that.
+                LiveVoiceStart.SignedOut -> return finish(if (reconnecting) VoiceEnding.Failed("Please sign in again to talk to Asha.") else VoiceEnding.Offline)
+            }
+            session = opened
+            try {
+                opened.events.collect { event -> handle(event, opened) }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Throwable) {
+                Diagnostics.note("voice: conversation failed (${e::class.simpleName})")
+            } finally {
+                session = null
+                streaming?.cancel()
+                microphone.stop()
+                speaker.stop()
+            }
+            if (ended) return
+            // The line dropped without anyone hanging up.
+            when {
+                // It never got going: nothing to carry on, so end as before.
+                !everLive -> return finishNow(VoiceEnding.Offline)
+                // A reopened call dropped again before it was live: one more failed attempt.
+                local.value.phase == VoicePhase.Reconnecting -> if (++reopenFailures >= MaxReopenFailures) return finishNow(VoiceEnding.Offline)
+                else -> startReconnecting()
+            }
         }
-        session = opened
-        try {
-            opened.events.collect { event -> handle(event, opened) }
-        } catch (e: kotlinx.coroutines.CancellationException) {
-            throw e
-        } catch (e: Throwable) {
-            Diagnostics.note("voice: conversation failed (${e::class.simpleName})")
-        } finally {
-            session = null
-            microphone.stop()
-            speaker.stop()
-            if (!ended) finishNow(VoiceEnding.Offline)
+    }
+
+    /** The call stays on screen, quiet: microphone and voice stopped, the cut-off answer closed, until the line is back. */
+    private fun startReconnecting() {
+        Diagnostics.note("voice: line dropped, reconnecting")
+        reopenFailures = 0
+        local.update { it.copy(phase = VoicePhase.Reconnecting, heard = "", heardFinal = false, status = null, turns = VoiceTranscript.cutOff(it.turns)) }
+        giveUp?.cancel()
+        giveUp = viewModelScope.launch {
+            delay(ReconnectWindowMillis)
+            if (local.value.phase != VoicePhase.Reconnecting) return@launch
+            Diagnostics.note("voice: still offline, giving up")
+            val s = session
+            finishNow(VoiceEnding.Offline)
+            conversation?.cancel()
+            s?.close()
         }
     }
 
@@ -200,12 +269,14 @@ class VoiceViewModel(
             is LiveVoiceEvent.Interrupted -> { Diagnostics.note("voice: interrupted"); speaker.flush(); local.update { it.copy(phase = VoicePhase.Listening, turns = VoiceTranscript.interrupted(it.turns)) } }
             is LiveVoiceEvent.ReplyDone -> {
                 Diagnostics.note("voice: reply done, spoken=${event.spoken}")
+                event.message.conversationId?.let { conversationId = it }
                 local.update { it.copy(phase = VoicePhase.Listening, status = null, turns = VoiceTranscript.done(it.turns, event.message.text, event.spoken)) }
                 viewModelScope.launch { refreshHistory() }
             }
             is LiveVoiceEvent.Error -> Diagnostics.note("voice: error ${event.code}").also { local.update { it.copy(phase = VoicePhase.Listening, status = null, notice = noticeFor(event.code), turns = VoiceTranscript.failed(it.turns)) } }
             is LiveVoiceEvent.Closing -> { Diagnostics.note("voice: closing ${event.reason}"); finish(endingFor(event)) }
-            is LiveVoiceEvent.Closed -> if (!ended) finish(closedEnding(event))
+            // A refused sign-in ends the call; any other close is the line dropping, which [converse] reconnects.
+            is LiveVoiceEvent.Closed -> if (!ended) closedEnding(event)?.let { finish(it) }
             is LiveVoiceEvent.ToolRequest -> Unit // answered inside the use case
             is LiveVoiceEvent.Timing -> {
                 Diagnostics.note("voice: timing model=${event.modelFirstTextMs} sentence=${event.firstSentenceMs} audio=${event.firstAudioMs}")
@@ -229,16 +300,25 @@ class VoiceViewModel(
             LiveMicStart.Failed -> { s.end(); return finish(VoiceEnding.Failed("Couldn't start the microphone. Try again.")) }
         }
         microphone.muted = local.value.muted
+        everLive = true
+        reopenFailures = 0
+        giveUp?.cancel()
         local.update { it.copy(phase = VoicePhase.Listening, voiceSecondsLeft = ready.voiceSecondsLeft) }
         streaming?.cancel()
         streaming = viewModelScope.launch {
-            // While her voice plays, the loudspeaker leaks into the microphone. The echo canceller takes most of it;
-            // what is left stays on the phone unless the person is clearly louder than it (then it is their barge-in),
-            // and once they are heard the stream stays open for a moment so their words are not chopped.
+            // During Asha's whole turn (from the question taken, through her thinking, her sentences and the gaps
+            // between them, until her answer is done, cut off or failed) and for an echo tail after her voice last
+            // played, the loudspeaker's leftovers and room noise stay on the phone: the server takes any word it hears
+            // then as the person talking over her, which cut her off and left a silent "You talked over this". Only a
+            // voice clearly louder than that gets through (a real barge-in), and once heard the stream stays open for a
+            // moment so their words are not chopped. Outside her turn everything streams.
             var openUntil = 0L
+            var lastPlayedAt = Long.MIN_VALUE / 2
             microphone.packets.collect { packet ->
-                if (speaker.playing.value) {
-                    val now = nowMillis()
+                val now = clock()
+                if (speaker.playing.value) lastPlayedAt = now
+                val herTurn = local.value.phase == VoicePhase.Thinking || local.value.phase == VoicePhase.Speaking
+                if (herTurn || now - lastPlayedAt < EchoTailMillis) {
                     if (microphone.level.value >= BargeInLevel) openUntil = now + BargeInHoldMillis
                     if (now > openUntil) return@collect
                 }
@@ -278,6 +358,7 @@ class VoiceViewModel(
     private fun finishNow(ending: VoiceEnding) {
         if (ended) return
         ended = true
+        giveUp?.cancel()
         streaming?.cancel()
         microphone.stop()
         speaker.stop()
@@ -293,11 +374,12 @@ class VoiceViewModel(
         else -> VoiceEnding.Failed(c.message ?: "The conversation ended.")
     }
 
-    private fun closedEnding(c: LiveVoiceEvent.Closed): VoiceEnding {
+    /** The ending a close means, or null when it is only the line dropping (reconnected, or Offline if it never got going). */
+    private fun closedEnding(c: LiveVoiceEvent.Closed): VoiceEnding? {
         Diagnostics.note("voice: closed ${c.code} ${c.reason ?: ""}")
         return when (c.reason) {
             "unauthorized", "auth required" -> VoiceEnding.Failed("Please sign in again to talk to Asha.")
-            else -> VoiceEnding.Offline
+            else -> null
         }
     }
 
@@ -320,6 +402,15 @@ class VoiceViewModel(
         /** A voice at the phone sits at 0.5 and above on the level scale; echo after cancellation stays well under. */
         const val BargeInLevel = 0.5f
         const val BargeInHoldMillis = 600L
+        /** How long after her voice last played the microphone stays gated: the room's echo tail. */
+        const val EchoTailMillis = 500L
+
+        /** A dropped call that can't reopen within this ends as Offline, with Talk Again. */
+        const val ReconnectWindowMillis = 30_000L
+        /** Reopen attempts that may fail (refused, or dropped again before `ready`) before the call ends. */
+        const val MaxReopenFailures = 3
+        /** The pause before each reopen once the connection is back: short, growing a little per failure. */
+        val ReopenBackoffMillis = longArrayOf(500, 1_500, 3_000)
 
         /** 16-bit little-endian samples, for a server configured to send `linear16` instead of mulaw. */
         fun pcm16(bytes: ByteArray): ShortArray = ShortArray(bytes.size / 2) { i -> ((bytes[2 * i].toInt() and 0xFF) or (bytes[2 * i + 1].toInt() shl 8)).toShort() }
@@ -370,6 +461,9 @@ object VoiceTranscript {
     }
 
     fun failed(turns: List<VoiceTurn>): List<VoiceTurn> = updateOpen(turns) { it.copy(done = true) }
+
+    /** The line dropped mid-answer: the open exchange closes, marked cut off when part of an answer had arrived. */
+    fun cutOff(turns: List<VoiceTurn>): List<VoiceTurn> = updateOpen(turns) { it.copy(done = true, cutOff = it.reply.isNotEmpty()) }
 
     private fun updateOpen(turns: List<VoiceTurn>, change: (VoiceTurn) -> VoiceTurn): List<VoiceTurn> {
         val last = turns.lastOrNull() ?: return turns

@@ -14,11 +14,11 @@ class LiveVoiceRepositoryImpl(
     private val auth: AuthManager,
     private val connection: ConnectionState,
 ) : LiveVoiceRepository {
-    override suspend fun open(language: String, chatReading: Boolean): LiveVoiceStart {
+    override suspend fun open(language: String, chatReading: Boolean, conversationId: String?): LiveVoiceStart {
         if (connection.status.value != ConnectionStatus.Online) return LiveVoiceStart.Offline
         val (access, agent) = currentTokens() ?: return LiveVoiceStart.SignedOut
         return try {
-            LiveVoiceStart.Opened(remote.open(access, agent, language, chatReading))
+            LiveVoiceStart.Opened(remote.open(access, agent, language, chatReading, conversationId))
         } catch (e: CancellationException) {
             throw e
         } catch (e: Throwable) {

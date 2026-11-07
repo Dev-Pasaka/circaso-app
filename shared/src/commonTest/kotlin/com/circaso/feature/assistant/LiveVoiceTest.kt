@@ -173,7 +173,9 @@ private class FakeSession : LiveVoiceSession {
 private class FakeLiveVoiceRepository(val session: FakeSession = FakeSession()) : LiveVoiceRepository {
     var start: LiveVoiceStart = LiveVoiceStart.Opened(session)
     var tokens: Pair<String, String?>? = "app-1" to "agent-1"
-    override suspend fun open(language: String, chatReading: Boolean) = start
+    /** The conversation each open asked for, in order. */
+    val opened = mutableListOf<String?>()
+    override suspend fun open(language: String, chatReading: Boolean, conversationId: String?): LiveVoiceStart { opened += conversationId; return start }
     override suspend fun currentTokens() = tokens
 }
 
@@ -276,8 +278,116 @@ class VoiceViewModelTest {
     @BeforeTest fun setUp() = Dispatchers.setMain(dispatcher)
     @AfterTest fun tearDown() = Dispatchers.resetMain()
 
+    private val online = MutableStateFlow(com.circaso.core.platform.ConnectionStatus.Online)
+
     private fun viewModel(repository: FakeLiveVoiceRepository = repo, microphone: FakeMicrophone = mic, spk: FakeSpeaker = speaker) =
-        VoiceViewModel(TalkToAshaUseCase(repository, DeviceToolRunner { _, _ -> emptyList() }, 60_000), history, microphone, spk)
+        VoiceViewModel(TalkToAshaUseCase(repository, DeviceToolRunner { _, _ -> emptyList() }, 60_000), history, microphone, spk, connection = online, clock = { now })
+
+    /** The microphone gate's clock, moved by hand. */
+    private var now = 1_000_000L
+
+    /** A live call with one answered turn saved in conversation `c9`, then the line drops while offline. */
+    private suspend fun TestScopeLike.liveCallThenDrop(vm: VoiceViewModel) {
+        repo.session.fromServer.emit(LiveVoiceEvent.Ready(118, "mulaw", 8000))
+        repo.session.fromServer.emit(LiveVoiceEvent.Turn("Who did I chat with?"))
+        repo.session.fromServer.emit(LiveVoiceEvent.ReplyDone(msg("m2", "ASHA", "Mostly Amina.", conversation = "c9"), spoken = true))
+        repo.session.fromServer.emit(LiveVoiceEvent.Turn("And Mum?"))
+        repo.session.fromServer.emit(LiveVoiceEvent.Reply("You and Mum talked on"))
+        online.value = com.circaso.core.platform.ConnectionStatus.Offline
+        val micStops = mic.stopped
+        repo.session.fromServer.emit(LiveVoiceEvent.Closed(1006, null))
+        testScheduler.runCurrent()
+        assertEquals(VoicePhase.Reconnecting, vm.state.value.phase, "a dropped call waits to reconnect instead of ending")
+        assertTrue(mic.stopped > micStops, "the microphone stops while the line is down")
+        assertTrue(speaker.stopped >= 1, "her voice stops too")
+    }
+
+    @Test fun aDroppedCallReconnectsInTheSameConversationWhenTheConnectionIsBack() = runTest(timeout = 15.seconds) {
+        val vm = viewModel()
+        with(vm) {
+            liveCallThenDrop(vm)
+            assertEquals(2, vm.state.value.turns.size, "the transcript stays")
+            assertTrue(vm.state.value.turns.last().done, "the cut-off answer is closed as it stood")
+            assertTrue(vm.state.value.turns.last().cutOff, "and marked cut off, never shown as complete")
+            assertFalse(vm.state.value.turns.first().cutOff)
+            val second = FakeSession()
+            repo.start = LiveVoiceStart.Opened(second)
+            advanceTimeBy(10_000)
+            assertEquals(1, repo.opened.size, "nothing is tried while offline")
+            online.value = com.circaso.core.platform.ConnectionStatus.Online
+            advanceTimeBy(600)
+            assertEquals(listOf(null, "c9"), repo.opened, "reopened once, in the same conversation")
+            second.fromServer.emit(LiveVoiceEvent.Ready(100, "mulaw", 8000))
+            assertEquals(VoicePhase.Listening, vm.state.value.phase)
+            assertEquals(2, mic.started, "the microphone opens again")
+            advanceTimeBy(40_000)
+            assertEquals(VoicePhase.Listening, vm.state.value.phase, "a reopened call is not ended by the reconnect timer")
+        }
+    }
+
+    @Test fun aCallStillOfflineAfterThirtySecondsEnds() = runTest(timeout = 15.seconds) {
+        val vm = viewModel()
+        with(vm) {
+            liveCallThenDrop(vm)
+            advanceTimeBy(29_000)
+            assertEquals(VoicePhase.Reconnecting, vm.state.value.phase)
+            advanceTimeBy(1_500)
+            assertEquals(VoiceEnding.Offline, vm.state.value.ending, "ends as before, with Talk Again")
+            assertEquals(1, repo.opened.size)
+        }
+    }
+
+    @Test fun threeFailedReopensEndTheCall() = runTest(timeout = 15.seconds) {
+        val vm = viewModel()
+        with(vm) {
+            liveCallThenDrop(vm)
+            repo.start = LiveVoiceStart.Offline
+            online.value = com.circaso.core.platform.ConnectionStatus.Online
+            advanceTimeBy(600)
+            assertEquals(2, repo.opened.size)
+            assertEquals(VoicePhase.Reconnecting, vm.state.value.phase)
+            advanceTimeBy(1_600)
+            assertEquals(3, repo.opened.size)
+            advanceTimeBy(3_100)
+            assertEquals(4, repo.opened.size)
+            assertEquals(VoiceEnding.Offline, vm.state.value.ending)
+            advanceTimeBy(30_000)
+            assertEquals(4, repo.opened.size, "no more tries")
+        }
+    }
+
+    @Test fun hangingUpNeverReconnects() = runTest(timeout = 15.seconds) {
+        val vm = viewModel()
+        with(vm) {
+            repo.session.fromServer.emit(LiveVoiceEvent.Ready(118, "mulaw", 8000))
+            vm.onEnd()
+            repo.session.fromServer.emit(LiveVoiceEvent.Closed(1000, "ended"))
+            advanceTimeBy(10_000)
+            assertEquals(VoiceEnding.HungUp, vm.state.value.ending)
+            assertEquals(1, repo.opened.size)
+        }
+    }
+
+    @Test fun quotaAndAuthEndingsNeverReconnect() = runTest(timeout = 15.seconds) {
+        val vm = viewModel()
+        with(vm) {
+            repo.session.fromServer.emit(LiveVoiceEvent.Ready(118, "mulaw", 8000))
+            repo.session.fromServer.emit(LiveVoiceEvent.Closing("assistant.quota_exceeded", null, 600))
+            repo.session.fromServer.emit(LiveVoiceEvent.Closed(1000, null))
+            advanceTimeBy(10_000)
+            assertEquals(VoiceEnding.OutOfVoice(600), vm.state.value.ending)
+            assertEquals(1, repo.opened.size)
+        }
+        val other = FakeLiveVoiceRepository()
+        val vm2 = viewModel(repository = other)
+        with(vm2) {
+            other.session.fromServer.emit(LiveVoiceEvent.Ready(118, "mulaw", 8000))
+            other.session.fromServer.emit(LiveVoiceEvent.Closed(1008, "unauthorized"))
+            advanceTimeBy(10_000)
+            assertIs<VoiceEnding.Failed>(vm2.state.value.ending)
+            assertEquals(1, other.opened.size)
+        }
+    }
 
     /** Keeps the state collected while [block] runs, then clears the ViewModel as the navigation would, whatever happened. */
     private suspend fun TestScopeLike.with(vm: VoiceViewModel, block: suspend () -> Unit) {
@@ -354,9 +464,61 @@ class VoiceViewModelTest {
             mic.out.emit(byteArrayOf(3))
             assertEquals(listOf<Byte>(2, 3), repo.session.audio.map { it.single() }, "a clear voice opens the stream and keeps it open a moment")
             speaker.playing.value = false
+            repo.session.fromServer.emit(LiveVoiceEvent.ReplyDone(msg("m2", "ASHA", "Done."), spoken = true))
+            now += VoiceTailMillis + 1_000
             mic.level.value = 0.1f
             mic.out.emit(byteArrayOf(4))
-            assertEquals(listOf<Byte>(2, 3, 4), repo.session.audio.map { it.single() }, "with her quiet, everything streams")
+            assertEquals(listOf<Byte>(2, 3, 4), repo.session.audio.map { it.single() }, "with her turn over and quiet, everything streams")
+        }
+    }
+
+    @Test fun noiseDuringHerWholeTurnStaysOnThePhone() = runTest(timeout = 15.seconds) {
+        val vm = viewModel()
+        with(vm) {
+            repo.session.fromServer.emit(LiveVoiceEvent.Ready(118, "mulaw", 8000))
+            mic.level.value = 0.2f
+            mic.out.emit(byteArrayOf(1))
+            assertEquals(1, repo.session.audio.size, "before her turn, everything streams")
+
+            repo.session.fromServer.emit(LiveVoiceEvent.Turn("What did I spend?"))
+            now += 20; mic.out.emit(byteArrayOf(2))
+            assertEquals(1, repo.session.audio.size, "while she thinks, before any audio, room noise is not sent")
+
+            repo.session.fromServer.emit(LiveVoiceEvent.Audio(byteArrayOf(0xFF.toByte())))
+            speaker.playing.value = true
+            now += 20; mic.out.emit(byteArrayOf(3))
+            speaker.playing.value = false // the gap between two sentences
+            now += 300; mic.out.emit(byteArrayOf(4))
+            now += 900; mic.out.emit(byteArrayOf(5))
+            assertEquals(1, repo.session.audio.size, "her echo and the gaps between her sentences are not sent")
+
+            mic.level.value = 0.8f
+            now += 20; mic.out.emit(byteArrayOf(6))
+            mic.level.value = 0.2f
+            now += 300; mic.out.emit(byteArrayOf(7))
+            now += 400; mic.out.emit(byteArrayOf(8))
+            assertEquals(listOf<Byte>(1, 6, 7), repo.session.audio.map { it.single() }, "a loud voice is sent and held open a moment, then the gate closes")
+
+            repo.session.fromServer.emit(LiveVoiceEvent.ReplyDone(msg("m2", "ASHA", "About 500."), spoken = true))
+            now += VoiceTailMillis + 1; mic.out.emit(byteArrayOf(9))
+            assertEquals(listOf<Byte>(1, 6, 7, 9), repo.session.audio.map { it.single() }, "after her turn and the echo tail, everything streams")
+        }
+    }
+
+    @Test fun theEchoTailGatesRightAfterHerVoiceStops() = runTest(timeout = 15.seconds) {
+        val vm = viewModel()
+        with(vm) {
+            repo.session.fromServer.emit(LiveVoiceEvent.Ready(118, "mulaw", 8000))
+            repo.session.fromServer.emit(LiveVoiceEvent.Turn("Hi"))
+            speaker.playing.value = true
+            now += 20; mic.out.emit(byteArrayOf(1))
+            repo.session.fromServer.emit(LiveVoiceEvent.ReplyDone(msg("m2", "ASHA", "Hello."), spoken = true))
+            speaker.playing.value = false
+            mic.level.value = 0.2f
+            now += 200; mic.out.emit(byteArrayOf(2))
+            assertTrue(repo.session.audio.isEmpty(), "her turn is over, but the room still rings for a moment")
+            now += VoiceTailMillis; mic.out.emit(byteArrayOf(3))
+            assertEquals(listOf<Byte>(3), repo.session.audio.map { it.single() })
         }
     }
 
@@ -405,8 +567,11 @@ class VoiceViewModelTest {
         }
     }
 
-    private fun msg(id: String, role: String, text: String) = com.circaso.feature.assistant.domain.AshaMessage(id, role, text, null, null, null, "2026-10-29T10:00:00Z")
+    private fun msg(id: String, role: String, text: String, conversation: String? = null) = com.circaso.feature.assistant.domain.AshaMessage(id, role, text, null, null, null, "2026-10-29T10:00:00Z", conversation)
 }
+
+/** Mirrors VoiceViewModel's echo tail (private there). */
+private const val VoiceTailMillis = 500L
 
 private typealias TestScopeLike = kotlinx.coroutines.test.TestScope
 

@@ -60,6 +60,7 @@ fun VoiceVisual.label(): String = when (this) {
     VoiceVisual.Thinking -> "Thinking"
     VoiceVisual.Speaking -> "Speaking"
     VoiceVisual.Muted -> "Muted"
+    VoiceVisual.Reconnecting -> "Reconnecting"
     VoiceVisual.Error -> "Not connected"
     VoiceVisual.Ended -> "Ended"
 }
@@ -96,10 +97,10 @@ fun AshaVoiceLogo(visual: VoiceVisual, level: Float, modifier: Modifier = Modifi
         tween(CircasoMotion.BaseMs),
         label = "tint",
     )
-    val moving = !still && visual in setOf(VoiceVisual.Connecting, VoiceVisual.Listening, VoiceVisual.Thinking, VoiceVisual.Speaking)
+    val moving = !still && visual in setOf(VoiceVisual.Connecting, VoiceVisual.Reconnecting, VoiceVisual.Listening, VoiceVisual.Thinking, VoiceVisual.Speaking)
     val clock = if (moving) rememberInfiniteTransition(label = "logo") else null
     val breath: State<Float> = clock?.animateFloat(
-        0f, 1f, infiniteRepeatable(tween(if (visual == VoiceVisual.Connecting) 1_600 else 3_200, easing = FastOutSlowInEasing), RepeatMode.Reverse), label = "breath",
+        0f, 1f, infiniteRepeatable(tween(when (visual) { VoiceVisual.Connecting -> 1_600; VoiceVisual.Reconnecting -> 2_400; else -> 3_200 }, easing = FastOutSlowInEasing), RepeatMode.Reverse), label = "breath",
     ) ?: remember { mutableFloatStateOf(0.5f) }
     val phase: State<Float> = clock?.animateFloat(0f, (2 * PI).toFloat(), infiniteRepeatable(tween(if (visual == VoiceVisual.Speaking) 2_200 else 3_600, easing = LinearEasing)), label = "phase")
         ?: remember { mutableFloatStateOf(0f) }
@@ -126,7 +127,8 @@ fun AshaVoiceLogo(visual: VoiceVisual, level: Float, modifier: Modifier = Modifi
                 else -> 0f
             }
             when (visual) {
-                VoiceVisual.Connecting -> drawCircle(tint.copy(alpha = 0.15f + 0.25f * b), base + room * (0.3f + 0.1f * b), centre, style = Stroke(1.5.dp.toPx()))
+                // Reconnecting breathes like connecting, only slower: calm, not alarming; the badge says the line is down.
+                VoiceVisual.Connecting, VoiceVisual.Reconnecting -> drawCircle(tint.copy(alpha = 0.15f + 0.25f * b), base + room * (0.3f + 0.1f * b), centre, style = Stroke(1.5.dp.toPx()))
                 VoiceVisual.Thinking -> {
                     drawCircle(tint.copy(alpha = 0.12f), base + room * 0.34f, centre, style = Stroke(1.5.dp.toPx()))
                     rotate(p * (180f / PI.toFloat()) * 2f, centre) {
@@ -164,7 +166,7 @@ fun AshaVoiceLogo(visual: VoiceVisual, level: Float, modifier: Modifier = Modifi
                 val swell = if (!still && (visual == VoiceVisual.Speaking || visual == VoiceVisual.Listening)) 0.05f * smooth.value else 0f
                 val s = 1f + 0.03f * b + swell
                 scaleX = s; scaleY = s
-                alpha = if (visual == VoiceVisual.Ended || visual == VoiceVisual.Connecting) 0.75f else 1f
+                alpha = if (visual == VoiceVisual.Ended || visual == VoiceVisual.Connecting || visual == VoiceVisual.Reconnecting) 0.75f else 1f
             }.clearAndSetSemantics {},
             size = markSize,
         )
@@ -182,7 +184,7 @@ fun AshaVoiceLogo(visual: VoiceVisual, level: Float, modifier: Modifier = Modifi
 /** The small badge on the mark: always for muted and not connected; with reduced motion, every state has one. */
 private fun stateBadge(v: VoiceVisual, still: Boolean): CircasoIcon? = when (v) {
     VoiceVisual.Muted -> CircasoIcon.MicOff
-    VoiceVisual.Error -> CircasoIcon.Offline
+    VoiceVisual.Error, VoiceVisual.Reconnecting -> CircasoIcon.Offline
     VoiceVisual.Listening -> if (still) CircasoIcon.Mic else null
     VoiceVisual.Speaking -> if (still) CircasoIcon.Speaker else null
     VoiceVisual.Thinking -> if (still) CircasoIcon.More else null

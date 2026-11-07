@@ -56,6 +56,7 @@ import com.circaso.designsystem.theme.CircasoMotion
 import com.circaso.designsystem.theme.CircasoShapes
 import com.circaso.designsystem.theme.CircasoSpacing
 import com.circaso.designsystem.theme.CircasoTheme
+import kotlinx.coroutines.launch
 
 /**
  * Talking to Asha hands-free. There is no frame for this in the design (F1 only has the mic button), so it follows the
@@ -129,8 +130,8 @@ fun VoiceContent(
                 )
                 Spacer(Modifier.weight(0.6f))
             }
-            if (hasTranscript && state.phase == VoicePhase.Ended) {
-                BasicText(endingText(state.ending), Modifier.padding(horizontal = CircasoSpacing.s6, vertical = CircasoSpacing.s2), style = t.footnote.copy(color = c.inkSecondary, textAlign = TextAlign.Center))
+            if (hasTranscript && (state.phase == VoicePhase.Ended || state.phase == VoicePhase.Reconnecting)) {
+                BasicText(if (state.phase == VoicePhase.Reconnecting) ReconnectingText else endingText(state.ending), Modifier.padding(horizontal = CircasoSpacing.s6, vertical = CircasoSpacing.s2), style = t.footnote.copy(color = c.inkSecondary, textAlign = TextAlign.Center))
             }
             Box(Modifier.padding(horizontal = CircasoSpacing.s6, vertical = CircasoSpacing.s4)) {
                 Crossfade(state.phase == VoicePhase.Ended, label = "controls") { ended ->
@@ -158,16 +159,21 @@ private fun statusLine(s: VoiceUiState): String = when (s.visual) {
     VoiceVisual.Connecting -> "Connecting…"
     VoiceVisual.Listening -> "Listening"
     VoiceVisual.Muted -> "Muted"
+    VoiceVisual.Reconnecting -> "Reconnecting…"
     VoiceVisual.Thinking -> s.status ?: "Thinking…"
     VoiceVisual.Speaking -> "Speaking"
     VoiceVisual.Error -> if (s.ending == VoiceEnding.Offline) "Offline" else "Not connected"
     VoiceVisual.Ended -> "Ended"
 }
 
+/** While the line is down: calm, and says the conversation will carry on. */
+private const val ReconnectingText = "The connection dropped. I'll pick up where we left off when it's back."
+
 /** Before anything is said: what to do, or why it ended. */
 private fun hint(s: VoiceUiState): String = when {
     s.phase == VoicePhase.Ended -> endingText(s.ending)
     s.phase == VoicePhase.Connecting -> "One moment…"
+    s.phase == VoicePhase.Reconnecting -> ReconnectingText
     s.muted -> "Unmute to talk."
     s.phase == VoicePhase.Thinking -> s.status ?: "Thinking…"
     else -> "Go ahead, I'm listening."
@@ -191,7 +197,7 @@ private fun StatePill(v: VoiceVisual) {
 private sealed interface Line {
     val key: String
     data class Mine(override val key: String, val text: String, val live: Boolean) : Line
-    data class Hers(override val key: String, val text: String, val waiting: Boolean, val interrupted: Boolean) : Line
+    data class Hers(override val key: String, val text: String, val waiting: Boolean, val interrupted: Boolean, val cutOff: Boolean = false) : Line
 }
 
 /** The call so far, newest at the bottom: each turn's question and answer, then what the person is saying now. */
@@ -202,7 +208,7 @@ private fun Transcript(state: VoiceUiState, modifier: Modifier) {
             if (turn.question.isNotBlank()) add(Line.Mine("q$i", turn.question, live = false))
             val open = i == state.turns.lastIndex && !turn.done
             when {
-                turn.reply.isNotEmpty() -> add(Line.Hers("a$i", turn.replyText, waiting = false, interrupted = turn.interrupted))
+                turn.reply.isNotEmpty() -> add(Line.Hers("a$i", turn.replyText, waiting = false, interrupted = turn.interrupted, cutOff = turn.cutOff))
                 // Her side while she works: what she is doing ("Checking your transactions…") or a quiet ellipsis.
                 open && state.heard.isEmpty() -> add(Line.Hers("a$i", state.status ?: "…", waiting = true, interrupted = false))
             }
@@ -210,13 +216,27 @@ private fun Transcript(state: VoiceUiState, modifier: Modifier) {
         // Keyed as the question it is about to become, so the bubble stays in place when the turn is taken.
         if (state.heard.isNotEmpty()) add(Line.Mine("q${state.turns.size}", state.heard, live = !state.heardFinal))
     } }
-    LazyColumn(
-        modifier,
-        reverseLayout = true,
-        contentPadding = PaddingValues(horizontal = CircasoSpacing.s4, vertical = CircasoSpacing.s3),
-        verticalArrangement = Arrangement.spacedBy(CircasoSpacing.s2),
-    ) {
-        items(lines.asReversed(), key = { it.key }) { line -> TranscriptRow(line, Modifier.animateItem()) }
+    val list = androidx.compose.foundation.lazy.rememberLazyListState()
+    val scope = androidx.compose.runtime.rememberCoroutineScope()
+    // The live caption and her answer grow in place at the bottom; a new line scrolls in smoothly (see rememberFollowLatest).
+    val follow = rememberFollowLatest(list) { lines.size to lines.lastOrNull()?.key }
+    val still = CircasoTheme.reduceMotion
+    // A new question taken is the person "sending": back to the newest line, following again.
+    LaunchedEffect(state.turns.size) { if (state.turns.isNotEmpty() && !follow.following) follow.jump(!still) }
+    Box(modifier) {
+        LazyColumn(
+            Modifier.fillMaxSize(),
+            state = list,
+            reverseLayout = true,
+            contentPadding = PaddingValues(horizontal = CircasoSpacing.s4, vertical = CircasoSpacing.s3),
+            verticalArrangement = Arrangement.spacedBy(CircasoSpacing.s2),
+        ) {
+            items(lines.asReversed(), key = { it.key }) { line -> TranscriptRow(line, Modifier.animateItem()) }
+        }
+        JumpToLatest(
+            !follow.following, { scope.launch { follow.jump(!still) } },
+            Modifier.align(Alignment.BottomEnd).padding(end = CircasoSpacing.s4, bottom = CircasoSpacing.s3),
+        )
     }
 }
 
@@ -233,12 +253,14 @@ private fun TranscriptRow(line: Line, modifier: Modifier) {
         }
         is Line.Hers -> Row(modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Start) {
             MessageColumn(false, Modifier.weight(1f, fill = false)) {
-                if (line.waiting) ChatBubble(line.text, outgoing = false, quiet = true)
+                // A cut-off answer stays quiet and says so: half an amount must never read as a fact.
+                if (line.waiting || line.cutOff) ChatBubble(line.text, outgoing = false, quiet = true)
                 else Box(
                     Modifier.clip(bubbleShape(false)).background(c.fill).padding(horizontal = CircasoSpacing.s4, vertical = CircasoSpacing.s3)
                         .semantics(mergeDescendants = true) {},
                 ) { AshaAnswer(line.text) }
-                if (line.interrupted) BubbleMeta("You talked over this")
+                if (line.cutOff) BubbleMeta("Cut off when the line dropped", icon = CircasoIcon.Offline)
+                else if (line.interrupted) BubbleMeta("You talked over this")
             }
         }
     }

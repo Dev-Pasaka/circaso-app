@@ -101,6 +101,7 @@ import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
@@ -702,11 +703,20 @@ class FeatureViewModelsTest {
     }
 
     @Test fun aFailureGivesTheQuestionBackSoItIsNotLost() = runTest(dispatcher) {
-        asha.script = listOf(AshaEvent.Failed(AppError.Network))
+        asha.script = listOf(AshaEvent.Failed(AppError.Api("service.unavailable", 503, "r", null, emptyMap())))
         val vm = ashaVm(); keep(vm.state)
         vm.onDraft("how much did I send?"); vm.onSend()
         assertEquals("how much did I send?", vm.state.value.draft)
-        assertEquals("No connection. Check your internet and try again.", vm.state.value.error)
+        assertNotNull(vm.state.value.error)
+    }
+
+    @Test fun aLostConnectionKeepsTheQuestionWaitingInsteadOfFailing() = runTest(dispatcher) {
+        asha.script = listOf(AshaEvent.Failed(AppError.Network))
+        val vm = ashaVm(); keep(vm.state)
+        vm.onDraft("how much did I send?"); vm.onSend()
+        assertEquals("how much did I send?", vm.state.value.waiting?.question)
+        assertEquals("", vm.state.value.draft)
+        assertNull(vm.state.value.error)
     }
 
     @Test fun theDailyLimitSaysWhenItResets() = runTest(dispatcher) {
