@@ -33,6 +33,7 @@ class MainActivity : ComponentActivity() {
         PermissionBridge.register(this) // must happen while the activity is being created
         ImagePickerBridge.register(this)
         com.circaso.core.platform.MomentPickerBridge.register(this)
+        com.circaso.core.platform.AndroidShareIntake.install(this)
 
         setContent {
             App()
@@ -42,6 +43,8 @@ class MainActivity : ComponentActivity() {
         // A tapped notification that started Circaso (cold start); not again when the activity is only recreated.
         if (savedInstanceState == null) openNotification(intent)
         if (savedInstanceState == null) openShareLink(intent) // not again when the activity is recreated
+        // Photos, videos and files shared from another app's share sheet (not again when the activity is recreated).
+        if (savedInstanceState == null) com.circaso.core.platform.AndroidShareIntake.handle(this, intent)
         debugUpload(intent)
     }
 
@@ -52,6 +55,7 @@ class MainActivity : ComponentActivity() {
         // Circaso was already running, in the background or on screen.
         openNotification(intent)
         openShareLink(intent)
+        com.circaso.core.platform.AndroidShareIntake.handle(this, intent)
         debugUpload(intent)
     }
 

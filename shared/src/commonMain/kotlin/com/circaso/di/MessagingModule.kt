@@ -185,7 +185,18 @@ val messagingModule = module {
             params.get<String>(0), com.circaso.feature.messaging.presentation.ChatComposeStart.valueOf(params.get<String>(1)),
             get(), getOrNull(), get(), get(),
             uploads = getOrNull<com.circaso.core.platform.BackgroundUploads>() ?: com.circaso.core.platform.NoBackgroundUploads,
+            moreChats = params.values.getOrNull(2) as? List<String> ?: emptyList(),
         )
+    }
+    // Shares from other apps: where they go.
+    viewModel {
+        val chats = get<com.circaso.feature.messaging.domain.ChatsRepository>()
+        com.circaso.feature.messaging.presentation.ShareTargetViewModel(chats, get(), openDirect = { userId ->
+            when (val r = chats.openDirect(userId)) {
+                is com.circaso.core.common.AppResult.Success -> com.circaso.core.common.AppResult.Success(r.value.chatId)
+                is com.circaso.core.common.AppResult.Failure -> r
+            }
+        })
     }
     viewModel { params -> ThreadViewModel(params.get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), contacts = get(), payments = get()) }
     viewModel { params ->

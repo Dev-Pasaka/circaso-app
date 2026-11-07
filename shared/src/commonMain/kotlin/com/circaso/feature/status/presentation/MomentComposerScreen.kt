@@ -81,7 +81,7 @@ import com.circaso.feature.mediacompose.elapsedLabel
 @Composable
 fun MomentComposerScreen(viewModel: MomentComposerViewModel, onClose: () -> Unit, onAudience: () -> Unit, onFindPeople: () -> Unit = {}) {
     val state by viewModel.state.collectAsState()
-    LaunchedEffect(state.shared) { if (state.shared) onClose() }
+    LaunchedEffect(state.shared, state.closed) { if (state.shared || state.closed) onClose() }
     androidx.compose.ui.backhandler.BackHandler {
         when {
             state.trim != null -> viewModel.cancelTrim()

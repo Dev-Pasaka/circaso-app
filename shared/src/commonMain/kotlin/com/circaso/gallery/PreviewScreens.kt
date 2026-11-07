@@ -348,7 +348,7 @@ fun PreviewScreens(name: String) {
             {}, {}, null, {}, {}, {}, {}, {}, {}, {},
         )
         "albums-direct", "albums-group" -> AlbumPreview(name)
-        "compose-moment", "compose-chat-camera", "compose-chat-gallery", "compose-chat-document" -> MediaComposePreview(name)
+        "share-flow", "compose-moment", "compose-chat-camera", "compose-chat-gallery", "compose-chat-document" -> MediaComposePreview(name)
         "chat-media" -> ThreadContent(ThreadUiState(chat = direct("2", "Mum"), messages = mediaThread, playing = 12, playingSince = now - 4_000), {}, {}, null, {}, {}, {}, {}, {}, {}, {}, media = previewMedia)
         "chat-video" -> ThreadContent(ThreadUiState(chat = direct("2", "Mum"), messages = listOf(
             media(31, D(D.Video, attachmentId = "v1", width = 720, height = 1280, durationMs = 42_000, caption = "Goal!"), false, 30),

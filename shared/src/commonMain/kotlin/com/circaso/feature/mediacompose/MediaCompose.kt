@@ -284,6 +284,38 @@ class MediaComposer(
         return file != null
     }
 
+    /**
+     * Items shared in from another app, onto the review in the order they came: photos and videos as the composer's
+     * own (a long video opens the trimmer), documents as documents ([documents] false: a moment, which has none, leaves
+     * them out). What can't go is said politely before anything is sent (over the limit, too many, unreadable).
+     */
+    suspend fun addShared(files: List<SharedFile>, documents: Boolean = true) {
+        val check = checkShare(files, maxBytes, maxItems - state.items.size)
+        update { it.copy(loadingPick = true) }
+        var unreadable = 0
+        var leftOut = 0
+        val added = check.usable.mapNotNull { f ->
+            when (sharedKind(f.mime, f.name)) {
+                SharedKind.Document -> if (documents) ComposerItem(ComposerCapture.Document(PickedFile(f.name, f.mime.ifBlank { "application/octet-stream" }, f.size.coerceAtLeast(0), path = f.path))) else { leftOut++; null }
+                SharedKind.Photo -> library.loadFile(f.path, f.mime)?.let { ComposerItem(ComposerCapture.Shot(it)) } ?: run { unreadable++; null }
+                SharedKind.Video -> library.loadFile(f.path, f.mime.ifBlank { "video/mp4" })?.let { ComposerItem(ComposerCapture.Shot(it)) } ?: run { unreadable++; null }
+            }
+        }
+        val notes = listOfNotNull(
+            check.notice,
+            unreadable.takeIf { it > 0 }?.let { if (it == 1) "One item couldn’t be opened." else "$it items couldn’t be opened." },
+            leftOut.takeIf { it > 0 }?.let { "Moments are photos and videos, so ${if (it == 1) "the document was" else "$it documents were"} left out." },
+        )
+        update { s ->
+            val long = added.indexOfFirst { it.tooLong }
+            s.copy(
+                loadingPick = false, items = s.items + added, current = s.items.size + long.coerceAtLeast(0),
+                error = notes.joinToString(" ").ifBlank { null } ?: s.error,
+            )
+        }
+        openTrimIfNeeded()
+    }
+
     /** Loads picks and puts them on the review, after anything already there; a long video opens the trimmer. */
     fun use(load: suspend () -> List<CapturedMedia>) {
         if (state.loadingPick) return

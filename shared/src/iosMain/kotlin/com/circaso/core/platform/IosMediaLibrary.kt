@@ -2,6 +2,8 @@
 
 package com.circaso.core.platform
 
+import kotlinx.cinterop.useContents
+
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
@@ -210,6 +212,24 @@ class IosMediaLibrary : MediaLibrary {
             val image = platform.UIKit.UIImage.imageWithCGImage(cg)
             platform.CoreGraphics.CGImageRelease(cg)
             tinyJpeg(image)
+        }.getOrNull()
+    }
+
+    /** A file shared in from another app (the Share Extension's copy): a photo scaled like a moment's, a video by its path. */
+    @OptIn(kotlinx.cinterop.ExperimentalForeignApi::class)
+    override suspend fun loadFile(path: String, mime: String): CapturedMedia? = withContext(Dispatchers.Default) {
+        runCatching {
+            if (mime.startsWith("video")) {
+                val asset = platform.AVFoundation.AVURLAsset.URLAssetWithURL(platform.Foundation.NSURL.fileURLWithPath(path), null)
+                val seconds = platform.CoreMedia.CMTimeGetSeconds(asset.duration)
+                CapturedMedia(ByteArray(0), mime, null, null, durationMs = if (seconds.isFinite()) (seconds * 1000).toLong() else 0L, thumb = poster(path), path = path)
+            } else {
+                val image = platform.UIKit.UIImage.imageWithContentsOfFile(path) ?: return@runCatching null
+                val scaled = fit(image, MomentPhotoMaxSide.toDouble())
+                val jpeg = platform.UIKit.UIImageJPEGRepresentation(scaled, 0.9)?.toByteArray() ?: return@runCatching null
+                val (w, h) = scaled.size.useContents { width to height }
+                CapturedMedia(jpeg, "image/jpeg", (w * scaled.scale).toInt(), (h * scaled.scale).toInt(), thumb = momentThumbnail(jpeg))
+            }
         }.getOrNull()
     }
 

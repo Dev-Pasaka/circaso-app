@@ -60,6 +60,8 @@ data class MomentComposerUiState(
     val myAvatarUrl: String? = null,
     val sharing: Boolean = false,
     val shared: Boolean = false,
+    /** Opened with items shared in from another app and none of them could be used: nothing to show, so it closes. */
+    val closed: Boolean = false,
 ) {
     val mode: ComposerMode get() = media.mode
     val camera: CameraStart? get() = media.camera
@@ -102,6 +104,8 @@ class MomentComposerViewModel(
     initial: MomentComposerUiState = MomentComposerUiState(),
     /** Re-encoding a video after Share runs as background work, so leaving Circaso mid-way doesn't stop it. */
     private val uploads: com.circaso.core.platform.BackgroundUploads = com.circaso.core.platform.NoBackgroundUploads,
+    /** Opened from another app's share sheet with "My moment": where its photos and videos come from. */
+    shared: (() -> List<com.circaso.feature.mediacompose.SharedFile>?)? = null,
 ) : ViewModel() {
     private val _state = MutableStateFlow(initial)
     val state: StateFlow<MomentComposerUiState> = _state.asStateFlow()
@@ -131,7 +135,12 @@ class MomentComposerViewModel(
     private val voiceSamples = mutableListOf<Float>()
 
     init {
-        composer.start()
+        if (shared == null) composer.start()
+        else viewModelScope.launch {
+            // Straight onto the review; the camera opens only if the person discards what was shared.
+            composer.addShared(shared().orEmpty(), documents = false)
+            if (_state.value.items.isEmpty()) _state.update { it.copy(closed = true) }
+        }
         viewModelScope.launch { observeProfile().collect { p -> _state.update { it.copy(myName = p?.displayName.orEmpty(), myAvatarUrl = p?.avatarUrl) } } }
         viewModelScope.launch {
             combine(observeContacts(), repository.privacy) { contacts, p ->
@@ -274,7 +283,12 @@ class MomentComposerViewModel(
     fun onVoiceBackground(bg: String) = _state.update { it.copy(voiceBackground = bg) }
 
     /** The close button on the review: everything picked or captured is let go, back to the camera. */
-    fun discardCapture() { if (_state.value.sharing) return; stopPlayback(); composer.discard(); _state.update { it.copy(forwarding = false) } }
+    fun discardCapture() {
+        if (_state.value.sharing) return
+        stopPlayback(); composer.discard(); _state.update { it.copy(forwarding = false) }
+        // Opened on a share: back to the camera, which starts now.
+        if (_state.value.camera == null) composer.start()
+    }
 
     fun onCaption(text: String) = composer.onCaption(text)
     fun onText(text: String) = _state.update { it.copy(text = text.take(700)) }

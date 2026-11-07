@@ -269,6 +269,18 @@ class AndroidMediaLibrary(private val context: Context) : MediaLibrary {
         }.getOrNull()
     }
 
+    override suspend fun loadFile(path: String, mime: String): CapturedMedia? = withContext(Dispatchers.IO) {
+        runCatching {
+            if (mime.startsWith("video")) {
+                val meta = metadata(path)
+                CapturedMedia(ByteArray(0), mime, meta?.width, meta?.height, durationMs = meta?.durationMs ?: 0L, thumb = meta?.frame?.thumb(), path = path)
+            } else {
+                val bitmap = decodeScaled(context, Uri.fromFile(File(path)), MomentPhotoMaxSide) ?: return@runCatching null
+                CapturedMedia(bitmap.toJpeg(90), "image/jpeg", bitmap.width, bitmap.height, thumb = bitmap.thumb())
+            }
+        }.getOrNull()
+    }
+
     /**
      * A document from Files: its own name and size from the provider, copied into this app's cache (the picker's grant
      * ends with the activity), read again when it is sent. Null when nothing was chosen or it can't be read.

@@ -1,6 +1,9 @@
 package com.circaso.gallery
 
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.setValue
 import com.circaso.core.common.AppError
 import com.circaso.core.common.AppResult
 import com.circaso.feature.messaging.domain.Chat
@@ -24,6 +27,9 @@ import kotlinx.coroutines.flow.flowOf
 @Composable
 internal fun MediaComposePreview(name: String) {
     when (name) {
+        // A real share from another app (it waits in IncomingShares, kept through sign-in) through the picker and on into
+        // the composer, with preview chats: for checking the share flow without signing in.
+        "share-flow" -> SharePreview()
         "compose-moment" -> com.circaso.feature.status.presentation.MomentComposerScreen(org.koin.compose.viewmodel.koinViewModel(), onClose = {}, onAudience = {})
         else -> {
             val start = when (name) { "compose-chat-gallery" -> ChatComposeStart.Gallery; "compose-chat-document" -> ChatComposeStart.Document; else -> ChatComposeStart.Camera }
@@ -35,6 +41,40 @@ internal fun MediaComposePreview(name: String) {
             ChatMediaComposerScreen(vm, onClose = {})
         }
     }
+}
+
+@Composable
+private fun SharePreview() {
+    val library = org.koin.compose.koinInject<com.circaso.core.platform.MediaLibrary>()
+    val camera = org.koin.compose.koinInject<com.circaso.core.platform.MomentCamera>()
+    var to by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf<com.circaso.feature.mediacompose.ShareDestination?>(null) }
+    val people = org.koin.compose.koinInject<com.circaso.feature.contacts.domain.ObserveContactsUseCase>()
+    when (val dest = to) {
+        null -> {
+            // The share is read back from disk at launch: wait for it.
+            val pending by com.circaso.feature.mediacompose.IncomingShares.pending.collectAsState()
+            if (pending == null) return
+            val vm = androidx.compose.runtime.remember { com.circaso.feature.messaging.presentation.ShareTargetViewModel(PreviewChats, people, openDirect = { com.circaso.core.common.AppResult.Success("preview") }) }
+            com.circaso.feature.messaging.presentation.ShareTargetScreen(vm, onClose = {}, onGo = { to = it })
+        }
+        com.circaso.feature.mediacompose.ShareDestination.Moment ->
+            com.circaso.feature.status.presentation.MomentComposerScreen(org.koin.compose.viewmodel.koinViewModel(key = "share-preview-moment", parameters = { org.koin.core.parameter.parametersOf(true) }), onClose = { to = null }, onAudience = {})
+        is com.circaso.feature.mediacompose.ShareDestination.Chats -> {
+            val vm = androidx.compose.runtime.remember(dest) {
+                ChatMediaComposerViewModel(dest.chatIds.first(), ChatComposeStart.Shared, library, camera, PreviewChats, { _, _, _ -> true }, moreChats = dest.chatIds.drop(1))
+            }
+            ChatMediaComposerScreen(vm, onClose = { to = null })
+        }
+    }
+}
+
+/** Two chats and a group, for the share picker preview. */
+private object PreviewChats : ChatsRepository by PreviewChat {
+    private fun chat(id: String, title: String, group: Boolean) =
+        Chat(id, if (group) ChatKind.Group else ChatKind.Direct, title, null, emptyList(), false, 1, 1, MemberRole.Member, if (group) null else "u-$id")
+    private val list = listOf(chat("preview", "Wanjiru", false), chat("g1", "Holiday Fund", true), chat("c2", "Otieno", false))
+    override val chats: Flow<List<ChatSummary>> = flowOf(list.map { ChatSummary(it, null, 0) })
+    override fun chat(chatId: String): Flow<Chat?> = flowOf(list.firstOrNull { it.chatId == chatId })
 }
 
 private object PreviewChat : ChatsRepository {

@@ -48,8 +48,12 @@ val statusModule = module {
         )
     } bind OutboxHandler::class
     viewModel { com.circaso.feature.status.presentation.MomentsViewModel(get(), get(), get(), get(), get()) }
-    viewModel { com.circaso.feature.status.presentation.MomentComposerViewModel(get(), get(), get(), get(), get(), get(), get(), get(),
-        uploads = getOrNull<com.circaso.core.platform.BackgroundUploads>() ?: com.circaso.core.platform.NoBackgroundUploads) }
+    viewModel { params ->
+        com.circaso.feature.status.presentation.MomentComposerViewModel(get(), get(), get(), get(), get(), get(), get(), get(),
+            uploads = getOrNull<com.circaso.core.platform.BackgroundUploads>() ?: com.circaso.core.platform.NoBackgroundUploads,
+            // Opened for a share from another app: its photos and videos onto the review.
+            shared = if (params.getOrNull<Boolean>() == true) com.circaso.feature.mediacompose.IncomingShares::take else null)
+    }
     viewModel { com.circaso.feature.status.presentation.MomentsPrivacyViewModel(get(), get()) }
     // V4 Forward: a moment into chats through the chat's own media path (encrypted, queued, sent by the outbox).
     single<com.circaso.feature.status.presentation.MomentForwarder> {

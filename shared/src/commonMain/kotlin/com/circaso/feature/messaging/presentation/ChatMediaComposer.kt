@@ -33,7 +33,11 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
 /** Where the attach sheet opens the composer: the camera (with the recents strip), the gallery, or Files. */
-enum class ChatComposeStart { Camera, Gallery, Document }
+enum class ChatComposeStart {
+    Camera, Gallery, Document,
+    /** Items shared in from another app (IncomingShares), straight onto the review. */
+    Shared,
+}
 
 /**
  * Puts one prepared item into a chat's queue through the chat's own media path (`MediaMessages`: encrypted on the
@@ -72,7 +76,12 @@ class ChatMediaComposerViewModel(
     private val sender: ChatMediaSender,
     private val uploads: com.circaso.core.platform.BackgroundUploads = com.circaso.core.platform.NoBackgroundUploads,
     now: () -> Long = { com.circaso.core.sync.nowMillis() },
+    /** Shared in from another app: further chats the same items go to (each its own messages, its own album). */
+    private val moreChats: List<String> = emptyList(),
+    /** Where [ChatComposeStart.Shared] takes its items from. */
+    private val shared: () -> List<com.circaso.feature.mediacompose.SharedFile>? = com.circaso.feature.mediacompose.IncomingShares::take,
 ) : ViewModel() {
+    private val chatIds = (listOf(chatId) + moreChats).distinct()
     private val _state = MutableStateFlow(ChatMediaUiState())
     val state: StateFlow<ChatMediaUiState> = _state.asStateFlow()
 
@@ -84,8 +93,16 @@ class ChatMediaComposerViewModel(
 
     init {
         viewModelScope.launch {
-            chats.chat(chatId).collect { chat ->
+            if (chatIds.size == 1) chats.chat(chatId).collect { chat ->
                 if (chat != null) _state.update { it.copy(title = chat.title, avatarUrl = chat.avatarUrl, group = chat.kind == ChatKind.Group) }
+            } else chats.chats.collect { list ->
+                // Several chats: their names, as many as fit ("Wanjiru, Holiday Fund and 1 more").
+                val names = chatIds.mapNotNull { id -> list.firstOrNull { it.chat.chatId == id }?.chat?.title }
+                val title = when {
+                    names.size <= 2 -> names.joinToString(" and ")
+                    else -> "${names.take(2).joinToString(", ")} and ${names.size - 2} more"
+                }
+                _state.update { it.copy(title = title, group = true) }
             }
         }
         when (start) {
@@ -94,6 +111,11 @@ class ChatMediaComposerViewModel(
             ChatComposeStart.Gallery -> { composer.openGallery() }
             ChatComposeStart.Document -> viewModelScope.launch {
                 if (!composer.pickDocument() && _state.value.media.items.isEmpty()) _state.update { it.copy(closed = true) }
+            }
+            ChatComposeStart.Shared -> viewModelScope.launch {
+                val files = shared().orEmpty()
+                composer.addShared(files)
+                if (_state.value.media.items.isEmpty()) _state.update { it.copy(closed = true) }
             }
         }
     }
@@ -113,7 +135,7 @@ class ChatMediaComposerViewModel(
         if (_state.value.sending) return
         composer.discard()
         when {
-            start == ChatComposeStart.Document -> _state.update { it.copy(closed = true) }
+            start == ChatComposeStart.Document || start == ChatComposeStart.Shared -> _state.update { it.copy(closed = true) }
             _state.value.media.camera == null -> composer.start()
         }
     }
@@ -147,9 +169,11 @@ class ChatMediaComposerViewModel(
                 }
                 _state.update { it.copy(media = it.media.copy(preparing = false)) }
                 // Two or more photos and videos go as one album (WhatsApp-style); documents always go on their own.
+                // Several chats (shared in): each gets the same items, as its own messages and its own album.
+                for (target in chatIds) {
                 val album = if (ready.count { it is PreparedItem.Shot } >= 2) newAlbumId() else null
                 for ((index, p) in ready.withIndex()) {
-                    if (!sender.send(chatId, p, album.takeIf { p is PreparedItem.Shot })) {
+                    if (!sender.send(target, p, album.takeIf { p is PreparedItem.Shot })) {
                         _state.update { st ->
                             val left = st.media.items.drop(index)
                             val why = if (index == 0) "This couldn’t be saved to send. Try again." else "$index sent. The rest couldn’t be saved to send. Try again."
@@ -157,6 +181,7 @@ class ChatMediaComposerViewModel(
                         }
                         return@keep
                     }
+                }
                 }
                 _state.update { it.copy(sending = false, sent = true) }
             }
@@ -220,14 +245,20 @@ fun ChatMediaComposerScreen(viewModel: ChatMediaComposerViewModel, onClose: () -
         onDiscard = viewModel::discard,
         onCloseGallery = viewModel::closeGallery,
         // Opened on Files there is no camera behind it: while Files is up or the document is copied, it says so.
-        showCamera = viewModel.start != ChatComposeStart.Document,
-        customStage = if (viewModel.start == ChatComposeStart.Document && media.capture == null) ({ OpeningFiles(media.loadingPick) }) else null,
+        // Opened on Files or with a share: no camera behind it.
+        showCamera = viewModel.start != ChatComposeStart.Document && viewModel.start != ChatComposeStart.Shared,
+        customStage = when {
+            media.capture != null -> null
+            viewModel.start == ChatComposeStart.Document -> ({ OpeningFiles(media.loadingPick) })
+            viewModel.start == ChatComposeStart.Shared -> ({ OpeningFiles(true, "Getting what you shared…") })
+            else -> null
+        },
     )
 }
 
 /** Opened on Files: the document review's card, waiting for the picker (and the copy into the app) to finish. */
 @Composable
-private fun androidx.compose.foundation.layout.BoxScope.OpeningFiles(busy: Boolean) {
+private fun androidx.compose.foundation.layout.BoxScope.OpeningFiles(busy: Boolean, busyText: String = "Opening your document…") {
     val c = com.circaso.designsystem.theme.CircasoTheme.colors
     androidx.compose.foundation.layout.Column(
         androidx.compose.ui.Modifier.align(androidx.compose.ui.Alignment.Center)
@@ -239,7 +270,7 @@ private fun androidx.compose.foundation.layout.BoxScope.OpeningFiles(busy: Boole
         verticalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(com.circaso.designsystem.theme.CircasoSpacing.s3),
     ) {
         com.circaso.designsystem.components.CircasoIconImage(com.circaso.designsystem.components.CircasoIcon.Document, c.ink, androidx.compose.ui.Modifier.size(36.dp))
-        androidx.compose.foundation.text.BasicText(if (busy) "Opening your document…" else "Choose a document in Files", style = com.circaso.designsystem.theme.CircasoTheme.typography.subhead.copy(color = c.ink))
+        androidx.compose.foundation.text.BasicText(if (busy) busyText else "Choose a document in Files", style = com.circaso.designsystem.theme.CircasoTheme.typography.subhead.copy(color = c.ink))
         if (busy) com.circaso.designsystem.components.Spinner(c.ink)
     }
 }

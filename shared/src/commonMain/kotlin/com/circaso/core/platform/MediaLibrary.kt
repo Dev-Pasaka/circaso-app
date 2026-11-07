@@ -91,6 +91,13 @@ interface MediaLibrary {
      * which travels inside the encrypted message; null when it can't be made (the moment's tiny thumb is used then).
      */
     suspend fun poster(path: String): ByteArray? = null
+
+    /**
+     * A photo or video that is already a file of Circaso's (shared in from another app), ready for the review exactly
+     * as [load] makes a library item: a photo as JPEG at most [MomentPhotoMaxSide] long, a video by its path with its
+     * size, length and a thumb. Null when it can't be read.
+     */
+    suspend fun loadFile(path: String, mime: String): CapturedMedia? = null
 }
 
 /** A document picked from Files: its own name, type and size; [path] is this app's copy (or [bytes] in memory). */

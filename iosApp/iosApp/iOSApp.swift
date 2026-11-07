@@ -5,6 +5,7 @@ import SwiftUI
 @main
 struct iOSApp: App {
     @UIApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
+    @Environment(\.scenePhase) private var scenePhase
 
     init() {
         GoogleSignInBridge.shared.provider = GoogleSignInImpl()
@@ -19,6 +20,7 @@ struct iOSApp: App {
         BackgroundSyncImpl.install() // sends the offline queue in the background once there's a network; see BackgroundSync.kt
         BackgroundUploadImpl.install() // uploads carry on when Circaso is left mid-upload; see BackgroundUploads.kt
         MapImpl.install() // Google Maps for live location, when this build has a key; see PlatformMap.ios.kt
+        IosShareInbox.shared.install() // photos, videos and files shared in from other apps; see IosShareInbox.kt
         if let host = Bundle.main.object(forInfoDictionaryKey: "CircasoShareHost") as? String {
             IncomingLinks.shared.addHost(host: host) // share links' host (Info.plist); see IncomingLinks.kt
         }
@@ -30,9 +32,15 @@ struct iOSApp: App {
                 .onOpenURL { url in
                     // Google's sign-in comes back to the app through its URL scheme; a share link
                     // (circaso://s/{code}, or a Universal Link) goes to IncomingLinks, which opens it once signed in.
-                    if !GIDSignIn.sharedInstance.handle(url) {
+                    if url.scheme == "circaso" && url.host == "share" {
+                        IosShareInbox.shared.collect() // the Share Extension handed something over
+                    } else if !GIDSignIn.sharedInstance.handle(url) {
                         _ = IncomingLinks.shared.open(url: url.absoluteString)
                     }
+                }
+                .onChange(of: scenePhase) { _, phase in
+                    // Something shared from another app while Circaso was in the background.
+                    if phase == .active { IosShareInbox.shared.collect() }
                 }
                 .onContinueUserActivity(NSUserActivityTypeBrowsingWeb) { activity in
                     // Universal Links: https://<share host>/s/{code} (apple-app-site-association on that host).

@@ -148,7 +148,7 @@ class IosMediaGallery : MediaGallery {
 }
 
 /** Scales so the longest side is at most [maxSide]; drawing through UIKit also applies the photo's rotation. */
-private fun fit(image: UIImage, maxSide: Double): UIImage {
+internal fun fit(image: UIImage, maxSide: Double): UIImage {
     val (w, h) = image.size.useContents { width to height }
     val scale = if (max(w, h) > maxSide) maxSide / max(w, h) else 1.0
     return UIGraphicsImageRenderer(size = CGSizeMake(w * scale, h * scale)).imageWithActions { image.drawInRect(CGRectMake(0.0, 0.0, w * scale, h * scale)) }
