@@ -422,11 +422,8 @@ class MediaComposer(
                         s.copy(
                             loadingPick = false, items = s.items + added, current = s.items.size + (if (big >= 0) big else long.coerceAtLeast(0)),
                             gallery = null, selecting = false, selection = emptyList(),
-                            error = when {
-                                tooBig.size == 1 -> tooLargeVideo(tooBig.single().second)
-                                tooBig.size > 1 -> "${tooBig.size} videos are over $limitLabel. They’re marked, and won’t be sent."
-                                else -> s.error
-                            },
+                            // Marked on the strip, with the reason above it and the count by Send: no toast as well.
+                            error = s.error,
                         )
                     }
                 }

@@ -5,7 +5,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
-import com.circaso.designsystem.chrome.CircasoSheet
+import com.circaso.designsystem.chrome.ConfirmSheet
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.ui.semantics.heading
@@ -306,7 +306,7 @@ fun ChatMediaComposerScreen(viewModel: ChatMediaComposerViewModel, onClose: () -
         footnote = when {
             // Said where Send is, so what it will do is never a surprise.
             out > 0 && going == 0 -> if (n == 1) "Over ${composer.limitLabel}, so it can’t be sent." else "All $n are over ${composer.limitLabel}, so none can be sent."
-            out > 0 -> "$going of $n will be sent, in this order; $out over ${composer.limitLabel} ${if (out == 1) "is" else "are"} left out. End-to-end encrypted."
+            out > 0 -> "$going of $n will be sent. End-to-end encrypted."
             n > 1 -> "$n items, in this order. End-to-end encrypted."
             else -> "End-to-end encrypted."
         },
@@ -335,42 +335,17 @@ fun ChatMediaComposerScreen(viewModel: ChatMediaComposerViewModel, onClose: () -
         var lastAsked by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(0) }
         if (asked != null) lastAsked = asked
         val rest = n - lastAsked
-        CircasoSheet(visible = asked != null, onDismiss = viewModel::leaveOutCancelled, label = "Items over the limit") {
-            LeaveOutSheet(lastAsked, rest, composer.limitLabel, onSend = viewModel::leaveOutConfirmed, onBack = viewModel::leaveOutCancelled)
-        }
-    }
-    }
-}
+        ConfirmSheet(
+            visible = asked != null,
+            title = if (lastAsked == 1) "1 item is over ${composer.limitLabel}" else "$lastAsked items are over ${composer.limitLabel}",
+            message = "Chats take files up to ${composer.limitLabel}, so ${if (lastAsked == 1) "it’s" else "they’re"} marked and won’t be sent. Send the rest now, or go back to trim or remove ${if (lastAsked == 1) "it" else "them"}.",
+            confirmLabel = if (rest == 1) "Send 1 Item" else "Send $rest Items",
+            onConfirm = viewModel::leaveOutConfirmed,
+            onDismiss = viewModel::leaveOutCancelled,
+            cancelLabel = "Go Back",
+        )
 
-/**
- * Send tapped with items over the size limit among them: they can't go in a chat, so before anything is sent it asks
- * whether to send the rest, or go back to remove or trim them (they are marked on the strip).
- */
-@Composable
-private fun androidx.compose.foundation.layout.ColumnScope.LeaveOutSheet(out: Int, rest: Int, limit: String, onSend: () -> Unit, onBack: () -> Unit) {
-    val c = com.circaso.designsystem.theme.CircasoTheme.colors
-    val t = com.circaso.designsystem.theme.CircasoTheme.typography
-    androidx.compose.foundation.layout.Column(
-        androidx.compose.ui.Modifier.fillMaxWidth(),
-        verticalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(com.circaso.designsystem.theme.CircasoSpacing.s3),
-    ) {
-        androidx.compose.foundation.text.BasicText(
-            if (out == 1) "1 item is over $limit" else "$out items are over $limit",
-            androidx.compose.ui.Modifier.semantics { heading() },
-            style = t.title3.copy(color = c.ink),
-        )
-        androidx.compose.foundation.text.BasicText(
-            "Chats take files up to $limit, so ${if (out == 1) "it’s" else "they’re"} marked and won’t be sent. Send the other $rest now, or go back to trim or remove ${if (out == 1) "it" else "them"}.",
-            style = t.body.copy(color = c.inkSecondary),
-        )
-        com.circaso.designsystem.components.CircasoButton(
-            if (rest == 1) "Send the Other 1" else "Send the Other $rest", onSend,
-            size = com.circaso.designsystem.components.ButtonSize.Large, block = true,
-        )
-        com.circaso.designsystem.components.CircasoButton(
-            "Go Back", onBack, style = com.circaso.designsystem.components.ButtonStyle.Plain,
-            size = com.circaso.designsystem.components.ButtonSize.Large, block = true,
-        )
+    }
     }
 }
 

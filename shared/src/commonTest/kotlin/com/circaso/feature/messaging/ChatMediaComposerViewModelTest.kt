@@ -223,8 +223,8 @@ class ChatMediaComposerViewModelTest {
         val vm = composer(ChatComposeStart.Camera)
         vm.composer.toggle(photo("a")); vm.composer.toggle(video("big", 900_000))
         vm.composer.useSelection()
-        // Said at once, with its size, on the stage, and marked on its item for as long as it is there.
-        assertEquals("This video is just over 100 MB. Videos up to 100 MB can be sent: trim it shorter or take it out.", vm.state.value.media.error)
+        // Put on the stage and marked on its item for as long as it is there (the note says why; no toast as well).
+        assertNull(vm.state.value.media.error)
         assertEquals(1, vm.state.value.media.current)
         assertEquals(listOf(null, com.circaso.core.platform.ChatFileMaxBytes + 1), vm.state.value.media.items.map { it.overLimit })
         assertTrue(vm.state.value.canSend, "the photo can still go")
@@ -254,7 +254,6 @@ class ChatMediaComposerViewModelTest {
         val vm = composer(ChatComposeStart.Camera)
         vm.composer.toggle(video("b1", 900_000)); vm.composer.toggle(video("b2", 900_000))
         vm.composer.useSelection()
-        assertEquals("2 videos are over 100 MB. They’re marked, and won’t be sent.", vm.state.value.media.error)
         assertEquals(2, vm.state.value.media.overLimitCount)
         assertFalse(vm.state.value.canSend, "nothing left to send")
         vm.send()

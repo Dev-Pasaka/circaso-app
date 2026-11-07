@@ -697,7 +697,7 @@ fun ThreadContent(
                     contentAlignment = Alignment.Center,
                 ) {
                     Box(
-                        Modifier.size(CircasoSizes.iconButton).shadow(CircasoSpacing.s2, com.circaso.designsystem.theme.CircasoShapes.circle)
+                        Modifier.size(CircasoSizes.iconButton).shadow(JumpShadow, com.circaso.designsystem.theme.CircasoShapes.circle)
                             .clip(com.circaso.designsystem.theme.CircasoShapes.circle).background(c.surface),
                         contentAlignment = Alignment.Center,
                     ) { CircasoIconImage(CircasoIcon.ArrowDown, c.ink, Modifier.size(18.dp)) }
@@ -1104,7 +1104,6 @@ private fun FileBubble(
     val going = m.state == DeliveryState.Sending || m.state == DeliveryState.Waiting
     // Coming in (this tap, or one before the bubble scrolled away): the ring fills round the tile as it arrives.
     val incoming = downloadProgress(m)
-    val fetching = incoming != null || opening
     Column(
         bubble.pressable(
             role = androidx.compose.ui.semantics.Role.Button, onLongClick = options,
@@ -1128,7 +1127,7 @@ private fun FileBubble(
             },
         ).semantics(mergeDescendants = true) {
             contentDescription = "Document $name, $kind" + (size?.let { ", $it" } ?: "") + (m.details.caption?.let { ". $it" } ?: "") +
-                (if (fetching) ". " + downloadLabel(incoming) else "")
+                (incoming?.let { ". " + downloadLabel(it) } ?: if (opening) ". Opening" else "")
         }.padding(CircasoSpacing.s3),
         verticalArrangement = Arrangement.spacedBy(CircasoSpacing.s2),
     ) {
@@ -1140,14 +1139,15 @@ private fun FileBubble(
                     else -> Box(Modifier.size(MediaIconSize).clip(com.circaso.designsystem.theme.CircasoShapes.circle).background(if (m.outgoing) c.onAction else c.fillStrong), contentAlignment = Alignment.Center) {
                         val glyph = if (m.outgoing) c.action else c.ink
                         when {
-                            fetching -> CircasoIconImage(CircasoIcon.ArrowDown, glyph, Modifier.size(20.dp))
+                            incoming != null -> CircasoIconImage(CircasoIcon.ArrowDown, glyph, Modifier.size(20.dp))
+                            opening -> com.circaso.designsystem.components.Spinner(glyph, Modifier.size(18.dp))
                             m.state == DeliveryState.Waiting && progress == null -> CircasoIconImage(CircasoIcon.Clock, glyph, Modifier.size(20.dp))
                             else -> CircasoIconImage(CircasoIcon.Document, glyph, Modifier.size(22.dp))
                         }
                     }
                 }
                 if (going && !(m.state == DeliveryState.Waiting && progress == null)) com.circaso.feature.mediacompose.UploadRing(progress, Modifier.matchParentSize(), ink = ink)
-                else if (fetching && !failed) com.circaso.feature.mediacompose.UploadRing(incoming, Modifier.matchParentSize(), ink = ink)
+                else if (incoming != null && !failed) com.circaso.feature.mediacompose.UploadRing(incoming, Modifier.matchParentSize(), ink = ink)
             }
             Column(Modifier.weight(1f)) {
                 BasicText(name, style = t.callout.copy(color = ink, fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold), maxLines = 2, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
@@ -1271,6 +1271,9 @@ private val TerminalMediaErrors = setOf("messaging.attachment_too_large")
 internal val MediaBubbleWidth = 240.dp
 private val MapTileHeight = 120.dp
 private val MediaIconSize = 40.dp
+
+/** The jump-to-latest disc's lift off the thread. */
+private val JumpShadow = 8.dp
 
 /** The play disc on a video in the chat; the download ring fills inside it. */
 internal val PlayDiscSize = 52.dp
@@ -1444,12 +1447,13 @@ private fun MediaRow(
                             onClick = { if (failed) onOptions() else onPlayVideo() },
                         ).semantics(mergeDescendants = true) {
                             contentDescription = "Video" + (m.details.durationMs?.let { ", ${clock(it / 1000)}" } ?: "") + (m.details.caption?.let { ". $it" } ?: "") +
-                                (if (fetching) ". " + downloadLabel(incoming) else "")
+                                (incoming?.let { ". " + downloadLabel(it) } ?: if (videoLoading) ". Opening" else "")
                         },
                     ) {
                         Box(Modifier.fillMaxWidth().aspectRatio(ratio).clip(com.circaso.designsystem.components.bubbleShape(m.outgoing)).background(c.fillStrong), contentAlignment = Alignment.Center) {
                             thumb?.let { coil3.compose.AsyncImage(model = it, contentDescription = null, contentScale = androidx.compose.ui.layout.ContentScale.Crop, modifier = Modifier.fillMaxSize()) }
-                            if (fetching && !m.outgoing) DownloadDisc(incoming, PlayDiscSize)
+                            // Only a real download shows the arrow; opening a file already here keeps the play disc, turning.
+                            if (incoming != null) DownloadDisc(incoming, PlayDiscSize)
                             else Box(Modifier.size(PlayDiscSize).clip(com.circaso.designsystem.theme.CircasoShapes.circle).background(com.circaso.designsystem.theme.DarkColors.scrim), contentAlignment = Alignment.Center) {
                                 if (fetching) com.circaso.feature.mediacompose.UploadRing(incoming, Modifier.matchParentSize().padding(3.dp), ink = com.circaso.designsystem.theme.DarkColors.ink)
                                 CircasoIconImage(CircasoIcon.Play, com.circaso.designsystem.theme.DarkColors.ink, Modifier.size(22.dp))

@@ -5,6 +5,8 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.animation.animateContentSize
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
@@ -175,7 +177,16 @@ fun MediaComposeStage(
                 Column(Modifier.align(Alignment.BottomCenter).fillMaxWidth().navigationBarsPadding().imePadding().padding(bottom = CircasoSpacing.s3), verticalArrangement = Arrangement.spacedBy(14.dp)) {
                     if (reviewing) {
                         // Just above the strip, beside the marked tile (clear of the toasts at the top).
-                        state.item?.overLimit?.let { size -> if (capture != null && state.trim == null) OverLimitNote(size, state.item?.video != null, composer) }
+                        val over = state.item?.overLimit?.takeIf { capture != null && state.trim == null }
+                        var lastOver by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(0L) }
+                        if (over != null) lastOver = over
+                        androidx.compose.animation.AnimatedVisibility(
+                            over != null,
+                            enter = if (CircasoTheme.reduceMotion) androidx.compose.animation.fadeIn(androidx.compose.animation.core.tween(CircasoMotion.BaseMs))
+                                else androidx.compose.animation.fadeIn(androidx.compose.animation.core.tween(CircasoMotion.BaseMs)) + androidx.compose.animation.expandVertically(androidx.compose.animation.core.tween(CircasoMotion.BaseMs)),
+                            exit = if (CircasoTheme.reduceMotion) androidx.compose.animation.fadeOut(androidx.compose.animation.core.tween(CircasoMotion.QuickMs))
+                                else androidx.compose.animation.fadeOut(androidx.compose.animation.core.tween(CircasoMotion.QuickMs)) + androidx.compose.animation.shrinkVertically(androidx.compose.animation.core.tween(CircasoMotion.QuickMs)),
+                        ) { OverLimitNote(lastOver, state.item?.video != null, alone = state.items.size == 1, composer) }
                         if (state.items.size > 1) PickedStrip(state, copy, composer, locked)
                         if (capture != null) CaptionField(state.caption, composer::onCaption, enabled = !locked)
                         // Under the caption, once (design M4): what happens to it.
@@ -273,16 +284,17 @@ private fun OverLimitBadge(modifier: Modifier = Modifier, size: androidx.compose
 
 private val OverLimitBadgeSize = 16.dp
 private val OverLimitBadgeInset = 2.dp
+private val OverLimitNoteMaxWidth = 480.dp
 
 /**
  * Why the item on the stage won't go: over the size limit, with its size and what to do. Stays while it is on the
  * stage (a toast would fade before it is read), so tapping a marked tile on the strip shows the reason.
  */
 @Composable
-private fun OverLimitNote(size: Long, video: Boolean, composer: MediaComposer) {
+private fun OverLimitNote(size: Long, video: Boolean, alone: Boolean, composer: MediaComposer) {
     val c = CircasoTheme.colors
     Row(
-        Modifier.padding(horizontal = CircasoSpacing.s4).widthIn(max = 480.dp).fillMaxWidth().clip(CircasoShapes.md).background(c.glass)
+        Modifier.padding(horizontal = CircasoSpacing.s4).widthIn(max = OverLimitNoteMaxWidth).fillMaxWidth().clip(CircasoShapes.md).background(c.glass)
             .padding(horizontal = CircasoSpacing.s3, vertical = CircasoSpacing.s3)
             .semantics(mergeDescendants = true) { liveRegion = androidx.compose.ui.semantics.LiveRegionMode.Polite },
         verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(CircasoSpacing.s3),
@@ -290,7 +302,7 @@ private fun OverLimitNote(size: Long, video: Boolean, composer: MediaComposer) {
         OverLimitBadge(size = CircasoSpacing.s6)
         BasicText(
             "${overLimitLabel(size, composer.maxBytes).replaceFirstChar { it.uppercase() }}, over the ${composer.limitLabel} limit. It won’t be sent: " +
-                (if (video) "trim it shorter or remove it." else "remove it to send the rest."),
+                when { video -> "trim it shorter or remove it."; alone -> "remove it."; else -> "remove it to send the rest." },
             style = CircasoTheme.typography.subhead.copy(color = c.ink),
         )
     }
@@ -625,15 +637,18 @@ private fun BoxScope.RecordingPill(state: MediaComposeState, composer: MediaComp
     val time = if (limits.maxMs != null) elapsedLabel(state.recordingSince) else runningClock(state.recordingSince)
     val text = when {
         maxBytes == null -> time
-        near -> "$time · Nearly ${composer.limitLabel}, it stops at the limit"
+        // One line, as the frame (M1b): the warning colour says "nearly"; the size says how near.
+        near -> "$time · ${(state.recordingBytes + 512 * 1024) / (1024 * 1024)} of ${composer.limitLabel}"
         state.recordingBytes > 0 -> "$time · ${sizeLabel(state.recordingBytes)}"
         else -> time
     }
-    val ink = if (near) com.circaso.designsystem.theme.LightColors.ink else c.bg
+    val ink = if (near) c.onAction else c.bg
     Row(
         Modifier.align(Alignment.TopCenter).statusBarsPadding().padding(top = CircasoSpacing.s2).padding(horizontal = CircasoSizes.controlMd + CircasoSpacing.s6)
+            .then(if (CircasoTheme.reduceMotion) Modifier else Modifier.animateContentSize(androidx.compose.animation.core.tween(CircasoMotion.QuickMs)))
             .clip(CircasoShapes.pill).background(if (near) c.warning else c.ink).padding(horizontal = CircasoSpacing.s3, vertical = 6.dp)
-            .semantics(mergeDescendants = true) { contentDescription = if (near) "Recording, nearly ${composer.limitLabel}" else "Recording"; liveRegion = androidx.compose.ui.semantics.LiveRegionMode.Polite },
+            // A fixed description, so a screen reader hears "Recording" and then "nearly 100 MB" once, not every tick.
+            .clearAndSetSemantics { contentDescription = if (near) "Recording, nearly ${composer.limitLabel}" else "Recording"; liveRegion = androidx.compose.ui.semantics.LiveRegionMode.Polite },
         verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(CircasoSpacing.s2),
     ) {
         Box(Modifier.size(CircasoSpacing.s2).clip(CircasoShapes.circle).background(if (near) ink else c.critical))
@@ -785,7 +800,7 @@ private fun GalleryPlaceholder(modifier: Modifier) {
         androidx.compose.foundation.lazy.grid.GridCells.Fixed(GalleryColumns), modifier.semantics { contentDescription = "Loading your gallery" },
         horizontalArrangement = Arrangement.spacedBy(GalleryGap), verticalArrangement = Arrangement.spacedBy(GalleryGap), userScrollEnabled = false,
     ) {
-        items(GalleryPlaceholderTiles) { Box(Modifier.fillMaxWidth().aspectRatio(1f).background(cc.fill)) }
+        items(GalleryPlaceholderTiles) { com.circaso.designsystem.components.SkeletonBlock(Modifier.fillMaxWidth().aspectRatio(1f), androidx.compose.ui.graphics.RectangleShape) }
     }
 }
 
