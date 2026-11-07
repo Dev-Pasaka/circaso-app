@@ -42,6 +42,8 @@ fun ListRow(
     onClick: (() -> Unit)? = null,
     /** A small badge after the title on the same line. */
     titleEnd: (@Composable () -> Unit)? = null,
+    /** The content's side inset; a list whose rows are already inset (Chats' rounded rows) passes less. */
+    horizontalPadding: androidx.compose.ui.unit.Dp = CircasoSpacing.s4,
 ) {
     val c = CircasoTheme.colors
     val t = CircasoTheme.typography
@@ -50,7 +52,7 @@ fun ListRow(
             .fillMaxWidth()
             .then(if (onClick != null) Modifier.pressable(onClick = onClick) else Modifier)
             .defaultMinSize(minHeight = 56.dp)
-            .padding(horizontal = CircasoSpacing.s4, vertical = CircasoSpacing.s3),
+            .padding(horizontal = horizontalPadding, vertical = CircasoSpacing.s3),
         horizontalArrangement = Arrangement.spacedBy(CircasoSpacing.s3),
         verticalAlignment = Alignment.CenterVertically,
     ) {

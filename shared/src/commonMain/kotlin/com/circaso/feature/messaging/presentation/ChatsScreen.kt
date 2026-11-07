@@ -196,6 +196,7 @@ fun ChatsContent(
                 ListRow(
                     "Asha", sub = "Ask me anything about your money", leading = { AshaMark() }, onClick = onAsha,
                     modifier = swap().padding(horizontal = CircasoSpacing.s2).clip(com.circaso.designsystem.theme.CircasoShapes.md),
+                    horizontalPadding = ChatRowInnerInset,
                 )
             }
         }
@@ -285,6 +286,7 @@ private fun ChatRow(
     // The design's end column (`cx-row-end`): the time above the unread count, both right-aligned.
     ListRow(
         title = summary.chat.title,
+        horizontalPadding = ChatRowInnerInset,
         // Always inset and rounded so selecting doesn't move the row; only the fill changes, softly.
         modifier = modifier.padding(horizontal = CircasoSpacing.s2).clip(com.circaso.designsystem.theme.CircasoShapes.md)
             .background(androidx.compose.animation.animateColorAsState(if (selected) c.fill else androidx.compose.ui.graphics.Color.Transparent, label = "selected").value)
@@ -336,3 +338,9 @@ private fun ChatsBrand() {
         BasicText("Circaso", style = t.title1.copy(color = c.ink, fontWeight = FontWeight.Bold), maxLines = 1)
     }
 }
+
+/**
+ * A chat row's content inset inside its rounded, inset row (8 dp from the screen, for the selection fill): together
+ * 16 dp, the same line as the logo, search and chips above (Pasaka, 2026-11-07).
+ */
+internal val ChatRowInnerInset = CircasoSpacing.s2

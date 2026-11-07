@@ -205,7 +205,7 @@ fun MomentRing.arcs(): List<Boolean> = moments.sortedBy { it.postedAt }.map { it
 private fun SectionLabel(text: String, modifier: Modifier) {
     BasicText(
         text,
-        modifier.fillMaxWidth().padding(start = CircasoSpacing.s5, end = CircasoSpacing.s4, top = CircasoSpacing.s4, bottom = CircasoSpacing.s1).semantics { heading() },
+        modifier.fillMaxWidth().padding(start = CircasoSpacing.s4, end = CircasoSpacing.s4, top = CircasoSpacing.s4, bottom = CircasoSpacing.s1).semantics { heading() },
         style = CircasoTheme.typography.footnote.copy(color = CircasoTheme.colors.inkSecondary, fontWeight = FontWeight.SemiBold),
     )
 }
@@ -226,7 +226,7 @@ private fun MomentRowFrame(
         modifier.fillMaxWidth().padding(horizontal = CircasoSpacing.s2).clip(CircasoShapes.md)
             .then(if (onClick != null) Modifier.pressable(role = Role.Button, onClick = onClick) else Modifier)
             .semantics(mergeDescendants = true) { contentDescription = label }
-            .padding(horizontal = CircasoSpacing.s4, vertical = CircasoSpacing.s3),
+            .padding(horizontal = CircasoSpacing.s2, vertical = CircasoSpacing.s3),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(CircasoSpacing.s3),
     ) {
@@ -309,7 +309,7 @@ private fun MutedHeader(count: Int, open: Boolean, onToggle: () -> Unit, modifie
                 contentDescription = "Muted, $count ${if (count == 1) "person" else "people"}"
                 stateDescription = if (open) "Expanded" else "Collapsed"
             }
-            .padding(start = CircasoSpacing.s3, end = CircasoSpacing.s4).padding(vertical = CircasoSpacing.s3),
+            .padding(start = CircasoSpacing.s2, end = CircasoSpacing.s4).padding(vertical = CircasoSpacing.s3),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         BasicText("Muted", Modifier.weight(1f), style = t.footnote.copy(color = c.inkSecondary, fontWeight = FontWeight.SemiBold))
@@ -413,7 +413,7 @@ private fun PostingArc(progress: Float?, size: Dp = MomentAvatar) {
 private fun SkeletonRow(modifier: Modifier, announce: Boolean) {
     val c = CircasoTheme.colors
     Row(
-        modifier.fillMaxWidth().padding(horizontal = CircasoSpacing.s2).padding(horizontal = CircasoSpacing.s4, vertical = CircasoSpacing.s3)
+        modifier.fillMaxWidth().padding(horizontal = CircasoSpacing.s2).padding(horizontal = CircasoSpacing.s2, vertical = CircasoSpacing.s3)
             // Said once for the three rows, not three times.
             .semantics { if (announce) contentDescription = "Loading moments" else hideFromAccessibility() },
         verticalAlignment = Alignment.CenterVertically,
