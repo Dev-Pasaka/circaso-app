@@ -1,4 +1,5 @@
 import AVFoundation
+import QuartzCore
 import Shared
 
 /// Live voice with Asha: the microphone as Opus packets (16 kHz mono, 20 ms, 24 kbit/s) and her voice played back as
@@ -22,6 +23,7 @@ final class LiveAudioImpl: NSObject, LiveAudioBridgeApi {
     private var muted = false
     private var onPacket: ((Data) -> Void)?
     private var onMicLevel: ((Float) -> Void)?
+    private var onMicFrame: ((Data) -> Void)?
     private var sinceLevel = 0
 
     private var speakerFormat: AVAudioFormat?
@@ -29,6 +31,13 @@ final class LiveAudioImpl: NSObject, LiveAudioBridgeApi {
     private var queued = 0
     private var onPlaying: ((Bool) -> Void)?
     private var onVoiceLevel: ((Float) -> Void)?
+    /// The echo guard's reference: each 20 ms of her voice, when it will be heard (ms from now) and for how long.
+    private var onBlock: ((Float, Int, Int) -> Void)?
+    private var onRoute: ((Int) -> Void)?
+    private var routeObserver: NSObjectProtocol?
+    /// When what is scheduled on the player finishes (CACurrentMediaTime), so the next buffer's start is known.
+    private var queuedUntil: CFTimeInterval = 0
+    private var playerVolume: Float = 1
 
     private static let frame = 320 // 20 ms at 16 kHz: one Opus packet
 
@@ -104,6 +113,7 @@ final class LiveAudioImpl: NSObject, LiveAudioBridgeApi {
             pending.removeFirst(Self.frame)
             sinceLevel += 1
             if sinceLevel >= 3 { sinceLevel = 0; onMicLevel?(Self.level(frame)) }
+            if let onMicFrame = onMicFrame { onMicFrame(Self.pcm16(frame)) }
             encode(frame)
         }
     }
@@ -127,6 +137,15 @@ final class LiveAudioImpl: NSObject, LiveAudioBridgeApi {
 
     func setMicrophoneMuted(muted: Bool) { work.async { self.muted = muted } }
 
+    /// The voice activity detector's copy of the echo-cancelled microphone (16 kHz, 16-bit), muted or not.
+    func setMicrophoneFrames(onFrame: ((Data) -> Void)?) { work.async { self.onMicFrame = onFrame } }
+
+    private static func pcm16(_ samples: [Float]) -> Data {
+        var out = [Int16](repeating: 0, count: samples.count)
+        for i in 0..<samples.count { out[i] = Int16(max(-1, min(1, samples[i])) * 32_767) }
+        return out.withUnsafeBufferPointer { Data(buffer: $0) }
+    }
+
     func stopMicrophone() {
         work.async {
             self.micRunning = false
@@ -136,6 +155,7 @@ final class LiveAudioImpl: NSObject, LiveAudioBridgeApi {
             self.pending.removeAll()
             self.onPacket = nil
             self.onMicLevel = nil
+            self.onMicFrame = nil
             self.stopEngineIfIdle()
         }
     }
@@ -156,7 +176,9 @@ final class LiveAudioImpl: NSObject, LiveAudioBridgeApi {
         self.onPlaying = { onPlaying(KotlinBoolean(value: $0)) }
         self.onVoiceLevel = { onLevel(KotlinFloat(value: $0)) }
         queued = 0
+        queuedUntil = 0
         player.volume = 1
+        playerVolume = 1
         do {
             if !engine.isRunning { try engine.start() }
         } catch {
@@ -184,7 +206,31 @@ final class LiveAudioImpl: NSObject, LiveAudioBridgeApi {
             }
         }
         let level = Self.level(rms: sqrt(sum / Double(count)))
+        // 20 ms slices of her voice for the echo guard: their loudness, as played (after the volume)
+        let step = max(1, Int(format.sampleRate) / 50)
+        var slices: [Float] = []
+        if let channel = buffer.floatChannelData?[0] {
+            var at = 0
+            while at < count {
+                let n = min(step, count - at)
+                var e: Double = 0
+                for i in at..<(at + n) { e += Double(channel[i] * channel[i]) }
+                slices.append(Float(20 * log10(max(sqrt(e / Double(n)), 1e-5))))
+                at += n
+            }
+        }
+        let duration = Double(count) / format.sampleRate
         work.async {
+            if let onBlock = self.onBlock {
+                let now = CACurrentMediaTime()
+                let session = AVAudioSession.sharedInstance()
+                let start = max(now + session.outputLatency + session.ioBufferDuration, self.queuedUntil)
+                let gain = Float(20 * log10(Double(max(self.playerVolume, 0.01))))
+                for (i, db) in slices.enumerated() {
+                    onBlock(db + gain, Int(((start - now) + Double(i * step) / format.sampleRate) * 1_000), 20)
+                }
+                self.queuedUntil = start + duration
+            }
             self.queued += 1
             self.onPlaying?(true)
             self.onVoiceLevel?(level)
@@ -203,6 +249,7 @@ final class LiveAudioImpl: NSObject, LiveAudioBridgeApi {
             guard self.speakerRunning else { return }
             self.player.stop()
             self.queued = 0
+            self.queuedUntil = 0
             self.onPlaying?(false)
             self.onVoiceLevel?(0)
             self.player.play()
@@ -212,7 +259,10 @@ final class LiveAudioImpl: NSObject, LiveAudioBridgeApi {
     /// Ducking while the person may be talking over her. The shared code ramps it in ~16 ms steps; the player's
     /// volume applies to what is already scheduled, so the dip is heard at once.
     func setSpeakerVolume(volume: Float) {
-        work.async { self.player.volume = min(max(volume, 0), 1) }
+        work.async {
+            self.playerVolume = min(max(volume, 0), 1)
+            self.player.volume = self.playerVolume
+        }
     }
 
     func stopSpeaker() {
@@ -220,10 +270,38 @@ final class LiveAudioImpl: NSObject, LiveAudioBridgeApi {
             self.speakerRunning = false
             self.player.stop()
             self.queued = 0
+            self.queuedUntil = 0
             self.onPlaying = nil
             self.onVoiceLevel = nil
+            self.onBlock = nil
+            self.onRoute = nil
+            if let observer = self.routeObserver { NotificationCenter.default.removeObserver(observer) }
+            self.routeObserver = nil
             self.stopEngineIfIdle()
         }
+    }
+
+    /// The echo guard's reference and the audio route (0 loudspeaker, 1 receiver, 2 headphones or a headset), the
+    /// route at once and again on every change (headphones plugged in or a Bluetooth headset connected mid-call).
+    func observeSpeaker(onBlock: @escaping (KotlinFloat, KotlinInt, KotlinInt) -> Void, onRoute: @escaping (KotlinInt) -> Void) {
+        work.async {
+            self.onBlock = { onBlock(KotlinFloat(value: $0), KotlinInt(value: Int32($1)), KotlinInt(value: Int32($2))) }
+            let report: () -> Void = { onRoute(KotlinInt(value: Int32(Self.route()))) }
+            self.onRoute = { _ in report() }
+            if let observer = self.routeObserver { NotificationCenter.default.removeObserver(observer) }
+            self.routeObserver = NotificationCenter.default.addObserver(forName: AVAudioSession.routeChangeNotification, object: nil, queue: nil) { [weak self] _ in
+                self?.work.async { self?.onRoute?(0) }
+            }
+            report()
+        }
+    }
+
+    private static func route() -> Int {
+        let outputs = AVAudioSession.sharedInstance().currentRoute.outputs
+        let headsets: Set<AVAudioSession.Port> = [.headphones, .bluetoothA2DP, .bluetoothHFP, .bluetoothLE, .usbAudio]
+        if outputs.contains(where: { headsets.contains($0.portType) }) { return 2 }
+        if outputs.contains(where: { $0.portType == .builtInReceiver }) { return 1 }
+        return 0
     }
 
     // MARK: engine and session

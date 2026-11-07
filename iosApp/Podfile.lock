@@ -64,6 +64,11 @@ PODS:
   - IQKeyboardNotification (1.0.3)
   - IQTextInputViewNotification (1.0.5):
     - IQKeyboardCore (= 1.0.5)
+  - onnxruntime-c (1.30.0)
+  - onnxruntime-objc (1.30.0):
+    - onnxruntime-objc/Core (= 1.30.0)
+  - onnxruntime-objc/Core (1.30.0):
+    - onnxruntime-c (= 1.30.0)
   - PromisesObjC (2.4.1)
   - PromisesSwift (2.4.1):
     - PromisesObjC (= 2.4.1)
@@ -77,6 +82,7 @@ DEPENDENCIES:
   - CircleProgrammableWalletSDK (= 1.4.5)
   - GoogleMaps (= 9.4.0)
   - GoogleSignIn (from `LocalPods/GoogleSignIn/GoogleSignIn.podspec.json`)
+  - onnxruntime-objc (= 1.30.0)
 
 SPEC REPOS:
   https://github.com/circlefin/w3s-ios-sdk.git:
@@ -99,6 +105,8 @@ SPEC REPOS:
     - IQKeyboardManagerSwift
     - IQKeyboardNotification
     - IQTextInputViewNotification
+    - onnxruntime-c
+    - onnxruntime-objc
     - PromisesObjC
     - PromisesSwift
     - RecaptchaInterop
@@ -129,12 +137,14 @@ SPEC CHECKSUMS:
   IQKeyboardManagerSwift: 12d6ae3632ef744ccd033c048b566af13cc10d49
   IQKeyboardNotification: d7382c4466c5a5adef92c7452ebf861b36050088
   IQTextInputViewNotification: 4381fb828881983205fbee38f17da8a9fe2e835c
+  onnxruntime-c: 36ca0f2cdbc89c6b330ec5287c3faf5ca6ed394d
+  onnxruntime-objc: b5edf18cf57daebe2ee59a7866aab12c8eeff940
   PromisesObjC: 752c3227f599e3467650e47ea36f433eeb10c273
   PromisesSwift: 217dea0fd5d2ad65222a109c48698add13cc1c5b
   RecaptchaInterop: 11e0b637842dfb48308d242afc3f448062325aba
   SDWebImage: fc8f2d48bbfd72ef39d70e981bd24a3f3be53fec
   SnapKit: d612e99e678a2d3b95bf60b0705ed0a35c03484a
 
-PODFILE CHECKSUM: e192024dcdd7811b3036d9dbca9070076fd0a13d
+PODFILE CHECKSUM: 5b2c653bf5de8658d921bc3d3a3f855d1980239a
 
 COCOAPODS: 1.17.0

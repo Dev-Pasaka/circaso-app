@@ -4,6 +4,7 @@ import android.Manifest
 import android.content.Context
 import android.content.pm.PackageManager
 import android.media.AudioAttributes
+import android.media.AudioDeviceCallback
 import android.media.AudioDeviceInfo
 import android.media.AudioFormat
 import android.media.AudioManager
@@ -45,6 +46,8 @@ class AndroidLiveMicrophone(private val context: Context) : LiveMicrophone {
     private val _level = MutableStateFlow(0f)
     override val level: StateFlow<Float> = _level.asStateFlow()
     @Volatile override var muted: Boolean = false
+    private val _frames = MutableSharedFlow<MicFrame>(extraBufferCapacity = 64, onBufferOverflow = BufferOverflow.DROP_OLDEST)
+    override val frames: Flow<MicFrame> = _frames
 
     private var worker: Thread? = null
     private val running = AtomicBoolean(false)
@@ -113,6 +116,8 @@ class AndroidLiveMicrophone(private val context: Context) : LiveMicrophone {
                 read += n
             }
             if (!running.get()) return
+            // the voice activity detector's copy, after the echo canceller, stamped as it comes off the recorder
+            if (_frames.subscriptionCount.value > 0) _frames.tryEmit(MicFrame(pcm.copyOf(), MonoClock.now()))
             if (++sinceLevel >= 3) { _level.value = AudioLevel.of(pcm); sinceLevel = 0 } // ~16 updates a second is plenty for the halo
             val inIndex = codec.dequeueInputBuffer(20_000)
             if (inIndex >= 0) {
@@ -155,12 +160,22 @@ class AndroidLiveSpeaker(private val context: Context) : LiveSpeaker {
     override val playing: StateFlow<Boolean> = _playing.asStateFlow()
     private val _level = MutableStateFlow(0f)
     override val level: StateFlow<Float> = _level.asStateFlow()
+    private val _blocks = MutableSharedFlow<PlaybackBlock>(extraBufferCapacity = 256, onBufferOverflow = BufferOverflow.DROP_OLDEST)
+    override val blocks: Flow<PlaybackBlock> = _blocks
+    override val route: StateFlow<AudioRoute> = VoiceRoute.route
+
+    /** Frames written to the track since it started or was flushed: with its play position, when a block is heard. */
+    @Volatile private var framesWritten = 0L
+    /** The volume set last, so the echo reference follows the duck. */
+    @Volatile private var volume = 1f
 
     private var track: AudioTrack? = null
     private val queue = ArrayDeque<ShortArray>()
     private val lock = Object()
     private val gain = SpeechGain()
     private var generation = 0
+    /** Bumped by every [flush]: the drain thread drops the chunk it is on the moment it sees a new one. */
+    @Volatile private var flushes = 0
     private var worker: Thread? = null
 
     override suspend fun start(sampleRate: Int) {
@@ -176,6 +191,8 @@ class AndroidLiveSpeaker(private val context: Context) : LiveSpeaker {
         if (t.state != AudioTrack.STATE_INITIALIZED) { t.release(); VoiceRoute.release(context); Diagnostics.note("voice: speaker failed"); return }
         track = t
         t.setVolume(1f)
+        volume = 1f
+        framesWritten = 0
         t.play()
         val gen = ++generation
         worker = Thread({ drain(t, gen, sampleRate) }, "asha-voice").also { it.start() }
@@ -183,16 +200,25 @@ class AndroidLiveSpeaker(private val context: Context) : LiveSpeaker {
 
     private fun drain(t: AudioTrack, gen: Int, sampleRate: Int) {
         var idle = true
+        var seen = flushes
         while (true) {
-            val chunk: ShortArray
-            synchronized(lock) {
-                while (queue.isEmpty() && gen == generation) {
+            if (seen != flushes) {
+                // Talked over: [flush] has paused the track (silent at once); what this thread wrote since is dropped
+                // here, on the thread that writes, so not even the rest of a 20 ms step is heard.
+                seen = flushes
+                runCatching { t.pause(); t.flush(); t.play() }
+                framesWritten = 0
+                idle = true
+            }
+            val chunk: ShortArray = synchronized(lock) {
+                while (queue.isEmpty() && gen == generation && seen == flushes) {
                     _playing.value = false
                     _level.value = 0f
                     idle = true
                     lock.wait()
                 }
                 if (gen != generation) return
+                if (seen != flushes) return@synchronized null
                 // A reply starting after silence: let ~150 ms gather first, so the track (which the system disables
                 // after running dry) restarts with enough to play and her first words aren't swallowed.
                 if (idle) {
@@ -201,11 +227,12 @@ class AndroidLiveSpeaker(private val context: Context) : LiveSpeaker {
                     while (queue.sumOf { it.size } < wanted && System.currentTimeMillis() < deadline && gen == generation) lock.wait(20)
                     if (gen != generation) return
                 }
-                chunk = queue.removeFirst()
-            }
+                queue.removeFirst()
+            } ?: continue
             if (idle) {
                 // A short lead-in of silence wakes the output path before the voice itself.
-                t.write(ShortArray(sampleRate * 3 / 50), 0, sampleRate * 3 / 50, AudioTrack.WRITE_BLOCKING)
+                val lead = t.write(ShortArray(sampleRate * 3 / 50), 0, sampleRate * 3 / 50, AudioTrack.WRITE_BLOCKING)
+                if (lead > 0) framesWritten += lead
                 idle = false
             }
             gain.apply(chunk)
@@ -213,11 +240,18 @@ class AndroidLiveSpeaker(private val context: Context) : LiveSpeaker {
             // The sound is written a little ahead of being heard: report the level per 20 ms as it is written.
             var at = 0
             val step = sampleRate / 50
-            while (at < chunk.size && gen == generation) {
+            while (at < chunk.size && gen == generation && seen == flushes) {
                 val n = minOf(step, chunk.size - at)
                 _level.value = AudioLevel.of(chunk, at, n)
+                // the echo guard's reference: heard once everything written before it has played
+                if (_blocks.subscriptionCount.value > 0) {
+                    val ahead = (framesWritten - (t.playbackHeadPosition.toLong() and 0xFFFFFFFFL)).coerceAtLeast(0)
+                    val db = AudioDb.of(chunk, at, n) + 20 * kotlin.math.log10(volume.coerceAtLeast(0.01f))
+                    _blocks.tryEmit(PlaybackBlock(MonoClock.now() + ahead * 1_000 / sampleRate, n * 1_000 / sampleRate, db))
+                }
                 val written = t.write(chunk, at, n, AudioTrack.WRITE_BLOCKING)
                 if (written < 0) return
+                framesWritten += written
                 at += n
             }
         }
@@ -230,13 +264,15 @@ class AndroidLiveSpeaker(private val context: Context) : LiveSpeaker {
 
     /** `AudioTrack.setVolume`: the mixer ramps each change over a buffer, so small steps are click-free. */
     override fun setVolume(volume: Float) {
-        runCatching { track?.setVolume(volume.coerceIn(0f, 1f)) }
+        this.volume = volume.coerceIn(0f, 1f)
+        runCatching { track?.setVolume(this.volume) }
     }
 
     override fun flush() {
         val t = track ?: return
-        synchronized(lock) { queue.clear(); lock.notifyAll() }
-        runCatching { t.pause(); t.flush(); t.play() }
+        synchronized(lock) { queue.clear(); flushes++; lock.notifyAll() }
+        // silent now; the drain thread flushes again and restarts the track once it has let go of its chunk
+        runCatching { t.pause(); t.flush() }
         _level.value = 0f
     }
 
@@ -253,38 +289,77 @@ class AndroidLiveSpeaker(private val context: Context) : LiveSpeaker {
 }
 
 /**
- * Puts the phone in a call: the voice-communication mode (which turns the echo canceller on) with the sound on the
- * loudspeaker, and gives everything back when the last user lets go. Shared by the microphone and the speaker.
+ * Puts the phone in a call: the voice-communication mode (which turns the echo canceller on) with the sound on
+ * headphones or a headset when one is connected (wired, USB, Bluetooth), else on the loudspeaker, and gives everything
+ * back when the last user lets go. Shared by the microphone and the speaker. Follows headphones plugged in or connected
+ * mid-call, and says where the sound is ([route]) so the barge-in detector can drop its echo guard on headphones.
  */
 private object VoiceRoute {
     private var users = 0
     private var previousMode = AudioManager.MODE_NORMAL
     private var previousSpeaker = false
+    private var watching: AudioDeviceCallback? = null
+    private val _route = MutableStateFlow(AudioRoute.Loudspeaker)
+    val route: StateFlow<AudioRoute> = _route.asStateFlow()
+
+    /** Headphones and headsets, in the order they are preferred. */
+    private val headsets = listOf(
+        AudioDeviceInfo.TYPE_WIRED_HEADSET,
+        AudioDeviceInfo.TYPE_WIRED_HEADPHONES,
+        AudioDeviceInfo.TYPE_USB_HEADSET,
+        AudioDeviceInfo.TYPE_BLE_HEADSET,
+        AudioDeviceInfo.TYPE_BLUETOOTH_SCO,
+    )
 
     @Synchronized fun acquire(context: Context) {
         if (users++ > 0) return
         val am = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
         previousMode = am.mode
+        @Suppress("DEPRECATION")
+        previousSpeaker = am.isSpeakerphoneOn
         am.mode = AudioManager.MODE_IN_COMMUNICATION
+        choose(am)
+        watching = object : AudioDeviceCallback() {
+            override fun onAudioDevicesAdded(addedDevices: Array<out AudioDeviceInfo>) = rechoose(am)
+            override fun onAudioDevicesRemoved(removedDevices: Array<out AudioDeviceInfo>) = rechoose(am)
+        }.also { am.registerAudioDeviceCallback(it, null) }
+    }
+
+    @Synchronized private fun rechoose(am: AudioManager) {
+        if (users > 0) choose(am)
+    }
+
+    /** A connected headset if there is one, else the loudspeaker. */
+    private fun choose(am: AudioManager) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            val speaker = am.availableCommunicationDevices.firstOrNull { it.type == AudioDeviceInfo.TYPE_BUILTIN_SPEAKER }
-            Diagnostics.note("voice: route speaker=${speaker?.let { am.setCommunicationDevice(it) }}")
+            val devices = am.availableCommunicationDevices
+            val headset = headsets.firstNotNullOfOrNull { type -> devices.firstOrNull { it.type == type } }
+            val target = headset ?: devices.firstOrNull { it.type == AudioDeviceInfo.TYPE_BUILTIN_SPEAKER }
+            val ok = target?.let { am.setCommunicationDevice(it) }
+            _route.value = if (headset != null && ok == true) AudioRoute.Headphones else AudioRoute.Loudspeaker
+            Diagnostics.note("voice: route ${_route.value} (${target?.type}, set=$ok)")
         } else {
+            // before Android 12 a wired or USB headset takes the call path by itself once the loudspeaker is off
+            val wired = am.getDevices(AudioManager.GET_DEVICES_OUTPUTS).any {
+                it.type == AudioDeviceInfo.TYPE_WIRED_HEADSET || it.type == AudioDeviceInfo.TYPE_WIRED_HEADPHONES || it.type == AudioDeviceInfo.TYPE_USB_HEADSET
+            }
             @Suppress("DEPRECATION")
-            previousSpeaker = am.isSpeakerphoneOn
-            @Suppress("DEPRECATION")
-            am.isSpeakerphoneOn = true
+            am.isSpeakerphoneOn = !wired
+            _route.value = if (wired) AudioRoute.Headphones else AudioRoute.Loudspeaker
         }
     }
 
     @Synchronized fun release(context: Context) {
         if (users == 0 || --users > 0) return
         val am = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+        watching?.let { am.unregisterAudioDeviceCallback(it) }
+        watching = null
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) am.clearCommunicationDevice() else {
             @Suppress("DEPRECATION")
             am.isSpeakerphoneOn = previousSpeaker
         }
         am.mode = previousMode
+        _route.value = AudioRoute.Loudspeaker
     }
 }
 

@@ -28,6 +28,17 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import com.circaso.core.platform.ConnectionStatus
+import com.circaso.core.platform.MonoClock
+import com.circaso.feature.assistant.voice.BargeInDetector
+import com.circaso.feature.assistant.voice.SileroVad
+import com.circaso.feature.assistant.voice.SpeechOnset
+import com.circaso.feature.assistant.voice.VadLoader
+import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.Deferred
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.isActive
+import kotlin.concurrent.Volatile
 
 /** Where the conversation is, as the animation and the status line show it. */
 enum class VoicePhase {
@@ -142,12 +153,18 @@ data class VoiceUiState(
 
 /**
  * The voice screen's conversation (guide A11): one socket and the microphone open for as long as the screen is up.
- * The microphone streams the whole time, even while Asha speaks, which is how talking over her works: the platform's
- * echo canceller takes her voice out and the server decides what is the person (one clear word; guide `interrupted`).
- * The phone answers first: the moment it hears the person over her ([VoiceActivity]), her voice ducks and the screen
- * shows listening; `interrupted` then stops her for good, and without one she comes back up after a moment. The
- * transcript, turn and reply frames build a chat-style transcript; the saved messages reach the Asha chat through the
- * normal history refresh.
+ * The microphone streams the whole time, even while Asha speaks, which is how talking over her works.
+ *
+ * **Talking over her is the phone's call** (decision 2026-11-07, like a phone call or Claude's voice mode): Silero VAD
+ * runs on the echo-cancelled microphone off the main thread ([BargeInDetector]; on the loudspeaker with an echo guard
+ * against her own voice, on headphones with a lower bar). The first sure window of the person's voice ducks her (the
+ * feel); about 200 ms of it stops her at once (flushed, not ducked), the screen listens, and an `interrupt` frame tells
+ * the server, which cancels her answer and answers `interrupted`; her audio and sentences arriving in between are the
+ * old reply's and are dropped. Without the detector (the model or ONNX Runtime unavailable) the energy detector
+ * ([VoiceActivity]) only ducks her, and the server's word rule decides.
+ *
+ * The transcript, turn and reply frames build a chat-style transcript; the saved messages reach the Asha chat through
+ * the normal history refresh.
  */
 class VoiceViewModel(
     private val talk: TalkToAshaUseCase,
@@ -162,6 +179,12 @@ class VoiceViewModel(
     private val connection: Flow<ConnectionStatus>? = null,
     /** Milliseconds, for the microphone gate; a test clock in tests. */
     private val clock: () -> Long = { nowMillis() },
+    /** Opens Silero VAD for the phone's own barge-in; null (previews, a platform without it) keeps the energy detector. */
+    private val vadLoader: VadLoader? = null,
+    /** Where the detector runs: one thread, never the main one. The test dispatcher in tests. */
+    private val vadDispatcher: CoroutineDispatcher = Dispatchers.Default.limitedParallelism(1),
+    /** The clock the microphone's frames and the speaker's blocks are stamped on, to time a barge-in. */
+    private val monoClock: () -> Long = { MonoClock.now() },
 ) : ViewModel() {
     /** When this phone got the turn, and how long until its first sound played; for the debug timing line. */
     private var turnAt = 0L
@@ -171,7 +194,8 @@ class VoiceViewModel(
     private val local = MutableStateFlow(VoiceUiState())
     private var session: LiveVoiceSession? = null
     private var conversation: Job? = null
-    private var ended = false
+    /** Read on the detector's thread too. */
+    @Volatile private var ended = false
 
     /** This call got as far as `ready` at least once: only a call that was live is worth reconnecting. */
     private var everLive = false
@@ -186,10 +210,6 @@ class VoiceViewModel(
     val state: StateFlow<VoiceUiState> = combine(local, microphone.level, speaker.level) { ui, mic, voice ->
         ui.copy(micLevel = if (ui.visual == VoiceVisual.Listening) mic else 0f, voiceLevel = if (ui.visual == VoiceVisual.Speaking) voice else 0f)
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), VoiceUiState())
-
-    init {
-        start()
-    }
 
     /** Starts (or, after a quiet hang-up, restarts) the conversation. */
     fun start() {
@@ -230,6 +250,7 @@ class VoiceViewModel(
             } finally {
                 session = null
                 streaming?.cancel()
+                detecting?.cancel()
                 microphone.stop()
                 speaker.stop()
             }
@@ -265,7 +286,8 @@ class VoiceViewModel(
     private suspend fun handle(event: LiveVoiceEvent, s: LiveVoiceSession) {
         when (event) {
             is LiveVoiceEvent.Ready -> onReady(event, s)
-            is LiveVoiceEvent.Audio -> if (local.value.phase != VoicePhase.Ended) {
+            // after the phone's own barge-in, her audio and sentences are the old reply's until the server says so
+            is LiveVoiceEvent.Audio -> if (local.value.phase != VoicePhase.Ended && !dropStale) {
                 speaker.play(if (encoding == "linear16") pcm16(event.bytes) else Mulaw.decode(event.bytes))
                 if (heardAfterMs == null && turnAt > 0) { heardAfterMs = nowMillis() - turnAt; showTiming() }
                 local.update { if (it.phase == VoicePhase.Thinking || it.phase == VoicePhase.Listening) it.copy(phase = VoicePhase.Speaking) else it }
@@ -273,13 +295,15 @@ class VoiceViewModel(
             is LiveVoiceEvent.Transcript -> local.update { it.copy(heard = event.text, heardFinal = event.final, notice = null) }
             is LiveVoiceEvent.Turn -> Diagnostics.note("voice: turn").also {
                 turnAt = nowMillis(); heardAfterMs = null; serverTiming = null
+                dropStale = false
                 resetDucking()
                 local.update { it.copy(phase = VoicePhase.Thinking, turns = VoiceTranscript.question(it.turns, event.text), heard = "", heardFinal = false, status = null) } }
-            is LiveVoiceEvent.Reply -> local.update { it.copy(phase = VoicePhase.Speaking, turns = VoiceTranscript.sentence(it.turns, event.text), status = null) }
+            is LiveVoiceEvent.Reply -> if (!dropStale) local.update { it.copy(phase = VoicePhase.Speaking, turns = VoiceTranscript.sentence(it.turns, event.text), status = null) }
             is LiveVoiceEvent.UsingTool -> local.update { it.copy(status = "Reading your chats…") }
             is LiveVoiceEvent.Status -> local.update { it.copy(status = event.label) }
             is LiveVoiceEvent.Interrupted -> {
                 Diagnostics.note("voice: interrupted")
+                dropStale = false
                 speaker.flush()
                 resetDucking(flushed = true)
                 local.update { it.copy(phase = VoicePhase.Listening, turns = VoiceTranscript.interrupted(it.turns)) }
@@ -313,6 +337,7 @@ class VoiceViewModel(
         speaker.start(ready.sampleRate) // at full volume: a new call never starts ducked
         volumeRamp?.cancel()
         volume = 1f
+        dropStale = false
         activity.reset()
         when (microphone.start()) {
             LiveMicStart.Started -> Unit
@@ -329,14 +354,129 @@ class VoiceViewModel(
         streaming = viewModelScope.launch {
             // Everything streams, her turn included: no loudness gate. With the echo canceller on, a normal voice
             // talking over her is quiet on the microphone, and a gate that kept her echo out kept the person out too.
-            // The server tells the person from her echo and from noise (guide `interrupted`); the phone only ducks.
+            // The detector (or, without it, the server) tells the person from her echo and from noise.
             microphone.packets.collect { packet ->
                 if (local.value.muted) return@collect
-                duckForVoice(clock())
+                if (!vadActive) duckForVoice(clock())
                 s.sendAudio(packet)
             }
         }
+        detect(s)
     }
+
+    // ---- the phone's own barge-in: Silero VAD on the echo-cancelled microphone ---------------------------------
+
+    /** The detector, opened once per screen on [vadDispatcher]; null when it can't be. */
+    private val detectorLoad: Deferred<BargeInDetector?>? = vadLoader?.let { loader ->
+        viewModelScope.async(vadDispatcher) {
+            val model = loader.open()
+            // the screen went while the model was opening: close it here, no one else will
+            if (!isActive) { model?.close(); null } else model?.let { BargeInDetector(SileroVad(it)) }
+        }
+    }
+    private var detecting: Job? = null
+    /** The detector is running for this call: it, not the energy detector, ducks her. */
+    @Volatile private var vadActive = false
+    /** Set the moment the phone stops her itself, until `interrupted` or the next `turn`: her frames in between are stale. */
+    @Volatile private var dropStale = false
+    /** Debug: how long the last barge-in took from the person's first word to her silence, for the timing line. */
+    @Volatile private var lastStopMs: Long? = null
+    /** When the detector last dipped her, and the pending return to full volume after a cough. */
+    @Volatile private var duckedAt = 0L
+    private var unduck: Job? = null
+
+    private fun detect(s: LiveVoiceSession) {
+        detecting?.cancel()
+        vadActive = false
+        val load = detectorLoad ?: return
+        detecting = viewModelScope.launch(vadDispatcher) {
+            val detector = load.await() ?: return@launch
+            detector.reset()
+            vadActive = true
+            // a dip the energy detector made before the model was ready would otherwise never be undone
+            if (local.value.ducked) viewModelScope.launch { undo() }
+            try {
+                launch { speaker.blocks.collect { detector.onPlayback(it) } }
+                launch { speaker.route.collect { detector.route = it; Diagnostics.note("voice: route $it") } }
+                microphone.frames.collect { frame ->
+                    if (ended || local.value.muted) return@collect
+                    detector.onMic(frame) { onSpeech(it, detector, s) }
+                }
+            } finally {
+                vadActive = false
+            }
+        }
+    }
+
+    /** One edge from the detector, on [vadDispatcher]. The stop itself happens here, not after a hop to the main thread. */
+    private fun onSpeech(e: BargeInDetector.Event, detector: BargeInDetector, s: LiveVoiceSession) {
+        val ui = local.value
+        when (e.edge) {
+            SpeechOnset.Edge.Rising -> if (ui.phase == VoicePhase.Speaking && !dropStale) viewModelScope.launch {
+                // the feel: she dips the moment the person is heard, and stops once it is sure (~200 ms)
+                unduck?.cancel()
+                if (local.value.phase != VoicePhase.Speaking || local.value.ducked) return@launch
+                duckedAt = monoClock()
+                rampVolume(DuckedVolume, DuckMillis)
+                local.update { it.copy(ducked = true) }
+            }
+            // a cough: she comes back up, but the screen holds listening a moment so the logo doesn't flicker
+            SpeechOnset.Edge.Fell -> if (ui.ducked) viewModelScope.launch {
+                unduck?.cancel()
+                unduck = viewModelScope.launch {
+                    delay((duckedAt + MinDuckMillis - monoClock()).coerceAtLeast(0))
+                    if (local.value.phase == VoicePhase.Speaking) undo()
+                }
+            }
+            SpeechOnset.Edge.Onset -> {
+                val herTurn = ui.phase == VoicePhase.Thinking || ui.phase == VoicePhase.Speaking
+                if (!herTurn && !speaker.playing.value) { tune("listening", e, detector, null); return }
+                if (herTurn) dropStale = true
+                speaker.flush()
+                val stoppedAt = monoClock()
+                detector.onFlushed(stoppedAt)
+                tune(if (herTurn) "barge-in" else "tail", e, detector, stoppedAt)
+                if (herTurn) viewModelScope.launch { bargedIn(s) } else viewModelScope.launch { resetDucking(flushed = true) }
+            }
+            SpeechOnset.Edge.Offset -> Unit
+        }
+    }
+
+    private fun undo() {
+        if (!local.value.ducked) return
+        rampVolume(1f, UnduckMillis)
+        local.update { it.copy(ducked = false) }
+    }
+
+    /**
+     * Her answer is cut off by the phone itself: listening at once, and the server is told. Her turn closes as it
+     * stood (marked talked over when she had started), so the answer she was still writing is never shown as heard.
+     */
+    private suspend fun bargedIn(s: LiveVoiceSession) {
+        if (ended) return
+        unduck?.cancel()
+        resetDucking(flushed = true)
+        local.update {
+            if (it.phase != VoicePhase.Thinking && it.phase != VoicePhase.Speaking) it
+            else it.copy(phase = VoicePhase.Listening, status = null, turns = VoiceTranscript.stopped(it.turns))
+        }
+        showTiming()
+        s.sendInterrupt(kotlin.time.Clock.System.now().toString())
+    }
+
+    /** Debug builds only: one line per onset with what the tuning needs. */
+    private fun tune(what: String, e: BargeInDetector.Event, detector: BargeInDetector, stoppedAt: Long?) {
+        if (client?.debugBuild != true) return
+        val v = e.verdict
+        stoppedAt?.let { lastStopMs = it - e.speechFrom }
+        Diagnostics.note(
+            "voice: vad $what p=${e.probability.fmt()} mic=${e.micDb.fmt()}dB floor=${detector.floorDb.fmt()}dB route=${e.route}" +
+                (if (v != null) " echo=${v.echoDb?.fmt() ?: "-"}dB delay=${v.delayMillis}ms coupling=${v.couplingDb.fmt()}dB learned=${v.learned}" else " guard=off") +
+                (if (stoppedAt != null) " speech→stop=${stoppedAt - e.speechFrom}ms detect→stop=${stoppedAt - e.at}ms" else ""),
+        )
+    }
+
+    private fun Float.fmt(): String = ((this * 100).toInt() / 100f).toString()
 
     // ---- ducking: her voice dips the moment the person talks over her, before the server confirms it ----------
 
@@ -411,6 +551,7 @@ class VoiceViewModel(
         // (she comes back up gently: the person has stepped out of the conversation, she hasn't stopped)
         if (muted) {
             activity.reset()
+            detectorLoad?.let { load -> viewModelScope.launch(vadDispatcher) { load.await()?.reset() } }
             if (local.value.ducked) { rampVolume(1f, UnduckMillis); local.update { it.copy(ducked = false) } }
         }
         local.update { it.copy(muted = muted) }
@@ -440,6 +581,8 @@ class VoiceViewModel(
         ended = true
         giveUp?.cancel()
         streaming?.cancel()
+        detecting?.cancel()
+        dropStale = false
         volumeRamp?.cancel()
         microphone.stop()
         speaker.stop()
@@ -477,6 +620,8 @@ class VoiceViewModel(
         speaker.stop()
         // The scope is already cancelled: say goodbye off it, so the server frees the line at once.
         if (s != null && !ended) GlobalScope.launch { runCatching { withTimeoutOrNull(1_000) { s.end() } }; runCatching { s.close() } }
+        // after the window being run (the dispatcher runs one thing at a time), the ONNX session is closed
+        detectorLoad?.let { load -> GlobalScope.launch(vadDispatcher) { runCatching { load.await()?.close() } } }
     }
 
     private companion object {
@@ -485,6 +630,8 @@ class VoiceViewModel(
         /** Down fast (an answer to the person), back up gently (it was nothing). */
         const val DuckMillis = 80L
         const val UnduckMillis = 150L
+        /** A duck from the detector shows listening at least this long, so a cough doesn't flicker the logo. */
+        const val MinDuckMillis = 300L
         /** How long after the person's voice stops a ducked reply waits for the server's `interrupted`. */
         const val DuckHoldMillis = 900L
         const val RampStepMillis = 16L
@@ -500,7 +647,10 @@ class VoiceViewModel(
         fun pcm16(bytes: ByteArray): ShortArray = ShortArray(bytes.size / 2) { i -> ((bytes[2 * i].toInt() and 0xFF) or (bytes[2 * i + 1].toInt() shl 8)).toShort() }
     }
 
-    /** The debug line: the server's steps, then when the first sound played here (the target is under 800 ms). */
+    /**
+     * The debug line: the server's steps, then when the first sound played here (the target is under 800 ms), and how
+     * long the last barge-in took from the person's first word to her silence (the target is under 300 ms).
+     */
     private fun showTiming() {
         if (client?.debugBuild != true) return
         val server = serverTiming
@@ -509,8 +659,14 @@ class VoiceViewModel(
             server?.firstSentenceMs?.let { "voice $it" },
             server?.firstAudioMs?.let { "sent $it" },
             heardAfterMs?.let { "heard $it" },
+            lastStopMs?.let { "stop $it" },
         )
         local.update { it.copy(timing = if (parts.isEmpty()) null else parts.joinToString(" · ") + " ms") }
+    }
+
+    // last, so every property above is set before the conversation starts
+    init {
+        start()
     }
 }
 
@@ -534,8 +690,13 @@ object VoiceTranscript {
 
     fun interrupted(turns: List<VoiceTurn>): List<VoiceTurn> = updateOpen(turns) { it.copy(interrupted = it.reply.isNotEmpty()) }
 
+    /** The phone stopped her itself: the open exchange closes as it stood, talked over if she had begun. */
+    fun stopped(turns: List<VoiceTurn>): List<VoiceTurn> = updateOpen(turns) { it.copy(done = true, interrupted = it.reply.isNotEmpty()) }
+
     fun done(turns: List<VoiceTurn>, savedText: String, spoken: Boolean): List<VoiceTurn> {
         val last = turns.lastOrNull()
+        // an unspoken answer whose exchange is already closed (the phone stopped her): never shown as heard
+        if (!spoken && (last == null || last.done)) return turns
         if (last == null || last.done) return if (savedText.isBlank()) turns else (turns + VoiceTurn("", listOf(savedText), done = true)).takeLast(MaxTurns)
         return turns.dropLast(1) + last.copy(
             reply = last.reply.ifEmpty { listOfNotNull(savedText.takeIf { it.isNotBlank() }) },

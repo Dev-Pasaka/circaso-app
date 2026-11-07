@@ -93,6 +93,8 @@ kotlin {
             // gives the host tests real crypto.
             implementation(libs.libsignal.android)
             implementation(libs.libsignal.client)
+            // Silero VAD for Asha's barge-in (approved 2026-11-07): one session, one thread, the model from resources.
+            implementation(libs.onnxruntime.android)
         }
         iosMain { kotlin.srcDir(generateMapsIosKey) }
         commonMain.dependencies {
@@ -128,6 +130,10 @@ kotlin {
         }
         iosMain.dependencies {
             implementation(libs.ktor.client.darwin)
+        }
+        getByName("androidHostTest").dependencies {
+            // ONNX Runtime for the JVM, so the VAD tests run the real Silero model on the host (never in the app)
+            implementation(libs.onnxruntime.jvm)
         }
         commonTest.dependencies {
             implementation(libs.kotlin.test)
