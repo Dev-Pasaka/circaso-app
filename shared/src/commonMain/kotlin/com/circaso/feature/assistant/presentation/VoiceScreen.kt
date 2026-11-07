@@ -33,6 +33,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
@@ -116,7 +117,7 @@ fun VoiceContent(
             // The logo is the screen while nothing has been said; once there is a transcript it steps up and shrinks.
             val logoSize by animateDpAsState(if (hasTranscript) 132.dp else 208.dp, tween(if (CircasoTheme.reduceMotion) 0 else CircasoMotion.BaseMs), label = "logo")
             if (!hasTranscript) Spacer(Modifier.weight(0.4f))
-            AshaVoiceLogo(state.visual, state.waveLevel, Modifier.padding(top = CircasoSpacing.s2), size = logoSize)
+            AshaVoiceLogo(state.visual, state.waveLevel, Modifier.padding(top = CircasoSpacing.s2), size = logoSize, announced = state.announcedVisual)
             // With reduced motion the waves are gone, so the state is also said in words under the logo.
             if (CircasoTheme.reduceMotion) StatePill(state.visual)
             if (hasTranscript) {
@@ -143,13 +144,17 @@ fun VoiceContent(
     }
 }
 
-/** One line under the title, like a call's: what Asha is doing. Read out when it changes. */
+/**
+ * One line under the title, like a call's: what Asha is doing. Read out when it changes, but only as the server has
+ * confirmed it: a short duck while the person may be talking over her shows "Listening" without announcing it.
+ */
 @Composable
 private fun StatusLine(state: VoiceUiState, maxLines: Int) {
     val c = CircasoTheme.colors
+    val spoken = statusLine(state.copy(ducked = false))
     BasicText(
         statusLine(state),
-        Modifier.semantics { liveRegion = LiveRegionMode.Polite },
+        Modifier.clearAndSetSemantics { contentDescription = spoken; liveRegion = LiveRegionMode.Polite },
         style = CircasoTheme.typography.caption1.copy(color = if (state.visual == VoiceVisual.Error) c.critical else c.inkSecondary),
         maxLines = maxLines,
     )

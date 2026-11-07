@@ -34,6 +34,7 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.util.lerp
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.role
@@ -79,7 +80,14 @@ fun VoiceVisual.label(): String = when (this) {
  * Animated values are read only while drawing, so a frame redraws the canvas without recomposing anything.
  */
 @Composable
-fun AshaVoiceLogo(visual: VoiceVisual, level: Float, modifier: Modifier = Modifier, size: Dp = 200.dp) {
+fun AshaVoiceLogo(
+    visual: VoiceVisual,
+    level: Float,
+    modifier: Modifier = Modifier,
+    size: Dp = 200.dp,
+    /** What a screen reader hears: the server-confirmed state, so a short duck isn't read out (defaults to [visual]). */
+    announced: VoiceVisual = visual,
+) {
     val c = CircasoTheme.colors
     val still = CircasoTheme.reduceMotion
     val smooth = animateFloatAsState(
@@ -97,6 +105,14 @@ fun AshaVoiceLogo(visual: VoiceVisual, level: Float, modifier: Modifier = Modifi
         tween(CircasoMotion.BaseMs),
         label = "tint",
     )
+    // Speaking and listening share the waves; this carries their weight across a flip (talking over her ducks to
+    // listening and, if it was only noise, back within a second), interruptible, so the rings never snap. Her stepping
+    // back is quicker than her coming back.
+    val speakingWeight = animateFloatAsState(
+        if (visual == VoiceVisual.Speaking) 1f else 0f,
+        tween(if (visual == VoiceVisual.Speaking) CircasoMotion.BaseMs else CircasoMotion.QuickMs),
+        label = "speaking",
+    )
     val moving = !still && visual in setOf(VoiceVisual.Connecting, VoiceVisual.Reconnecting, VoiceVisual.Listening, VoiceVisual.Thinking, VoiceVisual.Speaking)
     val clock = if (moving) rememberInfiniteTransition(label = "logo") else null
     val breath: State<Float> = clock?.animateFloat(
@@ -107,7 +123,7 @@ fun AshaVoiceLogo(visual: VoiceVisual, level: Float, modifier: Modifier = Modifi
     val markSize = size * 0.42f
 
     Box(
-        modifier.size(size).semantics { contentDescription = "Asha, ${visual.label().lowercase()}"; this.role = Role.Image },
+        modifier.size(size).semantics { contentDescription = "Asha, ${announced.label().lowercase()}"; this.role = Role.Image },
         contentAlignment = Alignment.Center,
     ) {
         Canvas(Modifier.size(size)) {
@@ -121,9 +137,9 @@ fun AshaVoiceLogo(visual: VoiceVisual, level: Float, modifier: Modifier = Modifi
             val b = breath.value
             val p = phase.value
             // Her voice never reads as flat between words; the person's silence does (that is what listening is).
+            val w = speakingWeight.value
             val heard = when (visual) {
-                VoiceVisual.Speaking -> maxOf(smooth.value, 0.14f + 0.1f * sin(p * 2))
-                VoiceVisual.Listening -> maxOf(smooth.value, 0.03f + 0.03f * b)
+                VoiceVisual.Speaking, VoiceVisual.Listening -> maxOf(smooth.value, lerp(0.03f + 0.03f * b, 0.14f + 0.1f * sin(p * 2), w))
                 else -> 0f
             }
             when (visual) {
@@ -147,12 +163,11 @@ fun AshaVoiceLogo(visual: VoiceVisual, level: Float, modifier: Modifier = Modifi
                         Brush.radialGradient(listOf(tint.copy(alpha = 0.10f + 0.22f * heard), Color.Transparent), centre, base + room * (0.5f + 0.5f * heard)),
                         base + room, centre,
                     )
-                    val speaking = visual == VoiceVisual.Speaking
                     for (i in 0 until 3) {
                         val spread = 0.22f + 0.26f * i
                         val radius = base + room * (spread + (0.18f + 0.1f * i) * heard)
-                        val amplitude = room * (if (speaking) 0.11f else 0.07f) * heard * (1f - 0.2f * i)
-                        val alpha = (if (speaking) 0.55f else 0.42f) - 0.14f * i
+                        val amplitude = room * lerp(0.07f, 0.11f, w) * heard * (1f - 0.2f * i)
+                        val alpha = lerp(0.42f, 0.55f, w) - 0.14f * i
                         drawWave(centre, radius, amplitude, p, i + 1, i * 1.7f, tint.copy(alpha = alpha.coerceAtLeast(0.08f)), (2.2f - 0.5f * i).dp.toPx())
                     }
                 }

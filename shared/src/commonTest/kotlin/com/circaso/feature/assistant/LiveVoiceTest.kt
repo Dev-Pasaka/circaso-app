@@ -537,6 +537,24 @@ class VoiceViewModelTest {
         }
     }
 
+    @Test fun herAnswerEndingWhileDuckedFinishesItsTailDucked() = runTest(timeout = 15.seconds) {
+        val vm = viewModel()
+        with(vm) {
+            ashaSpeaking()
+            talk(0.05f, 200)
+            talk(0.6f, 200)
+            advanceTimeBy(100)
+            assertTrue(vm.state.value.ducked)
+            assertEquals(VoiceVisual.Listening, vm.state.value.visual)
+            assertEquals(VoiceVisual.Speaking, vm.state.value.announcedVisual, "a screen reader isn't told until the server confirms")
+            repo.session.fromServer.emit(LiveVoiceEvent.ReplyDone(msg("m2", "ASHA", "Once upon a time."), spoken = true))
+            assertFalse(vm.state.value.ducked)
+            assertEquals(0.25f, speaker.volume, 0.001f, "what is still buffered plays out ducked, never jumping up over the person")
+            speaker.playing.value = false
+            assertEquals(1f, speaker.volume, "full volume for her next answer")
+        }
+    }
+
     @Test fun duckingIsOnlyForHerVoice() = runTest(timeout = 15.seconds) {
         val vm = viewModel()
         with(vm) {
@@ -557,7 +575,8 @@ class VoiceViewModelTest {
             val sent = repo.session.audio.size
             vm.onMute()
             assertFalse(vm.state.value.ducked, "muting undoes the duck")
-            assertEquals(1f, speaker.volume)
+            advanceTimeBy(200)
+            assertEquals(1f, speaker.volume, 0.001f, "she comes back up")
             assertEquals(VoiceVisual.Speaking, vm.state.value.visual)
             talk(0.6f, 400)
             assertEquals(sent, repo.session.audio.size, "muted, nothing is sent")

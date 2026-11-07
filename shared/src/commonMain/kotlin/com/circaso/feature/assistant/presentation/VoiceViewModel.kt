@@ -129,6 +129,9 @@ data class VoiceUiState(
             }
         }
 
+    /** The state a screen reader announces: [visual] without the short-lived duck, so a cough isn't read out. */
+    val announcedVisual: VoiceVisual get() = if (ducked) copy(ducked = false).visual else visual
+
     /** The loudness the waves follow: the person's while listening, Asha's while she speaks, else none. */
     val waveLevel: Float get() = when (visual) {
         VoiceVisual.Speaking -> voiceLevel
@@ -278,7 +281,7 @@ class VoiceViewModel(
             is LiveVoiceEvent.Interrupted -> {
                 Diagnostics.note("voice: interrupted")
                 speaker.flush()
-                resetDucking()
+                resetDucking(flushed = true)
                 local.update { it.copy(phase = VoicePhase.Listening, turns = VoiceTranscript.interrupted(it.turns)) }
             }
             is LiveVoiceEvent.ReplyDone -> {
@@ -365,11 +368,21 @@ class VoiceViewModel(
         }
     }
 
-    /** Her turn is over (talked over, answered, or a new one began): full volume for the next reply, at once. */
-    private fun resetDucking() {
+    /**
+     * Her turn is over (talked over, answered, failed, or a new one began): full volume for the next reply. At once
+     * when nothing of hers is left to play (after a flush); otherwise what is still buffered finishes ducked, so the
+     * tail of her answer never jumps back up over a person mid-sentence.
+     */
+    private fun resetDucking(flushed: Boolean = false) {
         volumeRamp?.cancel()
-        if (volume != 1f) { volume = 1f; speaker.setVolume(1f) }
         local.update { if (it.ducked) it.copy(ducked = false) else it }
+        if (volume == 1f) return
+        if (flushed || !speaker.playing.value) { volume = 1f; speaker.setVolume(1f); return }
+        volumeRamp = viewModelScope.launch {
+            speaker.playing.first { !it }
+            volume = 1f
+            speaker.setVolume(1f)
+        }
     }
 
     /** Moves her volume to [to] in [millis], easing out, a step per frame. */
@@ -395,7 +408,11 @@ class VoiceViewModel(
         val muted = !local.value.muted
         microphone.muted = muted
         // muted, nothing of the person reaches anyone, so nothing of theirs ducks her either
-        if (muted) { activity.reset(); resetDucking() }
+        // (she comes back up gently: the person has stepped out of the conversation, she hasn't stopped)
+        if (muted) {
+            activity.reset()
+            if (local.value.ducked) { rampVolume(1f, UnduckMillis); local.update { it.copy(ducked = false) } }
+        }
         local.update { it.copy(muted = muted) }
     }
 
