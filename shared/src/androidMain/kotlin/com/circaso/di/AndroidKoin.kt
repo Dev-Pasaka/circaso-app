@@ -68,6 +68,7 @@ fun initKoinAndroid(context: Context) {
             single<AudioRecorder> { AndroidAudioRecorder(app) }
             single<AudioPlayer> { AndroidAudioPlayer(app) }
             single<LiveMicrophone> { AndroidLiveMicrophone(app) }
+            single<com.circaso.feature.assistant.voice.VadEngine> { com.circaso.core.platform.AndroidVadEngine() } // Silero VAD for barge-in
             single<com.circaso.core.qr.QrScanner> { com.circaso.core.qr.AndroidQrScanner(currentActivityProvider()) }
             single<com.circaso.core.calls.CallEngine> { com.circaso.core.calls.AndroidCallEngine(app) }
             single { com.circaso.core.calls.AndroidCallNotifier(app).also { n -> ringing = { id -> n.clear(id) } } }

@@ -1,5 +1,5 @@
 # Circle's user-controlled wallets SDK ships through CocoaPods only (a prebuilt XCFramework with eight pod
-# dependencies), so it is the main pod in this project (Google Maps is the other); everything else is Swift Package Manager.
+# dependencies), so it is the main pod in this project (Google Maps and ONNX Runtime are the others); everything else is Swift Package Manager.
 #
 #   brew install cocoapods
 #   cd iosApp && pod install      (specs come from Circle's w3s-ios-sdk repo and the CocoaPods CDN)
@@ -23,6 +23,9 @@ target 'iosApp' do
   # Live location's map (decision 2026-10-30): Google Maps, styled to Circaso. Its key comes from local.properties
   # (`maps.ios.key`, restricted to the bundle id) through the shared framework; see MapImpl.swift.
   pod 'GoogleMaps', '9.4.0'
+  # Silero VAD for talking over Asha in voice mode (approved 2026-11-07): ONNX Runtime's Objective-C API, latest stable
+  # on CocoaPods at build time (the Swift package lags several releases). See VadImpl.swift.
+  pod 'onnxruntime-objc', '1.30.0'
   # Circle's social login (Google, Facebook) is not used. Its binary links both frameworks, so they must ship or the app
   # can't start; Facebook's is switched off in Info.plist (no app id, no auto-init, no event logging, no ad id).
 end

@@ -70,6 +70,12 @@ interface LiveVoiceSession {
     /** Hangs up politely: the server answers `closing` `ended`. */
     suspend fun end()
 
+    /**
+     * The phone's own barge-in: it heard the person talk over Asha and has stopped her already. The server cancels her
+     * answer as for one it heard, and answers `interrupted`. [at] is the onset, ISO-8601, for its latency log.
+     */
+    suspend fun sendInterrupt(at: String) {}
+
     suspend fun close()
 }
 

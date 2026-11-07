@@ -11,6 +11,7 @@ struct iOSApp: App {
         GoogleSignInBridge.shared.provider = GoogleSignInImpl()
         SignalBridge.shared.api = SignalCryptoImpl() // libsignal for encrypted chats; see SignalBridge.kt
         LiveAudioBridge.shared.api = LiveAudioImpl() // live voice with Asha; see IosLiveAudio.kt
+        VadBridge.shared.api = VadImpl() // Silero VAD for talking over Asha; see IosVadEngine.kt
         LocationBridge.shared.provider = LocationImpl() // "Share location" in chats; see Media.kt
         CallEngineBridge.shared.provider = CallEngineImpl() // WebRTC calls through Cloudflare Realtime; see CallEngine.kt
         QrScannerBridge.shared.provider = QrScannerImpl() // VisionKit QR scanning (design E4/E5); see Qr.kt

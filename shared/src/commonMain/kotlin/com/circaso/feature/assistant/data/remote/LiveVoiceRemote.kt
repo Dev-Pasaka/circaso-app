@@ -154,6 +154,10 @@ class LiveVoiceSocketSession(private val socket: LiveSocket, private val json: J
 
     override suspend fun end() = send("""{"type":"end"}""")
 
+    override suspend fun sendInterrupt(at: String) = send(
+        json.encodeToString(JsonObject.serializer(), buildJsonObject { put("type", "interrupt"); put("at", at) }),
+    )
+
     override suspend fun close() {
         open = false
         runCatching { socket.close() }

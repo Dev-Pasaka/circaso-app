@@ -240,7 +240,7 @@ fun YouContent(
                 Section(null) {
                     ListRow("Help", sub = "Chat with a person at Circaso", trailing = { RowChevron() }, onClick = actions.onHelp)
                     RowDivider(Modifier.padding(start = CircasoSpacing.s4))
-                    ListRow("Acknowledgements", sub = "Coin and network icons", trailing = { RowChevron() }, onClick = { showCredits = true })
+                    ListRow("Acknowledgements", sub = "Coin icons and voice detection", trailing = { RowChevron() }, onClick = { showCredits = true })
                 }
                 Section(null) {
                     ListRow("Sign out", destructive = true, onClick = onSignOutRequested)

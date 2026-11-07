@@ -121,6 +121,13 @@ class LiveVoiceSessionTest {
         assertEquals(10, events.size)
     }
 
+    @Test fun thePhonesOwnBargeInIsAnInterruptFrameWithItsTime() = runTest {
+        session.sendInterrupt("2026-11-07T10:00:00.120Z")
+        val frame = json.parseToJsonElement(socket.sentText.single()).jsonObject
+        assertEquals("interrupt", frame["type"]!!.jsonPrimitive.content)
+        assertEquals("2026-11-07T10:00:00.120Z", frame["at"]!!.jsonPrimitive.content)
+    }
+
     @Test fun audioToolResultsAuthAndEndAreSentAsTheGuideSays() = runTest {
         session.sendAudio(byteArrayOf(9, 9))
         session.sendToolResults("t1", "c1", listOf(Snippet("chat1", "Mum", "Mum", "2026-10-29T09:00:00Z", "lunch?")))
@@ -164,7 +171,9 @@ private class FakeSession : LiveVoiceSession {
     val auths = mutableListOf<Pair<String, String?>>()
     var ended = false
     var closed = false
+    val interrupts = mutableListOf<String>()
     override val events: Flow<LiveVoiceEvent> = fromServer
+    override suspend fun sendInterrupt(at: String) { interrupts += at }
     override suspend fun sendAudio(packet: ByteArray) { audio += packet }
     override suspend fun sendToolResults(turnId: String, callId: String, snippets: List<Snippet>) { toolResults += Triple(turnId, callId, snippets) }
     override suspend fun sendAuth(accessToken: String, agentToken: String?) { auths += accessToken to agentToken }
@@ -246,6 +255,7 @@ private class FakeMicrophone : LiveMicrophone {
     override val packets: Flow<ByteArray> = out
     override val level = MutableStateFlow(0f)
     override var muted = false
+    override val frames = MutableSharedFlow<com.circaso.core.platform.MicFrame>(extraBufferCapacity = 64)
     var startResult = LiveMicStart.Started
     var started = 0
     var stopped = 0
@@ -267,6 +277,8 @@ private class FakeSpeaker : LiveSpeaker {
     override fun setVolume(volume: Float) { volumes += volume }
     override val playing = MutableStateFlow(false)
     override val level = MutableStateFlow(0f)
+    override val blocks = MutableSharedFlow<com.circaso.core.platform.PlaybackBlock>(extraBufferCapacity = 256)
+    override val route = MutableStateFlow(com.circaso.core.platform.AudioRoute.Loudspeaker)
     override fun stop() { stopped++ }
 }
 
@@ -678,4 +690,198 @@ class VoiceActivityTest {
         assertTrue(v.floor <= VoiceActivity.MaxFloor)
         assertTrue(feed(0.7f, 200), "a real voice over it still counts")
     }
+}
+
+/** The phone's own barge-in (Silero VAD, decision 2026-11-07), driven by a stand-in model that hears anything loud as speech. */
+@OptIn(ExperimentalCoroutinesApi::class)
+class VoiceBargeInTest {
+    private val dispatcher = UnconfinedTestDispatcher()
+    private val repo = FakeLiveVoiceRepository()
+    private val mic = FakeMicrophone()
+    private val speaker = FakeSpeaker()
+    private val model = LoudIsSpeech()
+    private val history = RefreshAshaHistoryUseCase(NoAsha)
+    private val online = MutableStateFlow(com.circaso.core.platform.ConnectionStatus.Online)
+    private var now = 1_000_000L
+
+    @BeforeTest fun setUp() = Dispatchers.setMain(dispatcher)
+    @AfterTest fun tearDown() = Dispatchers.resetMain()
+
+    /** Runs [block] with the screen's state collected, and clears the screen after, as the navigation does. */
+    private suspend fun TestScopeLike.live(vm: VoiceViewModel, block: suspend () -> Unit) {
+        val collecting = vm.state.launchIn(backgroundScope)
+        testScheduler.runCurrent()
+        try { block() } finally { collecting.cancel(); vm.clear() }
+    }
+
+    private fun viewModel(loads: Boolean = true) = VoiceViewModel(
+        TalkToAshaUseCase(repo, DeviceToolRunner { _, _ -> emptyList() }, 60_000), history, mic, speaker,
+        connection = online, clock = { now },
+        vadLoader = com.circaso.feature.assistant.voice.VadLoader({ if (loads) model else null }, { ByteArray(0) }),
+        vadDispatcher = dispatcher, monoClock = { now },
+    )
+
+    /** [millis] of the person (a tone at [db] dBFS after the echo canceller; null is silence), frames and packets both. */
+    private suspend fun voice(db: Float?, millis: Int) = repeat(millis / 20) { i ->
+        now += 20
+        mic.frames.emit(com.circaso.core.platform.MicFrame(tone(db, i), now))
+        mic.out.emit(byteArrayOf(1))
+    }
+
+    private suspend fun ashaSpeaking() {
+        repo.session.fromServer.emit(LiveVoiceEvent.Ready(118, "mulaw", 8000))
+        repo.session.fromServer.emit(LiveVoiceEvent.Turn("Tell me a story"))
+        repo.session.fromServer.emit(LiveVoiceEvent.Audio(byteArrayOf(0xFF.toByte())))
+        repo.session.fromServer.emit(LiveVoiceEvent.Reply("Once upon a time"))
+        speaker.playing.value = true
+    }
+
+    @Test fun theirVoiceOverHersStopsHerAtOnceAndTellsTheServer() = runTest(timeout = 15.seconds) {
+        val vm = viewModel()
+        live(vm) {
+            ashaSpeaking()
+            voice(null, 200)
+            voice(-20f, 100)
+            assertTrue(vm.state.value.ducked, "the first sure window dips her")
+            assertEquals(VoiceVisual.Listening, vm.state.value.visual)
+            assertEquals(0, speaker.flushed)
+            voice(-20f, 120) // about 200 ms of speech in all
+            assertEquals(1, speaker.flushed, "stopped, not ducked")
+            assertEquals(VoicePhase.Listening, vm.state.value.phase, "listening at once, before the server answers")
+            assertFalse(vm.state.value.ducked)
+            assertEquals(1f, speaker.volume, "the next reply plays at full volume")
+            assertTrue(vm.state.value.turns.last().interrupted, "her answer is marked talked over")
+            assertEquals(1, repo.session.interrupts.size, "the server is told")
+            assertTrue(repo.session.interrupts.single().endsWith("Z"), "with the time, ISO-8601")
+
+            // what she was still sending of the old reply is dropped until the server answers
+            val played = speaker.played.size
+            repo.session.fromServer.emit(LiveVoiceEvent.Audio(byteArrayOf(0xFF.toByte())))
+            repo.session.fromServer.emit(LiveVoiceEvent.Reply("and they lived"))
+            assertEquals(played, speaker.played.size, "stale audio is not played")
+            assertEquals(listOf("Once upon a time"), vm.state.value.turns.last().reply, "nor shown")
+            assertEquals(VoicePhase.Listening, vm.state.value.phase)
+            repo.session.fromServer.emit(LiveVoiceEvent.ReplyDone(msg("Once upon a time and they lived."), spoken = false))
+            repo.session.fromServer.emit(LiveVoiceEvent.Interrupted)
+            repo.session.fromServer.emit(LiveVoiceEvent.Turn("What about yesterday?"))
+            repo.session.fromServer.emit(LiveVoiceEvent.Audio(byteArrayOf(0xFF.toByte())))
+            assertEquals(played + 1, speaker.played.size, "the next reply plays")
+            assertEquals(VoicePhase.Speaking, vm.state.value.phase)
+            assertEquals(1, repo.session.interrupts.size)
+        }
+    }
+
+    @Test fun whileSheIsThinkingTheirVoiceCancelsHerAnswer() = runTest(timeout = 15.seconds) {
+        val vm = viewModel()
+        live(vm) {
+            repo.session.fromServer.emit(LiveVoiceEvent.Ready(118, "mulaw", 8000))
+            repo.session.fromServer.emit(LiveVoiceEvent.Turn("What did I spend?"))
+            voice(-20f, 240)
+            assertEquals(1, repo.session.interrupts.size)
+            assertEquals(VoicePhase.Listening, vm.state.value.phase)
+            assertTrue(speaker.volumes.none { it < 1f }, "nothing to duck while she only thinks")
+            val closed = vm.state.value.turns.single()
+            assertTrue(closed.done, "her turn closes: no waiting ellipsis under listening")
+            assertFalse(closed.interrupted, "nothing of hers had been said")
+            // the answer she was still writing arrives later, unspoken: never shown as heard
+            repo.session.fromServer.emit(LiveVoiceEvent.Interrupted)
+            repo.session.fromServer.emit(LiveVoiceEvent.ReplyDone(msg("You spent about 500."), spoken = false))
+            assertEquals(1, vm.state.value.turns.size)
+            assertTrue(vm.state.value.turns.single().reply.isEmpty())
+        }
+    }
+
+    @Test fun whileSheListensTheirVoiceIsJustTheirTurn() = runTest(timeout = 15.seconds) {
+        val vm = viewModel()
+        live(vm) {
+            repo.session.fromServer.emit(LiveVoiceEvent.Ready(118, "mulaw", 8000))
+            voice(-20f, 600)
+            assertTrue(repo.session.interrupts.isEmpty())
+            assertEquals(0, speaker.flushed)
+            assertEquals(VoicePhase.Listening, vm.state.value.phase)
+            assertEquals(30, repo.session.audio.size, "and it all streams")
+        }
+    }
+
+    @Test fun aCoughDucksHerAndSheComesBackUp() = runTest(timeout = 15.seconds) {
+        val vm = viewModel()
+        live(vm) {
+            ashaSpeaking()
+            voice(null, 200)
+            voice(-20f, 60)
+            assertTrue(vm.state.value.ducked)
+            advanceTimeBy(100)
+            assertEquals(0.25f, speaker.volume, 0.001f)
+            voice(null, 100)
+            assertTrue(vm.state.value.ducked, "the screen holds listening a moment: no flicker")
+            advanceTimeBy(250)
+            assertFalse(vm.state.value.ducked, "silence after it: it was nothing")
+            advanceTimeBy(200)
+            assertEquals(1f, speaker.volume, 0.001f, "she comes back up")
+            assertEquals(0, speaker.flushed)
+            assertTrue(repo.session.interrupts.isEmpty())
+            assertEquals(VoicePhase.Speaking, vm.state.value.phase)
+        }
+    }
+
+    @Test fun mutedNothingOfTheirsStopsHer() = runTest(timeout = 15.seconds) {
+        val vm = viewModel()
+        live(vm) {
+            ashaSpeaking()
+            vm.onMute()
+            voice(-20f, 400)
+            assertTrue(repo.session.interrupts.isEmpty())
+            assertEquals(0, speaker.flushed)
+        }
+    }
+
+    @Test fun onHeadphonesTheBarIsLowerAndQuicker() = runTest(timeout = 15.seconds) {
+        val vm = viewModel()
+        live(vm) {
+            ashaSpeaking()
+            speaker.route.value = com.circaso.core.platform.AudioRoute.Headphones
+            voice(null, 100)
+            voice(-20f, 140) // 4 windows: enough on headphones
+            assertEquals(1, repo.session.interrupts.size)
+            assertEquals(VoicePhase.Listening, vm.state.value.phase)
+        }
+    }
+
+    @Test fun herEchoOnTheLoudspeakerDoesNotStopHer() = runTest(timeout = 15.seconds) {
+        val vm = viewModel()
+        live(vm) {
+            ashaSpeaking()
+            // she plays at -12 dBFS for the next 5 s; after the canceller about 30 dB of her comes back, heard as speech
+            repeat(250) { speaker.blocks.emit(com.circaso.core.platform.PlaybackBlock(now + it * 20L, 20, -12f)) }
+            voice(-42f, 2_000)
+            assertTrue(repo.session.interrupts.isEmpty(), "her echo alone never interrupts")
+            assertEquals(0, speaker.flushed)
+            voice(-18f, 300) // the person over her
+            assertEquals(1, repo.session.interrupts.size, "the person does")
+            assertEquals(VoicePhase.Listening, vm.state.value.phase)
+        }
+    }
+
+    @Test fun withoutTheModelTheEnergyDetectorStillDucks() = runTest(timeout = 15.seconds) {
+        val vm = viewModel(loads = false)
+        live(vm) {
+            ashaSpeaking()
+            mic.level.value = 0.05f
+            voice(null, 200)
+            mic.level.value = 0.6f
+            voice(-20f, 200)
+            assertTrue(vm.state.value.ducked, "ducked by loudness, as before")
+            assertTrue(repo.session.interrupts.isEmpty(), "and the server decides")
+            assertEquals(0, speaker.flushed)
+        }
+    }
+
+    @Test fun theModelIsClosedWithTheScreen() = runTest(timeout = 15.seconds) {
+        val vm = viewModel()
+        repo.session.fromServer.emit(LiveVoiceEvent.Ready(118, "mulaw", 8000))
+        vm.clear()
+        assertTrue(model.closed)
+    }
+
+    private fun msg(text: String) = com.circaso.feature.assistant.domain.AshaMessage("m2", "ASHA", text, null, null, null, "2026-10-29T10:00:00Z", null)
 }

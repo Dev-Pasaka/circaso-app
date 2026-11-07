@@ -74,6 +74,7 @@ fun initKoinIos() {
         single<com.circaso.core.platform.MediaFiles> { com.circaso.core.platform.IosMediaFiles() }
         single<LiveMicrophone> { IosLiveMicrophone() } // AVAudioEngine and Apple's Opus encoder live on the Swift side; see LiveAudioBridge
         single<LiveSpeaker> { IosLiveSpeaker() }
+        single<com.circaso.feature.assistant.voice.VadEngine> { com.circaso.core.platform.IosVadEngine() } // Silero VAD on ONNX Runtime, Swift side; see VadBridge
         single<ImagePicker> { IosImagePicker() }
         single<com.circaso.core.platform.GroupPhotoEncoder> { com.circaso.core.platform.IosGroupPhotoEncoder() }
         single<com.circaso.core.platform.MomentCamera> { com.circaso.core.platform.IosMomentCamera() } // AVFoundation lives on the Swift side; see MomentCameraBridge

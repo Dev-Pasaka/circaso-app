@@ -31,6 +31,19 @@ interface LiveAudioBridgeApi {
     fun setMicrophoneMuted(muted: Boolean)
     fun stopMicrophone()
 
+    /**
+     * The echo-cancelled microphone for the voice activity detector: each 20 ms frame (320 samples, 16 kHz, 16-bit
+     * little-endian) as it is captured, muted or not; null stops it.
+     */
+    fun setMicrophoneFrames(onFrame: ((NSData) -> Unit)?)
+
+    /**
+     * Her voice as it is scheduled: [onBlock] with the dBFS of each 20 ms of it (after the volume), when it will be
+     * heard (milliseconds from now) and how long it lasts; [onRoute] with where the sound goes now (0 the loudspeaker,
+     * 1 the receiver, 2 headphones or a headset: wired, USB or Bluetooth), at once and on every route change.
+     */
+    fun observeSpeaker(onBlock: (Float, Int, Int) -> Unit, onRoute: (Int) -> Unit)
+
     fun startSpeaker(sampleRate: Int, onPlaying: (Boolean) -> Unit, onLevel: (Float) -> Unit): Boolean
     fun playSamples(pcm16: NSData)
     fun flushSpeaker()
@@ -55,6 +68,9 @@ class IosLiveMicrophone : LiveMicrophone {
     override var muted: Boolean = false
         set(value) { field = value; api?.setMicrophoneMuted(value) }
 
+    private val _frames = MutableSharedFlow<MicFrame>(extraBufferCapacity = 64, onBufferOverflow = BufferOverflow.DROP_OLDEST)
+    override val frames: Flow<MicFrame> = _frames
+
     override suspend fun start(): LiveMicStart {
         val a = api ?: return LiveMicStart.Unsupported
         val code = suspendCancellableCoroutine { cont ->
@@ -64,11 +80,15 @@ class IosLiveMicrophone : LiveMicrophone {
                 completion = { if (cont.isActive) cont.resume(it) },
             )
         }
-        if (code == 0) a.setMicrophoneMuted(muted)
+        if (code == 0) {
+            a.setMicrophoneMuted(muted)
+            a.setMicrophoneFrames { data -> if (_frames.subscriptionCount.value > 0) _frames.tryEmit(MicFrame(data.toShortArray(), MonoClock.now())) }
+        }
         return when (code) { 0 -> LiveMicStart.Started; 1 -> LiveMicStart.PermissionDenied; 2 -> LiveMicStart.Unsupported; else -> LiveMicStart.Failed }
     }
 
     override fun stop() {
+        api?.setMicrophoneFrames(null)
         api?.stopMicrophone()
         _level.value = 0f
     }
@@ -81,9 +101,17 @@ class IosLiveSpeaker : LiveSpeaker {
     private val _level = MutableStateFlow(0f)
     override val level: StateFlow<Float> = _level.asStateFlow()
     private var started = false
+    private val _blocks = MutableSharedFlow<PlaybackBlock>(extraBufferCapacity = 256, onBufferOverflow = BufferOverflow.DROP_OLDEST)
+    override val blocks: Flow<PlaybackBlock> = _blocks
+    private val _route = MutableStateFlow(AudioRoute.Loudspeaker)
+    override val route: StateFlow<AudioRoute> = _route.asStateFlow()
 
     override suspend fun start(sampleRate: Int) {
         started = api?.startSpeaker(sampleRate, onPlaying = { _playing.value = it }, onLevel = { _level.value = it }) == true
+        if (started) api?.observeSpeaker(
+            onBlock = { db, inMillis, millis -> if (_blocks.subscriptionCount.value > 0) _blocks.tryEmit(PlaybackBlock(MonoClock.now() + inMillis, millis, db)) },
+            onRoute = { _route.value = when (it) { 2 -> AudioRoute.Headphones; 1 -> AudioRoute.Earpiece; else -> AudioRoute.Loudspeaker } },
+        )
     }
 
     override fun play(pcm: ShortArray) {
@@ -107,6 +135,13 @@ class IosLiveSpeaker : LiveSpeaker {
         _playing.value = false
         _level.value = 0f
     }
+}
+
+/** 16-bit little-endian samples from Swift (iOS is little-endian, so a straight copy). */
+private fun NSData.toShortArray(): ShortArray {
+    val out = ShortArray((length / 2u).toInt())
+    if (out.isNotEmpty()) out.usePinned { platform.posix.memcpy(it.addressOf(0), bytes, (out.size * 2).convert()) }
+    return out
 }
 
 private fun ShortArray.toNSData(): NSData = usePinned { NSData.create(bytes = it.addressOf(0), length = (size * 2).convert()) }
