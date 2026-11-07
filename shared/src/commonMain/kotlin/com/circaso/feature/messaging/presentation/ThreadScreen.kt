@@ -354,9 +354,10 @@ fun ThreadContent(
     LaunchedEffect(toastPayError) { toastPayError?.let { toast.show(it); toastPayError = null } }
     val listState = rememberLazyListState()
     val rows = state.messages.size + state.openRequests.size
-    // Opened at one message (from search): scroll there once and mark it briefly; otherwise follow the newest.
+    // Opened at one message (a search result, a notification's card or call): scroll there once; otherwise follow the
+    // newest. Landing on it is the whole mark: no tint behind the row (Pasaka, 2026-11-08: a received money card opened
+    // from its notification sat on a grey band across the full row width for a moment).
     var focused by androidx.compose.runtime.remember(focusLocalId) { androidx.compose.runtime.mutableStateOf(focusLocalId == null) }
-    var highlight by androidx.compose.runtime.remember(focusLocalId) { androidx.compose.runtime.mutableStateOf<Long?>(null) }
     // The list is drawn bottom up (newest at index 0, as WhatsApp), so it opens on the latest without scrolling and
     // stays there as messages arrive. Below the messages (lower indexes) sit the open requests and support replies.
     val lastMessage = state.messages.lastOrNull()
@@ -370,9 +371,6 @@ fun ThreadContent(
             if (at >= 0) {
                 focused = true
                 listState.scrollToItem(tail + threadRowList.lastIndex - at)
-                highlight = threadRowList[at].key
-                kotlinx.coroutines.delay(1_600)
-                highlight = null
             }
             return@LaunchedEffect
         }
@@ -630,8 +628,7 @@ fun ThreadContent(
                 itemsIndexed(threadRowList.asReversed(), key = { _, row -> row.key }) { _, row ->
                     val m = row.first
                     val index = row.index
-                    val lit by androidx.compose.animation.animateColorAsState(if (highlight == m.localId) c.fill else androidx.compose.ui.graphics.Color.Transparent, tween(CircasoMotion.BaseMs), label = "found")
-                    Box(Modifier.fillMaxWidth().background(lit)) {
+                    Box(Modifier.fillMaxWidth()) {
                     val previous = state.messages.getOrNull(index - 1)
                     if (previous == null || localDayIndex(previous.orderAt) != localDayIndex(m.orderAt)) DayLabel(threadDayLabel(m.orderAt, now))
                     when (m) {
