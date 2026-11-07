@@ -70,6 +70,14 @@ final class CallKitVoip: NSObject, PKPushRegistryDelegate, CXProviderDelegate, C
             if error == nil, data["callId"] != nil {
                 self.ownsAudio = true
                 IosCallKitBridge.shared.incoming(callId: callId)
+                // The server rings for 45 s. If the caller gives up while this phone is asleep, the ended signal may
+                // never reach it, so an unanswered ring ends itself then.
+                DispatchQueue.main.asyncAfter(deadline: .now() + 46) {
+                    guard let id = self.uuids[callId], id == uuid, !self.answered.contains(callId) else { return }
+                    self.provider.reportCall(with: uuid, endedAt: nil, reason: .unanswered)
+                    IosCallKitBridge.shared.end(callId: callId)
+                    self.forget(callId)
+                }
             } else if error != nil {
                 // Already ringing (the same call reported twice) or Do Not Disturb: nothing more to do.
                 if (error as? CXErrorCodeIncomingCallError)?.code != .callUUIDAlreadyExists { self.forget(callId) }

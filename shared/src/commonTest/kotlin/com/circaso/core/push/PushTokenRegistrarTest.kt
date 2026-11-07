@@ -57,6 +57,13 @@ class PushTokenRegistrarTest {
         assertEquals(emptyList(), sent)
     }
 
+    @Test fun signingOutAndBackInSendsTheSameTokenAgain() = runTest(dispatcher) {
+        registrar(this).start(); ready.value = true
+        user = null; ready.value = false // signed out: the server cleared this device's token
+        user = "u1"; ready.value = true
+        assertEquals(listOf("tok-1", "tok-1"), sent)
+    }
+
     @Test fun aDifferentPersonOnTheSamePhoneGetsTheTokenToo() = runTest(dispatcher) {
         val r = registrar(this); r.start(); ready.value = true
         user = "u2"
