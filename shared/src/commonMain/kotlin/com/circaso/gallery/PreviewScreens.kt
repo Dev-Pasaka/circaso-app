@@ -202,7 +202,7 @@ fun PreviewScreens(name: String) {
                 failed = if (name == "you") listOf(com.circaso.core.sync.FailedChange(1, "Profile change", "Your profile changed on another phone. We've loaded the latest, so check and save again.")) else emptyList(),
                 // The switches in their other state: privacy on, money sound off.
                 notificationPrivacy = name != "you", moneySound = name == "you",
-            ), YouActions({}, {}, {}, {}, {}, {}), "1.0.0",
+            ), YouActions({}, {}, {}, {}, {}), "1.0.0",
             PaddingValues(bottom = 90.dp), {}, {}, {},
         )
         "profile-available" -> EditProfileContent(

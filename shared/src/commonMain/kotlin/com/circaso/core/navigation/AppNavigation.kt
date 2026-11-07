@@ -292,7 +292,6 @@ fun AppNavigation(forceUpdate: Boolean, home: @Composable () -> Unit) {
                             onSecurity = { backStack.add(SecurityRoute) },
                             onNotifications = { backStack.add(NotificationsRoute) },
                             onHelp = { backStack.add(HelpRoute) },
-                            onAsha = { backStack.add(AshaRoute) },
                             onSecretMenu = { backStack.add(GalleryRoute) },
                             onNeedsAttention = { backStack.add(NeedsAttentionRoute) },
                             onCurrency = { backStack.add(CurrencyRoute) },

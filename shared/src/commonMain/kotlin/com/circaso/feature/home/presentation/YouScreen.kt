@@ -83,7 +83,6 @@ data class YouActions(
     val onContacts: () -> Unit,
     val onBlocked: () -> Unit,
     val onSecurity: () -> Unit,
-    val onAsha: () -> Unit,
     val onSecretMenu: () -> Unit,
     val onRetry: (FailedChange) -> Unit = {},
     val onDiscard: (FailedChange) -> Unit = {},
@@ -229,12 +228,10 @@ fun YouContent(
                     RowDivider(Modifier.padding(start = CircasoSpacing.s4))
                     SwitchRow("Money sound", state.moneySound, actions.onMoneySound, sub = "Coins dropping into your wallet when money arrives")
                 }
-                Section("Assistant") {
-                    ListRow("Asha", sub = "Ask about your money by text or voice", trailing = { RowChevron() }, onClick = actions.onAsha)
-                    RowDivider(Modifier.padding(start = CircasoSpacing.s4))
-                    ListRow("Help", sub = "Chat with a person at Circaso", trailing = { RowChevron() }, onClick = actions.onHelp)
-                }
+                // Asha's settings live in her own menu, inside her chat (Pasaka, 2026-11-07); the You tab keeps Help.
                 Section(null) {
+                    ListRow("Help", sub = "Chat with a person at Circaso", trailing = { RowChevron() }, onClick = actions.onHelp)
+                    RowDivider(Modifier.padding(start = CircasoSpacing.s4))
                     ListRow("Acknowledgements", sub = "Coin and network icons", trailing = { RowChevron() }, onClick = { showCredits = true })
                 }
                 Section(null) {

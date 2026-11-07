@@ -187,7 +187,11 @@ fun ChatsContent(
         if (state.query.isBlank() && state.filter == ChatFilter.All) {
             // The design's first row (C1): Asha, always there, above the chats.
             item(key = "asha", contentType = "asha") {
-                ListRow("Asha", sub = "Ask me anything about your money", leading = { AshaMark() }, onClick = onAsha, modifier = swap())
+                // The chat rows' inset, so her mark lines up with every photo below (Pasaka, 2026-11-07).
+                ListRow(
+                    "Asha", sub = "Ask me anything about your money", leading = { AshaMark() }, onClick = onAsha,
+                    modifier = swap().padding(horizontal = CircasoSpacing.s2).clip(com.circaso.designsystem.theme.CircasoShapes.md),
+                )
             }
         }
         if (!showMoments && state.loaded && state.shown.isEmpty()) {
