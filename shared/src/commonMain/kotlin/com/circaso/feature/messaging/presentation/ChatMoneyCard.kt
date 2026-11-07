@@ -211,6 +211,10 @@ private fun statusLine(s: PayUiState, first: String): Pair<String?, Tone> = when
     s.problem is PayeeProblem.NotOnChain -> "$first can’t receive on this network yet." to Tone.Critical
     s.problem is PayeeProblem.Other -> s.problem.message to Tone.Critical
     s.assetMissing -> "You don’t have ${s.assetTag?.uppercase()} in this wallet." to Tone.Critical
+    // The server refused the fee for this payment (not something Try Again fixes): say why, never a bare "—" and a
+    // dimmed Pay (Pasaka, 2026-11-07, sending EURC).
+    s.fee is com.circaso.feature.wallet.presentation.PayFee.Failed && !s.fee.retryable ->
+        ((s.fee.message ?: "This payment can’t be sent right now.") + (s.fee.reference?.let { " Ref $it" } ?: "")) to Tone.Critical
     // Typed in their money but no usable price: PriceWait says why Pay waits (never a guessed amount).
     s.priceWaiting -> null to Tone.Price
     s.block != null && !s.requestPayout -> null to Tone.Quiet
