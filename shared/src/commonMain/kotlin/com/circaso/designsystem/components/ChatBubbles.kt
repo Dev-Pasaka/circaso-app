@@ -31,6 +31,7 @@ import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.foundation.gestures.detectTapGestures
@@ -71,8 +72,16 @@ import org.jetbrains.compose.resources.painterResource
 /** Asha's mark: the silver disc with the ring and sparks. [size] `sm` 28 (headers), `md` 44 (rows), larger for empty states. */
 @Composable
 fun AshaMark(modifier: Modifier = Modifier, size: Dp = CircasoSizes.avatarMd) {
-    Image(painterResource(Res.drawable.asha_icon), contentDescription = "Asha", modifier = modifier.size(size))
+    // The artwork's disc is r 92 in a 200 box: drawn up so the disc itself is [size], the same as a photo beside it
+    // (Pasaka, 2026-11-07: Asha looked smaller and inset next to the chats). Drawing only; the layout box is unchanged.
+    Image(
+        painterResource(Res.drawable.asha_icon), contentDescription = "Asha",
+        modifier = modifier.size(size).graphicsLayer { scaleX = AshaDiscFill; scaleY = AshaDiscFill },
+    )
 }
+
+/** 200 / 184: the mark's box over its disc. */
+private const val AshaDiscFill = 200f / 184f
 
 /** `.cx-bubble`: 75% max width, 9×14 padding, radius lg with the corner nearest the sender tightened to 8. */
 @Composable

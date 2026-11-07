@@ -477,8 +477,21 @@ private fun ActiveWallet(
     var glow by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(androidx.compose.ui.graphics.Color.Transparent) }
     var cardsBottom by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(0f) }
     var pageTop by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(0f) }
-    val animatedGlow by androidx.compose.animation.animateColorAsState(glow, tween(CircasoMotion.BaseMs), label = "glow")
-    val glowStrength = if (c.isDark) 0.7f else 0.4f
+    // A micro animation, never a flash (Pasaka, 2026-11-07): the colour and its strength move apart. Arriving on the
+    // tab, the glow breathes in from nothing over GlowInMs; swiping cards crossfades one network colour into the next
+    // (never through transparent black). Softer than before, so it tints the page rather than lighting it.
+    val glowKnown = glow != androidx.compose.ui.graphics.Color.Transparent
+    var glowColour by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(androidx.compose.ui.graphics.Color.Transparent) }
+    if (glowKnown) glowColour = glow
+    val still = CircasoTheme.reduceMotion
+    val animatedGlow by androidx.compose.animation.animateColorAsState(
+        glowColour, if (still) androidx.compose.animation.core.snap() else tween(GlowSwapMs, easing = androidx.compose.animation.core.FastOutSlowInEasing), label = "glow",
+    )
+    val glowIn by androidx.compose.animation.core.animateFloatAsState(
+        if (glowKnown) 1f else 0f,
+        if (still) androidx.compose.animation.core.snap() else tween(GlowInMs, easing = androidx.compose.animation.core.LinearOutSlowInEasing), label = "glowIn",
+    )
+    val glowStrength = (if (c.isDark) 0.45f else 0.26f) * glowIn
     androidx.compose.foundation.layout.Box(Modifier.matchParentSize().onGloballyPositioned { pageTop = it.positionInWindow().y })
     // Drawn by the outermost scaffold, edge to edge from the top of the screen, so it isn't boxed in by the frame.
     val glowHeight = with(androidx.compose.ui.platform.LocalDensity.current) { cardsBottom.toDp() }
@@ -488,7 +501,7 @@ private fun ActiveWallet(
                 Modifier.fillMaxWidth().height(glowHeight)
                     .background(
                         androidx.compose.ui.graphics.Brush.verticalGradient(
-                            0f to animatedGlow.copy(alpha = glowStrength), 0.45f to animatedGlow.copy(alpha = glowStrength * 0.55f),
+                            0f to animatedGlow.copy(alpha = glowStrength), 0.45f to animatedGlow.copy(alpha = glowStrength * 0.5f),
                             1f to animatedGlow.copy(alpha = 0f),
                         ),
                     ),
@@ -798,3 +811,8 @@ private fun ComingSheetContent(flow: ComingFlow, onSendToWallet: () -> Unit) {
         }
     }
 }
+
+/** The Wallet tab's glow arriving: slow enough to read as light settling, not a flash. */
+private const val GlowInMs = 700
+/** One network's glow handing over to the next as the cards are swiped. */
+private const val GlowSwapMs = 450
