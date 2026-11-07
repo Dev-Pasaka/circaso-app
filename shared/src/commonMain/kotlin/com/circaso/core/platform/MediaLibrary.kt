@@ -79,7 +79,16 @@ interface MediaLibrary {
      * AVAssetExportSession on iOS. No new library.
      */
     suspend fun trim(path: String, startMs: Long, endMs: Long): CapturedMedia? = null
+
+    /**
+     * The system's Files picker for any document (a chat's Document, no permission needed); null when the person
+     * closes it. The file is copied to this app's cache and handed over by [PickedFile.path], read when it is sent.
+     */
+    suspend fun pickFile(): PickedFile? = null
 }
+
+/** A document picked from Files: its own name, type and size; [path] is this app's copy (or [bytes] in memory). */
+class PickedFile(val name: String, val mime: String, val size: Long, val path: String? = null, val bytes: ByteArray? = null)
 
 /** A library item's thumbnail, cropped to fill [modifier]; audio draws nothing (the strip shows its own tile). */
 @Composable
