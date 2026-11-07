@@ -134,8 +134,15 @@ fun YouContent(
         // On its side the profile and the settings sit side by side: a wider frame, still not the whole screen.
         maxContentWidth = if (short) com.circaso.designsystem.adaptive.WindowLayout.WideContentWidth else com.circaso.designsystem.adaptive.WindowLayout.ReadableWidth,
         backdrop = {
+            // A new photo crossfades its backdrop in at once (Pasaka, 2026-11-07: it only changed after leaving and
+            // coming back), each photo its own wash so the old one never lingers.
+            androidx.compose.animation.Crossfade(
+                state.profile?.avatarUrl,
+                animationSpec = androidx.compose.animation.core.tween(if (CircasoTheme.reduceMotion) 0 else PhotoSwapMs),
+                label = "glowPhoto",
+            ) { glowPhoto ->
             ProfileGlow(
-                photo = state.profile?.avatarUrl,
+                photo = glowPhoto,
                 // Drawn by the outermost scaffold from the top of the screen (under the status bar), edge to edge.
                 modifier = if (short) {
                     // On its side the glow belongs to the profile column alone: full height, fading out sideways
@@ -154,6 +161,7 @@ fun YouContent(
                         .graphicsLayer { translationY = -scroll.value.toFloat() }
                 },
             )
+            }
         },
         // No title on the tabs (Pasaka, 2026-10-30): the tab bar says where you are.
         banner = { ConnectionBanner(showing = "Showing what is saved on this phone") },
@@ -441,6 +449,8 @@ private val GlowBlur = 24.dp
 private const val GlowAlpha = 0.8f
 /** The backdrop melting from the sharp photo into its wash on arrival. */
 private const val GlowSettleMs = 650
+/** A changed profile photo's backdrop replacing the old one. */
+private const val PhotoSwapMs = 400
 /** How far the backdrop is zoomed as it starts to settle (4%). */
 private const val GlowZoom = 0.04f
 private val AvatarShadow = 18.dp
