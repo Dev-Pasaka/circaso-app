@@ -341,12 +341,24 @@ private fun ProfileHero(
             Box(Modifier.padding(top = CircasoSpacing.s1).size(160.dp, 24.dp).clip(CircasoShapes.sm).background(c.fill))
             Box(Modifier.size(120.dp, 16.dp).clip(CircasoShapes.sm).background(c.fill))
         } else {
-            // The ring in the page colour cuts the photo out of its own glow.
+            // The ring in the page colour cuts the photo out of its own glow. On arrival it comes into focus a beat
+            // after the backdrop starts melting: a small spring in scale and a fade, never a bounce in layout.
+            val stillHero = CircasoTheme.reduceMotion
+            val focus = androidx.compose.runtime.remember { androidx.compose.animation.core.Animatable(if (stillHero) 1f else 0f) }
+            androidx.compose.runtime.LaunchedEffect(Unit) {
+                if (stillHero) focus.snapTo(1f) else {
+                    kotlinx.coroutines.delay(AvatarFocusDelayMs)
+                    focus.animateTo(1f, androidx.compose.animation.core.spring(dampingRatio = 0.8f, stiffness = 260f))
+                }
+            }
             Avatar(
                 name, size = CircasoSizes.avatarHero, imageUrl = photo,
                 modifier = Modifier.onGloballyPositioned { onPhotoBounds(it.boundsInWindow()) }
                     // While it is open large, the circle is where it came from: empty, so the photo reads as lifted out.
-                    .graphicsLayer { alpha = if (photoHidden) 0f else 1f }
+                    .graphicsLayer {
+                        alpha = if (photoHidden) 0f else focus.value.coerceIn(0f, 1f)
+                        val z = 0.92f + 0.08f * focus.value; scaleX = z; scaleY = z
+                    }
                     .shadow(AvatarShadow, CircasoShapes.circle).border(AvatarRing, c.bgGrouped, CircasoShapes.circle)
                     .let { m -> if (photo != null) m.pressable(role = androidx.compose.ui.semantics.Role.Image, onClick = onPhoto).semantics { contentDescription = "Your photo. Open it large" } else m },
             )
@@ -375,14 +387,29 @@ private fun ProfileHero(
 private fun ProfileGlow(photo: String?, modifier: Modifier) {
     val c = CircasoTheme.colors
     val page = c.bgGrouped
-    Box(modifier.clipToBounds()) {
+    // Arriving on the tab (Pasaka, 2026-11-07): the photo starts sharp and melts into its soft wash while the page
+    // settles from a touch of zoom, so the eye lands on the round photo rather than the backdrop just appearing.
+    val still = CircasoTheme.reduceMotion
+    val settle = androidx.compose.runtime.remember { androidx.compose.animation.core.Animatable(if (still) 1f else 0f) }
+    androidx.compose.runtime.LaunchedEffect(photo) {
+        if (still) settle.snapTo(1f)
+        else if (settle.value < 1f) settle.animateTo(1f, androidx.compose.animation.core.tween(GlowSettleMs, easing = androidx.compose.animation.core.LinearOutSlowInEasing))
+    }
+    Box(modifier.clipToBounds().graphicsLayer { val z = 1f + (1f - settle.value) * GlowZoom; scaleX = z; scaleY = z }) {
         if (photo != null && !c.isHighContrast) {
             val key = photo.substringBefore('?')
             coil3.compose.AsyncImage(
                 model = coil3.request.ImageRequest.Builder(coil3.compose.LocalPlatformContext.current).data(photo)
                     .size(GlowDecodePx).memoryCacheKey("$key#glow").diskCacheKey(key).crossfade(true).build(),
                 contentDescription = null, contentScale = androidx.compose.ui.layout.ContentScale.Crop,
-                modifier = Modifier.fillMaxSize().blur(GlowBlur).graphicsLayer { alpha = GlowAlpha },
+                modifier = Modifier.fillMaxSize().blur(GlowBlur).graphicsLayer { alpha = GlowAlpha * settle.value },
+            )
+            // The sharp photo over it, only while it settles: blurring (Android 12+, iOS) and fading into the wash.
+            if (settle.value < 1f) coil3.compose.AsyncImage(
+                model = coil3.request.ImageRequest.Builder(coil3.compose.LocalPlatformContext.current).data(photo)
+                    .memoryCacheKey("$key#full").diskCacheKey(key).build(),
+                contentDescription = null, contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+                modifier = Modifier.fillMaxSize().blur(GlowBlur * settle.value).graphicsLayer { alpha = GlowAlpha * (1f - settle.value) },
             )
         } else {
             Box(Modifier.fillMaxSize().background(androidx.compose.ui.graphics.Brush.verticalGradient(listOf(c.fillStrong, page))))
@@ -404,7 +431,13 @@ private const val GlowDecodePx = 24
 /** Extra smoothing where blur is supported (Android 12+, iOS); harmless where it isn't. */
 private val GlowBlur = 24.dp
 private const val GlowAlpha = 0.8f
+/** The backdrop melting from the sharp photo into its wash on arrival. */
+private const val GlowSettleMs = 650
+/** How far the backdrop is zoomed as it starts to settle (4%). */
+private const val GlowZoom = 0.04f
 private val AvatarShadow = 18.dp
+/** The round photo comes into focus this long after the backdrop starts to settle. */
+private const val AvatarFocusDelayMs = 120L
 private val AvatarRing = 3.dp
 
 /**
