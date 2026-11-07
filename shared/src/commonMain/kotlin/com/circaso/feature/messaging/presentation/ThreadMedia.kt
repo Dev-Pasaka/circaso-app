@@ -25,7 +25,10 @@ class ThreadMedia(
     /** How far each outgoing file's upload has got, by row: the ring on its thumbnail. */
     val progress get() = media.progress
 
-    /** A video's file to play, downloading and decrypting it first if needed; null with why when it can't be had. */
+    /**
+     * A video's (or document's) file to play or open, downloading and decrypting it first if needed, streamed to disk;
+     * null with why when it can't be had.
+     */
     suspend fun videoFile(details: MediaDetails) = media.file(details)
     val canShareLocation get() = location.available
 

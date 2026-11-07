@@ -100,7 +100,7 @@ interface MediaLibraryProvider {
     /** [count] small JPEGs spread through the video at [path] (AVAssetImageGenerator), for the trim bar. */
     fun filmstrip(path: String, count: Int, completion: (List<NSData>) -> Unit)
     /** The video at [path] from [startMs] to [endMs] as MP4 (AVAssetExportSession), within the moment size limit; null if it can't be. */
-    fun trim(path: String, startMs: Long, endMs: Long, completion: (LibraryMedia?) -> Unit)
+    fun trim(path: String, startMs: Long, endMs: Long, maxBytes: Long, completion: (LibraryMedia?) -> Unit)
 }
 
 /** One photo (JPEG), video (MP4) or audio file from the Swift side; [durationMs] 0 and sizes 0 mean unknown. */
@@ -269,9 +269,9 @@ class IosMediaLibrary : MediaLibrary {
         return suspendCancellableCoroutine<List<NSData>> { cont -> p.filmstrip(path, count) { if (cont.isActive) cont.resume(it) } }.map { it.toByteArray() }
     }
 
-    override suspend fun trim(path: String, startMs: Long, endMs: Long): CapturedMedia? {
+    override suspend fun trim(path: String, startMs: Long, endMs: Long, maxBytes: Long): CapturedMedia? {
         val p = MediaLibraryBridge.provider ?: return null
-        return suspendCancellableCoroutine<LibraryMedia?> { cont -> p.trim(path, startMs, endMs) { if (cont.isActive) cont.resume(it) } }?.toCaptured()
+        return suspendCancellableCoroutine<LibraryMedia?> { cont -> p.trim(path, startMs, endMs, maxBytes) { if (cont.isActive) cont.resume(it) } }?.toCaptured()
     }
 
     /** A video stays on disk (empty bytes, [CapturedMedia.path]); [read] brings it in when it is posted. */

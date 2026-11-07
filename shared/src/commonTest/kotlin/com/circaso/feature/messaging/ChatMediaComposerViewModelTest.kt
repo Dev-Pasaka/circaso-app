@@ -11,7 +11,6 @@ import com.circaso.core.platform.LibraryKind
 import com.circaso.core.platform.LibraryRecents
 import com.circaso.core.platform.MediaLibrary
 import com.circaso.core.platform.MomentCamera
-import com.circaso.core.platform.MomentMediaMaxBytes
 import com.circaso.core.platform.PickedFile
 import com.circaso.feature.mediacompose.ComposerCapture
 import com.circaso.feature.mediacompose.PreparedItem
@@ -61,6 +60,10 @@ private class ChatLibrary : MediaLibrary {
     val files = mutableMapOf<String, ByteArray>()
     var nextFile: PickedFile? = null
     val trims = mutableListOf<Triple<String, Long, Long>>()
+    val trimLimits = mutableListOf<Long>()
+    /** A file's size when it isn't in [files] (a big video stands in for its bytes). */
+    val sizes = mutableMapOf<String, Long>()
+    override suspend fun size(path: String): Long? = sizes[path] ?: files[path]?.size?.toLong()
     var opened = 0
     override suspend fun access() = LibraryAccess.Granted
     override suspend fun recents(kind: LibraryKind, limit: Int, ask: Boolean) = LibraryRecents(emptyList(), LibraryAccess.Granted)
@@ -69,8 +72,9 @@ private class ChatLibrary : MediaLibrary {
     override suspend fun pick(kind: LibraryKind): CapturedMedia? = null
     override suspend fun read(path: String) = files[path]
     override suspend fun filmstrip(path: String, count: Int) = List(count) { ByteArray(1) }
-    override suspend fun trim(path: String, startMs: Long, endMs: Long): CapturedMedia? {
+    override suspend fun trim(path: String, startMs: Long, endMs: Long, maxBytes: Long): CapturedMedia? {
         trims += Triple(path, startMs, endMs)
+        trimLimits += maxBytes
         return clip("$path-cut", endMs - startMs).also { files[it.path!!] = ByteArray(7) }
     }
     override suspend fun pickFile(): PickedFile? { opened++; return nextFile.also { nextFile = null } }
@@ -158,8 +162,9 @@ class ChatMediaComposerViewModelTest {
         val items = queue.sent.map { it.second as PreparedItem.Shot }
         assertEquals(listOf("image/jpeg", "video/mp4", "image/jpeg"), items.map { it.media.mime })
         assertEquals(listOf("first", "", "third"), items.map { it.caption })
-        // The video's bytes are read from its file only when it is sent.
-        assertEquals(9, items[1].bytes.size)
+        // The video goes from its file as it is: never read into memory here.
+        assertEquals(0, items[1].bytes.size)
+        assertEquals("/v", items[1].path)
         // Sent together: one album id, shared by all three, so the chat draws one album.
         assertNotNull(queue.albums.first())
         assertEquals(1, queue.albums.distinct().size)
@@ -172,29 +177,73 @@ class ChatMediaComposerViewModelTest {
         assertEquals(1, camera.opens)
     }
 
-    @Test fun aVideoOverAMinuteMustBeTrimmedBeforeItCanGo() = runTest(dispatcher) {
-        library.media["long"] = clip("/long", 134_000)
+    @Test fun aLongVideoGoesWholeAndTheTrimmerIsOnlyAnOption() = runTest(dispatcher) {
+        // Pasaka, 2026-11-07: trimming is for moments; a chat sends people's videos as they are.
+        library.media["long"] = clip("/long", 600_000)
+        library.sizes["/long"] = 90L * 1024 * 1024
         val vm = composer(ChatComposeStart.Camera)
-        vm.composer.useRecent(video("long", 134_000))
-        val trim = assertNotNull(vm.state.value.media.trim)
-        assertTrue(trim.required)
-        assertFalse(vm.state.value.canSend)
-        vm.composer.applyTrim()
-        assertNull(vm.state.value.media.trim)
-        assertEquals(listOf(Triple("/long", 0L, 60_000L)), library.trims)
+        vm.composer.useRecent(video("long", 600_000))
+        assertNull(vm.state.value.media.trim, "no trimmer forced open")
         assertTrue(vm.state.value.canSend)
+        // The trimmer is still there if the person wants to cut: any length, never a minute's window.
+        vm.composer.openTrim()
+        val trim = assertNotNull(vm.state.value.media.trim)
+        assertFalse(trim.required)
+        assertEquals(0L to 600_000L, trim.startMs to trim.endMs)
+        vm.composer.setTrim(30_000, 300_000)
+        assertEquals(30_000L to 300_000L, vm.state.value.media.trim!!.let { it.startMs to it.endMs })
+        vm.composer.cancelTrim()
+        assertEquals(1, vm.state.value.media.items.size, "cancel keeps the whole video")
+        vm.send()
+        val sent = assertIs<PreparedItem.Shot>(queue.sent.single().second)
+        assertEquals("/long", sent.path)
+        assertTrue(library.trims.isEmpty(), "never re-encoded")
     }
 
-    @Test fun aVideoTooLargeToSendIsMadeSmallerWithTheMomentsOwnStep() = runTest(dispatcher) {
-        library.media["big"] = clip("/big", 50_000)
-        library.files["/big"] = ByteArray((MomentMediaMaxBytes + 1).toInt())
+    @Test fun aCutFromALongVideoIsMadeToTheChatsLimitNotAMoments() = runTest(dispatcher) {
+        library.media["long"] = clip("/long", 600_000)
+        library.sizes["/long"] = 90L * 1024 * 1024
         val vm = composer(ChatComposeStart.Camera)
-        vm.composer.useRecent(video("big", 50_000))
+        vm.composer.useRecent(video("long", 600_000))
+        vm.composer.openTrim()
+        vm.composer.setTrim(0, 240_000)
+        vm.composer.applyTrim()
+        assertEquals(listOf(Triple("/long", 0L, 240_000L)), library.trims)
+        assertEquals(listOf(com.circaso.core.platform.ChatFileMaxBytes), library.trimLimits)
+    }
+
+    @Test fun aVideoOverTheLimitIsSaidWhenPickedAndStopsTheSendOnIt() = runTest(dispatcher) {
+        library.media += mapOf("a" to jpeg(3), "big" to clip("/big", 900_000))
+        library.sizes["/big"] = com.circaso.core.platform.ChatFileMaxBytes + 1
+        val vm = composer(ChatComposeStart.Camera)
+        vm.composer.toggle(photo("a")); vm.composer.toggle(video("big", 900_000))
+        vm.composer.useSelection()
+        // Said at once, with its size, and on the stage so it can be taken out.
+        assertEquals("This video is just over 100 MB. Videos up to 100 MB can be sent: trim it shorter or take it out.", vm.state.value.media.error)
+        assertEquals(1, vm.state.value.media.current)
+        vm.composer.errorShown()
         vm.send()
-        // The same re-encode a moment uses: the whole clip through the library's trim.
-        assertEquals(listOf(Triple("/big", 0L, 50_000L)), library.trims)
-        assertEquals(7, (queue.sent.single().second as PreparedItem.Shot).bytes.size)
+        // Nothing goes, not even the photo before it, and nothing is re-encoded.
+        assertTrue(queue.sent.isEmpty())
+        assertTrue(library.trims.isEmpty())
+        assertFalse(vm.state.value.sending)
+        assertEquals(1, vm.state.value.media.current)
+        assertEquals("This video is just over 100 MB. Videos up to 100 MB can be sent: trim it shorter or take it out.", vm.state.value.media.error)
+        // Taken out, the rest goes.
+        vm.composer.removeCurrent()
+        vm.send()
+        assertEquals(1, queue.sent.size)
         assertTrue(vm.state.value.sent)
+    }
+
+    @Test fun aVideoJustUnderTheLimitGoesAsItIs() = runTest(dispatcher) {
+        library.media["v"] = clip("/v", 120_000)
+        library.sizes["/v"] = com.circaso.core.platform.ChatFileMaxBytes
+        val vm = composer(ChatComposeStart.Camera)
+        vm.composer.useRecent(video("v", 120_000))
+        assertNull(vm.state.value.media.error)
+        vm.send()
+        assertEquals("/v", (queue.sent.single().second as PreparedItem.Shot).path)
     }
 
     @Test fun aDocumentGoesUnderItsOwnNameWithItsCaption() = runTest(dispatcher) {
@@ -210,7 +259,9 @@ class ChatMediaComposerViewModelTest {
         val sent = assertIs<PreparedItem.Document>(queue.sent.single().second)
         assertEquals("Lease.pdf", sent.file.name)
         assertEquals("Signed", sent.caption)
-        assertEquals(12, sent.bytes.size)
+        // From its file, as it is.
+        assertEquals("/doc", sent.path)
+        assertEquals(0, sent.bytes.size)
         assertNull(queue.albums.single())
     }
 
@@ -220,10 +271,19 @@ class ChatMediaComposerViewModelTest {
     }
 
     @Test fun aFileOverTheLimitIsRefusedBeforeTheReview() = runTest(dispatcher) {
-        library.nextFile = PickedFile("Film.mov", "video/quicktime", MomentMediaMaxBytes + 10, path = "/film")
+        library.nextFile = PickedFile("Film.mov", "video/quicktime", 150L * 1024 * 1024, path = "/film")
         val vm = composer(ChatComposeStart.Document)
         assertTrue(vm.state.value.media.items.isEmpty())
-        assertEquals("Documents up to 32 MB can be sent. This one is 32.0 MB.", vm.state.value.media.error)
+        assertEquals("Documents up to 100 MB can be sent. This one is 150.0 MB.", vm.state.value.media.error)
+    }
+
+    @Test fun aDocumentOverTheOldLimitIsFine() = runTest(dispatcher) {
+        library.sizes["/report"] = 60L * 1024 * 1024
+        library.nextFile = PickedFile("Report.pdf", "application/pdf", 60L * 1024 * 1024, path = "/report")
+        val vm = composer(ChatComposeStart.Document)
+        assertNull(vm.state.value.media.error)
+        vm.send()
+        assertEquals("/report", (queue.sent.single().second as PreparedItem.Document).path)
     }
 
     @Test fun discardingADocumentGoesBackToTheChat() = runTest(dispatcher) {
@@ -315,6 +375,12 @@ class ChatDocumentWireTest {
         assertEquals("2.4 MB", sizeLabel(2_480_000))
         assertEquals("47 KB", sizeLabel(48_200))
         assertEquals("900 bytes", sizeLabel(900))
+        // Refused sizes never read as if they fit, and say the chat's own limit.
+        val chat = com.circaso.core.platform.ChatFileMaxBytes
+        assertEquals("just over 100 MB", com.circaso.feature.mediacompose.overLimitLabel(chat + 1, chat))
+        assertEquals("150.0 MB", com.circaso.feature.mediacompose.overLimitLabel(150L * 1024 * 1024, chat))
+        val big = com.circaso.feature.mediacompose.SharedFile("/in/f.mov", "f.mov", "video/quicktime", 150L * 1024 * 1024)
+        assertEquals("f.mov is 150.0 MB. Up to 100 MB can be sent.", com.circaso.feature.mediacompose.checkShare(listOf(big), chat).notice)
         assertEquals("PDF", fileKind("Lease.pdf", "application/pdf"))
         assertEquals("XLSX", fileKind("Budget.xlsx", ""))
         assertEquals("PDF", fileKind("README", "application/pdf"))

@@ -51,13 +51,13 @@ actual fun sharePdf(title: String, lines: List<String>) {
     }
 }
 
-actual suspend fun openFile(bytes: ByteArray, name: String, mime: String): Boolean {
+actual suspend fun openFile(path: String, name: String, mime: String): Boolean {
     val activity = runCatching { KoinPlatform.getKoin().get<CurrentActivity>().get() }.getOrNull() ?: return false
-    // Up to 32 MB: written off the main thread; only the chooser is shown from it.
+    // Up to 100 MB: copied off the main thread a piece at a time (never read into memory); only the chooser is shown from it.
     val file = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
         runCatching {
             val dir = java.io.File(activity.cacheDir, "shared/open-${System.nanoTime()}").apply { mkdirs() }
-            java.io.File(dir, name.replace(Regex("[/\\\\:*?\"<>|]"), "_").ifBlank { "File" }).also { it.writeBytes(bytes) }
+            java.io.File(dir, name.replace(Regex("[/\\\\:*?\"<>|]"), "_").ifBlank { "File" }).also { java.io.File(path).copyTo(it, overwrite = true, bufferSize = 256 * 1024) }
         }.getOrNull()
     } ?: return false
     return runCatching {

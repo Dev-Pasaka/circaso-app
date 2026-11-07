@@ -73,4 +73,37 @@ interface MediaFiles {
 
     /** Removes one file (a moment's media once its 24 hours are over). */
     suspend fun delete(name: String) {}
+
+    // Streaming (2026-11-07, chat files up to 100 MiB): a large file is read and written a piece at a time, never held
+    // whole in memory. The defaults go through [read] and [write] (fine for the tests' in-memory files); the phones'
+    // own implementations open the file and touch only the piece asked for.
+
+    /** The file's size in bytes, or null when it isn't there. */
+    suspend fun size(name: String): Long? = read(name)?.size?.toLong()
+
+    /** Up to [count] bytes of [name] from [offset] (fewer at the end, empty past it); null when the file isn't there. */
+    suspend fun readAt(name: String, offset: Long, count: Int): ByteArray? = read(name)?.let { all ->
+        val from = offset.coerceIn(0, all.size.toLong()).toInt()
+        all.copyOfRange(from, minOf(all.size, from + count))
+    }
+
+    /** Adds [bytes] to the end of [name], creating it when it isn't there. */
+    suspend fun append(name: String, bytes: ByteArray) = write(name, (read(name) ?: ByteArray(0)) + bytes)
+
+    /** Renames [from] to [to] (replacing [to]); false when [from] isn't there. */
+    suspend fun move(from: String, to: String): Boolean {
+        val bytes = read(from) ?: return false
+        write(to, bytes)
+        delete(from)
+        return true
+    }
+
+    /**
+     * Copies a file from elsewhere on this phone ([path]: a picked video or document in the cache) in as [name], a
+     * piece at a time. False when it can't be read.
+     */
+    suspend fun copyIn(path: String, name: String): Boolean = false
 }
+
+/** The size of a file anywhere on this phone (a picked video, a shared document), or null when it can't be read. */
+expect fun fileSizeAt(path: String): Long?

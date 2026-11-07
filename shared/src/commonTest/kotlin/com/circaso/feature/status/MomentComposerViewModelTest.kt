@@ -106,7 +106,7 @@ private class FakeLibrary : MediaLibrary {
     override suspend fun pickMany(max: Int) = systemPicks.take(max)
     override suspend fun read(path: String) = files[path]
     override suspend fun filmstrip(path: String, count: Int) = List(count) { ByteArray(1) }
-    override suspend fun trim(path: String, startMs: Long, endMs: Long): CapturedMedia? {
+    override suspend fun trim(path: String, startMs: Long, endMs: Long, maxBytes: Long): CapturedMedia? {
         trims += Triple(path, startMs, endMs)
         return trimResult?.invoke(path, startMs, endMs)?.also { files[it.path!!] = ByteArray(7) }
     }

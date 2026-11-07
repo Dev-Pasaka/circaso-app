@@ -67,6 +67,22 @@ class IosBackgroundUploads : BackgroundUploads {
     }
 
     /**
+     * The stored file goes up straight from disk: a file-system copy for the background session (a clone on APFS, so
+     * instant and without reading it), which deletes that copy when it is done. Never in memory, whatever its size.
+     */
+    @OptIn(kotlinx.cinterop.ExperimentalForeignApi::class)
+    override suspend fun putStored(url: String, headers: Map<String, String>, files: MediaFiles, name: String, size: Long, onProgress: (sent: Long, total: Long) -> Unit): Boolean? {
+        val provider = BackgroundUploadBridge.provider ?: return null
+        val source = files.path(name) ?: return null
+        val path = NSTemporaryDirectory() + "upload-" + NSUUID().UUIDString
+        val copied = withContext(Dispatchers.Default) { platform.Foundation.NSFileManager.defaultManager.copyItemAtPath(source, toPath = path, error = null) }
+        if (!copied) return null
+        return suspendCancellableCoroutine { cont ->
+            provider.upload(url, headers, path, { sent, total -> onProgress(sent, total) }) { ok -> if (cont.isActive) cont.resume(ok) }
+        }
+    }
+
+    /**
      * A PUT the background session finished after Circaso was closed (or suspended past its time) is written down by
      * `BackgroundUploadImpl.swift` under [FinishedKey]; the resumed job then goes straight to completing it.
      */

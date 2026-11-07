@@ -84,7 +84,13 @@ import com.circaso.designsystem.theme.CircasoTheme
  * The words that differ between a moment and a chat; the screens, controls and motion are the same.
  * [itemNoun]: one item on the review strip ("Moment 2 of 3"); [sendVerb]: "post" or "send".
  */
-class MediaComposeCopy(val itemNoun: String, val sendVerb: String, val trimHint: String)
+class MediaComposeCopy(
+    val itemNoun: String,
+    val sendVerb: String,
+    val trimHint: String,
+    /** Show [trimHint] whenever the trimmer is open (a chat, where cutting is optional), not only when a trim is required. */
+    val trimHintAlways: Boolean = false,
+)
 
 /** The Send button's state: what it says to a screen reader, whether it can be tapped, and whether it is working. */
 class MediaSendButton(val description: String, val enabled: Boolean, val busy: Boolean, val onClick: () -> Unit)
@@ -726,7 +732,7 @@ private fun TrimScreen(trim: TrimState, state: MediaComposeState, copy: MediaCom
                 style = t.subhead.copy(color = c.ink, fontWeight = FontWeight.SemiBold, fontFeatureSettings = "tnum"),
             )
             TrimBar(trim, composer)
-            if (trim.required) BasicText(copy.trimHint, style = t.footnote.copy(color = c.inkSecondary, textAlign = TextAlign.Center))
+            if (trim.required || copy.trimHintAlways) BasicText(copy.trimHint, style = t.footnote.copy(color = c.inkSecondary, textAlign = TextAlign.Center))
         }
     }
 }

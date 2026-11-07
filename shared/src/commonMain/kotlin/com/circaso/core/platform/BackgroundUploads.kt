@@ -6,6 +6,7 @@ import io.ktor.client.request.header
 import io.ktor.client.request.put
 import io.ktor.client.request.setBody
 import io.ktor.http.isSuccess
+import io.ktor.utils.io.writeFully
 import kotlinx.coroutines.currentCoroutineContext
 import kotlin.coroutines.AbstractCoroutineContextElement
 import kotlin.coroutines.CoroutineContext
@@ -55,6 +56,12 @@ interface BackgroundUploads {
     suspend fun put(url: String, headers: Map<String, String>, bytes: ByteArray, onProgress: (sent: Long, total: Long) -> Unit = { _, _ -> }): Boolean? = null
 
     /**
+     * PUTs the stored file [name] ([size] bytes) through the platform's own uploader, straight from the file, never
+     * read into memory (iOS: the background session uploads from a copy of it). Null: use the app's HTTP client.
+     */
+    suspend fun putStored(url: String, headers: Map<String, String>, files: MediaFiles, name: String, size: Long, onProgress: (sent: Long, total: Long) -> Unit = { _, _ -> }): Boolean? = null
+
+    /**
      * True when the platform's own uploader already finished a PUT to [url] while Circaso wasn't running to hear it
      * (iOS: the background session carried on after Circaso was closed), so the job goes straight to completing it.
      */
@@ -102,4 +109,67 @@ fun UploadKind.failedDestination(chatId: String?, localId: Long?): com.circaso.c
     this == UploadKind.ProfilePhoto -> com.circaso.core.notifications.NotificationDestination.Profile
     chatId != null -> com.circaso.core.notifications.NotificationDestination.Chat(chatId, localId = localId)
     else -> com.circaso.core.notifications.NotificationDestination.Inbox
+}
+
+/**
+ * One PUT of the stored file [name] to pre-signed storage, streamed from disk (Pasaka, 2026-11-07: chat files up to
+ * 100 MiB): the platform's background uploader when there is one, else [client] with a body read [StreamPieceBytes] at
+ * a time, so memory stays flat however large the file. A dropped connection or a passing storage error is tried again
+ * up to [attempts] times (the whole PUT: storage takes single PUTs, the backend gives no multipart parts); a refusal
+ * (4xx, like an expired URL) is not, the caller asks for a new slot. [onProgress] reports (bytes sent, bytes in all).
+ */
+suspend fun BackgroundUploads.putStoredFile(
+    client: HttpClient, url: String, headers: Map<String, String>, files: MediaFiles, name: String,
+    onProgress: (sent: Long, total: Long) -> Unit = { _, _ -> },
+    attempts: Int = 3,
+    pause: suspend (attempt: Int) -> Unit = { attempt -> kotlinx.coroutines.delay(2_000L * attempt) },
+): Boolean {
+    val size = files.size(name) ?: return false
+    val sink = currentCoroutineContext()[UploadProgress]
+    val progress: (Long, Long) -> Unit = { sent, total -> onProgress(sent, total); sink?.report(sent, total) }
+    putStored(url, headers, files, name, size, progress)?.let { return it }
+    val type = headers.entries.firstOrNull { it.key.equals("Content-Type", true) }?.value
+        ?.let { runCatching { io.ktor.http.ContentType.parse(it) }.getOrNull() } ?: io.ktor.http.ContentType.Application.OctetStream
+    for (attempt in 1..attempts) {
+        val status = try {
+            client.put(url) {
+                headers.forEach { (k, v) -> if (!k.equals("Content-Type", true)) header(k, v) }
+                setBody(StoredFileBody(files, name, size, type))
+                onUpload { sent, total -> progress(sent, total ?: size) }
+            }.status
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Throwable) {
+            null // the connection dropped: try again
+        }
+        if (status != null && status.isSuccess()) return true
+        // Refused (an expired URL, a size storage won't take): sending the same again won't help.
+        if (status != null && status.value in 400..499 && status.value != 408 && status.value != 429) return false
+        if (attempt < attempts) pause(attempt)
+    }
+    return false
+}
+
+/** Bytes of a body read from disk per piece: big enough to keep the socket busy, small enough to never matter. */
+const val StreamPieceBytes: Int = 256 * 1024
+
+/** A request body read from a stored file a piece at a time, with its exact length (storage needs Content-Length). */
+private class StoredFileBody(
+    private val files: MediaFiles,
+    private val name: String,
+    private val size: Long,
+    override val contentType: io.ktor.http.ContentType,
+) : io.ktor.http.content.OutgoingContent.WriteChannelContent() {
+    override val contentLength: Long get() = size
+
+    override suspend fun writeTo(channel: io.ktor.utils.io.ByteWriteChannel) {
+        var offset = 0L
+        while (offset < size) {
+            val piece = files.readAt(name, offset, minOf(StreamPieceBytes.toLong(), size - offset).toInt())
+            if (piece == null || piece.isEmpty()) throw IllegalStateException("the file to upload changed or went away")
+            channel.writeFully(piece, 0, piece.size)
+            offset += piece.size
+        }
+        channel.flush()
+    }
 }

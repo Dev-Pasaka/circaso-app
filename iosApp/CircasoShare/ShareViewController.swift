@@ -25,8 +25,9 @@ import UniformTypeIdentifiers
 final class ShareViewController: UIViewController {
     private static let appGroup = "group.com.circaso.app"
     private static let maxItems = 10
-    /// The attachment limit (MomentMediaMaxBytes): larger files aren't copied, only listed with their size.
-    private static let maxBytes: Int64 = 32 * 1024 * 1024 - 64
+    /// The chat attachment limit (ChatFileMaxBytes, 100 MB less encryption; 2026-11-07): larger files aren't copied,
+    /// only listed with their size. A moment refuses anything over its own 32 MiB on its review.
+    private static let maxBytes: Int64 = 100 * 1024 * 1024 - 100 * 28
 
     private struct Item: Codable { let file: String; let name: String; let mime: String; let size: Int64 }
 

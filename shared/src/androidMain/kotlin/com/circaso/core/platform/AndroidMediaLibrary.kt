@@ -306,11 +306,11 @@ class AndroidMediaLibrary(private val context: Context) : MediaLibrary {
                 val mime = resolver.getType(uri) ?: "application/octet-stream"
                 val shownName = name?.takeIf { it.isNotBlank() } ?: "File"
                 // Over the limit by the provider's own count: refused at once, nothing is copied.
-                if (size > MomentMediaMaxBytes) return@runCatching PickedFile(shownName, mime, size)
+                if (size > ChatFileMaxBytes) return@runCatching PickedFile(shownName, mime, size)
                 val dir = File(context.cacheDir, "picked").apply { mkdirs() }
                 val out = File(dir, "doc-${System.nanoTime()}")
                 // Stop reading past the attachment limit: the composer refuses it by its size anyway.
-                val copied = resolver.openInputStream(uri)?.use { input -> out.outputStream().use { o -> copyCapped(input, o, MomentMediaMaxBytes + 1) } } ?: return@runCatching null
+                val copied = resolver.openInputStream(uri)?.use { input -> out.outputStream().use { o -> copyCapped(input, o, ChatFileMaxBytes + 1) } } ?: return@runCatching null
                 PickedFile(shownName, mime, if (size >= 0) maxOf(size, copied) else copied, path = out.absolutePath)
             }.getOrNull()
         }
@@ -376,11 +376,11 @@ class AndroidMediaLibrary(private val context: Context) : MediaLibrary {
      * side, its frame rate, and a bit rate for that size that the 32 MiB limit allows for this length.
      */
     @OptIn(UnstableApi::class)
-    override suspend fun trim(path: String, startMs: Long, endMs: Long): CapturedMedia? {
+    override suspend fun trim(path: String, startMs: Long, endMs: Long, maxBytes: Long): CapturedMedia? {
         val out = File(context.cacheDir, "moment-trim-${System.nanoTime()}.mp4")
         val source = withContext(Dispatchers.IO) { probeVideo(path) }
         val plan = MomentVideoEncoding.plan(
-            source?.width ?: 720, source?.height ?: 1280, source?.frameRate, source?.videoBitRate, (endMs - startMs).coerceAtLeast(1),
+            source?.width ?: 720, source?.height ?: 1280, source?.frameRate, source?.videoBitRate, (endMs - startMs).coerceAtLeast(1), maxBytes,
         )
         val item = MediaItem.Builder().setUri(Uri.fromFile(File(path)))
             .setClippingConfiguration(MediaItem.ClippingConfiguration.Builder().setStartPositionMs(startMs).setEndPositionMs(endMs).build())
@@ -401,7 +401,7 @@ class AndroidMediaLibrary(private val context: Context) : MediaLibrary {
                 .build()
             val failed = export(edited, encoder, out)
             if (failed == null) {
-                if (out.length() > MomentMediaMaxBytes && !shrunk) {
+                if (out.length() > maxBytes && !shrunk) {
                     Log.i("MomentVideo", "trim: ${out.length()} bytes is over the limit at ${bitRate / 1000} kbit/s, once more at 80 %")
                     bitRate = bitRate * 4 / 5; shrunk = true; continue
                 }

@@ -30,19 +30,28 @@ data class UploadState(
     val urlUntil: Long? = null,
     /** The PUT returned 2xx (or the platform's uploader finished it while Circaso was closed). */
     val put: Boolean = false,
+    /** Sealed in 1 MiB chunks ([com.circaso.core.crypto.ChunkedFileCipher]); [digest] is empty then. */
+    val chunked: Boolean = false,
 )
 
 /** A pre-signed upload slot (moments ST1, chats AT1). */
 class UploadSlot(val id: String, val url: String, val headers: Map<String, String>, val expiresAt: Long?)
 
-/** A completed upload: the id the commit refers to, with the key and digest the encrypted message carries. */
-class UploadedFile(val id: String, val key: ByteArray, val digest: ByteArray, val size: Long)
+/**
+ * A completed upload: the id the commit refers to, with the key and digest the encrypted message carries. [chunked]:
+ * sealed in chunks ([com.circaso.core.crypto.ChunkedFileCipher]), so there is no whole-file [digest] (it is empty).
+ */
+class UploadedFile(val id: String, val key: ByteArray, val digest: ByteArray, val size: Long, val chunked: Boolean = false)
 
 /**
  * Runs an encrypted upload step by step, saving [UploadState] after each one (see the state's doc). Every step is
  * safe to repeat: sealing happens once; a new slot is asked for only when there is none or its URL has expired before
  * the bytes went up; a PUT is repeated whole (storage takes single PUTs only, no multipart: the backend gives one
- * pre-signed URL per file, up to 32 MiB); completing twice answers the same (AT2, ST2).
+ * pre-signed URL per file, chats up to 100 MiB, moments 32 MiB); completing twice answers the same (AT2, ST2).
+ *
+ * The ciphertext goes up streamed from its file ([putStoredFile]). With `chunked` the file is also sealed a chunk at
+ * a time ([com.circaso.core.crypto.ChunkedFileCipher]), so a 100 MiB video never sits in memory; without it the one
+ * AES-GCM box every app opens is made in memory, which callers keep to files of at most 32 MiB.
  */
 class ResumableUpload(
     private val crypto: SignalCrypto,
@@ -62,18 +71,23 @@ class ResumableUpload(
         startOver: (AppError) -> Boolean,
         missing: AppError,
         onProgress: (sent: Long, total: Long) -> Unit = { _, _ -> },
+        chunked: Boolean = false,
     ): AppResult<UploadedFile> {
-        var sealed = state?.let { files.read(it.sealedFile) }
-        var s: UploadState = if (state != null && sealed != null) state else {
-            val plain = files.read(plainFile) ?: return AppResult.Failure(missing)
+        // The saved state holds while its ciphertext is still on disk at its size.
+        val kept = state?.takeIf { files.size(it.sealedFile) == it.size }
+        var s: UploadState = kept ?: run {
             val key = crypto.randomBytes(32)
-            val bytes = withContext(Dispatchers.Default) { crypto.aesGcmSeal(key, plain) }
-            val digest = withContext(Dispatchers.Default) { crypto.sha256(bytes) }
-            files.write(sealedFile, bytes)
-            sealed = bytes
-            UploadState(sealedFile, Base64.encode(key), Base64.encode(digest), bytes.size.toLong()).also { save(it) }
+            if (chunked) {
+                val size = com.circaso.core.crypto.ChunkedFileCipher.seal(crypto, files, key, plainFile, sealedFile) ?: return AppResult.Failure(missing)
+                UploadState(sealedFile, Base64.encode(key), "", size, chunked = true)
+            } else {
+                val plain = files.read(plainFile) ?: return AppResult.Failure(missing)
+                val bytes = withContext(Dispatchers.Default) { crypto.aesGcmSeal(key, plain) }
+                val digest = withContext(Dispatchers.Default) { crypto.sha256(bytes) }
+                files.write(sealedFile, bytes)
+                UploadState(sealedFile, Base64.encode(key), Base64.encode(digest), bytes.size.toLong())
+            }.also { save(it) }
         }
-        val body = sealed!!
         for (attempt in 0..1) {
             if (s.slotId == null || s.url == null || (!s.put && expired(s))) {
                 val slot = when (val r = create(s.size)) {
@@ -84,7 +98,7 @@ class ResumableUpload(
             }
             if (!s.put) {
                 if (!uploads.finished(s.url!!)) {
-                    if (!uploads.putFile(storage, s.url!!, s.headers, body, onProgress)) return AppResult.Failure(AppError.Network)
+                    if (!uploads.putStoredFile(storage, s.url!!, s.headers, files, s.sealedFile, onProgress)) return AppResult.Failure(AppError.Network)
                 }
                 s = s.copy(put = true).also { save(it) }
             }
@@ -92,7 +106,7 @@ class ResumableUpload(
                 is AppResult.Success -> {
                     // The ciphertext is not needed again: the next step (the message, the post) refers to the slot id.
                     files.delete(s.sealedFile)
-                    return AppResult.Success(UploadedFile(s.slotId!!, Base64.decode(s.key), Base64.decode(s.digest), s.size))
+                    return AppResult.Success(UploadedFile(s.slotId!!, Base64.decode(s.key), Base64.decode(s.digest), s.size, s.chunked))
                 }
                 is AppResult.Failure -> {
                     if (attempt > 0 || !startOver(r.error)) return r

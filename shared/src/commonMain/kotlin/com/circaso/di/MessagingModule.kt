@@ -229,11 +229,15 @@ private suspend fun sendPrepared(
         is com.circaso.feature.mediacompose.PreparedItem.Shot -> {
             val m = item.media
             if (m.mime.startsWith("video")) {
-                val poster = m.path?.let { library.poster(it) } ?: m.thumb
-                media.sendVideo(chatId, item.bytes, m.mime, m.width, m.height, m.durationMs, poster?.let { kotlin.io.encoding.Base64.encode(it) }, item.caption, album)
+                val poster = (m.path?.let { library.poster(it) } ?: m.thumb)?.let { kotlin.io.encoding.Base64.encode(it) }
+                // As it is, from its file (Pasaka, 2026-11-07): never re-encoded, never read into memory.
+                if (item.path != null) media.sendVideoFile(chatId, item.path, m.mime, m.width, m.height, m.durationMs, poster, item.caption, album)
+                else media.sendVideo(chatId, item.bytes, m.mime, m.width, m.height, m.durationMs, poster, item.caption, album)
             } else media.sendImage(chatId, item.bytes, m.mime, m.width, m.height, item.caption, album)
         }
-        is com.circaso.feature.mediacompose.PreparedItem.Document -> media.sendDocument(chatId, item.bytes, item.file.mime, item.file.name, item.caption)
+        is com.circaso.feature.mediacompose.PreparedItem.Document ->
+            if (item.path != null) media.sendDocumentFile(chatId, item.path, item.file.mime, item.file.name, item.caption)
+            else media.sendDocument(chatId, item.bytes, item.file.mime, item.file.name, item.caption)
         is com.circaso.feature.mediacompose.PreparedItem.Voice -> media.sendVoice(chatId, item.capture.bytes, item.capture.mime, item.capture.durationMs)
         else -> return false
     }

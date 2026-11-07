@@ -32,4 +32,7 @@ internal const val TileZoom = 16
 
 internal val LocalMapPicture = staticCompositionLocalOf<MapPictureLoader?> { null }
 
+/** How a document bubble gets its decrypted file to open (the thread's media actions); null outside a thread. */
+internal val LocalOpenDocument = staticCompositionLocalOf<(suspend (com.circaso.feature.messaging.data.repository.MediaDetails) -> Pair<String?, com.circaso.feature.messaging.data.repository.MediaLoad?>)?> { null }
+
 private fun hex(c: Color) = (c.toArgb() and 0xFFFFFF).toString(16).padStart(6, '0').uppercase()
