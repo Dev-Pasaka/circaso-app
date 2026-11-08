@@ -91,17 +91,20 @@ fun CircasoIconButton(
     modifier: Modifier = Modifier,
     emphasised: Boolean = false,
     enabled: Boolean = true,
+    /** Working on it (e.g. a payment on its way to the PIN): a spinner in place of the icon; taps are ignored. */
+    busy: Boolean = false,
 ) {
     val c = CircasoTheme.colors
+    val fg = when { !enabled -> c.inkTertiary; emphasised -> c.onAction; else -> c.ink }
     Box(
         modifier
             .size(CircasoSizes.iconButton)
             .clip(CircasoShapes.circle)
             .background(if (emphasised) c.action else c.fill)
-            .pressable(enabled = enabled, role = Role.Button, onClick = onClick)
-            .semantics { this.contentDescription = contentDescription },
+            .pressable(enabled = enabled && !busy, role = Role.Button, onClick = onClick)
+            .semantics { this.contentDescription = if (busy) "$contentDescription, loading" else contentDescription },
         contentAlignment = Alignment.Center,
     ) {
-        CircasoIconImage(icon, when { !enabled -> c.inkTertiary; emphasised -> c.onAction; else -> c.ink }, Modifier.size(18.dp))
+        if (busy) Spinner(fg, Modifier.size(18.dp)) else CircasoIconImage(icon, fg, Modifier.size(18.dp))
     }
 }
