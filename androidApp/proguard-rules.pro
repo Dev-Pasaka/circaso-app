@@ -28,3 +28,9 @@
 # Readable crash reports in Play: keep line numbers (the mapping file CI uploads restores names).
 -keepattributes SourceFile,LineNumberTable
 -renamesourcefileattribute SourceFile
+
+# Google sign-in (Credential Manager): it finds its Play Services provider by class name at runtime, which R8 can't see,
+# so without these the release build has no provider and sign-in fails ("no credentials available"). Google's own rule.
+-if class androidx.credentials.CredentialManager
+-keep class androidx.credentials.playservices.** { *; }
+-keep class com.google.android.libraries.identity.googleid.** { *; }
