@@ -100,7 +100,7 @@ jobs:
             echo "pwsdk.maven.username=$CIRCLE_PWSDK_USERNAME"
             echo "pwsdk.maven.password=$CIRCLE_PWSDK_TOKEN"
             echo "maps.android.key=$MAPS_ANDROID_KEY"
-            [ -n "$SHARE_HOST" ] && echo "share.host=$SHARE_HOST"
+            if [ -n "$SHARE_HOST" ]; then echo "share.host=$SHARE_HOST"; fi
           } > local.properties
 
       - name: Build the signed bundle
