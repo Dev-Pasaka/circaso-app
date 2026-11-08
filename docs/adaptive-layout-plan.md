@@ -102,6 +102,12 @@ fixed:
 - Tablet sign-in is one centred group, buttons at `WindowLayout.FormWidth` (440 dp); the tablet wallet is one centred
   column a card's width; small call tiles step the avatar down and fade in and out as people join and leave.
 
+- **Deferred: set-aside screens restart.** A tab's screens set aside on two panes are taken off the back stack, and
+  navigation3 clears their view model and saved state when they leave it (its decorators' `onPop` is internal, so it
+  can't be wrapped). They come back reloaded (from Room, so instantly), but a half-typed form loses its text and scroll
+  positions reset. Fix next: drafts of forms that can be set aside (Edit Profile, amounts, support) live in a
+  repository or Room, as chat drafts already do; or a custom ViewModelStore/SavedState decorator that skips kept keys.
+
 **Checking landscape from a script.** Simulators can't be rotated from the command line (iPadOS refuses
 `requestGeometryUpdate` in windowed mode), so debug builds take `-frame=1376x1032` (iOS) or `--es frame 1280x800`
 (Android): the whole app is laid out in a window of that many dp, scaled to fit. Useful sizes: iPad Pro 13" 1376x1032,

@@ -8,6 +8,7 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.currentCompositionLocalContext
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
@@ -26,8 +27,10 @@ import com.circaso.designsystem.adaptive.WindowLayout
  * draws in it keeps everything its opener had (the theme of a dark screen, view models, share links, `/asha`); only
  * [LocalWindowLayout] becomes the window's.
  */
-class WindowOverlayHost internal constructor(internal val window: WindowLayout) {
+class WindowOverlayHost internal constructor(window: WindowLayout) {
     internal val layers = mutableStateListOf<Pair<Any, @Composable () -> Unit>>()
+    /** Updated in place on rotation and resizes, so what is open (a playing video, an album's page) carries on. */
+    internal var window by androidx.compose.runtime.mutableStateOf(window)
 }
 
 val LocalWindowOverlay = staticCompositionLocalOf<WindowOverlayHost?> { null }
@@ -40,8 +43,9 @@ val LocalWindowOverlay = staticCompositionLocalOf<WindowOverlayHost?> { null }
 fun WindowOverlayLayer(enabled: Boolean = true, content: @Composable () -> Unit) {
     if (!enabled) { content(); return }
     val window = LocalWindowLayout.current
-    // A new size (rotation, split screen) is a new host; each open layer moves to it (its effect is keyed on the host).
-    val host = remember(window) { WindowOverlayHost(window) }
+    // One host for the layer's life: a new size (rotation, split screen, a live resize) only updates its window.
+    val host = remember { WindowOverlayHost(window) }
+    androidx.compose.runtime.SideEffect { host.window = window }
     CompositionLocalProvider(LocalWindowOverlay provides host) {
         Box(Modifier.fillMaxSize()) {
             content()
@@ -72,7 +76,7 @@ fun BoxScope.OverWindow(content: @Composable BoxScope.() -> Unit) {
     }
     val locals by rememberUpdatedState(currentCompositionLocalContext)
     val key = remember { Any() }
-    DisposableEffect(host, key) {
+    DisposableEffect(key) {
         val layer: @Composable () -> Unit = {
             CompositionLocalProvider(locals) {
                 CompositionLocalProvider(LocalWindowLayout provides host.window) {
