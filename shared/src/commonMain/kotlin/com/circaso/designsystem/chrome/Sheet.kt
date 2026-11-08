@@ -10,6 +10,7 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -122,6 +123,20 @@ fun BoxScope.CircasoSheet(
             content()
         }
     }
+}
+
+/**
+ * Rows and tiles inside a sheet sit on a group a step off the sheet's own surface (grey on white, lighter on dark):
+ * Asha's menu and the Group Wallets sheet.
+ */
+@Composable
+fun sheetGroupColor(): Color = CircasoTheme.colors.let { if (it.isDark) it.fill else it.bgGrouped }
+
+/** In high contrast a sheet's grey groups get a hairline edge: grey on white alone is nearly invisible there. */
+@Composable
+fun Modifier.sheetGroupEdge(shape: androidx.compose.ui.graphics.Shape): Modifier {
+    val c = CircasoTheme.colors
+    return if (c.isHighContrast) this.border(1.dp, c.separator, shape) else this
 }
 
 /** The design's `.cx-sheet-head`: the sheet's title with a Close on the right. */

@@ -49,6 +49,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.circaso.core.sync.nowMillis
+import com.circaso.designsystem.chrome.sheetGroupEdge
 import com.circaso.designsystem.components.AshaMark
 import com.circaso.designsystem.components.ButtonSize
 import com.circaso.designsystem.components.ButtonStyle
@@ -120,11 +121,11 @@ fun ColumnScope.AshaMenuSheetContent(state: AshaUiState, page: AshaSheet, action
 
 /** Rows inside a sheet sit on a group a step off the sheet's own surface (grey on white, lighter on dark). */
 @Composable
-private fun groupColor(): Color = CircasoTheme.colors.let { if (it.isDark) it.fill else it.bgGrouped }
+private fun groupColor(): Color = com.circaso.designsystem.chrome.sheetGroupColor()
 
 @Composable
 private fun SheetGroup(content: @Composable ColumnScope.() -> Unit) {
-    Column(Modifier.fillMaxWidth().clip(CircasoShapes.md).background(groupColor()), content = content)
+    Column(Modifier.fillMaxWidth().clip(CircasoShapes.md).background(groupColor()).sheetGroupEdge(CircasoShapes.md), content = content)
 }
 
 @Composable

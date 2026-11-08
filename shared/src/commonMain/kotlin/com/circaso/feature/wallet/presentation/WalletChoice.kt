@@ -59,6 +59,8 @@ data class NamedWallet(
     val canSign: Boolean,
     val status: WalletStatus,
     val signerUserId: String?,
+    /** The networks the wallet is on (W16 `blockchains`): what a group's row shows before its balance is read. */
+    val blockchains: List<String> = emptyList(),
 ) {
     val personal get() = walletId == null
     val subject get() = if (walletId == null) SignSubject(null, PersonalName) else SignSubject.group(walletId, name)
@@ -79,7 +81,7 @@ fun nameWallets(
     if (w.personal) NamedWallet(null, null, NamedWallet.PersonalName, myAvatar, WalletOwnerType.Person, true, w.status, w.owner.signerUserId)
     else {
         val chat = chats.firstOrNull { it.chat.chatId == w.owner.chatId }?.chat
-        NamedWallet(w.walletId, w.owner.chatId, chat?.title ?: "Group wallet", chat?.avatarUrl, w.owner.type, w.canSign, w.status, w.owner.signerUserId)
+        NamedWallet(w.walletId, w.owner.chatId, chat?.title ?: "Group wallet", chat?.avatarUrl, w.owner.type, w.canSign, w.status, w.owner.signerUserId, w.blockchains)
     }
 }
 
