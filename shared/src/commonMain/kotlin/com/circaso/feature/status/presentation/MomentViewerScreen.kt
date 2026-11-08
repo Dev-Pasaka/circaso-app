@@ -433,7 +433,12 @@ private fun BoxScope.Stage(moment: Moment, media: ViewerMedia, onRetry: () -> Un
             }
             when (media) {
                 is ViewerMedia.Ready -> when (moment.kind) {
-                    MomentKind.Image -> coil3.compose.AsyncImage(media.bytes, moment.caption ?: "Photo", Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+                    MomentKind.Image -> if (com.circaso.designsystem.adaptive.LocalWindowLayout.current.wide) {
+                        // On a wide screen (a phone on its side, a tablet) cropping a portrait photo to fill would cut
+                        // most of it away: the whole photo shows, at its own shape, over a soft blur of itself.
+                        coil3.compose.AsyncImage(media.bytes, null, Modifier.fillMaxSize().blur(40.dp).graphicsLayer { scaleX = 1.2f; scaleY = 1.2f; alpha = 0.6f }, contentScale = ContentScale.Crop)
+                        coil3.compose.AsyncImage(media.bytes, moment.caption ?: "Photo", Modifier.fillMaxSize(), contentScale = ContentScale.Fit)
+                    } else coil3.compose.AsyncImage(media.bytes, moment.caption ?: "Photo", Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
                     // No player controls (Pasaka, 2026-11-03): hold anywhere to pause, the speaker at the top mutes.
                     MomentKind.Video -> media.path?.let { MomentVideo(it, playing = !paused, muted = muted, modifier = Modifier.fillMaxSize(), poster = thumb) }
                     else -> VoiceStage(moment, media.bytes, paused, posterName, posterAvatar)

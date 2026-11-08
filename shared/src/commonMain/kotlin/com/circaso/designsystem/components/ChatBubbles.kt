@@ -138,13 +138,25 @@ fun BubbleMeta(text: String, modifier: Modifier = Modifier, icon: CircasoIcon? =
     }
 }
 
-/** One message's column: the bubble and its meta line, aligned to the sender's side, at most 75% wide. */
+/**
+ * One message's column: the bubble and its meta line, aligned to the sender's side, at most 75% wide on a phone. On a
+ * wider screen (a phone on its side, a tablet's chat pane) a long message gets more room, as in iPad Messages, but
+ * never more than a comfortable line ([BubbleMaxWide]), so text is never a strip across the screen.
+ */
 @Composable
 fun MessageColumn(outgoing: Boolean, modifier: Modifier = Modifier, content: @Composable ColumnScope.() -> Unit) {
+    val width = com.circaso.designsystem.adaptive.LocalWindowLayout.current.width
+    val max = if (width < 600.dp) BubbleMax else minOf(width * 0.62f, BubbleMaxWide)
     Row(modifier.fillMaxWidth(), horizontalArrangement = if (outgoing) Arrangement.End else Arrangement.Start) {
-        Column(Modifier.widthIn(max = 292.dp), horizontalAlignment = if (outgoing) Alignment.End else Alignment.Start, verticalArrangement = Arrangement.spacedBy(2.dp), content = content)
+        Column(Modifier.widthIn(max = max), horizontalAlignment = if (outgoing) Alignment.End else Alignment.Start, verticalArrangement = Arrangement.spacedBy(2.dp), content = content)
     }
 }
+
+/** A message's widest on a phone: 75% of a 390 dp screen (the design's bubble). */
+private val BubbleMax = 292.dp
+
+/** A message's widest anywhere: about 60 characters of body text, the comfortable reading line. */
+private val BubbleMaxWide = 440.dp
 
 /** The day marker between runs of messages ("Today"): 12/16, semibold, secondary, centred. */
 @Composable

@@ -778,7 +778,7 @@ private fun GalleryScreen(gallery: GalleryState, state: MediaComposeState, compo
                         style = t.body.copy(color = cc.inkSecondary, textAlign = TextAlign.Center))
                 }
                 else -> androidx.compose.foundation.lazy.grid.LazyVerticalGrid(
-                    androidx.compose.foundation.lazy.grid.GridCells.Fixed(GalleryColumns), Modifier.fillMaxWidth().weight(1f),
+                    galleryCells(), Modifier.fillMaxWidth().weight(1f),
                     horizontalArrangement = Arrangement.spacedBy(GalleryGap), verticalArrangement = Arrangement.spacedBy(GalleryGap),
                 ) {
                     items(items.size, key = { items[it].id }) { i ->
@@ -792,19 +792,23 @@ private fun GalleryScreen(gallery: GalleryState, state: MediaComposeState, compo
     }
 }
 
-/** The gallery's grid as blank tiles (three across, the same gaps), shown while the library is read. */
+/** The gallery's grid as blank tiles (the same columns and gaps), shown while the library is read. */
 @Composable
 private fun GalleryPlaceholder(modifier: Modifier) {
     val cc = CircasoTheme.colors
     androidx.compose.foundation.lazy.grid.LazyVerticalGrid(
-        androidx.compose.foundation.lazy.grid.GridCells.Fixed(GalleryColumns), modifier.semantics { contentDescription = "Loading your gallery" },
+        galleryCells(), modifier.semantics { contentDescription = "Loading your gallery" },
         horizontalArrangement = Arrangement.spacedBy(GalleryGap), verticalArrangement = Arrangement.spacedBy(GalleryGap), userScrollEnabled = false,
     ) {
         items(GalleryPlaceholderTiles) { com.circaso.designsystem.components.SkeletonBlock(Modifier.fillMaxWidth().aspectRatio(1f), androidx.compose.ui.graphics.RectangleShape) }
     }
 }
 
-private const val GalleryColumns = 3
+/**
+ * Three across on a phone (the design), more as the screen widens, as Photos does: a tablet or a phone on its side
+ * gets more columns, never three huge tiles. 112 dp keeps every phone from 360 to 450 dp wide at three.
+ */
+private fun galleryCells() = androidx.compose.foundation.lazy.grid.GridCells.Adaptive(minSize = 112.dp)
 private const val GalleryPlaceholderTiles = 24
 private val GalleryGap = 2.dp
 

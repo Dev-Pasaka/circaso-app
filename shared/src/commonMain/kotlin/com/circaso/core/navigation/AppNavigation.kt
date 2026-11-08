@@ -333,7 +333,7 @@ fun AppNavigation(forceUpdate: Boolean, home: @Composable () -> Unit) {
             }
             entry<ContactsRoute> { ContactsScreen(koinViewModel(), onBack = ::pop) }
             // A chat's photos, videos and documents: the moment composer's screens, sent to this chat (2026-11-07).
-            entry<ChatMediaRoute> { route ->
+            entry<ChatMediaRoute>(metadata = Panes.FullScreen) { route ->
                 com.circaso.feature.messaging.presentation.ChatMediaComposerScreen(
                     koinViewModel(key = "chat-media-${route.chatId}-${route.start}-${route.more.joinToString()}", parameters = { parametersOf(route.chatId, route.start, route.more) }),
                     onClose = {
@@ -357,14 +357,14 @@ fun AppNavigation(forceUpdate: Boolean, home: @Composable () -> Unit) {
                     },
                 )
             }
-            entry<SharedMomentRoute> {
+            entry<SharedMomentRoute>(metadata = Panes.FullScreen) {
                 com.circaso.feature.status.presentation.MomentComposerScreen(
                     koinViewModel(key = "moment-shared", parameters = { parametersOf(true) }), onClose = ::pop,
                     onAudience = { backStack.add(MomentsPrivacyRoute) }, onFindPeople = { backStack.add(ContactsRoute) },
                 )
             }
-            entry<MomentComposerRoute> { com.circaso.feature.status.presentation.MomentComposerScreen(koinViewModel(), onClose = ::pop, onAudience = { backStack.add(MomentsPrivacyRoute) }, onFindPeople = { backStack.add(ContactsRoute) }) }
-            entry<MomentViewerRoute> { key ->
+            entry<MomentComposerRoute>(metadata = Panes.FullScreen) { com.circaso.feature.status.presentation.MomentComposerScreen(koinViewModel(), onClose = ::pop, onAudience = { backStack.add(MomentsPrivacyRoute) }, onFindPeople = { backStack.add(ContactsRoute) }) }
+            entry<MomentViewerRoute>(metadata = Panes.FullScreen) { key ->
                 val chats = koinInject<com.circaso.feature.messaging.domain.ChatsRepository>()
                 val scope = androidx.compose.runtime.rememberCoroutineScope()
                 com.circaso.feature.status.presentation.MomentViewerScreen(
