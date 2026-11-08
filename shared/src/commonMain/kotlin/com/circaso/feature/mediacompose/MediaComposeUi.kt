@@ -805,11 +805,17 @@ private fun GalleryPlaceholder(modifier: Modifier) {
 }
 
 /**
- * Three across on a phone (the design), more as the screen widens, as Photos does: a tablet or a phone on its side
- * gets more columns, never three huge tiles. 112 dp keeps every phone from 360 to 450 dp wide at three.
+ * Three across on a phone (the design), more as the screen widens, as Photos does: a phone on its side or a small
+ * tablet gets more columns of a phone's tile (112 dp keeps every phone from 360 to 450 dp wide at three), a large
+ * tablet larger tiles (Photos shows about 7 across a 13" iPad), never three huge tiles nor a contact sheet.
  */
-private fun galleryCells() = androidx.compose.foundation.lazy.grid.GridCells.Adaptive(minSize = 112.dp)
-private const val GalleryPlaceholderTiles = 24
+@Composable
+private fun galleryCells() = androidx.compose.foundation.lazy.grid.GridCells.Adaptive(
+    minSize = if (com.circaso.designsystem.adaptive.LocalWindowLayout.current.widthClass == com.circaso.designsystem.adaptive.WidthClass.Expanded) 160.dp else 112.dp,
+)
+
+/** Enough blank tiles to cover the largest screen; the lazy grid only draws the ones on screen. */
+private const val GalleryPlaceholderTiles = 72
 private val GalleryGap = 2.dp
 
 /**

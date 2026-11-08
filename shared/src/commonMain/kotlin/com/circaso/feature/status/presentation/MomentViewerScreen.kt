@@ -55,6 +55,8 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.geometry.isUnspecified
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.liveRegion
@@ -433,12 +435,7 @@ private fun BoxScope.Stage(moment: Moment, media: ViewerMedia, onRetry: () -> Un
             }
             when (media) {
                 is ViewerMedia.Ready -> when (moment.kind) {
-                    MomentKind.Image -> if (com.circaso.designsystem.adaptive.LocalWindowLayout.current.wide) {
-                        // On a wide screen (a phone on its side, a tablet) cropping a portrait photo to fill would cut
-                        // most of it away: the whole photo shows, at its own shape, over a soft blur of itself.
-                        coil3.compose.AsyncImage(media.bytes, null, Modifier.fillMaxSize().blur(40.dp).graphicsLayer { scaleX = 1.2f; scaleY = 1.2f; alpha = 0.6f }, contentScale = ContentScale.Crop)
-                        coil3.compose.AsyncImage(media.bytes, moment.caption ?: "Photo", Modifier.fillMaxSize(), contentScale = ContentScale.Fit)
-                    } else coil3.compose.AsyncImage(media.bytes, moment.caption ?: "Photo", Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+                    MomentKind.Image -> MomentPhoto(media.bytes, moment.caption ?: "Photo", thumb)
                     // No player controls (Pasaka, 2026-11-03): hold anywhere to pause, the speaker at the top mutes.
                     MomentKind.Video -> media.path?.let { MomentVideo(it, playing = !paused, muted = muted, modifier = Modifier.fillMaxSize(), poster = thumb) }
                     else -> VoiceStage(moment, media.bytes, paused, posterName, posterAvatar)
@@ -453,6 +450,31 @@ private fun BoxScope.Stage(moment: Moment, media: ViewerMedia, onRetry: () -> Un
                 ViewerMedia.None -> Unit
             }
         }
+    }
+}
+
+/**
+ * A photo moment. Shaped like the stage (a portrait photo on an upright phone) it fills it, cropped a little, as the
+ * design shows; shaped very differently (portrait on a phone on its side or an iPad in landscape, landscape on an
+ * upright phone) it shows whole, over its own blurred placeholder, by the same rule as moment videos
+ * ([com.circaso.core.platform.MomentVideoEncoding.fills]). The placeholder travelled in the encrypted body already
+ * blurred, so this looks the same on every Android version (Modifier.blur does nothing before Android 12).
+ */
+@Composable
+private fun MomentPhoto(bytes: ByteArray, description: String, thumb: ByteArray?) {
+    var photo by remember { androidx.compose.runtime.mutableStateOf(androidx.compose.ui.geometry.Size.Unspecified) }
+    var stage by remember { androidx.compose.runtime.mutableStateOf(androidx.compose.ui.unit.IntSize.Zero) }
+    val fills = photo.isUnspecified || stage == androidx.compose.ui.unit.IntSize.Zero ||
+        com.circaso.core.platform.MomentVideoEncoding.fills(photo.width.toInt(), photo.height.toInt(), stage.width, stage.height)
+    Box(Modifier.fillMaxSize().onSizeChanged { stage = it }) {
+        if (!fills && thumb != null) {
+            coil3.compose.AsyncImage(thumb, null, Modifier.fillMaxSize().graphicsLayer { scaleX = 1.2f; scaleY = 1.2f; alpha = 0.6f }, contentScale = ContentScale.Crop)
+        }
+        coil3.compose.AsyncImage(
+            bytes, description, Modifier.fillMaxSize(),
+            contentScale = if (fills) ContentScale.Crop else ContentScale.Fit,
+            onSuccess = { photo = it.painter.intrinsicSize },
+        )
     }
 }
 
