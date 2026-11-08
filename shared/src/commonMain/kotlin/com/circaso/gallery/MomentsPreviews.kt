@@ -33,6 +33,16 @@ internal fun MomentsChatsPreview(name: String): Boolean {
         "chats-moments-no-contacts" -> ChatsContent(ChatsUiState(chats = chatList, loaded = true, filter = ChatFilter.Moments), PaddingValues(bottom = 90.dp), {}, {}, {}, onNewChat = {}, moments = momentsSlot(com.circaso.feature.status.presentation.MomentsUiState(myName = "Pasaka Mutuku", loaded = true, refreshed = true, hasContacts = false)))
         "chats-moments-no-match" -> ChatsContent(ChatsUiState(chats = chatList, loaded = true, filter = ChatFilter.Moments, query = "Zawadi"), PaddingValues(bottom = 90.dp), {}, {}, {}, onNewChat = {}, moments = momentsSlot(sampleMoments()))
         "chats-moments-stale" -> ChatsContent(ChatsUiState(chats = chatList, loaded = true, filter = ChatFilter.Moments), PaddingValues(bottom = 90.dp), {}, {}, {}, onNewChat = {}, moments = momentsSlot(sampleMoments().copy(failed = true, checkFailedWithData = true, requestId = "req_7Hq2kD")))
+        // A new phone (2026-11-08): rings whose moments can't be opened here yet, and one row opened to say why.
+        "chats-moments-new-phone" -> ChatsContent(ChatsUiState(chats = chatList, loaded = true, filter = ChatFilter.Moments), PaddingValues(bottom = 90.dp), {}, {}, {}, onNewChat = {}, moments = momentsSlot(newPhoneMoments()))
+        "chats-moments-new-phone-open" -> {
+            val c = com.circaso.designsystem.theme.CircasoTheme.colors
+            androidx.compose.foundation.lazy.LazyColumn(androidx.compose.ui.Modifier.fillMaxSize().background(c.bg)) {
+                newPhoneMoments().rings.filter { it.allLocked }.forEach { r ->
+                    item { com.circaso.feature.status.presentation.LockedRingRow(r, androidx.compose.ui.Modifier, initiallyOpen = true) }
+                }
+            }
+        }
         else -> return false
     }
     return true
@@ -50,6 +60,23 @@ internal fun MomentsMutedOpenPreview() {
     androidx.compose.foundation.lazy.LazyColumn(androidx.compose.ui.Modifier.fillMaxSize().background(c.bg)) {
         momentsList(sampleMoments(), "", mutedOpen = true, onToggleMuted = {}, actions = noMomentsActions, now = com.circaso.core.sync.nowMillis())
     }
+}
+
+/** A new phone: Baraka's moments wait for his phone, Njeri's can't be opened here, Wanjiru has one open and two on the way. */
+internal fun newPhoneMoments(): com.circaso.feature.status.presentation.MomentsUiState {
+    val now = com.circaso.core.sync.nowMillis()
+    fun lock(id: String, who: String, state: com.circaso.feature.status.domain.LockState, minutesAgo: Long) =
+        com.circaso.feature.status.domain.LockedMoment(id, who, now - minutesAgo * 60_000, now + 3_600_000, state)
+    val waiting = com.circaso.feature.status.domain.LockState.Waiting
+    val readable = sampleMoments().rings.first()
+    return sampleMoments().copy(
+        rings = listOf(
+            readable.copy(locked = listOf(lock("w1", readable.posterId, waiting, 5), lock("w2", readable.posterId, waiting, 8))),
+            com.circaso.feature.status.domain.MomentRing("b", "Baraka Otieno", null, emptyList(), muted = false, locked = listOf(lock("b1", "b", waiting, 15))),
+            com.circaso.feature.status.domain.MomentRing("n", "Njeri", null, emptyList(), muted = false,
+                locked = listOf(lock("n1", "n", com.circaso.feature.status.domain.LockState.Unavailable, 600))),
+        ),
+    )
 }
 
 /** Moments from people in the sample contacts: three new (Mum among them, so her chat row is ringed), one seen, one muted. */

@@ -42,7 +42,9 @@ import com.circaso.feature.status.data.remote.PostedMomentDto
 import com.circaso.feature.status.data.remote.ViewedDto
 import com.circaso.feature.status.data.repository.MomentKeyCopiesHandler
 import com.circaso.feature.status.data.repository.MomentKeys
+import com.circaso.feature.status.data.repository.MomentKeyRequestPush
 import com.circaso.feature.status.data.repository.MomentsRepositoryImpl
+import com.circaso.feature.status.domain.LockState
 import com.circaso.testing.FakeChatsDao
 import com.circaso.testing.FakeKeys
 import com.circaso.testing.FakeKeysRemote
@@ -62,6 +64,7 @@ import kotlin.io.encoding.Base64
 import kotlin.test.Test
 import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 
@@ -171,6 +174,63 @@ class MomentKeyRequestTest {
         assertEquals("Habari", repo.moments.first().single().text)
     }
 
+    @Test fun aNewPhoneShowsWhoseMomentsAreOnTheirWayInsteadOfNothing() = runSuspending {
+        remote.moments = listOf(unreadable("m1", amina), unreadable("m2", amina))
+        repo.refresh()
+
+        assertTrue(repo.moments.first().isEmpty())
+        val locked = repo.locked.first()
+        assertEquals(listOf("m1", "m2"), locked.map { it.momentId })
+        assertTrue(locked.all { it.posterId == amina && it.state == LockState.Waiting })
+    }
+
+    @Test fun anAnswerWithoutAMomentMakesItUnavailableAndItIsNotAskedAboutAgain() = runSuspending {
+        remote.requestResult = AppResult.Success(KeyRequestedDto(listOf(amina)))
+        remote.moments = listOf(unreadable("old", amina), unreadable("m2", amina))
+        repo.refresh()
+        assertEquals(1, remote.keyRequests.size)
+
+        // Her phone answered with a copy for m2 only: "old" was shared from her earlier phone.
+        val body = """{"v":1,"kind":"Text","text":"Habari","background":"Ink","style":"Bold"}"""
+        remote.moments = listOf(
+            unreadable("old", amina),
+            unreadable("m2", amina, keyCopy = sealedFor(ChatPayload(type = ChatPayload.MomentBody, momentId = "m2", text = body))),
+        )
+        repo.onFrame("status.keys_ready", null, amina)
+
+        assertEquals(listOf("m2"), repo.moments.first().map { it.momentId })
+        assertEquals(listOf(LockState.Unavailable), repo.locked.first().map { it.state })
+        clock += 60 * 60 * 1000L
+        repo.refresh()
+        assertEquals(1, remote.keyRequests.size, "her phone already said it has nothing for it")
+    }
+
+    @Test fun aKeysReadyThisRunNeverAskedForLeavesTheMomentWaiting() = runSuspending {
+        remote.moments = listOf(unreadable("m1", baraka))
+        repo.onFrame("status.keys_ready", null, amina) // replayed from before; this phone never asked Amina
+        assertEquals(listOf(LockState.Waiting), repo.locked.first().map { it.state })
+    }
+
+    @Test fun stillWaitingAfterHalfAnHourAsksAgainAndASkippedRequestAfterTenMinutes() = runSuspending {
+        remote.requestResult = AppResult.Success(KeyRequestedDto(listOf(amina)))
+        remote.moments = listOf(unreadable("m1", amina))
+        repo.refresh()
+        clock += 20 * 60 * 1000L
+        repo.refresh()
+        assertEquals(1, remote.keyRequests.size)
+        clock += 10 * 60 * 1000L
+        repo.refresh()
+        assertEquals(2, remote.keyRequests.size, "her phone may have missed it: asked again after 30 minutes")
+
+        // The server skipped Baraka (asked within its 10 minutes, e.g. before a restart): asked again once that passes.
+        remote.requestResult = AppResult.Success(KeyRequestedDto(emptyList()))
+        remote.moments = listOf(unreadable("b1", baraka))
+        repo.refresh()
+        clock += 10 * 60 * 1000L
+        repo.refresh()
+        assertEquals(listOf(listOf(amina), listOf(amina), listOf(baraka), listOf(baraka)), remote.keyRequests)
+    }
+
     // ---- poster side
 
     @Test fun aKeyRequestRefreshesTheSessionClearsTheDeliveryAndSendsAFreshCopyPerMoment() = runSuspending {
@@ -220,13 +280,36 @@ class MomentKeyRequestTest {
         assertEquals(listOf("stranger"), chatsDao.deliveredTo(MomentKeys.Scope, "d1"))
     }
 
-    @Test fun withNoMomentsPostedFromThisPhoneNothingIsSentButMyNextMomentCopiesTheKey() = runSuspending {
+    @Test fun withNoMomentsPostedFromThisPhoneTheAnswerHasNoCopiesButNamesHerAndMyNextMomentCopiesTheKey() = runSuspending {
         dao.upsert(listOf(MomentEntity("from-old-phone", me, null, "x", null, clock, clock + day, mine = true, viewed = true, reacted = false, viewCount = 0)))
         chatsDao.insertDeliveries(listOf(SenderKeyDeliveryEntity(MomentKeys.Scope, amina, "d1", 0)))
         repo.onFrame("status.key_requested", null, null, requesterId = amina)
         processor.drain()
-        assertTrue(remote.sharedCopies.isEmpty())
+        // Before 2026-11-08 nothing was sent, so her new phone waited in silence for moments that could never come.
+        assertEquals(listOf(emptyList<MomentKeyCopyDto>()), remote.sharedCopies, "no copies: this phone never had those bodies")
+        assertEquals<List<String>>(listOf(amina), remote.answered, "but she is told, so her phone stops waiting")
         assertTrue(chatsDao.deliveredTo(MomentKeys.Scope, "d1").isEmpty())
+    }
+
+    @Test fun anAnswerWithCopiesNamesTheRequesterToo() = runSuspending {
+        myMoment("mine-1", """{"v":1,"kind":"Text","text":"one"}""")
+        repo.onFrame("status.key_requested", null, null, requesterId = amina)
+        processor.drain()
+        assertEquals(listOf("mine-1"), remote.sharedCopies.single().map { it.momentId })
+        assertEquals<List<String>>(listOf(amina), remote.answered)
+    }
+
+    @Test fun theSilentPushAnswersAtOnceWithCircasoClosed() = runSuspending {
+        myMoment("mine-1", """{"v":1,"kind":"Text","text":"one"}""")
+        val handled = MomentKeyRequestPush.handle(
+            mapOf("kind" to "moment.keys_requested", "userId" to amina), repository = { repo }, drain = { processor.drain() }, windowMillis = 5_000,
+        )
+        assertTrue(handled)
+        assertEquals(listOf("mine-1"), remote.sharedCopies.single().map { it.momentId }, "sent within the push, not on the next open")
+        assertEquals(0, outbox.waiting(com.circaso.feature.status.data.repository.MomentOutbox.KeyCopies))
+
+        assertFalse(MomentKeyRequestPush.handle(mapOf("kind" to "moment.loved"), repository = { repo }, drain = { processor.drain() }, windowMillis = 5_000))
+        assertEquals(1, remote.sharedCopies.size, "any other push is left to the usual handling")
     }
 
     // ---- identity changes seen in chats
@@ -281,11 +364,14 @@ private class KeyRequestRemote : MomentsRemote {
     val keyRequests = mutableListOf<List<String>>()
     var requestResult: AppResult<KeyRequestedDto> = AppResult.Success(KeyRequestedDto())
     val sharedCopies = mutableListOf<List<MomentKeyCopyDto>>()
+    val answered = mutableListOf<String>()
     var shareResult: AppResult<KeyCopiesSentDto> = AppResult.Success(KeyCopiesSentDto(1))
 
     override suspend fun page(after: String?, limit: Int) = AppResult.Success(MomentsPageDto(moments, null))
     override suspend fun requestKeys(posterIds: List<String>, idempotencyKey: String): AppResult<KeyRequestedDto> { keyRequests += posterIds; return requestResult }
-    override suspend fun shareKeyCopies(copies: List<MomentKeyCopyDto>, idempotencyKey: String): AppResult<KeyCopiesSentDto> { sharedCopies += copies; return shareResult }
+    override suspend fun shareKeyCopies(copies: List<MomentKeyCopyDto>, answered: List<String>, idempotencyKey: String): AppResult<KeyCopiesSentDto> {
+        sharedCopies += copies; this.answered.addAll(answered); return shareResult
+    }
     override suspend fun prepareMedia(sizeBytes: Long, kind: String, idempotencyKey: String): AppResult<MomentMediaUploadDto> = AppResult.Failure(AppError.Network)
     override suspend fun completeMedia(mediaId: String, idempotencyKey: String): AppResult<MomentMediaCompletedDto> = AppResult.Failure(AppError.Network)
     override suspend fun post(request: PostMomentRequest): AppResult<PostedMomentDto> = AppResult.Failure(AppError.Network)

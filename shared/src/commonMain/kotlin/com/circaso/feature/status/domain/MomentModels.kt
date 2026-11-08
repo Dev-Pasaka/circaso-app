@@ -74,10 +74,34 @@ data class PendingMoment(val localId: String, val kind: MomentKind, val state: P
 
 enum class PendingState { Posting, Waiting, Failed }
 
-/** One person's ring in the Moments list (the Moments chip in Chats): their live moments, oldest first. */
-data class MomentRing(val posterId: String, val name: String, val avatarUrl: String?, val moments: List<Moment>, val muted: Boolean) {
+/**
+ * Someone's live moment this phone can't open yet. On a new phone the copies the poster sent were sealed for the old
+ * phone's keys, so this one asks the poster's phone for fresh ones (key request); until they come the moment is
+ * [LockState.Waiting]. [LockState.Unavailable]: the poster's phone answered without it (shared from their earlier
+ * phone, which no phone of theirs can seal again), so it never opens here.
+ */
+data class LockedMoment(val momentId: String, val posterId: String, val postedAt: Long, val expiresAt: Long, val state: LockState)
+
+enum class LockState { Waiting, Unavailable }
+
+/**
+ * One person's ring in the Moments list (the Moments chip in Chats): their live moments, oldest first, and the ones
+ * this phone can't open yet ([locked]), so a new phone shows the person instead of nothing.
+ */
+data class MomentRing(
+    val posterId: String,
+    val name: String,
+    val avatarUrl: String?,
+    val moments: List<Moment>,
+    val muted: Boolean,
+    val locked: List<LockedMoment> = emptyList(),
+) {
     val unseen: Boolean get() = moments.any { !it.viewed }
-    val latestAt: Long get() = moments.maxOf { it.postedAt }
+    val latestAt: Long get() = (moments.map { it.postedAt } + locked.map { it.postedAt }).maxOrNull() ?: 0L
+    /** Moments still on their way from the poster's phone. */
+    val waiting: Int get() = locked.count { it.state == LockState.Waiting }
+    /** Nothing here opens yet: the row explains instead of opening the viewer. */
+    val allLocked: Boolean get() = moments.isEmpty() && locked.isNotEmpty()
 }
 
 /** Who sees my moments (P1). Chosen and kept on this phone; the server never learns anyone's contacts. */
@@ -118,6 +142,8 @@ sealed interface MomentMediaLoad {
 interface MomentsRepository {
     /** My moments and everyone else's I may see, from the phone; refreshed in the background. */
     val moments: Flow<List<Moment>>
+    /** Others' live moments this phone can't open yet (a new phone), so their rings show while the keys come. */
+    val locked: Flow<List<LockedMoment>> get() = kotlinx.coroutines.flow.flowOf(emptyList())
     val pending: Flow<List<PendingMoment>>
     val privacy: Flow<MomentPrivacy>
     val muted: Flow<Set<String>>

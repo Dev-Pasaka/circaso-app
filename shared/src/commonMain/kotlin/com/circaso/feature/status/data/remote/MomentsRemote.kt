@@ -61,7 +61,11 @@ import kotlinx.serialization.Serializable
 @Serializable data class KeyRequestDto(val posterIds: List<String>)
 @Serializable data class KeyRequestedDto(val requested: List<String> = emptyList())
 @Serializable data class MomentKeyCopyDto(val momentId: String, val userId: String, val ciphertext: String)
-@Serializable data class KeyCopiesDto(val copies: List<MomentKeyCopyDto>)
+/**
+ * [answered]: whose request this answers, copies or not (2026-11-08). Someone with no copy is still told
+ * (`status.keys_ready`), so their phone stops waiting for moments this phone can't seal again.
+ */
+@Serializable data class KeyCopiesDto(val copies: List<MomentKeyCopyDto>, val answered: List<String> = emptyList())
 @Serializable data class KeyCopiesSentDto(val copied: Int = 0)
 
 interface MomentsRemote {
@@ -74,7 +78,7 @@ interface MomentsRemote {
     suspend fun delete(momentId: String, idempotencyKey: String): AppResult<MomentDeletedDto>
     suspend fun download(mediaId: String): AppResult<MomentMediaDownloadDto>
     suspend fun requestKeys(posterIds: List<String>, idempotencyKey: String): AppResult<KeyRequestedDto>
-    suspend fun shareKeyCopies(copies: List<MomentKeyCopyDto>, idempotencyKey: String): AppResult<KeyCopiesSentDto>
+    suspend fun shareKeyCopies(copies: List<MomentKeyCopyDto>, answered: List<String>, idempotencyKey: String): AppResult<KeyCopiesSentDto>
 }
 
 class KtorMomentsRemote(private val api: CircasoApi) : MomentsRemote {
@@ -115,8 +119,8 @@ class KtorMomentsRemote(private val api: CircasoApi) : MomentsRemote {
         contentType(ContentType.Application.Json); setBody(KeyRequestDto(posterIds))
     }
 
-    override suspend fun shareKeyCopies(copies: List<MomentKeyCopyDto>, idempotencyKey: String) = api.call<KeyCopiesSentDto> {
+    override suspend fun shareKeyCopies(copies: List<MomentKeyCopyDto>, answered: List<String>, idempotencyKey: String) = api.call<KeyCopiesSentDto> {
         method = HttpMethod.Post; url("/v1/moments/key-copies"); idempotencyKey(idempotencyKey)
-        contentType(ContentType.Application.Json); setBody(KeyCopiesDto(copies))
+        contentType(ContentType.Application.Json); setBody(KeyCopiesDto(copies, answered))
     }
 }
