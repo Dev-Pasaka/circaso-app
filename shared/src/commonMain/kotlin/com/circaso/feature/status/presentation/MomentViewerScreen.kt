@@ -456,9 +456,10 @@ private fun BoxScope.Stage(moment: Moment, media: ViewerMedia, onRetry: () -> Un
 /**
  * A photo moment. Shaped like the stage (a portrait photo on an upright phone) it fills it, cropped a little, as the
  * design shows; shaped very differently (portrait on a phone on its side or an iPad in landscape, landscape on an
- * upright phone) it shows whole, over its own blurred placeholder, by the same rule as moment videos
- * ([com.circaso.core.platform.MomentVideoEncoding.fills]). The placeholder travelled in the encrypted body already
- * blurred, so this looks the same on every Android version (Modifier.blur does nothing before Android 12).
+ * upright phone) it shows whole, by the same rule as moment videos ([com.circaso.core.platform.MomentVideoEncoding.fills]),
+ * over its own small placeholder (the 96 px thumbnail from the encrypted body) blurred and dimmed, exactly as the
+ * loading state draws it, so nothing changes around the photo when it arrives. Before Android 12 the blur is a no-op
+ * and the tiny thumbnail stretched soft stands in for it.
  */
 @Composable
 private fun MomentPhoto(bytes: ByteArray, description: String, thumb: ByteArray?) {
@@ -468,7 +469,7 @@ private fun MomentPhoto(bytes: ByteArray, description: String, thumb: ByteArray?
         com.circaso.core.platform.MomentVideoEncoding.fills(photo.width.toInt(), photo.height.toInt(), stage.width, stage.height)
     Box(Modifier.fillMaxSize().onSizeChanged { stage = it }) {
         if (!fills && thumb != null) {
-            coil3.compose.AsyncImage(thumb, null, Modifier.fillMaxSize().graphicsLayer { scaleX = 1.2f; scaleY = 1.2f; alpha = 0.6f }, contentScale = ContentScale.Crop)
+            coil3.compose.AsyncImage(thumb, null, Modifier.fillMaxSize().blur(24.dp).graphicsLayer { scaleX = 1.2f; scaleY = 1.2f }, contentScale = ContentScale.Crop)
         }
         coil3.compose.AsyncImage(
             bytes, description, Modifier.fillMaxSize(),

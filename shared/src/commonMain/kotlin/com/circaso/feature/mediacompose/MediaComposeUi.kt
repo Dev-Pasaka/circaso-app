@@ -811,8 +811,12 @@ private fun GalleryPlaceholder(modifier: Modifier) {
  */
 @Composable
 private fun galleryCells() = androidx.compose.foundation.lazy.grid.GridCells.Adaptive(
-    minSize = if (com.circaso.designsystem.adaptive.LocalWindowLayout.current.widthClass == com.circaso.designsystem.adaptive.WidthClass.Expanded) 160.dp else 112.dp,
+    minSize = if (com.circaso.designsystem.adaptive.LocalWindowLayout.current.widthClass == com.circaso.designsystem.adaptive.WidthClass.Expanded) GalleryTileLarge else GalleryTile,
 )
+
+/** A gallery tile's least width: a phone's (three across), and a large tablet's (about seven across a 13" iPad). */
+private val GalleryTile = 112.dp
+private val GalleryTileLarge = 160.dp
 
 /** Enough blank tiles to cover the largest screen; the lazy grid only draws the ones on screen. */
 private const val GalleryPlaceholderTiles = 72

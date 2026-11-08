@@ -53,6 +53,8 @@ data class WindowLayout(val width: Dp, val height: Dp) {
         val ReadableWidth = 680.dp
         /** Buttons and short forms on a tablet (sign-in, a single field and its button): about iPadOS's sheet content. */
         val FormWidth = 440.dp
+        /** A sheet on a tablet: iPadOS's form sheet is 540 pt wide. */
+        val SheetWidth = 540.dp
         /** A layout designed in two columns (a phone on its side): wider, still framed, never the whole screen. */
         val WideContentWidth = 900.dp
         /** The top bar's column down the left side on a phone on its side. */

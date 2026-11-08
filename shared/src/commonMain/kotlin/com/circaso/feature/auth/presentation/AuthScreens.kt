@@ -120,7 +120,7 @@ fun WelcomeScreen(viewModel: WelcomeViewModel) {
                 verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.CenterHorizontally,
             ) {
                 intro()
-                Spacer(Modifier.height(48.dp))
+                Spacer(Modifier.height(com.circaso.designsystem.theme.CircasoSpacing.s14))
                 Column(Modifier.widthIn(max = com.circaso.designsystem.adaptive.WindowLayout.FormWidth)) { actions() }
             }
         } else {

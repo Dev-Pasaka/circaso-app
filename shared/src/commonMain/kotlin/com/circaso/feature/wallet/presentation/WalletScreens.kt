@@ -72,6 +72,7 @@ import com.circaso.designsystem.components.SegmentedControl
 import com.circaso.designsystem.motion.pressable
 import com.circaso.designsystem.theme.CircasoSizes
 import com.circaso.designsystem.theme.CircasoSpacing
+import com.circaso.designsystem.adaptive.readableWidth
 import com.circaso.designsystem.theme.CircasoMotion
 import com.circaso.designsystem.theme.CircasoTheme
 import com.circaso.feature.wallet.domain.FiatValue
@@ -521,11 +522,10 @@ private fun ActiveWallet(
                     Modifier.onGloballyPositioned { cardsBottom = it.boundsInWindow().bottom.takeIf { b -> b > pageTop + 1f } ?: 0f }.layout { measurable, constraints ->
                         // Upright the cards reach the screen edges to peek; on its side they stay in their column (the
                         // rail is beside them).
-                        val bleed = if (short || roomy) 0 else (CircasoSpacing.s4 * 2).roundToPx()
-                        // On a tablet the card keeps a card's size, centred (a 680 dp card would be a placard).
-                        val wide = if (roomy) minOf(constraints.maxWidth, CardMaxWidth.roundToPx()) else constraints.maxWidth + bleed
+                        val bleed = if (short) 0 else (CircasoSpacing.s4 * 2).roundToPx()
+                        val wide = constraints.maxWidth + bleed
                         val placeable = measurable.measure(constraints.copy(minWidth = wide, maxWidth = wide))
-                        layout(constraints.maxWidth, placeable.height) { placeable.place(if (roomy) (constraints.maxWidth - wide) / 2 else -bleed / 2, 0) }
+                        layout(constraints.maxWidth, placeable.height) { placeable.place(-bleed / 2, 0) }
                     },
                 ) {
                     ChainCards(byValue(wallet.chains, fiat), fiat, hidden, onToggleHidden, onAsset = actions.onAsset, onAssets = actions.onAssets, onGlow = { glow = it }) {
@@ -638,7 +638,9 @@ private fun ActiveWallet(
             }
         }
     } else {
-        LazyColumn(Modifier.fillMaxSize(), state = list, contentPadding = PaddingValues(start = CircasoSpacing.s4, end = CircasoSpacing.s4, top = 10.dp, bottom = bottom), verticalArrangement = Arrangement.spacedBy(22.dp)) {
+        // On a tablet the whole wallet is one centred column a card's width (iPad Wallet): a 680 dp card would be a
+        // placard, and a narrower card over wider rows reads as three sizes stacked.
+        LazyColumn(Modifier.fillMaxSize().let { if (roomy) it.readableWidth(CardMaxWidth + CircasoSpacing.s4 * 2) else it }, state = list, contentPadding = PaddingValues(start = CircasoSpacing.s4, end = CircasoSpacing.s4, top = 10.dp, bottom = bottom), verticalArrangement = Arrangement.spacedBy(22.dp)) {
             header?.let { h -> item(key = "header") { h(true) } }
             statusItems()
             item(key = "cards") { cardsBlock() }

@@ -341,7 +341,7 @@ private fun BoxScope.VideoCall(call: CallUi, actions: CallActions, money: String
         val (long, narrow) = if (tablet) SelfViewTabletLong to SelfViewTabletShort else SelfViewLong to SelfViewShort
         val landscape = layout.width > layout.height
         // Turning the screen reshapes the preview on a spring rather than snapping it.
-        val spec = if (CircasoTheme.reduceMotion) androidx.compose.animation.core.snap() else androidx.compose.animation.core.spring<androidx.compose.ui.unit.Dp>(dampingRatio = androidx.compose.animation.core.Spring.DampingRatioNoBouncy, stiffness = 420f)
+        val spec = if (CircasoTheme.reduceMotion) androidx.compose.animation.core.snap() else com.circaso.designsystem.motion.CircasoSpring.resize<androidx.compose.ui.unit.Dp>()
         val selfW by androidx.compose.animation.core.animateDpAsState(if (landscape) long else narrow, spec, label = "self-w")
         val selfH by androidx.compose.animation.core.animateDpAsState(if (landscape) narrow else long, spec, label = "self-h")
         Box(
@@ -375,7 +375,12 @@ private fun GroupCall(call: CallUi, actions: CallActions, chama: Chama?, fiat: F
         val beside = com.circaso.designsystem.adaptive.LocalWindowLayout.current.short && chama != null
         Row(Modifier.weight(1f).fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(CircasoSpacing.s3)) {
             Box(Modifier.weight(1f).fillMaxHeight(), contentAlignment = Alignment.BottomCenter) {
-                FittedTiles(tiles.map { it.userId } + MeTileId, Modifier.fillMaxSize()) { id -> tiles.firstOrNull { it.userId == id }?.let { Tile(it) } ?: MeTile(call) }
+                // Someone who just left is still drawn while their tile fades out.
+            val lastSeen = remember { mutableMapOf<String, CallPerson>() }
+            tiles.forEach { lastSeen[it.userId] = it }
+            FittedTiles(tiles.map { it.userId } + MeTileId, Modifier.fillMaxSize()) { id ->
+                if (id == MeTileId) MeTile(call) else (tiles.firstOrNull { it.userId == id } ?: lastSeen[id])?.let { Tile(it) }
+            }
                 // H5 after the PIN: a short line that the contribution is on its way, over the grid's lower edge just above
                 // the live goal (a transform only, so the video tiles aren't measured again each frame).
                 val reduce = CircasoTheme.reduceMotion
@@ -418,14 +423,25 @@ private fun Tile(p: CallPerson) {
     val t = CircasoTheme.typography
     val mid = p.videoMid
     // Wider than tall, so six people fit on a phone without scrolling (design H4's 2 x 3 grid).
-    Box(Modifier.fillMaxSize().clip(CircasoShapes.lg).background(CallColors.Control)) {
+    androidx.compose.foundation.layout.BoxWithConstraints(Modifier.fillMaxSize().clip(CircasoShapes.lg).background(CallColors.Control)) {
+        // A small tile (a phone on its side, a big call) keeps its face clear of the name under it.
+        val small = maxHeight < SmallTileHeight
+        val wide = maxWidth >= WideTileWidth
         if (p.video && mid != null) CallVideo(VideoSource.Remote(mid), Modifier.fillMaxSize())
-        else Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Avatar(p.name, size = CircasoSizes.avatarLg) }
+        else Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Avatar(p.name, size = if (small) CircasoSizes.avatarMd else CircasoSizes.avatarLg) }
         Row(Modifier.align(Alignment.BottomStart).padding(CircasoSpacing.s2), horizontalArrangement = Arrangement.spacedBy(CircasoSpacing.s1), verticalAlignment = Alignment.CenterVertically) {
-            BasicText(p.name.substringBefore(' '), style = t.footnote.copy(color = CallColors.Ink, fontWeight = FontWeight.SemiBold))
+            // Ringing or still connecting: the name in the soft colour says so on a narrow tile, in words on a wide one.
+            val waiting = p.ringing || (p.joined && !p.live)
+            BasicText(
+                p.name.substringBefore(' '), Modifier.weight(1f, fill = false),
+                style = t.footnote.copy(color = if (waiting && !wide) CallColors.InkSoft else CallColors.Ink, fontWeight = FontWeight.SemiBold),
+                maxLines = 1, overflow = TextOverflow.Ellipsis,
+            )
             if (!p.audio && p.joined) CircasoIconImage(CircasoIcon.MicOff, CallColors.Ink, Modifier.size(14.dp))
-            if (p.ringing) BasicText("· ringing", style = t.footnote.copy(color = CallColors.InkSoft))
-            else if (p.joined && !p.live) BasicText("· connecting", style = t.footnote.copy(color = CallColors.InkSoft))
+            if (wide) {
+                if (p.ringing) BasicText("· ringing", style = t.footnote.copy(color = CallColors.InkSoft), maxLines = 1)
+                else if (p.joined && !p.live) BasicText("· connecting", style = t.footnote.copy(color = CallColors.InkSoft), maxLines = 1)
+            }
         }
     }
 }
@@ -433,12 +449,19 @@ private fun Tile(p: CallPerson) {
 @Composable
 private fun MeTile(call: CallUi) {
     val t = CircasoTheme.typography
-    Box(Modifier.fillMaxSize().clip(CircasoShapes.lg).background(CallColors.Control)) {
+    androidx.compose.foundation.layout.BoxWithConstraints(Modifier.fillMaxSize().clip(CircasoShapes.lg).background(CallColors.Control)) {
+        val small = maxHeight < SmallTileHeight
         if (call.camera) CallVideo(VideoSource.Local, Modifier.fillMaxSize(), mirror = call.frontCamera)
-        else Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Avatar("You", size = CircasoSizes.avatarLg) }
+        else Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Avatar("You", size = if (small) CircasoSizes.avatarMd else CircasoSizes.avatarLg) }
         BasicText("You", style = t.footnote.copy(color = CallColors.Ink, fontWeight = FontWeight.SemiBold), modifier = Modifier.align(Alignment.BottomStart).padding(CircasoSpacing.s2))
     }
 }
+
+/** Below this height a tile's avatar steps down a size so the name under it never runs across the face. */
+private val SmallTileHeight = 120.dp
+
+/** From this width a tile says "ringing" or "connecting" in words beside the name. */
+private val WideTileWidth = 140.dp
 
 /**
  * The tiles laid out at the largest size that fits the space without scrolling (FaceTime's group grid): every column
@@ -451,18 +474,46 @@ private fun MeTile(call: CallUi) {
 @Composable
 private fun FittedTiles(ids: List<String>, modifier: Modifier = Modifier, tile: @Composable (String) -> Unit) {
     val still = CircasoTheme.reduceMotion
+    // Someone leaving fades out in place for a moment before the others close the gap; someone joining fades and
+    // grows in while the others move aside. The tiles there when the call opened are simply there.
+    val first = remember { ids.toSet() }
+    var shown by remember { androidx.compose.runtime.mutableStateOf(ids) }
+    val leaving = remember { androidx.compose.runtime.mutableStateListOf<String>() }
+    androidx.compose.runtime.LaunchedEffect(ids) {
+        val gone = shown.filter { it !in ids }
+        if (gone.isEmpty() || still) { leaving.clear(); shown = ids; return@LaunchedEffect }
+        leaving.addAll(gone.filter { it !in leaving })
+        shown = shown + ids.filter { it !in shown }
+        kotlinx.coroutines.delay(CircasoMotion.QuickMs.toLong())
+        leaving.clear()
+        shown = ids
+    }
+    val laidOut = if (leaving.isEmpty()) ids else shown
     androidx.compose.foundation.layout.BoxWithConstraints(modifier) {
         val gap = CircasoSpacing.s2
         val viewportWidth = maxWidth
         val viewportHeight = maxHeight
-        var (cols, width) = fitTiles(ids.size, viewportWidth, viewportHeight, gap, TileAspect)
+        var (cols, width) = fitTiles(laidOut.size, viewportWidth, viewportHeight, gap, TileAspect)
         if (width < MinTile) {
             cols = ((viewportWidth + gap) / (MinTile + gap)).toInt().coerceAtLeast(1)
             width = (viewportWidth - gap * (cols - 1)) / cols
         }
         val scroll = androidx.compose.foundation.rememberScrollState()
         androidx.compose.ui.layout.Layout(
-            content = { ids.forEach { id -> androidx.compose.runtime.key(id) { Box(Modifier.springPlacement(still)) { tile(id) } } } },
+            content = {
+                laidOut.forEach { id ->
+                    androidx.compose.runtime.key(id) {
+                        val appear = remember { androidx.compose.animation.core.Animatable(if (still || id in first) 1f else 0f) }
+                        androidx.compose.runtime.LaunchedEffect(Unit) { appear.animateTo(1f, tween(CircasoMotion.BaseMs)) }
+                        val fade by androidx.compose.animation.core.animateFloatAsState(if (id in leaving) 0f else 1f, tween(CircasoMotion.QuickMs), label = "leave")
+                        Box(Modifier.springPlacement(still).graphicsLayer {
+                            alpha = appear.value * fade
+                            val scale = 0.92f + 0.08f * appear.value * fade
+                            scaleX = scale; scaleY = scale
+                        }) { tile(id) }
+                    }
+                }
+            },
             modifier = Modifier.fillMaxWidth().verticalScroll(scroll, enabled = scroll.maxValue > 0),
         ) { measurables, _ ->
             val tileW = width.roundToPx()
@@ -502,13 +553,12 @@ private fun Modifier.springPlacement(still: Boolean): Modifier = composed {
             scope.launch {
                 // Start from where it was on screen, then settle at zero (its new place).
                 offset.snapTo(offset.value + (before - now))
-                offset.animateTo(androidx.compose.ui.unit.IntOffset.Zero, TileSpring)
+                offset.animateTo(androidx.compose.ui.unit.IntOffset.Zero, com.circaso.designsystem.motion.CircasoSpring.reflow())
             }
         }
     }.offset { offset.value }
 }
 
-private val TileSpring = androidx.compose.animation.core.spring(dampingRatio = androidx.compose.animation.core.Spring.DampingRatioNoBouncy, stiffness = 420f, visibilityThreshold = androidx.compose.ui.unit.IntOffset(1, 1))
 
 /** The key of the person's own tile, after everyone else's. */
 private const val MeTileId = "me"
