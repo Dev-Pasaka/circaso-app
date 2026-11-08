@@ -25,8 +25,8 @@ class FitTilesTest {
         // Beside the live goal: about 430 x 195 dp for the tiles.
         val (cols, width) = fitTiles(5, 430.dp, 195.dp, 8.dp, 1.15f)
         val rows = (5 + cols - 1) / cols
-        assertTrue(rows * (width / 1.15f) + 8.dp * (rows - 1) <= 195.dp + 0.5.dp)
-        assertTrue(cols * width + 8.dp * (cols - 1) <= 430.dp + 0.5.dp)
+        assertTrue((width / 1.15f) * rows + 8.dp * (rows - 1) <= 195.dp + 0.5.dp)
+        assertTrue(width * cols + 8.dp * (cols - 1) <= 430.dp + 0.5.dp)
     }
 
     @Test
