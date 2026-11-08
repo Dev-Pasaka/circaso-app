@@ -59,6 +59,7 @@ import com.circaso.designsystem.theme.CircasoMotion
 import com.circaso.designsystem.theme.CircasoShapes
 import com.circaso.designsystem.theme.CircasoSpacing
 import com.circaso.designsystem.theme.CircasoTheme
+import com.circaso.designsystem.adaptive.fillOrScroll
 import kotlinx.coroutines.launch
 
 /**
@@ -130,28 +131,45 @@ fun VoiceContent(
             }
             state.timing?.let { BasicText(it, style = t.caption2.copy(color = c.inkTertiary), modifier = Modifier.padding(bottom = CircasoSpacing.s2)) }
         }
-        // A phone on its side, once there is a conversation: Asha's mark and the controls on the left, the transcript
-        // beside them with the whole height to itself (on a short screen it would get a sliver under the logo).
-        if (hasTranscript && com.circaso.designsystem.adaptive.LocalWindowLayout.current.short) {
+        val short = com.circaso.designsystem.adaptive.LocalWindowLayout.current.short
+        val ended = state.phase == VoicePhase.Ended
+        // The logo is the screen while nothing has been said; once there is a transcript it steps up and shrinks, and
+        // on a phone on its side it shrinks further once the talk has ended, to leave room for the buttons under it.
+        val logoSize by animateDpAsState(
+            when { !hasTranscript -> 208.dp; short && ended -> 88.dp; short -> 120.dp; else -> 132.dp },
+            tween(if (CircasoTheme.reduceMotion) 0 else CircasoMotion.BaseMs), label = "logo",
+        )
+        // One logo, moved between the two layouts rather than built again, so its waves carry on when the first words
+        // arrive and the screen splits in two.
+        val latest = androidx.compose.runtime.rememberUpdatedState(state)
+        val logo = androidx.compose.runtime.remember {
+            androidx.compose.runtime.movableContentOf { modifier: Modifier, size: androidx.compose.ui.unit.Dp ->
+                val now = latest.value
+                AshaVoiceLogo(now.visual, now.waveLevel, modifier, size = size, announced = now.announcedVisual)
+            }
+        }
+        if (hasTranscript && short) {
+            // A phone on its side, once there is a conversation: Asha's mark and the controls on the left, the
+            // transcript beside them with the whole height to itself (on a short screen it would get a sliver under
+            // the logo). The left column scrolls when the largest text sizes don't fit.
             Row(Modifier.fillMaxSize().padding(bottom = padding.calculateBottomPadding())) {
-                Column(Modifier.weight(0.4f).fillMaxHeight(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
-                    AshaVoiceLogo(state.visual, state.waveLevel, size = 120.dp, announced = state.announcedVisual)
+                Column(
+                    Modifier.weight(0.4f).fillMaxHeight().fillOrScroll(),
+                    horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center,
+                ) {
+                    logo(Modifier, logoSize)
                     if (CircasoTheme.reduceMotion) StatePill(state.visual)
                     ending()
                     controls()
                 }
                 Transcript(state, Modifier.weight(0.6f).fillMaxHeight())
             }
-            return@CircasoScaffold
-        }
-        Column(
+        } else Column(
             Modifier.fillMaxSize().padding(bottom = padding.calculateBottomPadding()),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
-            // The logo is the screen while nothing has been said; once there is a transcript it steps up and shrinks.
-            val logoSize by animateDpAsState(if (hasTranscript) 132.dp else 208.dp, tween(if (CircasoTheme.reduceMotion) 0 else CircasoMotion.BaseMs), label = "logo")
             if (!hasTranscript) Spacer(Modifier.weight(0.4f))
-            AshaVoiceLogo(state.visual, state.waveLevel, Modifier.padding(top = CircasoSpacing.s2), size = logoSize, announced = state.announcedVisual)
+            logo(Modifier.padding(top = CircasoSpacing.s2), logoSize)
             // With reduced motion the waves are gone, so the state is also said in words under the logo.
             if (CircasoTheme.reduceMotion) StatePill(state.visual)
             if (hasTranscript) {
