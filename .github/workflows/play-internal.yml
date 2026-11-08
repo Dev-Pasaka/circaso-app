@@ -83,8 +83,18 @@ jobs:
           for v in GOOGLE_SERVICES_JSON_BASE64 UPLOAD_KEYSTORE_BASE64 CIRCLE_PWSDK_USERNAME CIRCLE_PWSDK_TOKEN; do
             [ -n "${!v}" ] || { echo "::error::Secret $v is not set"; exit 1; }
           done
-          printf '%s' "$GOOGLE_SERVICES_JSON_BASE64" | base64 -d > androidApp/google-services.json
-          printf '%s' "$UPLOAD_KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/upload.jks"
+          # google-services.json: base64, or the JSON itself pasted as is.
+          if printf '%s' "$GOOGLE_SERVICES_JSON_BASE64" | head -c 1 | grep -q '{'; then
+            printf '%s' "$GOOGLE_SERVICES_JSON_BASE64" > androidApp/google-services.json
+          elif ! printf '%s' "$GOOGLE_SERVICES_JSON_BASE64" | tr -d ' \r\n' | base64 -d > androidApp/google-services.json 2>/dev/null; then
+            echo "::error::GOOGLE_SERVICES_JSON_BASE64 is neither JSON nor valid base64"; exit 1
+          fi
+          python3 -c "import json;d=json.load(open('androidApp/google-services.json'));assert any(c['client_info']['android_client_info']['package_name']=='com.circaso.app' for c in d['client'])" \
+            || { echo "::error::google-services.json isn't valid JSON for com.circaso.app"; exit 1; }
+          # The keystore must be base64 (it's a binary file).
+          printf '%s' "$UPLOAD_KEYSTORE_BASE64" | tr -d ' \r\n' | base64 -d > "$RUNNER_TEMP/upload.jks" 2>/dev/null \
+            || { echo "::error::UPLOAD_KEYSTORE_BASE64 isn't valid base64: set it with base64 -i circaso-upload.jks | tr -d '\\n' | gh secret set UPLOAD_KEYSTORE_BASE64"; exit 1; }
+          [ "$(wc -c < "$RUNNER_TEMP/upload.jks")" -gt 1000 ] || { echo "::error::UPLOAD_KEYSTORE_BASE64 decodes to an empty or tiny file"; exit 1; }
           {
             echo "sdk.dir=$ANDROID_HOME"
             echo "pwsdk.maven.username=$CIRCLE_PWSDK_USERNAME"
