@@ -92,6 +92,16 @@ fixed:
 - **Tab labels** grow at most 1.2x with the text size, as UIKit's don't grow at all, so they never clip.
 - `readableWidth()` now fills up to its max (it used to wrap its content).
 
+- **Over the window, not the pane.** Sheets and photo viewers draw in a window-level layer
+  (`designsystem/chrome/WindowOverlay.kt`): one opened from the 360 dp list pane (You's photo, a tab's sheet) covers
+  the whole window, centred, never the narrow pane (Pasaka, 2026-11-08). Debug `-window-overlay=off` shows the old way.
+- **Each tab keeps its own screens** (`core/navigation/TabStacks.kt`, iOS tab-bar rule): on two panes, changing tab
+  sets aside what the old tab opened in the detail pane and brings back what the new tab had; Back never shows another
+  tab's sub-screens. On one pane nothing is kept. Signing out (Home leaving the stack) forgets them all; a notification
+  opens its tab fresh.
+- Tablet sign-in is one centred group, buttons at `WindowLayout.FormWidth` (440 dp); the tablet wallet is one centred
+  column a card's width; small call tiles step the avatar down and fade in and out as people join and leave.
+
 **Checking landscape from a script.** Simulators can't be rotated from the command line (iPadOS refuses
 `requestGeometryUpdate` in windowed mode), so debug builds take `-frame=1376x1032` (iOS) or `--es frame 1280x800`
 (Android): the whole app is laid out in a window of that many dp, scaled to fit. Useful sizes: iPad Pro 13" 1376x1032,
