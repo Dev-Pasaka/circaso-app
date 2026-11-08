@@ -187,11 +187,49 @@ private fun tabState(group: GroupWalletUiState, three: Boolean = false, member: 
 /** Someone in many groups: more than the Groups menu lists, so it ends with "All Group Wallets…". */
 private fun manyGroups(base: WalletUiState): WalletUiState {
     val names = listOf("Westlands Book Club", "Mama Mboga Savings Group", "Coast Trip 2026", "Office Lunch Kitty", "Ngong Road Runners", "Family Harambee", "Church Choir Welfare")
-    val more = names.mapIndexed { i, n -> NamedWallet("gw-${i + 2}", "g${i + 2}", n, null, WalletOwnerType.Group, i % 2 == 0, WalletStatus.Active, if (i % 2 == 0) "me" else "7") }
+    val nets = listOf(listOf("BASE-SEPOLIA"), listOf("BASE-SEPOLIA", "MATIC-AMOY"), listOf("BASE-SEPOLIA", "MATIC-AMOY", "ETH-SEPOLIA", "ARB-SEPOLIA"))
+    val more = names.mapIndexed { i, n -> NamedWallet("gw-${i + 2}", "g${i + 2}", n, null, WalletOwnerType.Group, i % 2 == 0, WalletStatus.Active, if (i % 2 == 0) "me" else "7", nets[i % nets.size]) }
     return base.copy(
         wallets = base.wallets.take(2) + more,
-        balances = base.balances + more.mapIndexed { i, w -> w.walletId to gwWallet("${(i + 1) * 12_340_000}", w.walletId) }.toMap(),
+        // The last two haven't been read on this phone: their rows show their networks and no balance.
+        balances = base.balances + more.dropLast(2).mapIndexed { i, w -> w.walletId to gwWallet("${(i + 1) * 12_340_000}", w.walletId) }.toMap(),
     )
+}
+
+/** Kilimani's wallet on two networks (Base and Polygon), the way the tab draws it as two cards. */
+private fun twoNetworks(): Wallet {
+    val base = gwWallet("250770000")
+    val polygon = WalletChain("MATIC-AMOY", "0x9be0000000000000000000000000000000071f3", "ACTIVE", listOf(Asset("USDC", "0xusdc", 6, "41200000", "", "5323.04")), true)
+    val baseChain = base.chains.first().let { it.copy(assets = it.assets.map { a -> a.copy(fiatAmount = "32399.48") }) }
+    return base.copy(chains = listOf(baseChain, polygon), totals = listOf(AssetTotal("USDC", 6, "291970000", "")), fiat = gwFiat.copy(amount = "37722.52"))
+}
+
+private val sheetMenu = GroupMenuActions({}, {}, onPay = {}, onSendToWallet = {}, onNetwork = { _, _ -> })
+
+/** The Group Wallets sheet's states: the group on screen (an owner, two networks) and the others. */
+private fun allSheet(groups: WalletUiState, variant: String): WalletUiState {
+    val many = manyGroups(groups).copy(allGroups = true)
+    val two = many.copy(balances = many.balances + ("gw-1" to twoNetworks()))
+    return when (variant) {
+        "" -> two
+        // A member: they add to it and the owner sends, so only Group Chat and Group Info.
+        "member" -> two.copy(wallets = two.wallets.map { if (it.walletId == "gw-1") it.copy(canSign = false, signerUserId = "2") else it }, group = memberState(two.group!!))
+        // Only two groups: no search, a short list.
+        "two" -> two.copy(wallets = two.wallets.take(3))
+        "offline" -> two.copy(online = false, group = two.group?.copy(online = false))
+        // Nothing read yet for the group on screen.
+        "loading" -> many.copy(balances = many.balances - "gw-1", group = GroupWalletUiState(chat = kilimani, money = gwMoney()))
+        "locked" -> two.copy(lockedWallets = setOf("gw-1"), group = lockedState(two.group!!))
+        // Long names and a large balance, on every row.
+        "long" -> two.copy(
+            wallets = two.wallets.map { w -> if (w.personal) w else w.copy(name = w.name + " and Friends of the Kilimani Welfare Association") },
+            balances = two.balances + ("gw-1" to twoNetworks().copy(fiat = gwFiat.copy(amount = "128450372.90"))) + ("gw-2" to gwWallet("998877665544", "gw-2")),
+        )
+        "hidden" -> two.copy(hidden = true)
+        // One group only: no Other Groups and no search.
+        "one" -> two.copy(wallets = two.wallets.take(2))
+        else -> two
+    }
 }
 
 /** The Groups side of the Wallet tab (Pasaka, 2026-11-05): a group, its menu, many groups, the full list, none yet. */
@@ -202,7 +240,11 @@ internal fun WalletGroupsPreview(name: String, gwState: GroupWalletUiState, gwAc
         "wallet-groups" -> TabPreview(groups, gwActions)
         "wallet-groups-menu" -> TabPreview(groups.copy(switching = true), gwActions)
         "wallet-groups-many" -> TabPreview(manyGroups(groups).copy(switching = true), gwActions)
-        "wallet-groups-all" -> TabPreview(manyGroups(groups).copy(allGroups = true), gwActions)
+        "wallet-groups-all" -> TabPreview(allSheet(groups, ""), gwActions)
+        "wallet-groups-all-member", "wallet-groups-all-two", "wallet-groups-all-offline", "wallet-groups-all-loading",
+        "wallet-groups-all-locked", "wallet-groups-all-long", "wallet-groups-all-hidden", "wallet-groups-all-one" -> TabPreview(allSheet(groups, name.removePrefix("wallet-groups-all-")), gwActions)
+        // A search with no match.
+        "wallet-groups-all-nomatch" -> TabPreview(allSheet(groups, ""), gwActions, query = "Nairobi")
         "wallet-groups-offline" -> TabPreview(groups.copy(online = false, group = gwState.copy(online = false)), gwActions)
         "wallet-groups-loading" -> TabPreview(groups.copy(group = GroupWalletUiState(chat = kilimani, money = gwMoney())), gwActions)
         // No group wallet: no Personal | Groups control at all, just the person's wallet.
@@ -215,7 +257,7 @@ internal fun WalletGroupsPreview(name: String, gwState: GroupWalletUiState, gwAc
 
 /** The Wallet tab in Home, as the person sees it, with the tab's state drawn without a view model. */
 @Composable
-private fun TabPreview(start: WalletUiState, gwActions: GroupWalletActions = GroupWalletActions({}, {}, {}, {}, {})) {
+private fun TabPreview(start: WalletUiState, gwActions: GroupWalletActions = GroupWalletActions({}, {}, {}, {}, {}), query: String = "") {
     // The menu and the full list open and close by touch on the phone, as in the app (the view model's own rules).
     var state by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(start) }
     com.circaso.feature.home.presentation.HomeScreen(
@@ -231,12 +273,12 @@ private fun TabPreview(start: WalletUiState, gwActions: GroupWalletActions = Gro
                 onAllGroups = { open -> state = state.copy(allGroups = open, switching = false) },
                 onMode = { m -> state = state.copy(mode = m, selectedWalletId = if (m == WalletMode.Groups) state.lastGroupWalletId ?: state.groupWallets.firstOrNull()?.walletId else null, switching = false) },
                 onCreate = {}, onRefresh = {}, onReceive = {}, onComing = {},
-                groupMenu = GroupMenuActions({}, {}, onPay = {}, onSendToWallet = {}),
+                groupMenu = sheetMenu,
             )
         },
         walletOverlay = {
             CircasoSheet(state.allGroups, { state = state.copy(allGroups = false) }, label = "Group Wallets") {
-                AllGroupWalletsContent(state, onPick = { w -> state = state.copy(selectedWalletId = w.walletId, allGroups = false) }, onClose = { state = state.copy(allGroups = false) })
+                AllGroupWalletsContent(state, onPick = { w -> state = state.copy(selectedWalletId = w.walletId, allGroups = false) }, onClose = { state = state.copy(allGroups = false) }, menu = sheetMenu, initialQuery = query)
             }
         },
         walletActions = {},

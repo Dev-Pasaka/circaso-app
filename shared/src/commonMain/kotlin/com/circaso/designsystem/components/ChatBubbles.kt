@@ -283,7 +283,7 @@ fun SearchPill(value: String, onValueChange: (String) -> Unit, placeholder: Stri
     val c = CircasoTheme.colors
     val t = CircasoTheme.typography
     Row(
-        modifier.fillMaxWidth().height(36.dp).clip(CircasoShapes.pill).background(c.fill).padding(horizontal = 12.dp),
+        modifier.fillMaxWidth().heightIn(min = 36.dp).clip(CircasoShapes.pill).background(c.fill).padding(horizontal = 12.dp),
         horizontalArrangement = Arrangement.spacedBy(6.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {

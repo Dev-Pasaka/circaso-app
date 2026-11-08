@@ -34,8 +34,12 @@ import com.circaso.designsystem.theme.CircasoTheme
  * nothing re-lays out per frame). Still under reduced motion.
  */
 @Composable
-fun SkeletonBlock(modifier: Modifier, shape: Shape = CircasoShapes.xs) {
-    val c = CircasoTheme.colors
+fun SkeletonBlock(
+    modifier: Modifier,
+    shape: Shape = CircasoShapes.xs,
+    /** `fillStrong` on a surface that is itself `fill` (a sheet's group in dark), so the shape still shows. */
+    color: androidx.compose.ui.graphics.Color = CircasoTheme.colors.fill,
+) {
     val alpha = if (CircasoTheme.reduceMotion) 1f else {
         val pulse by rememberInfiniteTransition(label = "skeleton").animateFloat(
             initialValue = 1f, targetValue = 0.55f,
@@ -43,7 +47,7 @@ fun SkeletonBlock(modifier: Modifier, shape: Shape = CircasoShapes.xs) {
         )
         pulse
     }
-    Box(modifier.graphicsLayer { this.alpha = alpha }.background(c.fill, shape))
+    Box(modifier.graphicsLayer { this.alpha = alpha }.background(color, shape))
 }
 
 /** [count] placeholder people rows (avatar, name, sub line), the shape of the list that is about to arrive. */
