@@ -31,7 +31,7 @@ import com.circaso.designsystem.chrome.TabItem
 import com.circaso.designsystem.components.CircasoIcon
 import com.circaso.designsystem.theme.CircasoTheme
 
-private enum class Tab(val label: String, val icon: CircasoIcon) {
+internal enum class Tab(val label: String, val icon: CircasoIcon) {
     Chats("Chats", CircasoIcon.Chat),
     Wallet("Wallet", CircasoIcon.Wallet),
     You("You", CircasoIcon.Person),
@@ -54,16 +54,24 @@ fun HomeScreen(
     walletOverlay: @Composable androidx.compose.foundation.layout.BoxScope.() -> Unit = {},
     /** The tab shown first (previews); the person's choice is remembered from then on. */
     initialTab: Int = Tab.Chats.ordinal,
+    /**
+     * The tab, when the navigation owns it (each tab keeps its own screens in the detail pane: core/navigation/TabStacks).
+     * Null: kept here (previews).
+     */
+    selectedTab: Int? = null,
+    onSelectTab: ((Int) -> Unit)? = null,
     you: @Composable (bottomPadding: PaddingValues) -> Unit,
 ) {
-    var selected by rememberSaveable { mutableStateOf(initialTab) }
+    var own by rememberSaveable { mutableStateOf(initialTab) }
+    val selected = selectedTab ?: own
+    val select: (Int) -> Unit = { value -> if (onSelectTab != null) onSelectTab(value) else own = value }
     // A tab index saved by an older build (four tabs, Spaces second) can't point past the end.
     val tab = Tab.entries.getOrElse(selected) { Tab.Chats }
     // A tapped notification can ask for a tab (a "set up your wallet" one opens Wallet); taken once.
     val wantedTab by com.circaso.core.notifications.HomeTabRequests.wanted.collectAsState()
     androidx.compose.runtime.LaunchedEffect(wantedTab) {
         val wanted = wantedTab ?: return@LaunchedEffect
-        selected = Tab.valueOf(wanted.name).ordinal
+        select(Tab.valueOf(wanted.name).ordinal)
         com.circaso.core.notifications.HomeTabRequests.wanted.value = null
     }
     // Back from Wallet or You goes to Chats first; Back from Chats asks before leaving (the user, 2026-10-31), so a
@@ -73,7 +81,7 @@ fun HomeScreen(
     val android = com.circaso.designsystem.platform.LocalPlatformStyle.current == com.circaso.designsystem.platform.PlatformStyle.Android && com.circaso.core.platform.canExitApp
     val covered = com.circaso.core.navigation.LocalListHasDetail.current
     androidx.compose.ui.backhandler.BackHandler(enabled = android && !confirmExit && !covered) {
-        if (tab != Tab.Chats) selected = Tab.Chats.ordinal else confirmExit = true
+        if (tab != Tab.Chats) select(Tab.Chats.ordinal) else confirmExit = true
     }
     val layout = com.circaso.designsystem.adaptive.LocalWindowLayout.current
     val rail = layout.short || layout.widthClass != com.circaso.designsystem.adaptive.WidthClass.Compact
@@ -91,7 +99,7 @@ fun HomeScreen(
                 CircasoTabBar(
                     items = Tab.entries.map { TabItem(it.label, it.icon) },
                     selectedIndex = tab.ordinal,
-                    onSelect = { selected = it },
+                    onSelect = { select(it) },
                 )
             }
         },
@@ -100,7 +108,7 @@ fun HomeScreen(
                 CircasoTabBar(
                     items = Tab.entries.map { TabItem(it.label, it.icon) },
                     selectedIndex = tab.ordinal,
-                    onSelect = { selected = it },
+                    onSelect = { select(it) },
                     vertical = true,
                 )
             }

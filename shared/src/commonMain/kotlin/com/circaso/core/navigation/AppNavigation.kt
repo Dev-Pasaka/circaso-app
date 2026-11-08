@@ -144,6 +144,19 @@ fun AppNavigation(forceUpdate: Boolean, home: @Composable () -> Unit) {
         onNetwork = { wid, chain -> backStack.add(NetworkAssetsRoute(chain, wid)) },
     )
     fun backToHome() { droppedTo[0] = -1; while (backStack.size > 1 && backStack.last() != HomeRoute) backStack.removeAt(backStack.lastIndex) }
+    // Home's tab lives here, with the screens each tab opened (TabStacks): changing tab swaps the detail pane's
+    // screens for the new tab's, so another tab's sub-screens never show, not even on Back.
+    var homeTab by androidx.compose.runtime.saveable.rememberSaveable { androidx.compose.runtime.mutableIntStateOf(0) }
+    val tabStacks = remember { TabStacks<NavKey>() }
+    fun switchTab(to: Int, restore: Boolean = true) {
+        if (!restore) tabStacks.forget(to)
+        tabStacks.switch(backStack, HomeRoute, from = homeTab, to = to, keep = twoPaneNow)
+        homeTab = to
+    }
+    // Signed out (Home gone from the stack): no tab's screens may come back after the next sign-in.
+    LaunchedEffect(Unit) {
+        androidx.compose.runtime.snapshotFlow { HomeRoute in backStack }.collect { if (!it) tabStacks.clear() }
+    }
     // A tapped notification (Pasaka, 2026-11-06): once signed in and Home is underneath, open where it points, over
     // Home, whether Circaso was cold, in the background or on screen. Signed out, the tap is dropped.
     val notificationLookups: com.circaso.core.notifications.NotificationLookups = koinInject()
@@ -167,7 +180,8 @@ fun AppNavigation(forceUpdate: Boolean, home: @Composable () -> Unit) {
             androidx.compose.runtime.snapshotFlow { backStack.firstOrNull() }.first { it == HomeRoute }
             val opening = com.circaso.core.notifications.NotificationRoutes.resolve(destination, notificationLookups)
             backToHome()
-            opening.tab?.let { com.circaso.core.notifications.HomeTabRequests.wanted.value = it }
+            // The tab first (its old screens are not brought back), then what the notification opens, on that tab.
+            opening.tab?.let { switchTab(com.circaso.feature.home.presentation.Tab.valueOf(it.name).ordinal, restore = false) }
             opening.routes.forEach { backStack.add(it) }
             taps.consumed(destination)
         }
@@ -271,6 +285,8 @@ fun AppNavigation(forceUpdate: Boolean, home: @Composable () -> Unit) {
                 )
                 val chatsMoments = remember(momentsViewModel) { com.circaso.feature.messaging.presentation.ChatsMoments(momentsViewModel, momentsActions) }
                 HomeScreen(
+                    selectedTab = homeTab,
+                    onSelectTab = { switchTab(it) },
                     chats = { bottomPadding -> ChatsTab(chatsViewModel, bottomPadding, onAsha = { backStack.add(AshaRoute) }, onVoice = { backStack.add(AshaRoute); backStack.add(VoiceRoute) }, onNewChat = { backStack.add(NewChatRoute) }, selectedChatId = if (twoPane) backStack.filterIsInstance<ChatRoute>().lastOrNull()?.chatId else null, moments = chatsMoments) { id -> openChatFromList(id) } },
                     chatsActions = {},
                     chatsBanner = {

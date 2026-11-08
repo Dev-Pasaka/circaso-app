@@ -82,24 +82,36 @@ val LocalIsDetailRoot = androidx.compose.runtime.compositionLocalOf { false }
  */
 class ListDetailSceneStrategy<T : Any>(private val twoPane: Boolean) : SceneStrategy<T> {
     override fun SceneStrategyScope<T>.calculateScene(entries: List<NavEntry<T>>): Scene<T>? {
-        if (!twoPane) return null
-        val listIndex = entries.indexOfLast { Panes.isList(it) }
-        if (listIndex < 0) return null
-        val above = entries.drop(listIndex + 1)
-        // A full-screen flow on top covers everything (it is pushed over the split like any screen on a phone).
-        if (above.any { Panes.isFullScreen(it) }) return null
-        val list = entries[listIndex]
-        val detail = above.lastOrNull()
+        val split = splitPanes(entries, twoPane) ?: return null
+        val list = entries[split.listIndex]
         return ListDetailScene(
             key = list.contentKey,
             list = list,
-            detail = detail,
-            underneath = above.getOrNull(above.size - 2),
-            depth = above.size,
+            detail = split.detail,
+            underneath = split.underneath,
+            depth = split.depth,
             previousEntries = entries.dropLast(1),
             onBack = onBack,
         )
     }
+}
+
+/** Where each open screen goes on a wide window: the list, the detail on top, the one under it, how deep. */
+internal data class PaneSplit<T : Any>(val listIndex: Int, val detail: NavEntry<T>?, val underneath: NavEntry<T>?, val depth: Int)
+
+/**
+ * The split for a back stack, or null when the window shows one screen at a time (too narrow, no list in the stack,
+ * or a full-screen flow on top). Everything opened above the list goes to the detail side, never into the list pane:
+ * the list pane only ever shows the list itself.
+ */
+internal fun <T : Any> splitPanes(entries: List<NavEntry<T>>, twoPane: Boolean): PaneSplit<T>? {
+    if (!twoPane) return null
+    val listIndex = entries.indexOfLast { Panes.isList(it) }
+    if (listIndex < 0) return null
+    val above = entries.drop(listIndex + 1)
+    // A full-screen flow on top covers everything (it is pushed over the split like any screen on a phone).
+    if (above.any { Panes.isFullScreen(it) }) return null
+    return PaneSplit(listIndex, above.lastOrNull(), above.getOrNull(above.size - 2), above.size)
 }
 
 internal class ListDetailScene<T : Any>(
