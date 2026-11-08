@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
@@ -113,6 +114,36 @@ fun VoiceContent(
         },
         toast = { ToastHost(toast, Modifier.align(Alignment.TopCenter).padding(top = 8.dp)) },
     ) { padding ->
+        val ending: @Composable () -> Unit = {
+            if (hasTranscript && (state.phase == VoicePhase.Ended || state.phase == VoicePhase.Reconnecting)) {
+                Crossfade(if (state.phase == VoicePhase.Reconnecting) ReconnectingText else endingText(state.ending), Modifier.animateContentSize(tween(if (CircasoTheme.reduceMotion) 0 else CircasoMotion.BaseMs)), animationSpec = tween(if (CircasoTheme.reduceMotion) 0 else CircasoMotion.BaseMs), label = "ending") { words ->
+                    BasicText(words, Modifier.padding(horizontal = CircasoSpacing.s6, vertical = CircasoSpacing.s2), style = t.footnote.copy(color = c.inkSecondary, textAlign = TextAlign.Center))
+                }
+            }
+        }
+        val controls: @Composable () -> Unit = {
+            Box(Modifier.padding(horizontal = CircasoSpacing.s6, vertical = CircasoSpacing.s4)) {
+                // Keyed on the ended actions too, so "Talk Again" fades in when Asha is back rather than popping.
+                Crossfade((state.phase == VoicePhase.Ended) to (state.ending == VoiceEnding.AshaBack), animationSpec = tween(if (CircasoTheme.reduceMotion) 0 else CircasoMotion.BaseMs), label = "controls") { (ended, _) ->
+                    if (ended) EndedActions(state.ending, onAgain, onLeave) else LiveControls(state.muted, onMute, onEnd)
+                }
+            }
+            state.timing?.let { BasicText(it, style = t.caption2.copy(color = c.inkTertiary), modifier = Modifier.padding(bottom = CircasoSpacing.s2)) }
+        }
+        // A phone on its side, once there is a conversation: Asha's mark and the controls on the left, the transcript
+        // beside them with the whole height to itself (on a short screen it would get a sliver under the logo).
+        if (hasTranscript && com.circaso.designsystem.adaptive.LocalWindowLayout.current.short) {
+            Row(Modifier.fillMaxSize().padding(bottom = padding.calculateBottomPadding())) {
+                Column(Modifier.weight(0.4f).fillMaxHeight(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
+                    AshaVoiceLogo(state.visual, state.waveLevel, size = 120.dp, announced = state.announcedVisual)
+                    if (CircasoTheme.reduceMotion) StatePill(state.visual)
+                    ending()
+                    controls()
+                }
+                Transcript(state, Modifier.weight(0.6f).fillMaxHeight())
+            }
+            return@CircasoScaffold
+        }
         Column(
             Modifier.fillMaxSize().padding(bottom = padding.calculateBottomPadding()),
             horizontalAlignment = Alignment.CenterHorizontally,
@@ -137,18 +168,8 @@ fun VoiceContent(
                 }
                 Spacer(Modifier.weight(0.6f))
             }
-            if (hasTranscript && (state.phase == VoicePhase.Ended || state.phase == VoicePhase.Reconnecting)) {
-                Crossfade(if (state.phase == VoicePhase.Reconnecting) ReconnectingText else endingText(state.ending), Modifier.animateContentSize(tween(if (CircasoTheme.reduceMotion) 0 else CircasoMotion.BaseMs)), animationSpec = tween(if (CircasoTheme.reduceMotion) 0 else CircasoMotion.BaseMs), label = "ending") { words ->
-                    BasicText(words, Modifier.padding(horizontal = CircasoSpacing.s6, vertical = CircasoSpacing.s2), style = t.footnote.copy(color = c.inkSecondary, textAlign = TextAlign.Center))
-                }
-            }
-            Box(Modifier.padding(horizontal = CircasoSpacing.s6, vertical = CircasoSpacing.s4)) {
-                // Keyed on the ended actions too, so "Talk Again" fades in when Asha is back rather than popping.
-                Crossfade((state.phase == VoicePhase.Ended) to (state.ending == VoiceEnding.AshaBack), animationSpec = tween(if (CircasoTheme.reduceMotion) 0 else CircasoMotion.BaseMs), label = "controls") { (ended, _) ->
-                    if (ended) EndedActions(state.ending, onAgain, onLeave) else LiveControls(state.muted, onMute, onEnd)
-                }
-            }
-            state.timing?.let { BasicText(it, style = t.caption2.copy(color = c.inkTertiary), modifier = Modifier.padding(bottom = CircasoSpacing.s2)) }
+            ending()
+            controls()
         }
     }
 }

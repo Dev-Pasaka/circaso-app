@@ -70,6 +70,33 @@ one is pushed over it. Checked on iPhone 17 Pro (portrait and on its side), iPad
 
 Left: checking the signed-in flows on a real tablet and on the Redmi on its side.
 
+## Second pass (2026-11-08)
+
+Pasaka asked again for every screen to adapt to phones and tablets in both orientations, premium and never stretched.
+Audited on the Redmi on its side, iPad Pro 13" and 11" (portrait, and landscape through the debug frame below), and
+fixed:
+
+- **Sheets** are a centred 540 dp card with every corner rounded on a tablet (regular width and height), rising from
+  the bottom of the screen as an iPadOS form sheet does; phones keep the bottom sheet.
+- **Floating bottom bars** (Make a Payment…) are centred over the content, not the screen, so the top bar or tabs down
+  the side never sit under them; on a phone on its side the page colour fades in behind the bar (scroll edge).
+- **Android on its side** hides the status bar (a swipe brings it back), as an iPhone does in landscape.
+- **Group calls** lay everyone out at the largest tile that fits without scrolling (FaceTime); on a phone on its side
+  the live goal moves beside the tiles. Call controls keep a hand's width on tablets. The video self-view turns with the
+  screen and is larger on a tablet.
+- **Message bubbles** grow to 62% of the pane, at most 440 dp, on wide screens (292 dp on a phone, as designed).
+- **Moments**: the viewer, composer and chat camera are full-screen flows (never squeezed into the detail pane); a
+  photo shows whole over a blur of itself on wide screens instead of being cropped. The gallery adds columns (112 dp
+  minimum) instead of three huge tiles.
+- **Voice with Asha** on a phone on its side: the mark and controls left, the transcript right.
+- **Tab labels** grow at most 1.2x with the text size, as UIKit's don't grow at all, so they never clip.
+- `readableWidth()` now fills up to its max (it used to wrap its content).
+
+**Checking landscape from a script.** Simulators can't be rotated from the command line (iPadOS refuses
+`requestGeometryUpdate` in windowed mode), so debug builds take `-frame=1376x1032` (iOS) or `--es frame 1280x800`
+(Android): the whole app is laid out in a window of that many dp, scaled to fit. Useful sizes: iPad Pro 13" 1376x1032,
+11" 1210x834, Android tablet 1280x800, iPhone on its side 874x402. Safe-area insets stay the real device's.
+
 ## Order of work
 
 1. Foundation: window classes, readable width in the scaffold, physical push/pop transitions. **(done first)**
