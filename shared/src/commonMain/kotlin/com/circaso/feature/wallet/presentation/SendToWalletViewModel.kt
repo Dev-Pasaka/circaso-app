@@ -75,10 +75,10 @@ data class SendToWalletUiState(
     val fiatHint: String? get() = wallet?.fiat?.let { f -> amountMinor?.let { usdcToFiat(it, f.rate) }?.let { "About ${f.currency} $it" } }
     val canReview get() = online && !notOwner && !fromLoading && blockchain != null && address.isNotBlank() && amountMinor?.let { !MinorUnits.isZero(it) } == true && !overBalance && !checking && step == ExternalStep.Form
     val feeMinor: String? get() = (fee as? PayFee.Quoted)?.amountMinor
-    /** "No fee", "0.25 USDC · 1%", "0.50 USDC · minimum": the same one fee as every payment, network cost included. */
+    /** "No fee", "0.25 USDC · network + 1%", "0.50 USDC · minimum": the same one fee as every payment, network cost included. */
     val feeText: String
         get() = when (val f = fee) {
-            is PayFee.Quoted -> if (MinorUnits.isZero(f.amountMinor)) "No fee" else listOfNotNull(MinorUnits.toDisplay(f.amountMinor, 6) + " USDC", if (f.minimum) "minimum" else f.rateBps?.let(::rateText)).joinToString(" · ")
+            is PayFee.Quoted -> if (MinorUnits.isZero(f.amountMinor)) "No fee" else listOfNotNull(MinorUnits.toDisplay(f.amountMinor, 6) + " USDC", feeWhy(f.minimum, f.rateBps)).joinToString(" · ")
             else -> "No fee"
         }
     /** What leaves the wallet: the amount plus the fee (the address receives exactly the amount). */

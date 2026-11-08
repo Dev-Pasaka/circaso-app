@@ -89,8 +89,8 @@ sealed interface PayFee {
     /** GW13: being worked out; Pay waits. */
     data object Quoting : PayFee
     /**
-     * GW9b/GW9d/GW13b: [amountMinor] in the payment's coin at [rateBps] (0..200); [minimum] when the floor that covers
-     * the network cost set it. [quoteId] holds it for W4 until [expiresAt] (only for the wallet's signer).
+     * GW9b/GW9d/GW13b: [amountMinor] in the payment's coin: the network cost plus [rateBps] (0..200) of the amount;
+     * [minimum] when a rule's minimum fee raised it. [quoteId] holds it for W4 until [expiresAt] (only for the wallet's signer).
      */
     data class Quoted(
         val amountMinor: String,
@@ -298,7 +298,7 @@ data class PayUiState(
     val usdcText: String? get() = amountMinor?.let { MinorUnits.toDisplay(it, decimals) + " " + asset }
 
     /**
-     * The fee row's words (GW9b, GW13, GW13b, GW13d): "No fee", "Working it out", "KES 2.50 · 0.5%", "KES 5 · minimum",
+     * The fee row's words (GW9b, GW13, GW13b, GW13d): "No fee", "Working it out", "KES 2.50 · network + 0.5%", "KES 5 · minimum",
      * and for a payout request, whose fee is set when it is paid, "about KES 50 · 1%, set when paid" (GW9c).
      */
     /** The fee alone, in the person's currency ("KES 5.17"), for the chat's slim card; "No fee" when none is taken. */
@@ -313,7 +313,7 @@ data class PayUiState(
             is PayFee.Failed -> "Couldn’t work it out"
             is PayFee.Quoted -> if (MinorUnits.isZero(f.amountMinor)) "No fee" else {
                 val money = moneyText(f.amountMinor)
-                val why = if (f.minimum) "minimum" else f.rateBps?.let(::rateText)
+                val why = feeWhy(f.minimum, f.rateBps)
                 val line = listOfNotNull(money, why).joinToString(" · ")
                 if (requestPayout) "about $line, set when paid" else line
             }
@@ -1080,6 +1080,17 @@ const val PriceFreshMillis = 5L * 60 * 1000
 /** What the group-wallet side of the review reads, combined. */
 /** "0.5%", "1%", "2%" from basis points. */
 internal fun rateText(bps: Int): String = (bps / 100.0).toString().removeSuffix(".0") + "%"
+
+/**
+ * How a quoted fee was made, after its amount (decision 2026-11-08: the fee is the network cost plus Circaso's rate):
+ * "network + 0.5%", "network cost" for a 0 % rule, "minimum" when a rule's minimum fee set it; null on a repeat.
+ */
+internal fun feeWhy(minimum: Boolean, rateBps: Int?): String? = when {
+    minimum -> "minimum"
+    rateBps == null -> null
+    rateBps == 0 -> "network cost"
+    else -> "network + ${rateText(rateBps)}"
+}
 
 /** "500", "1,000", "502.50": whole amounts as the design writes them, cents only when there are some. */
 internal fun fiatDisplay(cents: String): String {

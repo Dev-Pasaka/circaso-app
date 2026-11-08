@@ -158,7 +158,7 @@ class PayFeeTest {
         val s = vm.state.value
         assertEquals(PayFee.Quoted("20000", 50, false, "q1", null), s.fee)
         assertTrue(s.canPay)
-        assertEquals("KES 2.58 · 0.5%", s.feeText)
+        assertEquals("KES 2.58 · network + 0.5%", s.feeText)
         assertEquals("KES 502.58", totalValue(s))
         assertTrue(feeFootnote(s).startsWith("One Circaso fee, network cost included."))
     }
@@ -190,7 +190,8 @@ class PayFeeTest {
         vm.onAmount("50"); advanceUntilIdle()
 
         assertEquals("KES 6.45 · minimum", vm.state.value.feeText)
-        assertTrue("Small payments have a minimum fee that covers the network cost." in feeFootnote(vm.state.value))
+        assertTrue("This payment has a minimum fee." in feeFootnote(vm.state.value))
+        assertTrue("One Circaso fee, network cost included." in feeFootnote(vm.state.value))
     }
 
     @Test fun aFeeThatCantBeWorkedOutBlocksPayAndTryAgainAsksOnceMore() = runTest(dispatcher) {

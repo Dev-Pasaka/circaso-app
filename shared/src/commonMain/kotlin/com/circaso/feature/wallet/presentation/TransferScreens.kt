@@ -141,7 +141,7 @@ fun TransferContent(state: TransferUiState, onBack: () -> Unit) {
                 DetailRow("Date", when_)
                 DetailRow("Amount in coin", usdc)
                 state.fiat?.takeIf { dollar }?.let { DetailRow("Rate", "1 ${transfer.amount.asset} = ${it.currency} ${it.rate.substringBefore('.')}.${it.rate.substringAfter('.', "00").take(2).padEnd(2, '0')}") }
-                // Circaso pays the network fee on what its people send; money from outside paid its own.
+                // The network fee on what Circaso's people send is inside their Circaso fee; money from outside paid its own.
                 // From the fee's minor units (the phone's copy keeps no display string): "KES 12.99 · 0.10 USDC". It
                 // said "No fee" for a charged fee before (2026-11-05).
                 if (!incoming) DetailRow("Fee", feeText(transfer.fee, state.fiat))

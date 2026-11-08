@@ -404,7 +404,7 @@ class GroupWalletPayViewModelTest {
         assertEquals("KES 500", base.totalText)
         val quoted = base.copy(fee = com.circaso.feature.wallet.presentation.PayFee.Quoted("19380", 50))
         assertEquals(com.circaso.feature.wallet.domain.MinorUnits.add(base.amountMinor!!, "19380"), quoted.totalMinor, "the sender pays the fee on top")
-        assertTrue(quoted.feeText.endsWith("· 0.5%"))
+        assertTrue(quoted.feeText.endsWith("· network + 0.5%"))
         assertTrue(base.canPay)
         assertFalse(base.copy(fee = com.circaso.feature.wallet.presentation.PayFee.Quoting).canPay, "GW13: Send waits for the quote")
         assertEquals("Working it out", base.copy(fee = com.circaso.feature.wallet.presentation.PayFee.Quoting).feeText)

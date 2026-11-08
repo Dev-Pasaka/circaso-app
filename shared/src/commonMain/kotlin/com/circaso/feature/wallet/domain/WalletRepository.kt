@@ -139,9 +139,9 @@ data class PaymentRequest(
 enum class QuoteProblem { InsufficientFunds, PerPaymentLimit, DailyLimit }
 
 /**
- * W17's answer (phase 2F, spaces-plan §7b): the one Circaso fee for exactly this payment, network cost included, in
- * the payment's coin (USDC minor units). [minimum] when the floor that covers the network cost made it more than the
- * rate. [maxAmountMinor] is the most that can go now with its fee; [leftMinor] what the wallet may still send in its
+ * W17's answer (phase 2F, spaces-plan §7b): the one Circaso fee for exactly this payment, in the payment's coin
+ * (USDC minor units): the network cost plus [rateBps] of the amount (decision 2026-11-08). [minimum] when a rule's
+ * minimum fee raised it. [maxAmountMinor] is the most that can go now with its fee; [leftMinor] what the wallet may still send in its
  * rolling 24 hours; [fitsAt] when this payment fits that window (ISO), if it doesn't now. [quoteId] only for the signer.
  */
 data class PaymentQuote(
