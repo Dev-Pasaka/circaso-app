@@ -48,6 +48,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import com.circaso.designsystem.adaptive.readableWidth
+import androidx.compose.ui.draw.blur
+import coil3.request.crossfade
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -103,6 +105,10 @@ private object CallColors {
     val ControlOn = Color.White
     val Panel = Color(0xE61C1C1E)
     val Scrim = Color.Black.copy(alpha = 0.5f)
+    /** Over the blurred photo behind H1 and H2. */
+    val Backdrop = Color.Black.copy(alpha = 0.6f)
+    /** H4's name chip on a tile (`.ti-name`). */
+    val NameChip = Color.Black.copy(alpha = 0.45f)
     /** H1's Accept is a white disc with an ink handset; End and Decline the system call red, readable on black. */
     val Accept = Color.White
     val AcceptInk = Color(0xFF0B0B0C)
@@ -179,6 +185,19 @@ private fun CallSurface(call: CallUi, actions: CallActions, money: String?, cham
             call.camera || call.people.any { it.video && it.joined } -> 2
             else -> 3
         }
+        // H1 and H2 (and H3 while their camera is off): their photo, blurred and dimmed, behind everything. Once, under
+        // the pages, so Accept (H1 to H2) keeps it steady, and with its own fade so a photo already in memory never pops.
+        val theirVideo = call.people.any { it.joined && it.video && it.videoMid != null }
+        val highContrastBackdrop = com.circaso.designsystem.platform.rememberIsHighContrast()
+        val backdropUrl = call.photoUrl
+        AnimatedVisibility(
+            backdropUrl != null && !highContrastBackdrop && (layout == 0 || layout == 3 || (layout == 2 && !theirVideo)),
+            Modifier.matchParentSize(), enter = fadeIn(tween(CircasoMotion.BaseMs)), exit = fadeOut(tween(CircasoMotion.QuickMs)),
+        ) {
+            // The last photo stays while it fades out.
+            val last = remember { arrayOf<String?>(null) }
+            CallBackdrop(backdropUrl?.also { last[0] = it } ?: last[0])
+        }
         // Voice turning into video (or back) crossfades instead of jumping.
         androidx.compose.animation.AnimatedContent(layout, transitionSpec = { fadeIn(tween(CircasoMotion.BaseMs)) togetherWith fadeOut(tween(CircasoMotion.QuickMs)) }, label = "call") { l ->
             Box(Modifier.fillMaxSize()) {
@@ -224,7 +243,7 @@ private fun BoxScope.Incoming(call: CallUi, actions: CallActions) {
         Spacer(Modifier.height(CircasoSpacing.s10))
         BasicText(if (call.video) "Circaso video call" else "Circaso voice call", style = t.subhead.copy(color = CallColors.InkSoft))
         Spacer(Modifier.height(CircasoSpacing.s5))
-        Pulse { Avatar(call.title, size = 120.dp) }
+        Pulse { Avatar(call.title, size = 120.dp, imageUrl = call.photoUrl) }
         Spacer(Modifier.height(CircasoSpacing.s5))
         BasicText(call.title, style = t.largeTitle.copy(color = CallColors.Ink, textAlign = TextAlign.Center), maxLines = 1, overflow = TextOverflow.Ellipsis)
         Handle(call.handle)
@@ -268,7 +287,7 @@ private fun VoiceCall(call: CallUi, actions: CallActions, money: String?) {
                 Column(Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally) {
                     SecureLine()
                     Spacer(Modifier.height(CircasoSpacing.s3))
-                    Avatar(call.title, size = 88.dp)
+                    Avatar(call.title, size = 88.dp, imageUrl = call.photoUrl)
                     Spacer(Modifier.height(CircasoSpacing.s3))
                     BasicText(call.title, style = t.title1.copy(color = CallColors.Ink, textAlign = TextAlign.Center), maxLines = 1, overflow = TextOverflow.Ellipsis)
                     Handle(call.handle)
@@ -281,7 +300,7 @@ private fun VoiceCall(call: CallUi, actions: CallActions, money: String?) {
             Spacer(Modifier.height(CircasoSpacing.s6))
             SecureLine()
             Spacer(Modifier.height(CircasoSpacing.s6))
-            Avatar(call.title, size = 120.dp)
+            Avatar(call.title, size = 120.dp, imageUrl = call.photoUrl)
             Spacer(Modifier.height(CircasoSpacing.s4))
             BasicText(call.title, style = t.largeTitle.copy(color = CallColors.Ink, textAlign = TextAlign.Center), maxLines = 1, overflow = TextOverflow.Ellipsis)
             Handle(call.handle)
@@ -300,7 +319,7 @@ private fun BoxScope.VideoCall(call: CallUi, actions: CallActions, money: String
     val them = call.people.firstOrNull { it.joined }
     val theirMid = them?.videoMid
     if (them != null && them.video && theirMid != null) CallVideo(VideoSource.Remote(theirMid), Modifier.fillMaxSize())
-    else Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Avatar(call.title, size = 120.dp) }
+    else Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Avatar(call.title, size = 120.dp, imageUrl = them?.photoUrl ?: call.photoUrl) }
     Box(Modifier.fillMaxWidth().height(180.dp).background(Brush.verticalGradient(listOf(Color.Black.copy(alpha = 0.55f), Color.Transparent))))
     Box(Modifier.align(Alignment.BottomCenter).fillMaxWidth().height(260.dp).background(Brush.verticalGradient(listOf(Color.Transparent, Color.Black.copy(alpha = 0.6f)))))
     Column(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing).padding(horizontal = CircasoSpacing.s4, vertical = CircasoSpacing.s4)) {
@@ -343,7 +362,11 @@ private fun GroupCall(call: CallUi, actions: CallActions, chama: Chama?, fiat: F
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             RoundIcon(CircasoIcon.Minimise, "Minimise call") { actions.onMinimise(true) }
             Column(Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally) {
-                BasicText(call.title, style = t.headline.copy(color = CallColors.Ink), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                // The group's photo beside its name, so ringing and connecting say which group at a glance.
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(CircasoSpacing.s2)) {
+                    Avatar(call.title, size = CircasoSizes.avatarSm, imageUrl = call.photoUrl)
+                    BasicText(call.title, style = t.headline.copy(color = CallColors.Ink), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }
                 val time = elapsedText(call.activeSince)
                 BasicText(if (call.phase == CallPhase.Active) "$onCall on the call · $time" else statusText(call), style = t.footnote.copy(color = CallColors.InkSoft))
             }
@@ -397,8 +420,9 @@ private fun Tile(p: CallPerson) {
     // Wider than tall, so six people fit on a phone without scrolling (design H4's 2 x 3 grid).
     Box(Modifier.fillMaxWidth().aspectRatio(1.15f).clip(CircasoShapes.lg).background(CallColors.Control)) {
         if (p.video && mid != null) CallVideo(VideoSource.Remote(mid), Modifier.fillMaxSize())
-        else Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Avatar(p.name, size = CircasoSizes.avatarLg) }
-        Row(Modifier.align(Alignment.BottomStart).padding(CircasoSpacing.s2), horizontalArrangement = Arrangement.spacedBy(CircasoSpacing.s1), verticalAlignment = Alignment.CenterVertically) {
+        else PersonFill(p.name, p.photoUrl, present = p.live)
+        // H4's name chip: readable on any photo or video.
+        Row(Modifier.align(Alignment.BottomStart).padding(CircasoSpacing.s2).clip(CircasoShapes.pill).background(CallColors.NameChip).padding(horizontal = CircasoSpacing.s2, vertical = CircasoSpacing.s1), horizontalArrangement = Arrangement.spacedBy(CircasoSpacing.s1), verticalAlignment = Alignment.CenterVertically) {
             BasicText(p.name.substringBefore(' '), style = t.footnote.copy(color = CallColors.Ink, fontWeight = FontWeight.SemiBold))
             if (!p.audio && p.joined) CircasoIconImage(CircasoIcon.MicOff, CallColors.Ink, Modifier.size(14.dp))
             if (p.ringing) BasicText("· ringing", style = t.footnote.copy(color = CallColors.InkSoft))
@@ -412,8 +436,8 @@ private fun MeTile(call: CallUi) {
     val t = CircasoTheme.typography
     Box(Modifier.fillMaxWidth().aspectRatio(1.15f).clip(CircasoShapes.lg).background(CallColors.Control)) {
         if (call.camera) CallVideo(VideoSource.Local, Modifier.fillMaxSize(), mirror = call.frontCamera)
-        else Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Avatar("You", size = CircasoSizes.avatarLg) }
-        BasicText("You", style = t.footnote.copy(color = CallColors.Ink, fontWeight = FontWeight.SemiBold), modifier = Modifier.align(Alignment.BottomStart).padding(CircasoSpacing.s2))
+        else PersonFill("You", call.myPhotoUrl)
+        BasicText("You", style = t.footnote.copy(color = CallColors.Ink, fontWeight = FontWeight.SemiBold), modifier = Modifier.align(Alignment.BottomStart).padding(CircasoSpacing.s2).clip(CircasoShapes.pill).background(CallColors.NameChip).padding(horizontal = CircasoSpacing.s2, vertical = CircasoSpacing.s1))
     }
 }
 
@@ -718,7 +742,10 @@ private fun CallPill(call: CallUi, onOpen: () -> Unit) {
             .padding(horizontal = CircasoSpacing.s4, vertical = CircasoSpacing.s2),
         horizontalArrangement = Arrangement.spacedBy(CircasoSpacing.s2), verticalAlignment = Alignment.CenterVertically,
     ) {
-        CircasoIconImage(CircasoIcon.Phone, c.onMoney, Modifier.size(16.dp))
+        // Their photo when there is one, else the call's handset (initials would be too small to read here).
+        val photo = call.photoUrl
+        if (photo != null) Avatar(call.title, size = PillPhoto, imageUrl = photo)
+        else CircasoIconImage(CircasoIcon.Phone, c.onMoney, Modifier.size(16.dp))
         BasicText("${call.title.substringBefore(' ')} · ${statusText(call, short = true)}", style = t.footnote.copy(color = c.onMoney, fontWeight = FontWeight.SemiBold))
     }
 }
@@ -751,6 +778,56 @@ private fun ControlButton(icon: CircasoIcon, label: String?, description: String
 private fun RoundIcon(icon: CircasoIcon, description: String, onClick: () -> Unit) {
     Box(Modifier.size(44.dp).clip(CircleShape).background(CallColors.Control).pressable(role = Role.Button, onClick = onClick).semantics { contentDescription = description }, contentAlignment = Alignment.Center) {
         CircasoIconImage(icon, CallColors.Ink, Modifier.size(20.dp))
+    }
+}
+
+/**
+ * H1 and H2's backdrop: the photo decoded tiny (so it is cheap and already soft where blur isn't available), scaled up,
+ * blurred and darkened so the white text on it stays readable. Nothing when there's no photo: the call stays black.
+ * Drawn once; the ring's pulse animates only the avatar's layer, so this never redraws per frame.
+ */
+@Composable
+private fun CallBackdrop(url: String?) {
+    if (url == null) return
+    val context = coil3.compose.LocalPlatformContext.current
+    val request = remember(url) {
+        val key = url.substringBefore('?')
+        coil3.request.ImageRequest.Builder(context).data(url).size(BackdropPx).memoryCacheKey("$key@backdrop").diskCacheKey(key).crossfade(CircasoMotion.BaseMs).build()
+    }
+    coil3.compose.AsyncImage(
+        request, contentDescription = null, contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+        modifier = Modifier.fillMaxSize().graphicsLayer { scaleX = 1.2f; scaleY = 1.2f }.blur(42.dp),
+    )
+    // H2's brightness(0.42): dark enough that the 72% white lines on it stay readable on a bright photo. High contrast
+    // has no photo behind the text at all (as You does).
+    Box(Modifier.fillMaxSize().background(CallColors.Backdrop))
+}
+
+/** The pill's photo, a little larger than the handset it replaces so a face reads at a glance. */
+private val PillPhoto = 20.dp
+
+/** The backdrop's decode size: tiny on purpose, it is blurred over the whole screen. */
+private const val BackdropPx = 64
+
+/**
+ * H4's tile without video: the person's photo fills the tile (their initials, centred, until it loads or when they have
+ * none, so the tile never changes size). Someone still ringing or connecting is shown faded until they're really on.
+ */
+@Composable
+private fun PersonFill(name: String, url: String?, present: Boolean = true) {
+    val alpha by androidx.compose.animation.core.animateFloatAsState(if (present) 1f else 0.45f, tween(CircasoMotion.BaseMs), label = "present")
+    Box(Modifier.fillMaxSize().graphicsLayer { this.alpha = alpha }, contentAlignment = Alignment.Center) {
+        Avatar(name, size = CircasoSizes.avatarLg)
+        if (url != null) {
+            val context = coil3.compose.LocalPlatformContext.current
+            val request = remember(url) {
+                val key = url.substringBefore('?')
+                coil3.request.ImageRequest.Builder(context).data(url).memoryCacheKey("$key@tile").diskCacheKey(key)
+                    // The chat list's copy stands in while the tile's decodes, as Avatar does.
+                    .placeholderMemoryCacheKey("$key@${CircasoSizes.avatarMd.value.toInt()}").crossfade(CircasoMotion.BaseMs).build()
+            }
+            coil3.compose.AsyncImage(request, contentDescription = null, contentScale = androidx.compose.ui.layout.ContentScale.Crop, modifier = Modifier.fillMaxSize())
+        }
     }
 }
 

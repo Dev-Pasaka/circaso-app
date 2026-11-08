@@ -71,7 +71,7 @@ fun initKoinAndroid(context: Context) {
             single<com.circaso.feature.assistant.voice.VadEngine> { com.circaso.core.platform.AndroidVadEngine() } // Silero VAD for barge-in
             single<com.circaso.core.qr.QrScanner> { com.circaso.core.qr.AndroidQrScanner(currentActivityProvider()) }
             single<com.circaso.core.calls.CallEngine> { com.circaso.core.calls.AndroidCallEngine(app) }
-            single { com.circaso.core.calls.AndroidCallNotifier(app).also { n -> ringing = { id -> n.clear(id) } } }
+            single { com.circaso.core.calls.AndroidCallNotifier(app, get()).also { n -> ringing = { id -> n.clear(id) } } }
             single(createdAtStart = true) { com.circaso.core.calls.CallKeepAlive(app, get(), get()).also { it.start() } }
             single(createdAtStart = true) { com.circaso.core.calls.CallRinger(app, get(), get()).also { it.start() } }
             single<com.circaso.core.platform.LocationProvider> { com.circaso.core.platform.AndroidLocation(app) }
