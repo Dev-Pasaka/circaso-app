@@ -127,6 +127,12 @@ class MomentsRepositoryImpl(
     private val json: Json,
     private val ownUserId: suspend () -> String?,
     private val now: () -> Long = ::nowMillis,
+    /**
+     * Makes sure this phone's encryption keys are on the server (publishing them if not) before posters are asked for
+     * moment keys: a poster seals for whatever key bundle the server has, and right after a sign-in on a new phone
+     * that may still be the old phone's, which this one could never open.
+     */
+    private val keysPublished: suspend () -> Boolean = { true },
     /** Keeps a media post going when the person leaves Circaso mid-upload. */
     private val uploads: com.circaso.core.platform.BackgroundUploads = com.circaso.core.platform.NoBackgroundUploads,
 ) : MomentsRepository {
@@ -240,6 +246,8 @@ class MomentsRepositoryImpl(
             since >= KeyRequestEveryMillis && (!asked[poster].orEmpty().containsAll(ids) || since >= KeyRequestAgainMillis)
         }.keys.toList()
         if (posters.isEmpty()) return
+        // Not yet: the next refresh (each reconnect, each frame) asks once they are.
+        if (!keysPublished()) return
         posters.chunked(KeyRequestBatch).forEach { batch ->
             // Only the posters the server says it asked count as asked: one it skipped (asked within its 10 minutes,
             // perhaps by this phone before a restart) is asked again once that has passed.

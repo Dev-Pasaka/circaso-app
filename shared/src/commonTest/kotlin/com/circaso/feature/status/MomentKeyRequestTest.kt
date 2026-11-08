@@ -91,8 +91,11 @@ class MomentKeyRequestTest {
     private val remote = KeyRequestRemote()
     private val contacts = KeyRequestContacts(listOf(amina, baraka))
     private val outbox = Outbox(FakeOutboxDao(), { me })
+    /** Whether this phone's own keys are on the server yet (a fresh sign-in publishes them first). */
+    private var keysPublished = true
     private val repo = MomentsRepositoryImpl(
         dao, remote, keys, contacts, crypto, KeyRequestFiles, HttpClient(MockEngine { respondOk() }), outbox, {}, json, { me }, now = { clock },
+        keysPublished = { keysPublished },
     )
     private val processor = OutboxProcessor(outbox, listOf(MomentKeyCopiesHandler { repo }), nowMillis = { clock })
 
@@ -229,6 +232,38 @@ class MomentKeyRequestTest {
         clock += 10 * 60 * 1000L
         repo.refresh()
         assertEquals(listOf(listOf(amina), listOf(amina), listOf(baraka), listOf(baraka)), remote.keyRequests)
+    }
+
+    // ---- cold launch and fresh sign-in (Pasaka, 2026-11-08: contacts' moments visible at once)
+
+    @Test fun aColdLaunchShowsStoredRingsBeforeAnyNetwork() = runSuspending {
+        // Last run left one readable moment and one still waiting for keys.
+        dao.upsert(listOf(
+            MomentEntity("r1", amina, """{"v":1,"kind":"Text","text":"hi"}""", null, null, clock - 1_000, clock + day, mine = false, viewed = false, reacted = false, viewCount = 0),
+            MomentEntity("w1", baraka, null, "x", null, clock - 1_000, clock + day, mine = false, viewed = false, reacted = false, viewCount = 0),
+        ))
+        assertEquals(listOf("r1"), repo.moments.first().map { it.momentId })
+        assertEquals(listOf("w1" to LockState.Waiting), repo.locked.first().map { it.momentId to it.state })
+        assertTrue(remote.keyRequests.isEmpty(), "nothing asked of the server yet")
+    }
+
+    @Test fun aFreshSignInAsksForKeysInTheSameRefreshThatListsTheMoments() = runSuspending {
+        remote.moments = listOf(unreadable("m1", amina), unreadable("m2", baraka))
+        repo.refresh()
+        assertEquals(listOf(amina, baraka), remote.keyRequests.single().sorted(), "one request for every poster, straight away")
+        assertEquals(2, repo.locked.first().size, "both rings show, waiting")
+    }
+
+    @Test fun aFreshSignInWaitsForItsOwnKeysBeforeAsking() = runSuspending {
+        keysPublished = false
+        remote.moments = listOf(unreadable("m1", amina))
+        repo.refresh()
+        assertTrue(remote.keyRequests.isEmpty(), "Amina's phone would seal for my old phone's keys")
+        assertEquals(1, repo.locked.first().size, "the ring shows anyway")
+
+        keysPublished = true
+        repo.refresh()
+        assertEquals(listOf(listOf(amina)), remote.keyRequests)
     }
 
     // ---- poster side
