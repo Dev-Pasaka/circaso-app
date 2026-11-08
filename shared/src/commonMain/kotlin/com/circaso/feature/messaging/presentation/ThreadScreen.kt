@@ -734,6 +734,9 @@ fun ThreadContent(
                 showSend = paying || media == null || state.draft.isNotBlank(),
                 trailing = if (payChip == null && media != null && state.draft.isBlank()) ({ VoiceButton(state.recording, media.onVoiceStart, media.onVoiceEnd) }) else null,
                 canSend = if (paying) quickPay?.state?.canPay == true else state.canSend,
+                // From the tap until Circle's PIN (or Face ID) is up, and while it sends: the arrow spins, so the
+                // wait reads as work, not a frozen screen (Pasaka, 2026-11-08).
+                sendBusy = paying && quickPay?.state?.step.let { it == com.circaso.feature.wallet.presentation.PayStep.Signing || it == com.circaso.feature.wallet.presentation.PayStep.Sending },
                 // The composer's arrow is the card's Pay: straight to the PIN, nothing in between.
                 onSend = if (paying) ({ quickPay?.onPay?.invoke(); Unit }) else onSend,
                 chip = payChip,

@@ -203,6 +203,8 @@ fun ComposerBar(
     focusRequester: androidx.compose.ui.focus.FocusRequester? = null,
     /** What the arrow does, for a screen reader ("Send KES 500 to Mum" while a payment is in the field). */
     sendLabel: String = "Send",
+    /** The arrow is working (a payment on its way to the PIN, or sending): a spinner, and taps are ignored. */
+    sendBusy: Boolean = false,
 ) {
     val c = CircasoTheme.colors
     val t = CircasoTheme.typography
@@ -265,7 +267,7 @@ fun ComposerBar(
                 }
                 Row(buttonLift, horizontalArrangement = Arrangement.spacedBy(CircasoSpacing.s2)) {
                     trailing?.invoke(this)
-                    if (showSend) CircasoIconButton(CircasoIcon.Send, sendLabel, onSend, emphasised = canSend)
+                    if (showSend) CircasoIconButton(CircasoIcon.Send, sendLabel, onSend, emphasised = canSend || sendBusy, busy = sendBusy)
                 }
             }
         }
