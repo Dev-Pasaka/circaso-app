@@ -10,6 +10,13 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.ui.composed
+import kotlinx.coroutines.launch
+import androidx.compose.animation.core.VectorConverter
+import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.ui.layout.positionInParent
+import androidx.compose.ui.layout.onPlaced
 import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -17,6 +24,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -313,7 +321,8 @@ private fun BoxScope.VideoCall(call: CallUi, actions: CallActions, money: String
         Spacer(Modifier.weight(1f))
         money?.let { MoneyNote(it, Modifier.align(Alignment.CenterHorizontally)); Spacer(Modifier.height(CircasoSpacing.s3)) }
         Row(
-            Modifier.fillMaxWidth().clip(CircasoShapes.pill).background(CallColors.Panel).padding(horizontal = CircasoSpacing.s3, vertical = CircasoSpacing.s2),
+            // A compact glass bar, centred: on a tablet or a phone on its side it keeps a hand's width (FaceTime).
+            Modifier.readableWidth(VideoBarWidth).clip(CircasoShapes.pill).background(CallColors.Panel).padding(horizontal = CircasoSpacing.s3, vertical = CircasoSpacing.s2),
             horizontalArrangement = Arrangement.SpaceEvenly, verticalAlignment = Alignment.CenterVertically,
         ) {
             ControlButton(CircasoIcon.FlipCamera, null, "Flip camera", actions.onFlip, enabled = call.camera)
@@ -325,10 +334,19 @@ private fun BoxScope.VideoCall(call: CallUi, actions: CallActions, money: String
     }
     // Me, in the corner above the controls, mirrored like a mirror when it's the front camera.
     if (call.camera) {
+        // Design H3: top right, under the top row, 104 x 150 on a phone. The camera turns with the screen, so on its
+        // side the preview is landscape too; a tablet's is larger, in proportion to its screen.
+        val layout = com.circaso.designsystem.adaptive.LocalWindowLayout.current
+        val tablet = minOf(layout.width, layout.height) >= 600.dp
+        val (long, narrow) = if (tablet) SelfViewTabletLong to SelfViewTabletShort else SelfViewLong to SelfViewShort
+        val landscape = layout.width > layout.height
+        // Turning the screen reshapes the preview on a spring rather than snapping it.
+        val spec = if (CircasoTheme.reduceMotion) androidx.compose.animation.core.snap() else com.circaso.designsystem.motion.CircasoSpring.resize<androidx.compose.ui.unit.Dp>()
+        val selfW by androidx.compose.animation.core.animateDpAsState(if (landscape) long else narrow, spec, label = "self-w")
+        val selfH by androidx.compose.animation.core.animateDpAsState(if (landscape) narrow else long, spec, label = "self-h")
         Box(
-            // Design H3: top right, under the top row, 104 x 150.
-            Modifier.align(Alignment.TopEnd).windowInsetsPadding(WindowInsets.safeDrawing).padding(end = CircasoSpacing.s4, top = 64.dp)
-                .width(104.dp).height(150.dp).clip(CircasoShapes.lg).border(1.dp, Color.White.copy(alpha = 0.2f), CircasoShapes.lg),
+            Modifier.align(Alignment.TopEnd).windowInsetsPadding(WindowInsets.safeDrawing).padding(end = CircasoSpacing.s4, top = SelfViewTop)
+                .width(selfW).height(selfH).clip(CircasoShapes.lg).border(1.dp, Color.White.copy(alpha = 0.2f), CircasoShapes.lg),
         ) { CallVideo(VideoSource.Local, Modifier.fillMaxSize(), mirror = call.frontCamera) }
     }
 }
@@ -351,27 +369,37 @@ private fun GroupCall(call: CallUi, actions: CallActions, chama: Chama?, fiat: F
             else Spacer(Modifier.size(44.dp))
         }
         val tiles = call.people.filter { it.joined || it.ringing }
-        // Two across on a phone; more as the screen widens (on its side, tablets), each tile about a phone's half.
-        Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.BottomCenter) {
-            LazyVerticalGrid(GridCells.Adaptive(minSize = 150.dp), Modifier.fillMaxSize().readableWidth(com.circaso.designsystem.adaptive.WindowLayout.WideContentWidth), horizontalArrangement = Arrangement.spacedBy(CircasoSpacing.s2), verticalArrangement = Arrangement.spacedBy(CircasoSpacing.s2)) {
-                items(tiles, key = { it.userId }) { p -> Tile(p) }
-                item(key = "me") { MeTile(call) }
+        // Everyone fits on screen at the largest size the space allows, as FaceTime lays out a group: more columns as
+        // the screen widens, never a tile stretched or cut off. On a phone on its side the live goal moves beside the
+        // tiles so they keep their height.
+        val beside = com.circaso.designsystem.adaptive.LocalWindowLayout.current.short && chama != null
+        Row(Modifier.weight(1f).fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(CircasoSpacing.s3)) {
+            Box(Modifier.weight(1f).fillMaxHeight(), contentAlignment = Alignment.BottomCenter) {
+                // Someone who just left is still drawn while their tile fades out.
+            val lastSeen = remember { mutableMapOf<String, CallPerson>() }
+            androidx.compose.runtime.SideEffect { tiles.forEach { lastSeen[it.userId] = it } }
+            FittedTiles(tiles.map { it.userId } + MeTileId, Modifier.fillMaxSize()) { id ->
+                if (id == MeTileId) MeTile(call) else (tiles.firstOrNull { it.userId == id } ?: lastSeen[id])?.let { Tile(it) }
             }
-            // H5 after the PIN: a short line that the contribution is on its way, over the grid's lower edge just above
-            // the live goal (a transform only, so the video tiles aren't measured again each frame).
-            val reduce = CircasoTheme.reduceMotion
-            androidx.compose.animation.AnimatedVisibility(
-                landed != null, Modifier.padding(bottom = CircasoSpacing.s2),
-                enter = fadeIn(tween(CircasoMotion.BaseMs)) + if (reduce) androidx.compose.animation.EnterTransition.None else androidx.compose.animation.slideInVertically(tween(CircasoMotion.BaseMs)) { it / 2 },
-                exit = fadeOut(tween(CircasoMotion.QuickMs)),
-            ) {
-                // The text stays while it fades out, after [landed] has gone.
-                val last = remember { arrayOf("") }
-                Landed(landed?.also { last[0] = it } ?: last[0])
+                // H5 after the PIN: a short line that the contribution is on its way, over the grid's lower edge just above
+                // the live goal (a transform only, so the video tiles aren't measured again each frame).
+                val reduce = CircasoTheme.reduceMotion
+                androidx.compose.animation.AnimatedVisibility(
+                    landed != null, Modifier.padding(bottom = CircasoSpacing.s2),
+                    enter = fadeIn(tween(CircasoMotion.BaseMs)) + if (reduce) androidx.compose.animation.EnterTransition.None else androidx.compose.animation.slideInVertically(tween(CircasoMotion.BaseMs)) { it / 2 },
+                    exit = fadeOut(tween(CircasoMotion.QuickMs)),
+                ) {
+                    // The text stays while it fades out, after [landed] has gone.
+                    val last = remember { arrayOf("") }
+                    Landed(landed?.also { last[0] = it } ?: last[0])
+                }
             }
+            // `beside` already means a goal; the check again lets the compiler know it isn't null.
+            if (beside && chama != null) Box(Modifier.width(GoalBesideWidth).fillMaxHeight(), contentAlignment = Alignment.BottomCenter) { LiveGoal(chama, fiat) }
         }
-        if (chama != null) LiveGoal(chama, fiat)
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
+        if (!beside && chama != null) Box(Modifier.readableWidth()) { LiveGoal(chama, fiat) }
+        // The controls stay a hand's width apart on a tablet instead of spreading across the window.
+        Row(Modifier.readableWidth(ControlsWidth), horizontalArrangement = Arrangement.SpaceEvenly) {
             ControlButton(if (call.mic) CircasoIcon.Mic else CircasoIcon.MicOff, null, if (call.mic) "Mute" else "Unmute", actions.onMute, on = !call.mic)
             ControlButton(if (call.camera) CircasoIcon.Video else CircasoIcon.VideoOff, null, if (call.camera) "Turn camera off" else "Turn camera on", actions.onCamera, on = !call.camera)
             // Design H4: the money moment is a button of its own, on the money card's colours.
@@ -395,14 +423,31 @@ private fun Tile(p: CallPerson) {
     val t = CircasoTheme.typography
     val mid = p.videoMid
     // Wider than tall, so six people fit on a phone without scrolling (design H4's 2 x 3 grid).
-    Box(Modifier.fillMaxWidth().aspectRatio(1.15f).clip(CircasoShapes.lg).background(CallColors.Control)) {
+    // The tile reads as one: who, and whether they are ringing or still connecting (on a narrow tile only the name's
+    // softer colour shows it, so screen readers get it in words).
+    val state = when { p.ringing -> ", ringing"; p.joined && !p.live -> ", connecting"; !p.audio && p.joined -> ", muted"; else -> "" }
+    androidx.compose.foundation.layout.BoxWithConstraints(
+        Modifier.fillMaxSize().clip(CircasoShapes.lg).background(CallColors.Control)
+            .semantics(mergeDescendants = true) { contentDescription = p.name + state },
+    ) {
+        // A small tile (a phone on its side, a big call) keeps its face clear of the name under it.
+        val small = maxHeight < SmallTileHeight
+        val wide = maxWidth >= WideTileWidth
         if (p.video && mid != null) CallVideo(VideoSource.Remote(mid), Modifier.fillMaxSize())
-        else Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Avatar(p.name, size = CircasoSizes.avatarLg) }
+        else Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Avatar(p.name, size = if (small) CircasoSizes.avatarMd else CircasoSizes.avatarLg) }
         Row(Modifier.align(Alignment.BottomStart).padding(CircasoSpacing.s2), horizontalArrangement = Arrangement.spacedBy(CircasoSpacing.s1), verticalAlignment = Alignment.CenterVertically) {
-            BasicText(p.name.substringBefore(' '), style = t.footnote.copy(color = CallColors.Ink, fontWeight = FontWeight.SemiBold))
+            // Ringing or still connecting: the name in the soft colour says so on a narrow tile, in words on a wide one.
+            val waiting = p.ringing || (p.joined && !p.live)
+            BasicText(
+                p.name.substringBefore(' '), Modifier.weight(1f, fill = false),
+                style = t.footnote.copy(color = if (waiting && !wide) CallColors.InkSoft else CallColors.Ink, fontWeight = FontWeight.SemiBold),
+                maxLines = 1, overflow = TextOverflow.Ellipsis,
+            )
             if (!p.audio && p.joined) CircasoIconImage(CircasoIcon.MicOff, CallColors.Ink, Modifier.size(14.dp))
-            if (p.ringing) BasicText("· ringing", style = t.footnote.copy(color = CallColors.InkSoft))
-            else if (p.joined && !p.live) BasicText("· connecting", style = t.footnote.copy(color = CallColors.InkSoft))
+            if (wide) {
+                if (p.ringing) BasicText("· ringing", style = t.footnote.copy(color = CallColors.InkSoft), maxLines = 1)
+                else if (p.joined && !p.live) BasicText("· connecting", style = t.footnote.copy(color = CallColors.InkSoft), maxLines = 1)
+            }
         }
     }
 }
@@ -410,12 +455,158 @@ private fun Tile(p: CallPerson) {
 @Composable
 private fun MeTile(call: CallUi) {
     val t = CircasoTheme.typography
-    Box(Modifier.fillMaxWidth().aspectRatio(1.15f).clip(CircasoShapes.lg).background(CallColors.Control)) {
+    androidx.compose.foundation.layout.BoxWithConstraints(Modifier.fillMaxSize().clip(CircasoShapes.lg).background(CallColors.Control)) {
+        val small = maxHeight < SmallTileHeight
         if (call.camera) CallVideo(VideoSource.Local, Modifier.fillMaxSize(), mirror = call.frontCamera)
-        else Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Avatar("You", size = CircasoSizes.avatarLg) }
+        else Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Avatar("You", size = if (small) CircasoSizes.avatarMd else CircasoSizes.avatarLg) }
         BasicText("You", style = t.footnote.copy(color = CallColors.Ink, fontWeight = FontWeight.SemiBold), modifier = Modifier.align(Alignment.BottomStart).padding(CircasoSpacing.s2))
     }
 }
+
+/** Below this height a tile's avatar steps down a size so the name under it never runs across the face. */
+private val SmallTileHeight = 120.dp
+
+/** From this width a tile says "ringing" or "connecting" in words beside the name. */
+private val WideTileWidth = 140.dp
+
+/**
+ * The tiles laid out at the largest size that fits the space without scrolling (FaceTime's group grid): every column
+ * count is tried and the biggest tile kept, each tile wider than tall (design H4's 1.15). Rows are centred, the last
+ * one too. With so many people that a tile would be smaller than [MinTile], it keeps that size and scrolls.
+ *
+ * One layout, each tile keyed by [ids]: when someone joins or leaves, or the columns change (rotation, split view),
+ * a tile only moves, on a spring, to its new place; its video surface is never torn down and built again.
+ */
+@Composable
+private fun FittedTiles(ids: List<String>, modifier: Modifier = Modifier, tile: @Composable (String) -> Unit) {
+    val still = CircasoTheme.reduceMotion
+    // Someone leaving fades out in place for a moment before the others close the gap; someone joining fades and
+    // grows in while the others move aside. The tiles there when the call opened are simply there.
+    val first = remember { ids.toSet() }
+    var shown by remember { androidx.compose.runtime.mutableStateOf(ids) }
+    val leaving = remember { androidx.compose.runtime.mutableStateListOf<String>() }
+    androidx.compose.runtime.LaunchedEffect(ids) {
+        val gone = shown.filter { it !in ids }
+        if (gone.isEmpty() || still) { leaving.clear(); shown = ids; return@LaunchedEffect }
+        leaving.addAll(gone.filter { it !in leaving })
+        shown = shown + ids.filter { it !in shown }
+        kotlinx.coroutines.delay(CircasoMotion.QuickMs.toLong())
+        leaving.clear()
+        shown = ids
+    }
+    val laidOut = if (leaving.isEmpty()) ids else shown
+    androidx.compose.foundation.layout.BoxWithConstraints(modifier) {
+        val gap = CircasoSpacing.s2
+        val viewportWidth = maxWidth
+        val viewportHeight = maxHeight
+        var (cols, width) = fitTiles(laidOut.size, viewportWidth, viewportHeight, gap, TileAspect)
+        if (width < MinTile) {
+            cols = ((viewportWidth + gap) / (MinTile + gap)).toInt().coerceAtLeast(1)
+            width = (viewportWidth - gap * (cols - 1)) / cols
+        }
+        val scroll = androidx.compose.foundation.rememberScrollState()
+        androidx.compose.ui.layout.Layout(
+            content = {
+                laidOut.forEach { id ->
+                    androidx.compose.runtime.key(id) {
+                        val appear = remember { androidx.compose.animation.core.Animatable(if (still || id in first) 1f else 0f) }
+                        androidx.compose.runtime.LaunchedEffect(Unit) { appear.animateTo(1f, tween(CircasoMotion.BaseMs)) }
+                        val fade by androidx.compose.animation.core.animateFloatAsState(if (id in leaving) 0f else 1f, tween(CircasoMotion.QuickMs), label = "leave")
+                        Box(Modifier.springPlacement(still).graphicsLayer {
+                            alpha = appear.value * fade
+                            val scale = 0.92f + 0.08f * appear.value * fade
+                            scaleX = scale; scaleY = scale
+                        }) { tile(id) }
+                    }
+                }
+            },
+            modifier = Modifier.fillMaxWidth().verticalScroll(scroll, enabled = scroll.maxValue > 0),
+        ) { measurables, _ ->
+            val tileW = width.roundToPx()
+            val tileH = (width / TileAspect).roundToPx()
+            val gapPx = gap.roundToPx()
+            val w = viewportWidth.roundToPx()
+            val rows = (measurables.size + cols - 1) / cols
+            val contentH = rows * tileH + (rows - 1).coerceAtLeast(0) * gapPx
+            val h = maxOf(contentH, viewportHeight.roundToPx())
+            val placeables = measurables.map { it.measure(androidx.compose.ui.unit.Constraints.fixed(tileW, tileH)) }
+            layout(w, h) {
+                val top = (h - contentH) / 2
+                placeables.forEachIndexed { i, p ->
+                    val row = i / cols
+                    val inRow = minOf(cols, placeables.size - row * cols)
+                    val left = (w - (inRow * tileW + (inRow - 1) * gapPx)) / 2
+                    p.place(left + (i % cols) * (tileW + gapPx), top + row * (tileH + gapPx))
+                }
+            }
+        }
+    }
+}
+
+/**
+ * Moves a tile to where the layout puts it on a critically damped spring (interruptible: a second change mid-flight
+ * carries on from where it is); with Reduce Motion it is simply there.
+ */
+private fun Modifier.springPlacement(still: Boolean): Modifier = composed {
+    val scope = androidx.compose.runtime.rememberCoroutineScope()
+    var target by remember { androidx.compose.runtime.mutableStateOf<androidx.compose.ui.unit.IntOffset?>(null) }
+    val offset = remember { androidx.compose.animation.core.Animatable(androidx.compose.ui.unit.IntOffset.Zero, androidx.compose.ui.unit.IntOffset.VectorConverter) }
+    this.onPlaced { coords ->
+        val now = coords.positionInParent().let { androidx.compose.ui.unit.IntOffset(it.x.toInt(), it.y.toInt()) }
+        val before = target
+        target = now
+        if (before != null && before != now && !still) {
+            scope.launch {
+                // Start from where it was on screen, then settle at zero (its new place).
+                offset.snapTo(offset.value + (before - now))
+                offset.animateTo(androidx.compose.ui.unit.IntOffset.Zero, com.circaso.designsystem.motion.CircasoSpring.reflow())
+            }
+        }
+    }.offset { offset.value }
+}
+
+
+/** The key of the person's own tile, after everyone else's. */
+private const val MeTileId = "me"
+
+/** A call tile is a little wider than tall (design H4: six people fit a phone in a 2 x 3 grid). */
+private const val TileAspect = 1.15f
+
+/**
+ * The column count that gives [count] tiles of [aspect] (width / height) the largest width inside [width] x [height]
+ * with [gap] between them, and that width.
+ */
+internal fun fitTiles(count: Int, width: androidx.compose.ui.unit.Dp, height: androidx.compose.ui.unit.Dp, gap: androidx.compose.ui.unit.Dp, aspect: Float): Pair<Int, androidx.compose.ui.unit.Dp> {
+    var bestCols = 1
+    var bestWidth = 0.dp
+    for (cols in 1..maxOf(count, 1)) {
+        val rows = (count + cols - 1) / cols
+        val byWidth = (width - gap * (cols - 1)) / cols
+        val byHeight = ((height - gap * (rows - 1)) / rows) * aspect
+        val w = minOf(byWidth, byHeight)
+        if (w > bestWidth) { bestWidth = w; bestCols = cols }
+    }
+    return bestCols to bestWidth
+}
+
+/** Below this a tile can't show a face: the grid scrolls instead of shrinking further. */
+private val MinTile = 96.dp
+
+/** The call controls' row never runs wider than this, centred (FaceTime keeps them together on an iPad). */
+private val ControlsWidth = 440.dp
+
+/** The video call's glass control bar at its widest. */
+private val VideoBarWidth = 520.dp
+
+/** Design H3's self-view, 104 x 150 on a phone, and a tablet's in proportion to its screen; [SelfViewTop] clears the top row. */
+private val SelfViewLong = 150.dp
+private val SelfViewShort = 104.dp
+private val SelfViewTabletLong = 220.dp
+private val SelfViewTabletShort = 152.dp
+private val SelfViewTop = 64.dp
+
+/** The live goal's column beside the tiles on a phone on its side. */
+private val GoalBesideWidth = 280.dp
 
 /** H4's goal card: "LIVE · contributions land as they happen", moving as the frames arrive. */
 @Composable

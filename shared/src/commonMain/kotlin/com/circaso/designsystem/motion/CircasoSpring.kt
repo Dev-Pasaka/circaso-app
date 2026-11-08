@@ -9,4 +9,10 @@ import androidx.compose.ui.unit.IntOffset
 object CircasoSpring {
     /** iOS sheet: quick, lightly damped, no visible overshoot. */
     fun sheet(): SpringSpec<IntOffset> = spring(dampingRatio = 0.9f, stiffness = Spring.StiffnessMediumLow, visibilityThreshold = IntOffset(1, 1))
+
+    /** Things moving to a new place in a layout that changed (call tiles reflowing): UIKit's push speed, no bounce. */
+    fun reflow(): SpringSpec<IntOffset> = spring(dampingRatio = Spring.DampingRatioNoBouncy, stiffness = 420f, visibilityThreshold = IntOffset(1, 1))
+
+    /** A size settling after the screen turned (the call self-view). */
+    fun <T> resize(): SpringSpec<T> = spring(dampingRatio = Spring.DampingRatioNoBouncy, stiffness = 420f)
 }

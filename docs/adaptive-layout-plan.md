@@ -70,6 +70,49 @@ one is pushed over it. Checked on iPhone 17 Pro (portrait and on its side), iPad
 
 Left: checking the signed-in flows on a real tablet and on the Redmi on its side.
 
+## Second pass (2026-11-08)
+
+Pasaka asked again for every screen to adapt to phones and tablets in both orientations, premium and never stretched.
+Audited on the Redmi on its side, iPad Pro 13" and 11" (portrait, and landscape through the debug frame below), and
+fixed:
+
+- **Sheets** are a centred 540 dp card with every corner rounded on a tablet (regular width and height), rising from
+  the bottom of the screen as an iPadOS form sheet does; phones keep the bottom sheet.
+- **Floating bottom bars** (Make a Payment…) are centred over the content, not the screen, so the top bar or tabs down
+  the side never sit under them; on a phone on its side the page colour fades in behind the bar (scroll edge).
+- **Android on its side** hides the status bar (a swipe brings it back), as an iPhone does in landscape.
+- **Group calls** lay everyone out at the largest tile that fits without scrolling (FaceTime); on a phone on its side
+  the live goal moves beside the tiles. Call controls keep a hand's width on tablets. The video self-view turns with the
+  screen and is larger on a tablet.
+- **Message bubbles** grow to 62% of the pane, at most 440 dp, on wide screens (292 dp on a phone, as designed).
+- **Moments**: the viewer, composer and chat camera are full-screen flows (never squeezed into the detail pane); a
+  photo shows whole over a blur of itself on wide screens instead of being cropped. The gallery adds columns (112 dp
+  minimum) instead of three huge tiles.
+- **Voice with Asha** on a phone on its side: the mark and controls left, the transcript right.
+- **Tab labels** grow at most 1.2x with the text size, as UIKit's don't grow at all, so they never clip.
+- `readableWidth()` now fills up to its max (it used to wrap its content).
+
+- **Over the window, not the pane.** Sheets and photo viewers draw in a window-level layer
+  (`designsystem/chrome/WindowOverlay.kt`): one opened from the 360 dp list pane (You's photo, a tab's sheet) covers
+  the whole window, centred, never the narrow pane (Pasaka, 2026-11-08). Debug `-window-overlay=off` shows the old way.
+- **Each tab keeps its own screens** (`core/navigation/TabStacks.kt`, iOS tab-bar rule): on two panes, changing tab
+  sets aside what the old tab opened in the detail pane and brings back what the new tab had; Back never shows another
+  tab's sub-screens. On one pane nothing is kept. Signing out (Home leaving the stack) forgets them all; a notification
+  opens its tab fresh.
+- Tablet sign-in is one centred group, buttons at `WindowLayout.FormWidth` (440 dp); the tablet wallet is one centred
+  column a card's width; small call tiles step the avatar down and fade in and out as people join and leave.
+
+- **Deferred: set-aside screens restart.** A tab's screens set aside on two panes are taken off the back stack, and
+  navigation3 clears their view model and saved state when they leave it (its decorators' `onPop` is internal, so it
+  can't be wrapped). They come back reloaded (from Room, so instantly), but a half-typed form loses its text and scroll
+  positions reset. Fix next: drafts of forms that can be set aside (Edit Profile, amounts, support) live in a
+  repository or Room, as chat drafts already do; or a custom ViewModelStore/SavedState decorator that skips kept keys.
+
+**Checking landscape from a script.** Simulators can't be rotated from the command line (iPadOS refuses
+`requestGeometryUpdate` in windowed mode), so debug builds take `-frame=1376x1032` (iOS) or `--es frame 1280x800`
+(Android): the whole app is laid out in a window of that many dp, scaled to fit. Useful sizes: iPad Pro 13" 1376x1032,
+11" 1210x834, Android tablet 1280x800, iPhone on its side 874x402. Safe-area insets stay the real device's.
+
 ## Order of work
 
 1. Foundation: window classes, readable width in the scaffold, physical push/pop transitions. **(done first)**

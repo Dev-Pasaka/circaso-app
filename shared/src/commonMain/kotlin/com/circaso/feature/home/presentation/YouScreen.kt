@@ -1,5 +1,7 @@
 package com.circaso.feature.home.presentation
 
+import com.circaso.designsystem.chrome.OverWindow
+
 import androidx.compose.foundation.layout.size
 import com.circaso.designsystem.components.CircasoIcon
 import com.circaso.designsystem.components.SwitchRow
@@ -106,7 +108,7 @@ fun YouScreen(viewModel: YouViewModel, actions: YouActions, appVersion: String, 
 }
 
 /** Design F2. Stateless so it can be shown with sample data. Money rows (currency, limits, verification) arrive with the wallet. */
-@OptIn(ExperimentalFoundationApi::class)
+@OptIn(ExperimentalFoundationApi::class, androidx.compose.ui.ExperimentalComposeUiApi::class)
 @Composable
 fun YouContent(
     state: YouUiState,
@@ -167,7 +169,12 @@ fun YouContent(
         banner = { ConnectionBanner(showing = "Showing what is saved on this phone") },
         overlay = {
             state.profile?.avatarUrl?.let { photo ->
-                PhotoViewer(photo, state.profile.displayName, photoBounds, viewingPhoto, photoOpen, onClose = { viewingPhoto = false })
+                // Over the whole window: on an iPad the You tab is the narrow list pane, and the photo opens over everything
+                // (Pasaka, 2026-11-08: it opened inside the list pane). It grows from the circle in window coordinates.
+                androidx.compose.ui.backhandler.BackHandler(enabled = viewingPhoto, onBack = { viewingPhoto = false })
+                OverWindow {
+                    PhotoViewer(photo, state.profile.displayName, photoBounds, viewingPhoto, photoOpen, onClose = { viewingPhoto = false })
+                }
             }
             ConfirmSheet(
                 visible = state.confirmSignOut,
@@ -479,7 +486,6 @@ private fun PhotoViewer(
         if (open) drag.snapTo(0f)
         progress.animateTo(if (open) 1f else 0f, if (open) PhotoOpenSpring else PhotoCloseSpring)
     }
-    androidx.compose.ui.backhandler.BackHandler(enabled = open, onBack = onClose)
     if (!open && progress.value <= 0.001f) return
     var origin by remember { mutableStateOf(androidx.compose.ui.geometry.Offset.Zero) }
     var box by remember { mutableStateOf(androidx.compose.ui.unit.IntSize.Zero) }
@@ -509,9 +515,11 @@ private fun PhotoViewer(
             )
             Box(Modifier.fillMaxSize().background(androidx.compose.ui.graphics.Color.Black.copy(alpha = ViewerVeil)))
         }
-        val side = box.width.toFloat()
+        // The largest square the window holds, centred: the window's width on a phone, its height on a tablet on its
+        // side (a full-width square there would run off the top and bottom).
+        val side = minOf(box.width, box.height).toFloat()
         val start = from.translate(-origin.x, -origin.y)
-        val endLeft = 0f
+        val endLeft = (box.width - side) / 2f
         val endTop = (box.height - side) / 2f
         val left = start.left + (endLeft - start.left) * p
         val top = start.top + (endTop - start.top) * p + drag.value

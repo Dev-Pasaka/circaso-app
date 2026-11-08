@@ -83,14 +83,27 @@ private fun TabButton(item: TabItem, selected: Boolean, modifier: Modifier, onSe
                         Box(Modifier.align(Alignment.TopEnd).offset(x = 3.dp, y = (-1).dp).size(8.dp).clip(CircasoShapes.circle).background(c.action))
                     }
                 }
-                BasicText(
-                    item.label,
-                    style = CircasoTheme.typography.caption2.copy(
-                        color = if (selected) c.ink else c.inkSecondary,
-                        fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
-                    ),
-                )
+                // Tab labels grow only a little with the text size, as UIKit's tab bar labels don't grow at all: at the
+                // largest sizes the label would no longer fit its 54 dp tab (screen readers still read it in full). A
+                // plain linear scale here: at a 1.2 cap Android 14's non-linear font curve makes no visible difference.
+                val density = androidx.compose.ui.platform.LocalDensity.current
+                androidx.compose.runtime.CompositionLocalProvider(
+                    androidx.compose.ui.platform.LocalDensity provides androidx.compose.ui.unit.Density(density.density, minOf(density.fontScale, MaxTabLabelScale)),
+                ) {
+                    BasicText(
+                        item.label,
+                        style = CircasoTheme.typography.caption2.copy(
+                            color = if (selected) c.ink else c.inkSecondary,
+                            fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
+                        ),
+                        maxLines = 1,
+                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                    )
+                }
             }
         }
     }
 }
+
+/** The most a tab's label grows with the person's text size. */
+private const val MaxTabLabelScale = 1.2f

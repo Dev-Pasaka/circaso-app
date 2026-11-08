@@ -103,6 +103,9 @@ fun AppNavigation(forceUpdate: Boolean, home: @Composable () -> Unit) {
     val state by auth.state.collectAsState()
     val stored by auth.stored.collectAsState()
     val twoPaneNow = com.circaso.designsystem.adaptive.LocalWindowLayout.current.twoPane
+    // Home's tab (see switchTab below). The Wallet tab is a dashboard: on a tablet it takes the whole window.
+    var homeTab by androidx.compose.runtime.saveable.rememberSaveable { androidx.compose.runtime.mutableIntStateOf(0) }
+    val splitHome = twoPaneNow && homeTab != com.circaso.feature.home.presentation.Tab.Wallet.ordinal
     val backStack = rememberNavBackStack(SavedStateConfiguration { serializersModule = routeSerializers }, SplashRoute)
 
     val root: Route = when (state) {
@@ -111,11 +114,12 @@ fun AppNavigation(forceUpdate: Boolean, home: @Composable () -> Unit) {
         AuthState.Onboarding -> if (stored.onboardingStep == "REGISTER_DEVICE") RegisteringRoute else PhoneRoute
         AuthState.Active -> HomeRoute
     }
-    val preview = remember { launchValue("-preview") }
+    val client: com.circaso.core.platform.ClientInfo = koinInject()
+    // Debug builds only: on Android launch arguments are extras any app could put on the launcher intent.
+    val preview = remember { launchValue("-preview")?.takeIf { client.debugBuild } }
     // Debug builds: `-group-wallets=on|off|default` (Android: `--es group-wallets off`) overrides the build's default.
     val groupWalletsArg = remember { launchValue("-group-wallets") }
     val prefs: com.circaso.core.datastore.AppPreferences = koinInject()
-    val client: com.circaso.core.platform.ClientInfo = koinInject()
     LaunchedEffect(groupWalletsArg) { if (groupWalletsArg != null && client.debugBuild) prefs.setGroupWalletsOverride(groupWalletsArg) }
     LaunchedEffect(root, forceUpdate) {
         val target: Route = if (forceUpdate) ForceUpdateRoute else if (preview != null) PreviewRoute(preview) else root
@@ -133,7 +137,7 @@ fun AppNavigation(forceUpdate: Boolean, home: @Composable () -> Unit) {
     // From the list in a split, a chat replaces what the detail pane shows (iPad Messages): Home stays the only
     // thing under it, so Back from the chat returns to the empty pane, not through every chat opened before.
     fun openChatFromList(id: String) {
-        if (twoPaneNow) while (backStack.size > 1 && backStack.last() != HomeRoute) backStack.removeAt(backStack.lastIndex)
+        if (splitHome) while (backStack.size > 1 && backStack.last() != HomeRoute) backStack.removeAt(backStack.lastIndex)
         backStack.add(ChatRoute(id))
     }
     // The Groups wallet's sheet actions (one place for the tab's header and its sheet).
@@ -143,6 +147,31 @@ fun AppNavigation(forceUpdate: Boolean, home: @Composable () -> Unit) {
         onNetwork = { wid, chain -> backStack.add(NetworkAssetsRoute(chain, wid)) },
     )
     fun backToHome() { droppedTo[0] = -1; while (backStack.size > 1 && backStack.last() != HomeRoute) backStack.removeAt(backStack.lastIndex) }
+    // Home's tab lives here, with the screens each tab opened (TabStacks): changing tab swaps the detail pane's
+    // screens for the new tab's, so another tab's sub-screens never show, not even on Back.
+    val tabStacks = remember { TabStacks<NavKey>() }
+    // Bumped on each tab change, so the detail pane swaps to the new tab's screen in place (iPadOS) rather than
+    // sliding as if pushed or popped.
+    var tabEpoch by remember { androidx.compose.runtime.mutableIntStateOf(0) }
+    // The back stack a tab change left behind: the scene change it causes is the tab swapping in, not a push or a back.
+    // It counts only while the stack is still exactly that, worked out during composition so it can't race a frame.
+    var tabSwapStack by remember { androidx.compose.runtime.mutableStateOf<List<NavKey>?>(null) }
+    val swapPending = tabSwapStack != null && tabSwapStack == backStack.toList()
+    // Forgotten the first time the stack moves on, so coming back to the same stack later is an ordinary back.
+    if (tabSwapStack != null && !swapPending) androidx.compose.runtime.SideEffect { tabSwapStack = null }
+    fun switchTab(to: Int, restore: Boolean = true) {
+        if (to == homeTab) return
+        if (!restore) tabStacks.forget(to)
+        tabStacks.switch(backStack, HomeRoute, from = homeTab, to = to, keep = twoPaneNow)
+        homeTab = to
+        tabEpoch++
+        tabSwapStack = backStack.toList()
+    }
+    // Signed out (Home gone from the stack): no tab's screens may come back after the next sign-in, and the next
+    // person starts on Chats.
+    LaunchedEffect(Unit) {
+        androidx.compose.runtime.snapshotFlow { HomeRoute in backStack }.collect { if (!it) { tabStacks.clear(); homeTab = 0 } }
+    }
     // A tapped notification (Pasaka, 2026-11-06): once signed in and Home is underneath, open where it points, over
     // Home, whether Circaso was cold, in the background or on screen. Signed out, the tap is dropped.
     val notificationLookups: com.circaso.core.notifications.NotificationLookups = koinInject()
@@ -165,8 +194,10 @@ fun AppNavigation(forceUpdate: Boolean, home: @Composable () -> Unit) {
         taps.pending.filterNotNull().collect { destination ->
             androidx.compose.runtime.snapshotFlow { backStack.firstOrNull() }.first { it == HomeRoute }
             val opening = com.circaso.core.notifications.NotificationRoutes.resolve(destination, notificationLookups)
+            // The tab first: the current tab's screens are set aside for it (not lost), the new tab's are not brought
+            // back; then what the notification opens, on that tab.
+            opening.tab?.let { switchTab(com.circaso.feature.home.presentation.Tab.valueOf(it.name).ordinal, restore = false) }
             backToHome()
-            opening.tab?.let { com.circaso.core.notifications.HomeTabRequests.wanted.value = it }
             opening.routes.forEach { backStack.add(it) }
             taps.consumed(destination)
         }
@@ -217,21 +248,32 @@ fun AppNavigation(forceUpdate: Boolean, home: @Composable () -> Unit) {
     Box {
     val twoPane = com.circaso.designsystem.adaptive.LocalWindowLayout.current.twoPane
     val still = com.circaso.designsystem.theme.CircasoTheme.reduceMotion
-    // Pop or push, decided once per change of depth (not on every recomposition mid-animation).
+    // Whether a scene change is a tab change swapping in: its target is the stack switchTab left (pure, so the
+    // several times AnimatedContent asks during one change all agree).
+    fun <S> androidx.compose.animation.AnimatedContentTransitionScope<androidx.navigation3.scene.Scene<S>>.tabSwap(): Boolean where S : Any =
+        swapPending && tabSwapStack?.lastOrNull()?.let { top -> targetState.entries.lastOrNull()?.contentKey == "$top:${top::class}" } == true
     val lastDepth = remember { IntArray(1) { backStack.size } }
     val popping = remember(backStack.size) { (backStack.size < lastDepth[0]).also { lastDepth[0] = backStack.size } }
-    CompositionLocalProvider(LocalNavPopping provides popping) {
+    // Sheets and photo viewers draw over the whole window, not inside the pane that opened them (WindowOverlay.kt);
+    // only over the screens: the share sheet, toasts and calls below stay above them.
+    com.circaso.designsystem.chrome.WindowOverlayLayer(enabled = launchValue("-window-overlay")?.takeIf { client.debugBuild } != "off") {
+    // A tab change that shortens the stack isn't a back: the screen it shows must not start dimmed.
+    CompositionLocalProvider(LocalNavPopping provides (popping && !swapPending), LocalNavCut provides swapPending) {
     NavDisplay(
         backStack = backStack,
         onBack = ::pop,
         entryDecorators = listOf(rememberSaveableStateHolderNavEntryDecorator(), rememberViewModelStoreNavEntryDecorator(), rememberDimNavEntryDecorator()),
         // On a wide window Home is a list beside whatever it opened (docs/adaptive-layout-plan.md).
-        sceneStrategies = listOf(remember(twoPane) { ListDetailSceneStrategy(twoPane) }),
-        // The same screen on top before and after (a rotation or resize into or out of the split) only reflows.
-        transitionSpec = { if (sameTop()) EnterTransition.None togetherWith ExitTransition.None else pushTransition(still) },
+        // The Wallet tab is a dashboard, not a list (Pasaka, 2026-11-08: the card looked shrunk in the narrow list
+        // pane): on a tablet it takes the whole window, its card centred at a card's size, and what it opens covers it
+        // with a Back, as on a phone. Chats and You keep the list beside the detail.
+        sceneStrategies = listOf(remember(splitHome, tabEpoch) { ListDetailSceneStrategy(splitHome, tabEpoch) }),
+        // The same screen on top before and after (a rotation or resize into or out of the split) only reflows; a
+        // change of Home's tab swaps in place (iPadOS), never slides as a push or a back.
+        transitionSpec = { if (tabSwap() || sameTop()) EnterTransition.None togetherWith ExitTransition.None else pushTransition(still) },
         popTransitionSpec = {
             when {
-                sameTop() -> EnterTransition.None togetherWith ExitTransition.None
+                tabSwap() || sameTop() -> EnterTransition.None togetherWith ExitTransition.None
                 backStack.size == droppedTo[0] -> dropTransition(still)
                 else -> popTransition(still)
             }
@@ -270,6 +312,9 @@ fun AppNavigation(forceUpdate: Boolean, home: @Composable () -> Unit) {
                 )
                 val chatsMoments = remember(momentsViewModel) { com.circaso.feature.messaging.presentation.ChatsMoments(momentsViewModel, momentsActions) }
                 HomeScreen(
+                    selectedTab = homeTab,
+                    onSelectTab = { switchTab(it) },
+                    onBackToTab = { switchTab(it, restore = false) },
                     chats = { bottomPadding -> ChatsTab(chatsViewModel, bottomPadding, onAsha = { backStack.add(AshaRoute) }, onVoice = { backStack.add(AshaRoute); backStack.add(VoiceRoute) }, onNewChat = { backStack.add(NewChatRoute) }, selectedChatId = if (twoPane) backStack.filterIsInstance<ChatRoute>().lastOrNull()?.chatId else null, moments = chatsMoments) { id -> openChatFromList(id) } },
                     chatsActions = {},
                     chatsBanner = {
@@ -334,7 +379,7 @@ fun AppNavigation(forceUpdate: Boolean, home: @Composable () -> Unit) {
             }
             entry<ContactsRoute> { ContactsScreen(koinViewModel(), onBack = ::pop) }
             // A chat's photos, videos and documents: the moment composer's screens, sent to this chat (2026-11-07).
-            entry<ChatMediaRoute> { route ->
+            entry<ChatMediaRoute>(metadata = Panes.FullScreen) { route ->
                 com.circaso.feature.messaging.presentation.ChatMediaComposerScreen(
                     koinViewModel(key = "chat-media-${route.chatId}-${route.start}-${route.more.joinToString()}", parameters = { parametersOf(route.chatId, route.start, route.more) }),
                     onClose = {
@@ -358,14 +403,14 @@ fun AppNavigation(forceUpdate: Boolean, home: @Composable () -> Unit) {
                     },
                 )
             }
-            entry<SharedMomentRoute> {
+            entry<SharedMomentRoute>(metadata = Panes.FullScreen) {
                 com.circaso.feature.status.presentation.MomentComposerScreen(
                     koinViewModel(key = "moment-shared", parameters = { parametersOf(true) }), onClose = ::pop,
                     onAudience = { backStack.add(MomentsPrivacyRoute) }, onFindPeople = { backStack.add(ContactsRoute) },
                 )
             }
-            entry<MomentComposerRoute> { com.circaso.feature.status.presentation.MomentComposerScreen(koinViewModel(), onClose = ::pop, onAudience = { backStack.add(MomentsPrivacyRoute) }, onFindPeople = { backStack.add(ContactsRoute) }) }
-            entry<MomentViewerRoute> { key ->
+            entry<MomentComposerRoute>(metadata = Panes.FullScreen) { com.circaso.feature.status.presentation.MomentComposerScreen(koinViewModel(), onClose = ::pop, onAudience = { backStack.add(MomentsPrivacyRoute) }, onFindPeople = { backStack.add(ContactsRoute) }) }
+            entry<MomentViewerRoute>(metadata = Panes.FullScreen) { key ->
                 val chats = koinInject<com.circaso.feature.messaging.domain.ChatsRepository>()
                 val scope = androidx.compose.runtime.rememberCoroutineScope()
                 com.circaso.feature.status.presentation.MomentViewerScreen(
@@ -610,6 +655,7 @@ fun AppNavigation(forceUpdate: Boolean, home: @Composable () -> Unit) {
             entry<ForceUpdateRoute> { ForceUpdateScreen() }
         },
     )
+    }
     }
     if (state == AuthState.Active) {
         val scope = androidx.compose.runtime.rememberCoroutineScope()

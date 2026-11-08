@@ -512,6 +512,7 @@ private fun ActiveWallet(
     // A phone on its side (the user, 2026-10-31): the cards, actions and assets on the left, the payments on the
     // right, each scrolling on its own; upright, one list.
     val short = com.circaso.designsystem.adaptive.LocalWindowLayout.current.short
+    val roomy = !short && com.circaso.designsystem.adaptive.LocalWindowLayout.current.widthClass != com.circaso.designsystem.adaptive.WidthClass.Compact
     val cardsBlock: @Composable () -> Unit = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 // One card per network, swiped sideways (cards reach the screen edges to peek); the actions, then the
@@ -610,10 +611,15 @@ private fun ActiveWallet(
     val transactionsItem: androidx.compose.foundation.lazy.LazyListScope.() -> Unit = {
         item(key = "transactions") { ViewTransactionsRow(actions.onActivity) }
     }
+    // Both layouts' scroll positions live here, above the switch, so turning the phone and back returns each to where
+    // it was rather than to the top.
+    val sideCardsScroll = rememberScrollState()
+    val sideList = androidx.compose.foundation.lazy.rememberLazyListState()
+    val list = androidx.compose.foundation.lazy.rememberLazyListState()
     if (short) {
         Row(Modifier.fillMaxSize(), horizontalArrangement = Arrangement.spacedBy(CircasoSpacing.s2)) {
             Column(
-                Modifier.weight(1f).fillMaxHeight().verticalScroll(rememberScrollState())
+                Modifier.weight(1f).fillMaxHeight().verticalScroll(sideCardsScroll)
                     .padding(start = CircasoSpacing.s4, end = CircasoSpacing.s2, top = 10.dp, bottom = bottom),
             ) {
                 header?.let { it(true); Spacer(Modifier.height(CircasoSpacing.s3)) }
@@ -621,6 +627,7 @@ private fun ActiveWallet(
             }
             LazyColumn(
                 Modifier.weight(1f).fillMaxHeight(),
+                state = sideList,
                 contentPadding = PaddingValues(start = CircasoSpacing.s2, end = CircasoSpacing.s4, top = 10.dp, bottom = bottom),
                 verticalArrangement = Arrangement.spacedBy(22.dp),
             ) {
@@ -630,12 +637,18 @@ private fun ActiveWallet(
             }
         }
     } else {
-        LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(start = CircasoSpacing.s4, end = CircasoSpacing.s4, top = 10.dp, bottom = bottom), verticalArrangement = Arrangement.spacedBy(22.dp)) {
+        // On a tablet the whole wallet is one centred column a card's width (iPad Wallet): a 680 dp card would be a
+        // placard, and a narrower card over wider rows reads as three sizes stacked. The list itself stays full width,
+        // so a swipe in the margins scrolls it too.
+        androidx.compose.foundation.layout.BoxWithConstraints(Modifier.fillMaxSize()) {
+        val side = if (roomy) maxOf(CircasoSpacing.s4, (maxWidth - CardMaxWidth) / 2) else CircasoSpacing.s4
+        LazyColumn(Modifier.fillMaxSize(), state = list, contentPadding = PaddingValues(start = side, end = side, top = 10.dp, bottom = bottom), verticalArrangement = Arrangement.spacedBy(22.dp)) {
             header?.let { h -> item(key = "header") { h(true) } }
             statusItems()
             item(key = "cards") { cardsBlock() }
             groupItems()
             transactionsItem()
+        }
         }
     }
     }
@@ -817,3 +830,6 @@ private fun ComingSheetContent(flow: ComingFlow, onSendToWallet: () -> Unit) {
 private const val GlowInMs = 700
 /** One network's glow handing over to the next as the cards are swiped. */
 private const val GlowSwapMs = 450
+
+/** A wallet card's widest on a tablet: about a real card held up to the screen, centred in the readable column. */
+private val CardMaxWidth = 440.dp

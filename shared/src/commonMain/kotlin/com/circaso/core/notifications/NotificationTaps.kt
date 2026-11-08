@@ -56,30 +56,35 @@ interface NotificationLookups {
 }
 
 object NotificationRoutes {
+    /**
+     * Every opening names the Home tab it belongs to (core/navigation/TabStacks: a tab owns what it opened), so a chat
+     * tapped while on You opens under Chats, and a later tap on Chats doesn't file it under You.
+     */
     suspend fun resolve(destination: NotificationDestination, lookups: NotificationLookups): NotificationOpening = when (destination) {
         is NotificationDestination.Chat -> NotificationOpening(
             listOf(ChatRoute(destination.chatId, destination.localId ?: destination.messageId?.let { lookups.messageLocalId(it) })),
+            HomeTabName.Chats,
         )
         is NotificationDestination.Payment -> {
             val key = destination.transferId ?: destination.transactionId
             val chat = destination.chatId ?: key?.let { lookups.chatOfPayment(it) }
             when {
-                chat != null -> NotificationOpening(listOf(ChatRoute(chat, destination.transferId?.let { lookups.paymentCardLocalId(chat, it) })))
-                key != null -> NotificationOpening(listOf(TransferRoute(key)))
-                else -> NotificationOpening(listOf(ActivityRoute()))
+                chat != null -> NotificationOpening(listOf(ChatRoute(chat, destination.transferId?.let { lookups.paymentCardLocalId(chat, it) })), HomeTabName.Chats)
+                key != null -> NotificationOpening(listOf(TransferRoute(key)), HomeTabName.Wallet)
+                else -> NotificationOpening(listOf(ActivityRoute()), HomeTabName.Wallet)
             }
         }
         is NotificationDestination.MissedCall -> destination.chatId
-            ?.let { NotificationOpening(listOf(ChatRoute(it, lookups.lastCallLocalId(it)))) }
-            ?: NotificationOpening(listOf(NotificationsRoute))
-        is NotificationDestination.Moment -> NotificationOpening(listOf(MomentViewerRoute(destination.posterId, destination.momentId)))
-        NotificationDestination.Asha -> NotificationOpening(listOf(AshaRoute))
-        NotificationDestination.Security -> NotificationOpening(listOf(SecurityRoute))
-        NotificationDestination.Contacts -> NotificationOpening(listOf(ContactsRoute))
+            ?.let { NotificationOpening(listOf(ChatRoute(it, lookups.lastCallLocalId(it))), HomeTabName.Chats) }
+            ?: NotificationOpening(listOf(NotificationsRoute), HomeTabName.You)
+        is NotificationDestination.Moment -> NotificationOpening(listOf(MomentViewerRoute(destination.posterId, destination.momentId)), HomeTabName.Chats)
+        NotificationDestination.Asha -> NotificationOpening(listOf(AshaRoute), HomeTabName.Chats)
+        NotificationDestination.Security -> NotificationOpening(listOf(SecurityRoute), HomeTabName.You)
+        NotificationDestination.Contacts -> NotificationOpening(listOf(ContactsRoute), HomeTabName.You)
         NotificationDestination.Wallet -> NotificationOpening(emptyList(), HomeTabName.Wallet)
-        NotificationDestination.Profile -> NotificationOpening(listOf(EditProfileRoute))
-        NotificationDestination.NeedsAttention -> NotificationOpening(listOf(NeedsAttentionRoute))
-        NotificationDestination.Inbox -> NotificationOpening(listOf(NotificationsRoute))
+        NotificationDestination.Profile -> NotificationOpening(listOf(EditProfileRoute), HomeTabName.You)
+        NotificationDestination.NeedsAttention -> NotificationOpening(listOf(NeedsAttentionRoute), HomeTabName.You)
+        NotificationDestination.Inbox -> NotificationOpening(listOf(NotificationsRoute), HomeTabName.You)
     }
 }
 

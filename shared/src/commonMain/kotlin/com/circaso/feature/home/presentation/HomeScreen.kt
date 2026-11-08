@@ -31,7 +31,7 @@ import com.circaso.designsystem.chrome.TabItem
 import com.circaso.designsystem.components.CircasoIcon
 import com.circaso.designsystem.theme.CircasoTheme
 
-private enum class Tab(val label: String, val icon: CircasoIcon) {
+internal enum class Tab(val label: String, val icon: CircasoIcon) {
     Chats("Chats", CircasoIcon.Chat),
     Wallet("Wallet", CircasoIcon.Wallet),
     You("You", CircasoIcon.Person),
@@ -54,16 +54,26 @@ fun HomeScreen(
     walletOverlay: @Composable androidx.compose.foundation.layout.BoxScope.() -> Unit = {},
     /** The tab shown first (previews); the person's choice is remembered from then on. */
     initialTab: Int = Tab.Chats.ordinal,
+    /**
+     * The tab, when the navigation owns it (each tab keeps its own screens in the detail pane: core/navigation/TabStacks).
+     * Null: kept here (previews).
+     */
+    selectedTab: Int? = null,
+    onSelectTab: ((Int) -> Unit)? = null,
+    /** Back's jump to Chats: a step back, so it never brings back a screen Chats had open. Null: like a tab tap. */
+    onBackToTab: ((Int) -> Unit)? = null,
     you: @Composable (bottomPadding: PaddingValues) -> Unit,
 ) {
-    var selected by rememberSaveable { mutableStateOf(initialTab) }
+    var own by rememberSaveable { mutableStateOf(initialTab) }
+    val selected = selectedTab ?: own
+    val select: (Int) -> Unit = { value -> if (onSelectTab != null) onSelectTab(value) else own = value }
     // A tab index saved by an older build (four tabs, Spaces second) can't point past the end.
     val tab = Tab.entries.getOrElse(selected) { Tab.Chats }
     // A tapped notification can ask for a tab (a "set up your wallet" one opens Wallet); taken once.
     val wantedTab by com.circaso.core.notifications.HomeTabRequests.wanted.collectAsState()
     androidx.compose.runtime.LaunchedEffect(wantedTab) {
         val wanted = wantedTab ?: return@LaunchedEffect
-        selected = Tab.valueOf(wanted.name).ordinal
+        select(Tab.valueOf(wanted.name).ordinal)
         com.circaso.core.notifications.HomeTabRequests.wanted.value = null
     }
     // Back from Wallet or You goes to Chats first; Back from Chats asks before leaving (the user, 2026-10-31), so a
@@ -73,10 +83,12 @@ fun HomeScreen(
     val android = com.circaso.designsystem.platform.LocalPlatformStyle.current == com.circaso.designsystem.platform.PlatformStyle.Android && com.circaso.core.platform.canExitApp
     val covered = com.circaso.core.navigation.LocalListHasDetail.current
     androidx.compose.ui.backhandler.BackHandler(enabled = android && !confirmExit && !covered) {
-        if (tab != Tab.Chats) selected = Tab.Chats.ordinal else confirmExit = true
+        if (tab != Tab.Chats) (onBackToTab ?: select)(Tab.Chats.ordinal) else confirmExit = true
     }
     val layout = com.circaso.designsystem.adaptive.LocalWindowLayout.current
-    val rail = layout.short || layout.widthClass != com.circaso.designsystem.adaptive.WidthClass.Compact
+    // A rail on a phone on its side, a wide window, and in a tablet's list pane: one place for the tabs on a tablet,
+    // whichever tab is showing.
+    val rail = layout.short || layout.widthClass != com.circaso.designsystem.adaptive.WidthClass.Compact || com.circaso.designsystem.adaptive.LocalTabsAsRail.current
     CircasoScaffold(
         grouped = tab == Tab.You,
         // On its side, Wallet and You are laid out in two columns: a wider frame for them; Chats stays one column.
@@ -84,14 +96,14 @@ fun HomeScreen(
         // No title bar on the tabs (Pasaka, 2026-10-30): the tab bar already says where you are, and each screen's
         // actions live in it (the Chats button, the eye on the wallet card).
         banner = { when (tab) { Tab.Chats -> chatsBanner(); Tab.Wallet -> ConnectionBanner(); Tab.You -> Unit } },
-        // On its side, or with room to spare, the tabs move to the left edge (Material's rail, iPad's sidebar);
-        // in a split's narrow list pane they stay at the bottom of the pane.
+        // On its side, with room to spare, or in a tablet's list pane, the tabs move to the left edge (Material's
+        // rail, iPad's sidebar), in the same place on every tab; a phone upright keeps them at the bottom.
         bottomBar = if (rail) null else {
             {
                 CircasoTabBar(
                     items = Tab.entries.map { TabItem(it.label, it.icon) },
                     selectedIndex = tab.ordinal,
-                    onSelect = { selected = it },
+                    onSelect = { select(it) },
                 )
             }
         },
@@ -100,7 +112,7 @@ fun HomeScreen(
                 CircasoTabBar(
                     items = Tab.entries.map { TabItem(it.label, it.icon) },
                     selectedIndex = tab.ordinal,
-                    onSelect = { selected = it },
+                    onSelect = { select(it) },
                     vertical = true,
                 )
             }

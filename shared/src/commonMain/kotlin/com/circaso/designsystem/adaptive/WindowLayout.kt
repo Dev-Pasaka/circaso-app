@@ -47,10 +47,16 @@ data class WindowLayout(val width: Dp, val height: Dp) {
 
     companion object {
         val TwoPaneMinWidth = 840.dp
-        /** The list pane's width beside a detail (iPad Messages and Mail use about this). */
+        /** The list's own width beside a detail (iPad Messages and Mail use about this). */
         val ListPaneWidth = 360.dp
+        /** Room the tabs' rail takes at the list pane's leading edge, added to [ListPaneWidth]. */
+        val RailRoom = 96.dp
         /** Text and forms never run wider than this (Apple's readable content guide, Material's body width). */
         val ReadableWidth = 680.dp
+        /** Buttons and short forms on a tablet (sign-in, a single field and its button): about iPadOS's sheet content. */
+        val FormWidth = 440.dp
+        /** A sheet on a tablet: iPadOS's form sheet is 540 pt wide. */
+        val SheetWidth = 540.dp
         /** A layout designed in two columns (a phone on its side): wider, still framed, never the whole screen. */
         val WideContentWidth = 900.dp
         /** The top bar's column down the left side on a phone on its side. */
@@ -68,9 +74,12 @@ fun ProvideWindowLayout(modifier: Modifier = Modifier.fillMaxSize(), content: @C
     }
 }
 
-/** Centres the content and keeps it within the readable width; on a phone in portrait it changes nothing. */
+/**
+ * Fills the width up to [max] and centres it there: the readable column on a tablet, the whole width on a phone in
+ * portrait (where it changes nothing).
+ */
 fun Modifier.readableWidth(max: Dp = WindowLayout.ReadableWidth): Modifier =
-    fillMaxWidth().wrapContentWidth(Alignment.CenterHorizontally).widthIn(max = max)
+    fillMaxWidth().wrapContentWidth(Alignment.CenterHorizontally).widthIn(max = max).fillMaxWidth()
 
 /**
  * Fills the screen when the content fits and scrolls when it doesn't: a phone on its side, the largest text sizes.
@@ -85,3 +94,9 @@ fun Modifier.fillOrScroll(): Modifier = composed { verticalScroll(androidx.compo
  * 2026-10-31): the bar's back button, title and actions stack vertically there, within thumb reach.
  */
 val LocalTopBarOnSide = androidx.compose.runtime.compositionLocalOf { false }
+
+/**
+ * True for a screen in the list pane of a two-pane window: the tabs there are a rail down the window's leading edge,
+ * as they are when the Wallet dashboard has the whole window, so they never jump between a bottom bar and a rail.
+ */
+val LocalTabsAsRail = androidx.compose.runtime.compositionLocalOf { false }

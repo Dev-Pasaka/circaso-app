@@ -1,5 +1,7 @@
 package com.circaso.feature.messaging.presentation
 
+import com.circaso.designsystem.chrome.OverWindow
+
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
@@ -290,7 +292,19 @@ internal fun BoxScope.AlbumViewer(
     onPlayVideo: (Message.Media) -> Unit,
     onClose: () -> Unit,
 ) {
+    // Over the whole window, even from a chat in the detail pane; Back stays with the chat that opened it.
     androidx.compose.ui.backhandler.BackHandler(enabled = album != null, onBack = onClose)
+    OverWindow { AlbumViewerInPlace(album, load, onPlayVideo, onClose) }
+}
+
+@OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class)
+@Composable
+private fun BoxScope.AlbumViewerInPlace(
+    album: Pair<List<Message.Media>, Int>?,
+    load: suspend (MediaDetails) -> MediaLoad,
+    onPlayVideo: (Message.Media) -> Unit,
+    onClose: () -> Unit,
+) {
     var last by remember { mutableStateOf(album) }
     if (album != null) last = album
     AnimatedVisibility(album != null, Modifier.matchParentSize(), enter = fadeIn(tween(CircasoMotion.BaseMs)), exit = fadeOut(tween(CircasoMotion.QuickMs))) {

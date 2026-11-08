@@ -26,6 +26,8 @@ object CircasoShapes {
     val md = RoundedCornerShape(14.dp)
     val lg = RoundedCornerShape(22.dp)
     val sheet = RoundedCornerShape(topStart = 34.dp, topEnd = 34.dp)
+    /** A sheet on a tablet: a centred card, every corner at the sheet's radius (iPadOS form sheet). */
+    val sheetFloating = RoundedCornerShape(34.dp)
     val pill = RoundedCornerShape(CornerSize(50))
     val circle = CircleShape
 }

@@ -75,7 +75,8 @@ fun App() {
             onDispose { lifecycle.lifecycle.removeObserver(observer) }
         }
         // Every screen knows the space it has (rotation, split screen, tablets): see designsystem/adaptive.
-        com.circaso.designsystem.adaptive.ProvideWindowLayout {
+        // Debug only: `-frame=WxH` lays the app out as a window of that size (gallery/DebugFrame.kt).
+        com.circaso.gallery.DebugFrame { com.circaso.designsystem.adaptive.ProvideWindowLayout {
             // Links open the Circaso way (core/web): web pages in the in-app browser drawn over everything here, other
             // apps' links (mail, phone, stores) in the system. Text links (Asha's answers) go through LocalUriHandler.
             CompositionLocalProvider(LocalUriHandler provides CircasoUriHandler) {
@@ -95,7 +96,7 @@ fun App() {
                     InAppBrowserHost()
                 }
             }
-        }
+        } }
     }
 }
 

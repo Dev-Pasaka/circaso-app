@@ -138,13 +138,25 @@ fun BubbleMeta(text: String, modifier: Modifier = Modifier, icon: CircasoIcon? =
     }
 }
 
-/** One message's column: the bubble and its meta line, aligned to the sender's side, at most 75% wide. */
+/**
+ * One message's column: the bubble and its meta line, aligned to the sender's side, at most 75% wide on a phone. On a
+ * wider screen (a phone on its side, a tablet's chat pane) a long message gets more room, as in iPad Messages, but
+ * never more than a comfortable line ([BubbleMaxWide]), so text is never a strip across the screen.
+ */
 @Composable
 fun MessageColumn(outgoing: Boolean, modifier: Modifier = Modifier, content: @Composable ColumnScope.() -> Unit) {
+    val width = com.circaso.designsystem.adaptive.LocalWindowLayout.current.width
+    val max = if (width < 600.dp) BubbleMax else minOf(width * 0.62f, BubbleMaxWide)
     Row(modifier.fillMaxWidth(), horizontalArrangement = if (outgoing) Arrangement.End else Arrangement.Start) {
-        Column(Modifier.widthIn(max = 292.dp), horizontalAlignment = if (outgoing) Alignment.End else Alignment.Start, verticalArrangement = Arrangement.spacedBy(2.dp), content = content)
+        Column(Modifier.widthIn(max = max), horizontalAlignment = if (outgoing) Alignment.End else Alignment.Start, verticalArrangement = Arrangement.spacedBy(2.dp), content = content)
     }
 }
+
+/** A message's widest on a phone: 75% of a 390 dp screen (the design's bubble). */
+private val BubbleMax = 292.dp
+
+/** A message's widest anywhere: about 60 characters of body text, the comfortable reading line. */
+private val BubbleMaxWide = 440.dp
 
 /** The day marker between runs of messages ("Today"): 12/16, semibold, secondary, centred. */
 @Composable
@@ -338,6 +350,8 @@ fun SuggestionChip(
     badge: Int = 0,
     /** A small dot after the text for something new without a count (Moments); it fades in and out. */
     dot: Boolean = false,
+    /** Tighter sides, for a row of chips that would otherwise just overflow a narrow column (a tablet's list pane). */
+    compact: Boolean = false,
 ) {
     val c = CircasoTheme.colors
     val t = CircasoTheme.typography
@@ -349,7 +363,7 @@ fun SuggestionChip(
         modifier.minimumInteractiveComponentSize().heightIn(min = 34.dp).clip(CircasoShapes.pill).background(if (on) c.ink else c.fill)
             .pressable(role = if (selected != null) Role.RadioButton else Role.Button, onClick = onClick)
             .then(if (selected != null) Modifier.semantics { this.selected = on } else Modifier)
-            .padding(horizontal = 14.dp, vertical = 6.dp),
+            .padding(horizontal = if (compact) ChipSideCompact else ChipSide, vertical = 6.dp),
         contentAlignment = Alignment.Center,
     ) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -441,3 +455,7 @@ fun ThreadHeader(
 /** Keeps the header balanced when there is no trailing action (the design leaves a 36 dp gap). */
 @Composable
 fun RowScope.HeaderSpacer() { Box(Modifier.width(CircasoSizes.iconButton)) }
+
+/** A chip's sides: the design's 14 dp, and 10 dp for a row that would otherwise just overflow its column. */
+private val ChipSide = 14.dp
+private val ChipSideCompact = 10.dp

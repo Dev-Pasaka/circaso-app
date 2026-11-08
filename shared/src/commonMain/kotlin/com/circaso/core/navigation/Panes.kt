@@ -80,26 +80,39 @@ val LocalIsDetailRoot = androidx.compose.runtime.compositionLocalOf { false }
  * do: Home in a fixed list pane on the left, the top of the stack opened from it on the right. One scene for the
  * whole time Home is the list, so opening the next chat only changes the detail pane; the list never moves.
  */
-class ListDetailSceneStrategy<T : Any>(private val twoPane: Boolean) : SceneStrategy<T> {
+class ListDetailSceneStrategy<T : Any>(private val twoPane: Boolean, private val tabEpoch: Int = 0) : SceneStrategy<T> {
     override fun SceneStrategyScope<T>.calculateScene(entries: List<NavEntry<T>>): Scene<T>? {
-        if (!twoPane) return null
-        val listIndex = entries.indexOfLast { Panes.isList(it) }
-        if (listIndex < 0) return null
-        val above = entries.drop(listIndex + 1)
-        // A full-screen flow on top covers everything (it is pushed over the split like any screen on a phone).
-        if (above.any { Panes.isFullScreen(it) }) return null
-        val list = entries[listIndex]
-        val detail = above.lastOrNull()
+        val split = splitPanes(entries, twoPane) ?: return null
+        val list = entries[split.listIndex]
         return ListDetailScene(
             key = list.contentKey,
             list = list,
-            detail = detail,
-            underneath = above.getOrNull(above.size - 2),
-            depth = above.size,
+            detail = split.detail,
+            underneath = split.underneath,
+            depth = split.depth,
+            tabEpoch = tabEpoch,
             previousEntries = entries.dropLast(1),
             onBack = onBack,
         )
     }
+}
+
+/** Where each open screen goes on a wide window: the list, the detail on top, the one under it, how deep. */
+internal data class PaneSplit<T : Any>(val listIndex: Int, val detail: NavEntry<T>?, val underneath: NavEntry<T>?, val depth: Int)
+
+/**
+ * The split for a back stack, or null when the window shows one screen at a time (too narrow, no list in the stack,
+ * or a full-screen flow on top). Everything opened above the list goes to the detail side, never into the list pane:
+ * the list pane only ever shows the list itself.
+ */
+internal fun <T : Any> splitPanes(entries: List<NavEntry<T>>, twoPane: Boolean): PaneSplit<T>? {
+    if (!twoPane) return null
+    val listIndex = entries.indexOfLast { Panes.isList(it) }
+    if (listIndex < 0) return null
+    val above = entries.drop(listIndex + 1)
+    // A full-screen flow on top covers everything (it is pushed over the split like any screen on a phone).
+    if (above.any { Panes.isFullScreen(it) }) return null
+    return PaneSplit(listIndex, above.lastOrNull(), above.getOrNull(above.size - 2), above.size)
 }
 
 internal class ListDetailScene<T : Any>(
@@ -110,22 +123,24 @@ internal class ListDetailScene<T : Any>(
     val underneath: NavEntry<T>?,
     /** How many screens are open above the list: it grows on a push and shrinks on a pop. */
     val depth: Int,
+    /** Changes when Home's tab changes: the detail swaps in place rather than pushing or popping. */
+    val tabEpoch: Int,
     override val previousEntries: List<NavEntry<T>>,
     private val onBack: () -> Unit,
 ) : Scene<T> {
     override val entries: List<NavEntry<T>> = listOfNotNull(list, underneath, detail)
 
-    override val content: @Composable () -> Unit = { ListDetail(list, detail, underneath, depth, onBack) }
+    override val content: @Composable () -> Unit = { ListDetail(list, detail, underneath, depth, tabEpoch, onBack) }
 
     override fun equals(other: Any?): Boolean =
         other is ListDetailScene<*> && key == other.key && list == other.list && detail == other.detail &&
-            underneath == other.underneath && depth == other.depth && previousEntries == other.previousEntries
+            underneath == other.underneath && depth == other.depth && tabEpoch == other.tabEpoch && previousEntries == other.previousEntries
 
-    override fun hashCode(): Int = listOf(key, list, detail, underneath, depth, previousEntries).hashCode()
+    override fun hashCode(): Int = listOf(key, list, detail, underneath, depth, tabEpoch, previousEntries).hashCode()
 }
 
 @Composable
-private fun <T : Any> ListDetail(list: NavEntry<T>, detail: NavEntry<T>?, underneath: NavEntry<T>?, depth: Int, onBack: () -> Unit) {
+private fun <T : Any> ListDetail(list: NavEntry<T>, detail: NavEntry<T>?, underneath: NavEntry<T>?, depth: Int, tabEpoch: Int, onBack: () -> Unit) {
     val c = CircasoTheme.colors
     val still = CircasoTheme.reduceMotion
     // Back inside the detail pane follows the finger (Android's predictive back, iOS's edge swipe): the screen slides
@@ -153,10 +168,14 @@ private fun <T : Any> ListDetail(list: NavEntry<T>, detail: NavEntry<T>?, undern
     // Push, pop or swap inside the detail pane, by how the stack above the list changed. A running stacking order
     // (as NavDisplay keeps) so a pop's leaving screen stays on top even after several pops in a row.
     val motion = remember { DetailMotion() }
-    val change = remember(detail?.contentKey, depth) { motion.next(depth) }
+    val change = remember(detail?.contentKey, depth, tabEpoch) { motion.next(depth, tabEpoch) }
     Row(Modifier.fillMaxSize().background(c.bg)) {
-        ProvideWindowLayout(Modifier.width(WindowLayout.ListPaneWidth).fillMaxHeight()) {
-            androidx.compose.runtime.CompositionLocalProvider(LocalListHasDetail provides (detail != null)) { list.Content() }
+        // The list and, at its leading edge, the tabs' rail (the same rail the full-window Wallet shows).
+        ProvideWindowLayout(Modifier.width(WindowLayout.ListPaneWidth + WindowLayout.RailRoom).fillMaxHeight()) {
+            androidx.compose.runtime.CompositionLocalProvider(
+                LocalListHasDetail provides (detail != null),
+                com.circaso.designsystem.adaptive.LocalTabsAsRail provides true,
+            ) { list.Content() }
         }
         Box(Modifier.width(0.5.dp).fillMaxHeight().background(c.separator))
         ProvideWindowLayout(Modifier.weight(1f).fillMaxHeight().clipToBounds()) {
@@ -181,6 +200,7 @@ private fun <T : Any> ListDetail(list: NavEntry<T>, detail: NavEntry<T>?, undern
                     when (change.kind) {
                         // A chat picked from the list replaces the one shown: it swaps in place (iPad Messages).
                         DetailChange.Swap -> fadeIn(spring(stiffness = Spring.StiffnessMediumLow)) togetherWith fadeOut(spring(stiffness = Spring.StiffnessMedium))
+                        DetailChange.Cut -> EnterTransition.None togetherWith ExitTransition.None
                         DetailChange.Push -> pushTransition(still)
                         DetailChange.Pop -> popTransition(still)
                     }.apply { targetContentZIndex = change.z }
@@ -196,22 +216,26 @@ private fun <T : Any> ListDetail(list: NavEntry<T>, detail: NavEntry<T>?, undern
     }
 }
 
-internal enum class DetailChange { Push, Pop, Swap }
+/** Swap: another item picked from the list (a short fade). Cut: another tab's screen (in place, at once, as iPadOS). */
+internal enum class DetailChange { Push, Pop, Swap, Cut }
 internal data class DetailStep(val kind: DetailChange, val z: Float)
 
 /** Remembers the depth above the list between changes, and the stacking order NavDisplay would give. */
 internal class DetailMotion {
     private var depth = -1
+    private var epoch = 0
     private var z = 0f
-    fun next(newDepth: Int): DetailStep {
+    fun next(newDepth: Int, tabEpoch: Int = epoch): DetailStep {
         val kind = when {
             depth < 0 -> DetailChange.Swap
+            tabEpoch != epoch -> DetailChange.Cut // another tab: its screen replaces this one in place, at once
             newDepth > depth -> DetailChange.Push
             newDepth < depth -> DetailChange.Pop
             else -> DetailChange.Swap // same depth, another screen: picked from the list
         }
         z += if (kind == DetailChange.Pop) -1f else 1f
         depth = newDepth
+        epoch = tabEpoch
         return DetailStep(kind, z)
     }
 }
@@ -273,6 +297,9 @@ private val SwipeSpring = spring<Float>(dampingRatio = Spring.DampingRatioNoBoun
 /** How dark the screen underneath is while one is pushed over it (UIKit's dimming view is about this). */
 internal const val UnderneathDim = 0.12f
 
+/** True while Home's tab is swapping in: screens change at once, nothing dims (iPadOS). */
+val LocalNavCut = androidx.compose.runtime.compositionLocalOf { false }
+
 /** Whether the latest back stack change was a pop: the screen coming back starts dimmed and brightens. */
 val LocalNavPopping = androidx.compose.runtime.compositionLocalOf { false }
 
@@ -289,7 +316,8 @@ fun <T : Any> rememberDimNavEntryDecorator(): androidx.navigation3.runtime.NavEn
 private fun DimWhenUnderneath(content: @Composable () -> Unit) {
     val scope = androidx.navigation3.ui.LocalNavAnimatedContentScope.current
     val popping = LocalNavPopping.current
-    val still = CircasoTheme.reduceMotion
+    // A tab swap is a cut: nothing to animate, so the old screen goes in the same frame.
+    val still = CircasoTheme.reduceMotion || LocalNavCut.current
     val dim by scope.transition.animateFloat(
         transitionSpec = { spring(dampingRatio = Spring.DampingRatioNoBouncy, stiffness = 420f) },
         label = "dim",
