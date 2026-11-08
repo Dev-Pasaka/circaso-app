@@ -68,9 +68,12 @@ fun ProvideWindowLayout(modifier: Modifier = Modifier.fillMaxSize(), content: @C
     }
 }
 
-/** Centres the content and keeps it within the readable width; on a phone in portrait it changes nothing. */
+/**
+ * Fills the width up to [max] and centres it there: the readable column on a tablet, the whole width on a phone in
+ * portrait (where it changes nothing).
+ */
 fun Modifier.readableWidth(max: Dp = WindowLayout.ReadableWidth): Modifier =
-    fillMaxWidth().wrapContentWidth(Alignment.CenterHorizontally).widthIn(max = max)
+    fillMaxWidth().wrapContentWidth(Alignment.CenterHorizontally).widthIn(max = max).fillMaxWidth()
 
 /**
  * Fills the screen when the content fits and scrolls when it doesn't: a phone on its side, the largest text sizes.

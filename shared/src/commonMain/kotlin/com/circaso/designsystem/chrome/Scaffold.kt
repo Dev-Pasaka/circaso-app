@@ -28,6 +28,8 @@ import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.displayCutout
 import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.WindowInsetsSides
@@ -102,15 +104,33 @@ fun CircasoScaffold(
             Box(Modifier.weight(1f).let { if (keepReadable) it.readableWidth(maxContentWidth) else it }) { content(PaddingValues(bottom = if (bottomBar != null) bottomBarHeight + navInset else 0.dp)) }
             }
         }
+        if (bottomBar != null && topBarOnSide) {
+            // A phone on its side has little height: the content scrolls under the floating bar, so the page's colour
+            // fades in behind the bar (UIKit's scroll edge) and nothing reads through it half covered.
+            val page = if (grouped) c.bgGrouped else c.bg
+            Box(
+                Modifier.align(Alignment.BottomCenter).fillMaxWidth().height(bottomBarHeight + navInset + 16.dp)
+                    .background(androidx.compose.ui.graphics.Brush.verticalGradient(0f to page.copy(alpha = 0f), 0.35f to page.copy(alpha = 0.92f), 1f to page)),
+            )
+        }
         if (bottomBar != null) {
+            // Centred over the content, not the whole screen: with the top bar or the tabs down the left side (a phone
+            // on its side) the bar would otherwise slide under them.
             Box(
                 Modifier
                     .align(Alignment.BottomCenter)
-                    .let { if (keepReadable) it.widthIn(max = WindowLayout.ReadableWidth) else it }
+                    .fillMaxWidth()
                     .windowInsetsPadding(WindowInsets.displayCutout.union(WindowInsets.navigationBars).only(WindowInsetsSides.Horizontal))
-                    .padding(start = 16.dp, end = 16.dp, bottom = navInset)
-                    .onSizeChanged { bottomBarHeight = with(density) { it.height.toDp() } + 8.dp },
-            ) { bottomBar() }
+                    .padding(start = (if (sideBar != null) sideBarWidth else 0.dp) + (if (topBarOnSide) WindowLayout.SideTopBarWidth else 0.dp)),
+                contentAlignment = Alignment.BottomCenter,
+            ) {
+                Box(
+                    Modifier
+                        .let { if (keepReadable) it.widthIn(max = WindowLayout.ReadableWidth) else it }
+                        .padding(start = 16.dp, end = 16.dp, bottom = navInset)
+                        .onSizeChanged { bottomBarHeight = with(density) { it.height.toDp() } + 8.dp },
+                ) { bottomBar() }
+            }
         }
         if (topBarOnSide) {
             Box(

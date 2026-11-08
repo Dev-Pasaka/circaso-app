@@ -41,6 +41,7 @@ class MainActivity : ComponentActivity() {
         setContent {
             App()
         }
+        immersiveOnItsSide(resources.configuration)
         showOverLockScreenDuringCalls()
         shareHost()?.let(com.circaso.feature.share.domain.IncomingLinks::addHost)
         openCall(intent)
@@ -116,6 +117,24 @@ class MainActivity : ComponentActivity() {
      */
     private fun showOverLockScreenDuringCalls() {
         lifecycleScope.launch { com.circaso.di.callOnScreen().distinctUntilChanged().collect(::overLockScreen) }
+    }
+
+    override fun onConfigurationChanged(newConfig: android.content.res.Configuration) {
+        super.onConfigurationChanged(newConfig)
+        immersiveOnItsSide(newConfig) // rotation doesn't recreate the activity (configChanges)
+    }
+
+    /**
+     * A phone on its side is fully immersive, as an iPhone is in landscape: the status bar steps aside (a swipe from
+     * the top brings it back for a moment) and the content gets the whole height. Tablets and portrait keep it. Short
+     * means the same as WindowLayout.short: under 480 dp tall.
+     */
+    private fun immersiveOnItsSide(config: android.content.res.Configuration) {
+        val controller = androidx.core.view.WindowCompat.getInsetsController(window, window.decorView)
+        val onItsSide = config.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE && config.screenHeightDp < 480
+        controller.systemBarsBehavior = androidx.core.view.WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+        if (onItsSide) controller.hide(androidx.core.view.WindowInsetsCompat.Type.statusBars())
+        else controller.show(androidx.core.view.WindowInsetsCompat.Type.statusBars())
     }
 
     private fun overLockScreen(on: Boolean) {
