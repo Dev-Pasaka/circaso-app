@@ -15,4 +15,4 @@
 "circlepw_pin_biometrics_allow_subtitle" = "Use it instead of typing your PIN next time.";
 "circlepw_transaction_request_title" = "Confirm payment";
 "circlepw_transaction_request_subtitle" = "Enter your PIN to send this payment.";
-"circlepw_transaction_request_network_fee_label" = "Network fee (paid by Circaso)";
+"circlepw_transaction_request_network_fee_label" = "Network fee (in your Circaso fee)";

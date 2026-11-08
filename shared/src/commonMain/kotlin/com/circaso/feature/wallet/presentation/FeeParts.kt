@@ -176,8 +176,8 @@ internal fun feeFootnote(s: PayUiState, now: Long = nowMillis()): String {
         ?.let { clockOf(it, now) }?.let { if (MinorUnits.isDollar(s.asset)) "fee and rate held until $it" else "fee held until $it" }
     return listOfNotNull(
         ref,
-        "Small payments have a minimum fee that covers the network cost.".takeIf { minimum },
-        "One Circaso fee, network cost included.".takeIf { charged && !minimum },
+        "One Circaso fee, network cost included.".takeIf { charged },
+        "This payment has a minimum fee.".takeIf { minimum },
         listOfNotNull(rate, held).joinToString(" · ").ifEmpty { null },
     ).joinToString("\n")
 }
