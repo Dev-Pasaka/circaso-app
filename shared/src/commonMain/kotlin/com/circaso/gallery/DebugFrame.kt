@@ -21,12 +21,17 @@ import androidx.compose.ui.unit.dp
  */
 @Composable
 internal fun DebugFrame(content: @Composable () -> Unit) {
-    val size = remember { launchValue("-frame")?.split('x')?.mapNotNull { it.trim().toIntOrNull() }?.takeIf { it.size == 2 } }
+    // Debug builds only: on Android launch arguments are extras any app could put on the launcher intent.
+    val debug = org.koin.compose.koinInject<com.circaso.core.platform.ClientInfo>().debugBuild
+    val size = remember { launchValue("-frame")?.takeIf { debug }?.split('x')?.mapNotNull { it.trim().toIntOrNull() }?.takeIf { it.size == 2 } }
     if (size == null) { content(); return }
-    BoxWithConstraints(Modifier.fillMaxSize().background(Color(0xFF3A3A3C)), contentAlignment = Alignment.Center) {
+    BoxWithConstraints(Modifier.fillMaxSize().background(FrameSurround), contentAlignment = Alignment.Center) {
         val w = size[0].dp
         val h = size[1].dp
         val scale = minOf(maxWidth / w, maxHeight / h, 1f)
-        Box(Modifier.requiredSize(w, h).graphicsLayer { scaleX = scale; scaleY = scale }) { content() }
+        Box(Modifier.requiredSize(w, h).graphicsLayer { scaleX = scale; scaleY = scale; clip = true }) { content() }
     }
 }
+
+/** Debug only: the grey around a framed window, so its edges are obvious in a screenshot. */
+private val FrameSurround = Color(0xFF3A3A3C)

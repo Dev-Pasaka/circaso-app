@@ -512,6 +512,7 @@ private fun ActiveWallet(
     // A phone on its side (the user, 2026-10-31): the cards, actions and assets on the left, the payments on the
     // right, each scrolling on its own; upright, one list.
     val short = com.circaso.designsystem.adaptive.LocalWindowLayout.current.short
+    val roomy = !short && com.circaso.designsystem.adaptive.LocalWindowLayout.current.widthClass != com.circaso.designsystem.adaptive.WidthClass.Compact
     val cardsBlock: @Composable () -> Unit = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 // One card per network, swiped sideways (cards reach the screen edges to peek); the actions, then the
@@ -520,10 +521,11 @@ private fun ActiveWallet(
                     Modifier.onGloballyPositioned { cardsBottom = it.boundsInWindow().bottom.takeIf { b -> b > pageTop + 1f } ?: 0f }.layout { measurable, constraints ->
                         // Upright the cards reach the screen edges to peek; on its side they stay in their column (the
                         // rail is beside them).
-                        val bleed = if (short) 0 else (CircasoSpacing.s4 * 2).roundToPx()
-                        val wide = constraints.maxWidth + bleed
+                        val bleed = if (short || roomy) 0 else (CircasoSpacing.s4 * 2).roundToPx()
+                        // On a tablet the card keeps a card's size, centred (a 680 dp card would be a placard).
+                        val wide = if (roomy) minOf(constraints.maxWidth, CardMaxWidth.roundToPx()) else constraints.maxWidth + bleed
                         val placeable = measurable.measure(constraints.copy(minWidth = wide, maxWidth = wide))
-                        layout(constraints.maxWidth, placeable.height) { placeable.place(-bleed / 2, 0) }
+                        layout(constraints.maxWidth, placeable.height) { placeable.place(if (roomy) (constraints.maxWidth - wide) / 2 else -bleed / 2, 0) }
                     },
                 ) {
                     ChainCards(byValue(wallet.chains, fiat), fiat, hidden, onToggleHidden, onAsset = actions.onAsset, onAssets = actions.onAssets, onGlow = { glow = it }) {
@@ -610,10 +612,15 @@ private fun ActiveWallet(
     val transactionsItem: androidx.compose.foundation.lazy.LazyListScope.() -> Unit = {
         item(key = "transactions") { ViewTransactionsRow(actions.onActivity) }
     }
+    // Both layouts' scroll positions live here, above the switch, so turning the phone and back returns each to where
+    // it was rather than to the top.
+    val sideCardsScroll = rememberScrollState()
+    val sideList = androidx.compose.foundation.lazy.rememberLazyListState()
+    val list = androidx.compose.foundation.lazy.rememberLazyListState()
     if (short) {
         Row(Modifier.fillMaxSize(), horizontalArrangement = Arrangement.spacedBy(CircasoSpacing.s2)) {
             Column(
-                Modifier.weight(1f).fillMaxHeight().verticalScroll(rememberScrollState())
+                Modifier.weight(1f).fillMaxHeight().verticalScroll(sideCardsScroll)
                     .padding(start = CircasoSpacing.s4, end = CircasoSpacing.s2, top = 10.dp, bottom = bottom),
             ) {
                 header?.let { it(true); Spacer(Modifier.height(CircasoSpacing.s3)) }
@@ -621,6 +628,7 @@ private fun ActiveWallet(
             }
             LazyColumn(
                 Modifier.weight(1f).fillMaxHeight(),
+                state = sideList,
                 contentPadding = PaddingValues(start = CircasoSpacing.s2, end = CircasoSpacing.s4, top = 10.dp, bottom = bottom),
                 verticalArrangement = Arrangement.spacedBy(22.dp),
             ) {
@@ -630,7 +638,7 @@ private fun ActiveWallet(
             }
         }
     } else {
-        LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(start = CircasoSpacing.s4, end = CircasoSpacing.s4, top = 10.dp, bottom = bottom), verticalArrangement = Arrangement.spacedBy(22.dp)) {
+        LazyColumn(Modifier.fillMaxSize(), state = list, contentPadding = PaddingValues(start = CircasoSpacing.s4, end = CircasoSpacing.s4, top = 10.dp, bottom = bottom), verticalArrangement = Arrangement.spacedBy(22.dp)) {
             header?.let { h -> item(key = "header") { h(true) } }
             statusItems()
             item(key = "cards") { cardsBlock() }
@@ -817,3 +825,6 @@ private fun ComingSheetContent(flow: ComingFlow, onSendToWallet: () -> Unit) {
 private const val GlowInMs = 700
 /** One network's glow handing over to the next as the cards are swiped. */
 private const val GlowSwapMs = 450
+
+/** A wallet card's widest on a tablet: about a real card held up to the screen, centred in the readable column. */
+private val CardMaxWidth = 440.dp

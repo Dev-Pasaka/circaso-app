@@ -111,11 +111,12 @@ fun AppNavigation(forceUpdate: Boolean, home: @Composable () -> Unit) {
         AuthState.Onboarding -> if (stored.onboardingStep == "REGISTER_DEVICE") RegisteringRoute else PhoneRoute
         AuthState.Active -> HomeRoute
     }
-    val preview = remember { launchValue("-preview") }
+    val client: com.circaso.core.platform.ClientInfo = koinInject()
+    // Debug builds only: on Android launch arguments are extras any app could put on the launcher intent.
+    val preview = remember { launchValue("-preview")?.takeIf { client.debugBuild } }
     // Debug builds: `-group-wallets=on|off|default` (Android: `--es group-wallets off`) overrides the build's default.
     val groupWalletsArg = remember { launchValue("-group-wallets") }
     val prefs: com.circaso.core.datastore.AppPreferences = koinInject()
-    val client: com.circaso.core.platform.ClientInfo = koinInject()
     LaunchedEffect(groupWalletsArg) { if (groupWalletsArg != null && client.debugBuild) prefs.setGroupWalletsOverride(groupWalletsArg) }
     LaunchedEffect(root, forceUpdate) {
         val target: Route = if (forceUpdate) ForceUpdateRoute else if (preview != null) PreviewRoute(preview) else root

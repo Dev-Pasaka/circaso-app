@@ -4,6 +4,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -110,6 +111,17 @@ fun WelcomeScreen(viewModel: WelcomeViewModel) {
             ) {
                 Box(Modifier.weight(1f)) { intro() }
                 Column(Modifier.weight(1f)) { actions() }
+            }
+        } else if (com.circaso.designsystem.adaptive.LocalWindowLayout.current.widthClass != com.circaso.designsystem.adaptive.WidthClass.Compact) {
+            // A tablet: the mark, the words and the buttons as one centred group, the buttons a hand's width rather
+            // than the width of the screen (an iPad's sign-in, not a phone's stretched).
+            Column(
+                Modifier.fillMaxSize().fillOrScroll().padding(horizontal = 20.dp, vertical = 16.dp),
+                verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                intro()
+                Spacer(Modifier.height(48.dp))
+                Column(Modifier.widthIn(max = com.circaso.designsystem.adaptive.WindowLayout.FormWidth)) { actions() }
             }
         } else {
             Column(Modifier.fillMaxSize().fillOrScroll().padding(horizontal = 20.dp, vertical = 16.dp)) {

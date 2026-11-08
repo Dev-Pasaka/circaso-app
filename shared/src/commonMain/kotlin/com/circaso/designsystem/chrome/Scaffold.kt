@@ -109,8 +109,9 @@ fun CircasoScaffold(
             // fades in behind the bar (UIKit's scroll edge) and nothing reads through it half covered.
             val page = if (grouped) c.bgGrouped else c.bg
             Box(
-                Modifier.align(Alignment.BottomCenter).fillMaxWidth().height(bottomBarHeight + navInset + 16.dp)
-                    .background(androidx.compose.ui.graphics.Brush.verticalGradient(0f to page.copy(alpha = 0f), 0.35f to page.copy(alpha = 0.92f), 1f to page)),
+                // bottomBarHeight is the bar itself (measured inside its inset padding) plus 8; the inset is added once.
+                Modifier.align(Alignment.BottomCenter).fillMaxWidth().height(bottomBarHeight + navInset + com.circaso.designsystem.theme.CircasoSpacing.s4)
+                    .background(androidx.compose.ui.graphics.Brush.verticalGradient(0f to page.copy(alpha = 0f), 0.5f to page.copy(alpha = 0.85f), 1f to page)),
             )
         }
         if (bottomBar != null) {

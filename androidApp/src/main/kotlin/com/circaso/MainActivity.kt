@@ -41,6 +41,9 @@ class MainActivity : ComponentActivity() {
         setContent {
             App()
         }
+        // On its side the status bar steps aside; a swipe from the top shows it for a moment.
+        androidx.core.view.WindowCompat.getInsetsController(window, window.decorView).systemBarsBehavior =
+            androidx.core.view.WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
         immersiveOnItsSide(resources.configuration)
         showOverLockScreenDuringCalls()
         shareHost()?.let(com.circaso.feature.share.domain.IncomingLinks::addHost)
@@ -132,7 +135,6 @@ class MainActivity : ComponentActivity() {
     private fun immersiveOnItsSide(config: android.content.res.Configuration) {
         val controller = androidx.core.view.WindowCompat.getInsetsController(window, window.decorView)
         val onItsSide = config.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE && config.screenHeightDp < 480
-        controller.systemBarsBehavior = androidx.core.view.WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
         if (onItsSide) controller.hide(androidx.core.view.WindowInsetsCompat.Type.statusBars())
         else controller.show(androidx.core.view.WindowInsetsCompat.Type.statusBars())
     }
