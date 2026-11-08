@@ -67,6 +67,17 @@ class NotificationRoutingTest {
         assertEquals(listOf(NotificationsRoute), open(NotificationDestination.Inbox).routes)
     }
 
+    @Test
+    fun everyOpeningNamesTheTabItBelongsTo() = kotlinx.coroutines.test.runTest {
+        assertEquals(HomeTabName.Chats, open(NotificationDestination.Chat("c1", "m1")).tab)
+        assertEquals(HomeTabName.Chats, open(NotificationDestination.Payment("c1", "t1")).tab)
+        assertEquals(HomeTabName.Wallet, open(NotificationDestination.Payment(null, "t9")).tab)
+        assertEquals(HomeTabName.Chats, open(NotificationDestination.MissedCall("c1", "call1")).tab)
+        assertEquals(HomeTabName.Chats, open(NotificationDestination.Asha).tab)
+        assertEquals(HomeTabName.You, open(NotificationDestination.Security).tab)
+        assertEquals(HomeTabName.You, open(NotificationDestination.Inbox).tab)
+    }
+
     @Test fun pushDataNamesTheDestination() {
         fun push(vararg pairs: Pair<String, String>) = NotificationDestination.fromPush(mapOf(*pairs))
         assertEquals(NotificationDestination.Chat("c1", "m1"), push("chatId" to "c1", "messageId" to "m1"))

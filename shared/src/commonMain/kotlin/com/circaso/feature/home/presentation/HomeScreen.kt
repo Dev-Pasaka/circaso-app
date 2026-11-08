@@ -60,6 +60,8 @@ fun HomeScreen(
      */
     selectedTab: Int? = null,
     onSelectTab: ((Int) -> Unit)? = null,
+    /** Back's jump to Chats: a step back, so it never brings back a screen Chats had open. Null: like a tab tap. */
+    onBackToTab: ((Int) -> Unit)? = null,
     you: @Composable (bottomPadding: PaddingValues) -> Unit,
 ) {
     var own by rememberSaveable { mutableStateOf(initialTab) }
@@ -81,7 +83,7 @@ fun HomeScreen(
     val android = com.circaso.designsystem.platform.LocalPlatformStyle.current == com.circaso.designsystem.platform.PlatformStyle.Android && com.circaso.core.platform.canExitApp
     val covered = com.circaso.core.navigation.LocalListHasDetail.current
     androidx.compose.ui.backhandler.BackHandler(enabled = android && !confirmExit && !covered) {
-        if (tab != Tab.Chats) select(Tab.Chats.ordinal) else confirmExit = true
+        if (tab != Tab.Chats) (onBackToTab ?: select)(Tab.Chats.ordinal) else confirmExit = true
     }
     val layout = com.circaso.designsystem.adaptive.LocalWindowLayout.current
     val rail = layout.short || layout.widthClass != com.circaso.designsystem.adaptive.WidthClass.Compact

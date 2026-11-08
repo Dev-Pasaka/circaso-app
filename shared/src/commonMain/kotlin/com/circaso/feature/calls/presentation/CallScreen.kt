@@ -377,7 +377,7 @@ private fun GroupCall(call: CallUi, actions: CallActions, chama: Chama?, fiat: F
             Box(Modifier.weight(1f).fillMaxHeight(), contentAlignment = Alignment.BottomCenter) {
                 // Someone who just left is still drawn while their tile fades out.
             val lastSeen = remember { mutableMapOf<String, CallPerson>() }
-            tiles.forEach { lastSeen[it.userId] = it }
+            androidx.compose.runtime.SideEffect { tiles.forEach { lastSeen[it.userId] = it } }
             FittedTiles(tiles.map { it.userId } + MeTileId, Modifier.fillMaxSize()) { id ->
                 if (id == MeTileId) MeTile(call) else (tiles.firstOrNull { it.userId == id } ?: lastSeen[id])?.let { Tile(it) }
             }
@@ -423,7 +423,13 @@ private fun Tile(p: CallPerson) {
     val t = CircasoTheme.typography
     val mid = p.videoMid
     // Wider than tall, so six people fit on a phone without scrolling (design H4's 2 x 3 grid).
-    androidx.compose.foundation.layout.BoxWithConstraints(Modifier.fillMaxSize().clip(CircasoShapes.lg).background(CallColors.Control)) {
+    // The tile reads as one: who, and whether they are ringing or still connecting (on a narrow tile only the name's
+    // softer colour shows it, so screen readers get it in words).
+    val state = when { p.ringing -> ", ringing"; p.joined && !p.live -> ", connecting"; !p.audio && p.joined -> ", muted"; else -> "" }
+    androidx.compose.foundation.layout.BoxWithConstraints(
+        Modifier.fillMaxSize().clip(CircasoShapes.lg).background(CallColors.Control)
+            .semantics(mergeDescendants = true) { contentDescription = p.name + state },
+    ) {
         // A small tile (a phone on its side, a big call) keeps its face clear of the name under it.
         val small = maxHeight < SmallTileHeight
         val wide = maxWidth >= WideTileWidth

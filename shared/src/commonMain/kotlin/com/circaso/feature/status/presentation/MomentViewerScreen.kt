@@ -457,8 +457,8 @@ private fun BoxScope.Stage(moment: Moment, media: ViewerMedia, onRetry: () -> Un
  * A photo moment. Shaped like the stage (a portrait photo on an upright phone) it fills it, cropped a little, as the
  * design shows; shaped very differently (portrait on a phone on its side or an iPad in landscape, landscape on an
  * upright phone) it shows whole, by the same rule as moment videos ([com.circaso.core.platform.MomentVideoEncoding.fills]),
- * over its own small placeholder (the 96 px thumbnail from the encrypted body) blurred and dimmed, exactly as the
- * loading state draws it, so nothing changes around the photo when it arrives. Before Android 12 the blur is a no-op
+ * over its own small placeholder (the 96 px thumbnail from the encrypted body) blurred, exactly as the loading state
+ * draws it, so nothing changes around the photo when it arrives. Before Android 12 the blur is a no-op
  * and the tiny thumbnail stretched soft stands in for it.
  */
 @Composable

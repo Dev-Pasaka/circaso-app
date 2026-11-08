@@ -148,14 +148,20 @@ fun AppNavigation(forceUpdate: Boolean, home: @Composable () -> Unit) {
     // screens for the new tab's, so another tab's sub-screens never show, not even on Back.
     var homeTab by androidx.compose.runtime.saveable.rememberSaveable { androidx.compose.runtime.mutableIntStateOf(0) }
     val tabStacks = remember { TabStacks<NavKey>() }
+    // Bumped on each tab change, so the detail pane swaps to the new tab's screen in place (iPadOS) rather than
+    // sliding as if pushed or popped.
+    var tabEpoch by remember { androidx.compose.runtime.mutableIntStateOf(0) }
     fun switchTab(to: Int, restore: Boolean = true) {
+        if (to == homeTab) return
         if (!restore) tabStacks.forget(to)
         tabStacks.switch(backStack, HomeRoute, from = homeTab, to = to, keep = twoPaneNow)
         homeTab = to
+        tabEpoch++
     }
-    // Signed out (Home gone from the stack): no tab's screens may come back after the next sign-in.
+    // Signed out (Home gone from the stack): no tab's screens may come back after the next sign-in, and the next
+    // person starts on Chats.
     LaunchedEffect(Unit) {
-        androidx.compose.runtime.snapshotFlow { HomeRoute in backStack }.collect { if (!it) tabStacks.clear() }
+        androidx.compose.runtime.snapshotFlow { HomeRoute in backStack }.collect { if (!it) { tabStacks.clear(); homeTab = 0 } }
     }
     // A tapped notification (Pasaka, 2026-11-06): once signed in and Home is underneath, open where it points, over
     // Home, whether Circaso was cold, in the background or on screen. Signed out, the tap is dropped.
@@ -179,9 +185,10 @@ fun AppNavigation(forceUpdate: Boolean, home: @Composable () -> Unit) {
         taps.pending.filterNotNull().collect { destination ->
             androidx.compose.runtime.snapshotFlow { backStack.firstOrNull() }.first { it == HomeRoute }
             val opening = com.circaso.core.notifications.NotificationRoutes.resolve(destination, notificationLookups)
-            backToHome()
-            // The tab first (its old screens are not brought back), then what the notification opens, on that tab.
+            // The tab first: the current tab's screens are set aside for it (not lost), the new tab's are not brought
+            // back; then what the notification opens, on that tab.
             opening.tab?.let { switchTab(com.circaso.feature.home.presentation.Tab.valueOf(it.name).ordinal, restore = false) }
+            backToHome()
             opening.routes.forEach { backStack.add(it) }
             taps.consumed(destination)
         }
@@ -235,13 +242,16 @@ fun AppNavigation(forceUpdate: Boolean, home: @Composable () -> Unit) {
     // Pop or push, decided once per change of depth (not on every recomposition mid-animation).
     val lastDepth = remember { IntArray(1) { backStack.size } }
     val popping = remember(backStack.size) { (backStack.size < lastDepth[0]).also { lastDepth[0] = backStack.size } }
+    // Sheets and photo viewers draw over the whole window, not inside the pane that opened them (WindowOverlay.kt);
+    // only over the screens: the share sheet, toasts and calls below stay above them.
+    com.circaso.designsystem.chrome.WindowOverlayLayer(enabled = launchValue("-window-overlay")?.takeIf { client.debugBuild } != "off") {
     CompositionLocalProvider(LocalNavPopping provides popping) {
     NavDisplay(
         backStack = backStack,
         onBack = ::pop,
         entryDecorators = listOf(rememberSaveableStateHolderNavEntryDecorator(), rememberViewModelStoreNavEntryDecorator(), rememberDimNavEntryDecorator()),
         // On a wide window Home is a list beside whatever it opened (docs/adaptive-layout-plan.md).
-        sceneStrategies = listOf(remember(twoPane) { ListDetailSceneStrategy(twoPane) }),
+        sceneStrategies = listOf(remember(twoPane, tabEpoch) { ListDetailSceneStrategy(twoPane, tabEpoch) }),
         // The same screen on top before and after (a rotation or resize into or out of the split) only reflows.
         transitionSpec = { if (sameTop()) EnterTransition.None togetherWith ExitTransition.None else pushTransition(still) },
         popTransitionSpec = {
@@ -287,6 +297,7 @@ fun AppNavigation(forceUpdate: Boolean, home: @Composable () -> Unit) {
                 HomeScreen(
                     selectedTab = homeTab,
                     onSelectTab = { switchTab(it) },
+                    onBackToTab = { switchTab(it, restore = false) },
                     chats = { bottomPadding -> ChatsTab(chatsViewModel, bottomPadding, onAsha = { backStack.add(AshaRoute) }, onVoice = { backStack.add(AshaRoute); backStack.add(VoiceRoute) }, onNewChat = { backStack.add(NewChatRoute) }, selectedChatId = if (twoPane) backStack.filterIsInstance<ChatRoute>().lastOrNull()?.chatId else null, moments = chatsMoments) { id -> openChatFromList(id) } },
                     chatsActions = {},
                     chatsBanner = {
@@ -627,6 +638,7 @@ fun AppNavigation(forceUpdate: Boolean, home: @Composable () -> Unit) {
             entry<ForceUpdateRoute> { ForceUpdateScreen() }
         },
     )
+    }
     }
     if (state == AuthState.Active) {
         val scope = androidx.compose.runtime.rememberCoroutineScope()

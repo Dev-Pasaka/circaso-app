@@ -1,5 +1,7 @@
 package com.circaso.feature.messaging.presentation
 
+import com.circaso.designsystem.chrome.OverWindow
+
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.semantics.toggleableState
 import com.circaso.designsystem.components.HeaderSpacer
@@ -189,6 +191,7 @@ fun ThreadScreen(
     )
 }
 
+@OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class)
 @Composable
 fun ThreadContent(
     state: ThreadUiState,
@@ -584,11 +587,15 @@ fun ThreadContent(
             // Fades in and out like the photo viewer; the last path is kept through the fade out.
             var lastVideo by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf<String?>(null) }
             state.videoPath?.let { lastVideo = it }
-            AnimatedVisibility(
-                state.videoPath != null, Modifier.matchParentSize(),
-                enter = if (CircasoTheme.reduceMotion) fadeIn(tween(CircasoMotion.BaseMs)) else fadeIn(tween(CircasoMotion.BaseMs)) + androidx.compose.animation.scaleIn(tween(CircasoMotion.BaseMs), initialScale = 0.94f),
-                exit = fadeOut(tween(CircasoMotion.QuickMs)),
-            ) { lastVideo?.let { path -> Box(Modifier.fillMaxSize()) { FullScreenVideo(path) { media?.onCloseVideo?.invoke() } } } }
+            // Over the window too, and after the album, so a video played from the album shows above it.
+            androidx.compose.ui.backhandler.BackHandler(enabled = state.videoPath != null) { media?.onCloseVideo?.invoke() }
+            OverWindow {
+                AnimatedVisibility(
+                    state.videoPath != null, Modifier.matchParentSize(),
+                    enter = if (CircasoTheme.reduceMotion) fadeIn(tween(CircasoMotion.BaseMs)) else fadeIn(tween(CircasoMotion.BaseMs)) + androidx.compose.animation.scaleIn(tween(CircasoMotion.BaseMs), initialScale = 0.94f),
+                    exit = fadeOut(tween(CircasoMotion.QuickMs)),
+                ) { lastVideo?.let { path -> Box(Modifier.fillMaxSize()) { FullScreenVideo(path) { media?.onCloseVideo?.invoke() } } } }
+            }
             // GW10: Paying from, opened from the chat's money card; picking a group wallet turns it into Request Payout.
             quickPay?.let { q ->
                 CircasoSheet(visible = q.state.choosing, onDismiss = { q.onChoosing(false) }, label = "Pay from") {
@@ -1651,7 +1658,6 @@ private fun fixed5(v: Double): String {
 @OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class)
 @Composable
 private fun androidx.compose.foundation.layout.BoxScope.FullScreenVideo(path: String, onClose: () -> Unit) {
-    androidx.compose.ui.backhandler.BackHandler(onBack = onClose)
     Box(Modifier.matchParentSize().background(androidx.compose.ui.graphics.Color.Black)) {
         com.circaso.core.platform.VideoPlayer(path, Modifier.fillMaxSize())
         Box(Modifier.statusBarsPadding().padding(CircasoSpacing.s3).align(Alignment.TopStart)) {
@@ -1669,13 +1675,14 @@ private fun androidx.compose.foundation.layout.BoxScope.FullScreenVideo(path: St
 @Composable
 internal fun androidx.compose.foundation.layout.BoxScope.ImageViewer(bytes: ByteArray?, onClose: () -> Unit) {
     // Over the whole window, even from a chat in the detail pane (iPad Photos and Messages show a photo full screen).
-    com.circaso.designsystem.chrome.OverWindow { ImageViewerInPlace(bytes, onClose) }
+    // Back stays with the chat that opened it, so it is handled in the screen's order, not the window layer's.
+    androidx.compose.ui.backhandler.BackHandler(enabled = bytes != null, onBack = onClose)
+    OverWindow { ImageViewerInPlace(bytes, onClose) }
 }
 
 @OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class)
 @Composable
 private fun androidx.compose.foundation.layout.BoxScope.ImageViewerInPlace(bytes: ByteArray?, onClose: () -> Unit) {
-    androidx.compose.ui.backhandler.BackHandler(enabled = bytes != null, onBack = onClose)
     // Keep the last photo through the fade out (bytes is already null by then).
     var shown by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf<ByteArray?>(null) }
     if (bytes != null) shown = bytes

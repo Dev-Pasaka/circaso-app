@@ -80,7 +80,7 @@ val LocalIsDetailRoot = androidx.compose.runtime.compositionLocalOf { false }
  * do: Home in a fixed list pane on the left, the top of the stack opened from it on the right. One scene for the
  * whole time Home is the list, so opening the next chat only changes the detail pane; the list never moves.
  */
-class ListDetailSceneStrategy<T : Any>(private val twoPane: Boolean) : SceneStrategy<T> {
+class ListDetailSceneStrategy<T : Any>(private val twoPane: Boolean, private val tabEpoch: Int = 0) : SceneStrategy<T> {
     override fun SceneStrategyScope<T>.calculateScene(entries: List<NavEntry<T>>): Scene<T>? {
         val split = splitPanes(entries, twoPane) ?: return null
         val list = entries[split.listIndex]
@@ -90,6 +90,7 @@ class ListDetailSceneStrategy<T : Any>(private val twoPane: Boolean) : SceneStra
             detail = split.detail,
             underneath = split.underneath,
             depth = split.depth,
+            tabEpoch = tabEpoch,
             previousEntries = entries.dropLast(1),
             onBack = onBack,
         )
@@ -122,22 +123,24 @@ internal class ListDetailScene<T : Any>(
     val underneath: NavEntry<T>?,
     /** How many screens are open above the list: it grows on a push and shrinks on a pop. */
     val depth: Int,
+    /** Changes when Home's tab changes: the detail swaps in place rather than pushing or popping. */
+    val tabEpoch: Int,
     override val previousEntries: List<NavEntry<T>>,
     private val onBack: () -> Unit,
 ) : Scene<T> {
     override val entries: List<NavEntry<T>> = listOfNotNull(list, underneath, detail)
 
-    override val content: @Composable () -> Unit = { ListDetail(list, detail, underneath, depth, onBack) }
+    override val content: @Composable () -> Unit = { ListDetail(list, detail, underneath, depth, tabEpoch, onBack) }
 
     override fun equals(other: Any?): Boolean =
         other is ListDetailScene<*> && key == other.key && list == other.list && detail == other.detail &&
-            underneath == other.underneath && depth == other.depth && previousEntries == other.previousEntries
+            underneath == other.underneath && depth == other.depth && tabEpoch == other.tabEpoch && previousEntries == other.previousEntries
 
-    override fun hashCode(): Int = listOf(key, list, detail, underneath, depth, previousEntries).hashCode()
+    override fun hashCode(): Int = listOf(key, list, detail, underneath, depth, tabEpoch, previousEntries).hashCode()
 }
 
 @Composable
-private fun <T : Any> ListDetail(list: NavEntry<T>, detail: NavEntry<T>?, underneath: NavEntry<T>?, depth: Int, onBack: () -> Unit) {
+private fun <T : Any> ListDetail(list: NavEntry<T>, detail: NavEntry<T>?, underneath: NavEntry<T>?, depth: Int, tabEpoch: Int, onBack: () -> Unit) {
     val c = CircasoTheme.colors
     val still = CircasoTheme.reduceMotion
     // Back inside the detail pane follows the finger (Android's predictive back, iOS's edge swipe): the screen slides
@@ -165,7 +168,7 @@ private fun <T : Any> ListDetail(list: NavEntry<T>, detail: NavEntry<T>?, undern
     // Push, pop or swap inside the detail pane, by how the stack above the list changed. A running stacking order
     // (as NavDisplay keeps) so a pop's leaving screen stays on top even after several pops in a row.
     val motion = remember { DetailMotion() }
-    val change = remember(detail?.contentKey, depth) { motion.next(depth) }
+    val change = remember(detail?.contentKey, depth, tabEpoch) { motion.next(depth, tabEpoch) }
     Row(Modifier.fillMaxSize().background(c.bg)) {
         ProvideWindowLayout(Modifier.width(WindowLayout.ListPaneWidth).fillMaxHeight()) {
             androidx.compose.runtime.CompositionLocalProvider(LocalListHasDetail provides (detail != null)) { list.Content() }
@@ -214,16 +217,19 @@ internal data class DetailStep(val kind: DetailChange, val z: Float)
 /** Remembers the depth above the list between changes, and the stacking order NavDisplay would give. */
 internal class DetailMotion {
     private var depth = -1
+    private var epoch = 0
     private var z = 0f
-    fun next(newDepth: Int): DetailStep {
+    fun next(newDepth: Int, tabEpoch: Int = epoch): DetailStep {
         val kind = when {
             depth < 0 -> DetailChange.Swap
+            tabEpoch != epoch -> DetailChange.Swap // another tab: its screen replaces this one in place
             newDepth > depth -> DetailChange.Push
             newDepth < depth -> DetailChange.Pop
             else -> DetailChange.Swap // same depth, another screen: picked from the list
         }
         z += if (kind == DetailChange.Pop) -1f else 1f
         depth = newDepth
+        epoch = tabEpoch
         return DetailStep(kind, z)
     }
 }

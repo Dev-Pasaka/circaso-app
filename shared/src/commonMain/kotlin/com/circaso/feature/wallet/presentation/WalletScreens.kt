@@ -72,7 +72,6 @@ import com.circaso.designsystem.components.SegmentedControl
 import com.circaso.designsystem.motion.pressable
 import com.circaso.designsystem.theme.CircasoSizes
 import com.circaso.designsystem.theme.CircasoSpacing
-import com.circaso.designsystem.adaptive.readableWidth
 import com.circaso.designsystem.theme.CircasoMotion
 import com.circaso.designsystem.theme.CircasoTheme
 import com.circaso.feature.wallet.domain.FiatValue
@@ -639,13 +638,17 @@ private fun ActiveWallet(
         }
     } else {
         // On a tablet the whole wallet is one centred column a card's width (iPad Wallet): a 680 dp card would be a
-        // placard, and a narrower card over wider rows reads as three sizes stacked.
-        LazyColumn(Modifier.fillMaxSize().let { if (roomy) it.readableWidth(CardMaxWidth + CircasoSpacing.s4 * 2) else it }, state = list, contentPadding = PaddingValues(start = CircasoSpacing.s4, end = CircasoSpacing.s4, top = 10.dp, bottom = bottom), verticalArrangement = Arrangement.spacedBy(22.dp)) {
+        // placard, and a narrower card over wider rows reads as three sizes stacked. The list itself stays full width,
+        // so a swipe in the margins scrolls it too.
+        androidx.compose.foundation.layout.BoxWithConstraints(Modifier.fillMaxSize()) {
+        val side = if (roomy) maxOf(CircasoSpacing.s4, (maxWidth - CardMaxWidth) / 2) else CircasoSpacing.s4
+        LazyColumn(Modifier.fillMaxSize(), state = list, contentPadding = PaddingValues(start = side, end = side, top = 10.dp, bottom = bottom), verticalArrangement = Arrangement.spacedBy(22.dp)) {
             header?.let { h -> item(key = "header") { h(true) } }
             statusItems()
             item(key = "cards") { cardsBlock() }
             groupItems()
             transactionsItem()
+        }
         }
     }
     }
