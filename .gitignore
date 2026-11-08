@@ -31,3 +31,6 @@ androidApp/google-services.json
 
 # CocoaPods installs these (pod install)
 iosApp/Pods/
+
+# Agents' scratch worktrees
+.claude/worktrees/

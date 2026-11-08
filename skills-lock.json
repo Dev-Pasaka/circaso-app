@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "skills": {
+    "kmp-compose-adaptive-layout": {
+      "source": "ronjunevaldoz/kmp-agent-skills",
+      "sourceType": "github",
+      "skillPath": "skills/kmp-compose-adaptive-layout/SKILL.md",
+      "computedHash": "5e89b162cf64ef9ef6f118a645781c63c36218cbf1e2ab677bb58491e3ccdf10"
+    }
+  }
+}
