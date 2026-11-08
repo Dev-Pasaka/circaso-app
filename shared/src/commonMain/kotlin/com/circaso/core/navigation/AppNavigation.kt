@@ -151,12 +151,14 @@ fun AppNavigation(forceUpdate: Boolean, home: @Composable () -> Unit) {
     // Bumped on each tab change, so the detail pane swaps to the new tab's screen in place (iPadOS) rather than
     // sliding as if pushed or popped.
     var tabEpoch by remember { androidx.compose.runtime.mutableIntStateOf(0) }
+    val tabSwapTop = remember { arrayOfNulls<NavKey>(1) }
     fun switchTab(to: Int, restore: Boolean = true) {
         if (to == homeTab) return
         if (!restore) tabStacks.forget(to)
         tabStacks.switch(backStack, HomeRoute, from = homeTab, to = to, keep = twoPaneNow)
         homeTab = to
         tabEpoch++
+        tabSwapTop[0] = backStack.lastOrNull()
     }
     // Signed out (Home gone from the stack): no tab's screens may come back after the next sign-in, and the next
     // person starts on Chats.
@@ -238,6 +240,16 @@ fun AppNavigation(forceUpdate: Boolean, home: @Composable () -> Unit) {
     ) {
     Box {
     val twoPane = com.circaso.designsystem.adaptive.LocalWindowLayout.current.twoPane
+    val splitHome = twoPane && homeTab != com.circaso.feature.home.presentation.Tab.Wallet.ordinal
+    // The scene change a tab change causes lands on this top screen (Home, or the tab's restored screen): that change
+    // is the tab swapping in, not a push or a back. Matched by NavEntry's default content key.
+    fun <S> androidx.compose.animation.AnimatedContentTransitionScope<androidx.navigation3.scene.Scene<S>>.tabSwap(): Boolean where S : Any {
+        val top = tabSwapTop[0] ?: return false
+        // One shot: the first scene change after a tab change is either the swap or something else (then the swap
+        // caused none), so it is forgotten either way and a later pop back to the same screen still animates.
+        tabSwapTop[0] = null
+        return targetState.entries.lastOrNull()?.contentKey == "$top:${top::class}"
+    }
     val still = com.circaso.designsystem.theme.CircasoTheme.reduceMotion
     // Pop or push, decided once per change of depth (not on every recomposition mid-animation).
     val lastDepth = remember { IntArray(1) { backStack.size } }
@@ -251,12 +263,16 @@ fun AppNavigation(forceUpdate: Boolean, home: @Composable () -> Unit) {
         onBack = ::pop,
         entryDecorators = listOf(rememberSaveableStateHolderNavEntryDecorator(), rememberViewModelStoreNavEntryDecorator(), rememberDimNavEntryDecorator()),
         // On a wide window Home is a list beside whatever it opened (docs/adaptive-layout-plan.md).
-        sceneStrategies = listOf(remember(twoPane, tabEpoch) { ListDetailSceneStrategy(twoPane, tabEpoch) }),
-        // The same screen on top before and after (a rotation or resize into or out of the split) only reflows.
-        transitionSpec = { if (sameTop()) EnterTransition.None togetherWith ExitTransition.None else pushTransition(still) },
+        // The Wallet tab is a dashboard, not a list (Pasaka, 2026-11-08: the card looked shrunk in the narrow list
+        // pane): on a tablet it takes the whole window, its card centred at a card's size, and what it opens covers it
+        // with a Back, as on a phone. Chats and You keep the list beside the detail.
+        sceneStrategies = listOf(remember(splitHome, tabEpoch) { ListDetailSceneStrategy(splitHome, tabEpoch) }),
+        // The same screen on top before and after (a rotation or resize into or out of the split) only reflows; a
+        // change of Home's tab swaps in place (iPadOS), never slides as a push or a back.
+        transitionSpec = { if (tabSwap() || sameTop()) EnterTransition.None togetherWith ExitTransition.None else pushTransition(still) },
         popTransitionSpec = {
             when {
-                sameTop() -> EnterTransition.None togetherWith ExitTransition.None
+                tabSwap() || sameTop() -> EnterTransition.None togetherWith ExitTransition.None
                 backStack.size == droppedTo[0] -> dropTransition(still)
                 else -> popTransition(still)
             }

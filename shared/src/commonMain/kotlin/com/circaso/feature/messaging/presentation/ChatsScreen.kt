@@ -166,8 +166,17 @@ fun ChatsContent(
             // All · Unread · Groups · Moments (as WhatsApp): one is always picked; Unread shows how many chats are
             // waiting. With large text the row scrolls sideways rather than clipping the last chip.
             val unread = state.chats.count { it.unread > 0 }
+            // The row starts and ends on the screen's 16 dp line, like the logo and search above it. When the chips
+            // would just overflow (a tablet's 360 dp list pane) they take tighter sides so the last one ends on that
+            // line too; only when even that doesn't fit (the largest text) does the row scroll, its padding inside
+            // the scroll so the last chip still stops 16 dp from the edge.
+            val scroll = androidx.compose.foundation.rememberScrollState()
+            val width = com.circaso.designsystem.adaptive.LocalWindowLayout.current.width
+            val fontScale = androidx.compose.ui.platform.LocalDensity.current.fontScale
+            var compact by androidx.compose.runtime.remember(width, fontScale, moments != null) { androidx.compose.runtime.mutableStateOf(false) }
+            androidx.compose.runtime.LaunchedEffect(scroll.maxValue) { if (scroll.maxValue > 0) compact = true }
             Row(
-                Modifier.fillMaxWidth().horizontalScroll(androidx.compose.foundation.rememberScrollState()).padding(horizontal = CircasoSpacing.s4, vertical = CircasoSpacing.s1),
+                Modifier.fillMaxWidth().horizontalScroll(scroll).padding(horizontal = CircasoSpacing.s4, vertical = CircasoSpacing.s1),
                 horizontalArrangement = Arrangement.spacedBy(CircasoSpacing.s2),
             ) {
                 ChatFilter.entries.filter { it != ChatFilter.Moments || moments != null }.forEach { f ->
@@ -182,6 +191,7 @@ fun ChatsContent(
                         selected = f == state.filter,
                         badge = if (f == ChatFilter.Unread) unread else 0,
                         dot = dot,
+                        compact = compact,
                     )
                 }
             }
