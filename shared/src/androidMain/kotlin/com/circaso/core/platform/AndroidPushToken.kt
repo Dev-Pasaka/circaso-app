@@ -6,6 +6,7 @@ import com.circaso.feature.messaging.data.local.ChatsDao
 import com.circaso.core.notifications.PushNotices
 import com.google.firebase.messaging.FirebaseMessagingService
 import com.google.firebase.messaging.RemoteMessage
+import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeoutOrNull
@@ -60,10 +61,18 @@ class CircasoMessagingService : FirebaseMessagingService() {
                 val notifier = koin.get<com.circaso.core.calls.AndroidCallNotifier>()
                 runBlocking {
                     val chatId = message.data["chatId"]
+                    // The caller's photo (the group's for a group call) from this phone's chats, looked up beside the
+                    // wording; never with Notification privacy on (a check that doesn't answer counts as on).
+                    val photoLookup = async {
+                        if (withTimeoutOrNull(200) { notices.privacyOn() } != false) null
+                        else withTimeoutOrNull(250) { chatId?.let { koin.get<com.circaso.feature.messaging.domain.ChatsRepository>().chat(it).first()?.avatarUrl } }
+                    }
                     val name = withTimeoutOrNull(2_000) { chatId?.let { koin.get<ChatsDao>().chat(it)?.name } } ?: message.data["callerName"]
                     val content = withTimeoutOrNull(1_000) { notices.incomingCall(name, message.data["callKind"] == "VIDEO") }
                         ?: com.circaso.core.notifications.NotificationText.compose(com.circaso.core.notifications.NotificationEvent.IncomingCall(null, false), private = true, fiat = null)
-                    notifier.ringing(callId, content.title, content.text)
+                    // Already done in the usual case; the ring waits at most a beat more for it.
+                    val photo = withTimeoutOrNull(100) { photoLookup.await() }.also { if (it == null) photoLookup.cancel() }
+                    notifier.ringWithPhoto(callId, content.title, content.text, photo)
                 }
                 return
             }

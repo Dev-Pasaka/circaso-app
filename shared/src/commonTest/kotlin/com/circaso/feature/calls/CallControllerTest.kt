@@ -18,11 +18,13 @@ import com.circaso.feature.calls.data.PulledTrackDto
 import com.circaso.feature.calls.data.RenegotiateRequest
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.advanceUntilIdle
+import kotlinx.coroutines.test.currentTime
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.Json
@@ -353,5 +355,93 @@ class CallControllerTest {
         assertTrue("close" in engine.events)
         advanceTimeBy(5_000)
         assertNull(cc.state.value)
+    }
+
+    private val photos = CallPhotos(chat = "https://p/mum.jpg?sig=1", people = mapOf("mum" to "https://p/mum.jpg?sig=1", "otieno" to "https://p/otieno.jpg"), me = "https://p/me.jpg")
+
+    @Test fun anIncomingCallShowsTheCallersPhoto() = runTest(UnconfinedTestDispatcher()) {
+        val cc = CallController(remote, engine, myUserId = { "me" }, scope = backgroundScope, names = { "Mum" to false }, photos = { photos })
+        remote.current = call("RINGING", person("mum", "JOINED"), person("me", "INVITED")).copy(startedBy = "mum")
+        cc.onFrame("call.ringing", buildJsonObject { put("callId", "c1") })
+        advanceUntilIdle()
+        assertEquals("https://p/mum.jpg?sig=1", cc.state.value!!.photoUrl)
+        cc.accept()
+        advanceUntilIdle()
+        val s = cc.state.value!!
+        assertEquals(CallPhase.Active, s.phase)
+        assertEquals("https://p/mum.jpg?sig=1", s.photoUrl)
+        assertEquals("https://p/mum.jpg?sig=1", s.people.single().photoUrl)
+    }
+
+    @Test fun aCallerFromAChatNotOnThisPhoneStillShowsTheirPhotoFromContacts() = runTest(UnconfinedTestDispatcher()) {
+        val cc = CallController(remote, engine, myUserId = { "me" }, scope = backgroundScope, names = { null }, photos = { CallPhotos(people = mapOf("mum" to "https://p/mum.jpg")) })
+        remote.current = call("RINGING", person("mum", "JOINED"), person("me", "INVITED")).copy(startedBy = "mum")
+        cc.onFrame("call.ringing", buildJsonObject { put("callId", "c1") })
+        advanceUntilIdle()
+        assertEquals("https://p/mum.jpg", cc.state.value!!.photoUrl)
+    }
+
+    @Test fun aGroupRingsWithTheGroupsPhotoAndEachTileHasItsPersonsPhoto() = runTest(UnconfinedTestDispatcher()) {
+        val group = photos.copy(chat = "/files/group.jpg")
+        val cc = CallController(remote, engine, myUserId = { "me" }, scope = backgroundScope, names = { "Holiday Fund" to true }, photos = { group })
+        remote.current = call("RINGING", person("otieno", "JOINED"), person("mum", "INVITED"), person("me", "INVITED")).copy(startedBy = "otieno")
+        cc.onFrame("call.ringing", buildJsonObject { put("callId", "c1") })
+        advanceUntilIdle()
+        val s = cc.state.value!!
+        assertEquals(CallPhase.Incoming, s.phase)
+        assertEquals("/files/group.jpg", s.photoUrl) // the group's photo, not the caller's
+        assertEquals("https://p/me.jpg", s.myPhotoUrl)
+        assertEquals(mapOf("otieno" to "https://p/otieno.jpg", "mum" to "https://p/mum.jpg?sig=1"), s.people.associate { it.userId to it.photoUrl })
+    }
+
+    @Test fun anOutgoingCallShowsWhoItIsCalling() = runTest(UnconfinedTestDispatcher()) {
+        val cc = CallController(remote, engine, myUserId = { "me" }, scope = backgroundScope, names = { "Mum" to false }, photos = { photos })
+        cc.start("chat1", video = false)
+        advanceUntilIdle()
+        assertEquals(CallPhase.Ringing, cc.state.value!!.phase)
+        assertEquals("https://p/mum.jpg?sig=1", cc.state.value!!.photoUrl)
+    }
+
+    @Test fun aSlowOrBrokenPhotoLookupRingsAtOnceWithInitialsThenTheLatePhotoFillsIn() = runTest(UnconfinedTestDispatcher()) {
+        val gate = kotlinx.coroutines.CompletableDeferred<CallPhotos>()
+        val slow = CallController(remote, engine, myUserId = { "me" }, scope = backgroundScope, names = { "Mum" to false }, photos = { gate.await() })
+        remote.current = call("RINGING", person("mum", "JOINED"), person("me", "INVITED")).copy(startedBy = "mum")
+        slow.onFrame("call.ringing", buildJsonObject { put("callId", "c1") })
+        assertEquals(CallPhase.Incoming, slow.state.value!!.phase)
+        assertTrue(currentTime <= 100, "rang after ${currentTime} ms") // waits at most 100 ms for the photo
+        assertNull(slow.state.value!!.photoUrl)
+        gate.complete(photos)
+        kotlinx.coroutines.withTimeout(1_000) { slow.state.first { it?.photoUrl != null } }
+        assertEquals("https://p/mum.jpg?sig=1", slow.state.value!!.photoUrl)
+        assertEquals("https://p/mum.jpg?sig=1", slow.state.value!!.people.single().photoUrl)
+
+        val broken = CallController(remote, FakeEngine(), myUserId = { "me" }, scope = backgroundScope, names = { "Mum" to false }, photos = { error("store closed") })
+        broken.onFrame("call.ringing", buildJsonObject { put("callId", "c1") })
+        advanceUntilIdle()
+        assertEquals(CallPhase.Incoming, broken.state.value!!.phase)
+        assertNull(broken.state.value!!.photoUrl)
+    }
+
+    @Test fun anOutgoingCallNeverWaitsForItsPhoto() = runTest(UnconfinedTestDispatcher()) {
+        val cc = CallController(remote, engine, myUserId = { "me" }, scope = backgroundScope, names = { "Mum" to false }, photos = { kotlinx.coroutines.awaitCancellation() })
+        cc.start("chat1", video = false)
+        runCurrent()
+        assertEquals("start", remote.calls.first()) // CL1 went out with no time passing
+        assertEquals(0L, currentTime)
+    }
+
+    @Test fun aLatePhotoFromTheLastCallNeverLandsOnTheNextOne() = runTest(UnconfinedTestDispatcher()) {
+        val gate = kotlinx.coroutines.CompletableDeferred<CallPhotos>()
+        var first = true
+        val cc = CallController(remote, engine, myUserId = { "me" }, scope = backgroundScope, names = { "Mum" to false }, photos = { if (first) { first = false; gate.await() } else CallPhotos() })
+        remote.current = call("RINGING", person("mum", "JOINED"), person("me", "INVITED")).copy(startedBy = "mum")
+        cc.onFrame("call.ringing", buildJsonObject { put("callId", "c1") })
+        cc.decline()
+        // Rung again while "Declined" is still up: the new call takes over before the first lookup answers.
+        cc.onFrame("call.ringing", buildJsonObject { put("callId", "c1") })
+        assertEquals(CallPhase.Incoming, cc.state.value!!.phase)
+        gate.complete(photos)
+        advanceUntilIdle()
+        assertNull(cc.state.value!!.photoUrl)
     }
 }

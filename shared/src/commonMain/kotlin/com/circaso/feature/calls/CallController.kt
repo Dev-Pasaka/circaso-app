@@ -17,6 +17,7 @@ import com.circaso.feature.calls.data.PullTrackRequest
 import com.circaso.feature.calls.data.RenegotiateRequest
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -40,7 +41,15 @@ data class CallPerson(
     val handle: String? = null,
     /** Joined and their audio or video is really arriving; until then their tile says "connecting". */
     val live: Boolean = joined,
+    /** Their profile photo from this phone's chats or contacts; null shows their initials. */
+    val photoUrl: String? = null,
 )
+
+/**
+ * The photos a call shows, from what this phone already has (no network): [chat] is the chat's own photo (the other
+ * person in a direct chat, the group's photo in a group), [people] each person's by user id, [me] mine.
+ */
+data class CallPhotos(val chat: String? = null, val people: Map<String, String> = emptyMap(), val me: String? = null)
 
 /** One call as the screens see it. */
 data class CallUi(
@@ -64,6 +73,10 @@ data class CallUi(
     val caller: String? = null,
     /** The other person's "@username" under their name in a direct call. */
     val handle: String? = null,
+    /** Who the call is with: the other person's photo in a direct call, the group's photo in a group (null: initials). */
+    val photoUrl: String? = null,
+    /** My own photo, for my tile in a group call. */
+    val myPhotoUrl: String? = null,
 ) {
     val joined get() = people.filter { it.joined }
     /** In the group but not on the call (missed, declined or left): who "Add people" rings. */
@@ -94,6 +107,8 @@ class CallController(
     private val mediaGraceMillis: Long = 15_000,
     /** Writes a finished call into its chat's history (WhatsApp-style); see [logEnded]. */
     private val log: suspend (CallLogEntry) -> Unit = {},
+    /** The call's photos from this phone's store (never the network, so a ring is never held up). */
+    private val photos: suspend (chatId: String) -> CallPhotos = { CallPhotos() },
 ) {
     private val _state = MutableStateFlow<CallUi?>(null)
     val state: StateFlow<CallUi?> = _state
@@ -126,6 +141,8 @@ class CallController(
         scope.launch {
             names(chatId)?.let { (t, g) -> _state.update { it?.copy(title = t, group = g) } }
             labelOf = labels(chatId)
+            // Beside the call, never before it: the photo fills in when this phone's store answers.
+            scope.launch { loadPhotos(chatId) }
             when (val r = remote.start(chatId, video, newIdempotencyKey())) {
                 is AppResult.Success -> { call = r.value; publish(); join(r.value) }
                 is AppResult.Failure -> {
@@ -150,6 +167,7 @@ class CallController(
             val (t, g) = names(chatId) ?: ("Group call" to (existing.participants.size > 2))
             _state.value = CallUi(existing.callId, chatId, t, existing.kind == "VIDEO", g, CallPhase.Connecting, camera = existing.kind == "VIDEO", speaker = true)
             call = existing
+            scope.launch { loadPhotos(chatId) }
             join(existing)
         }
     }
@@ -238,8 +256,14 @@ class CallController(
                 labelOf = labels(c.chatId)
                 val (title, group) = names(c.chatId) ?: (c.participants.firstOrNull { it.userId == c.startedBy }?.displayName.orEmpty() to false)
                 val caller = c.participants.firstOrNull { it.userId == c.startedBy }?.displayName?.takeIf { it.isNotBlank() }
+                // The photo gets a moment to be in the first frame (a store read is a few ms); the ring never waits longer.
+                val token = photoToken
+                val lookup = scope.async { photosFor(c.chatId) }
+                val quick = kotlinx.coroutines.withTimeoutOrNull(FirstFramePhotoMillis) { lookup.await() }
                 _state.value = CallUi(c.callId, c.chatId, title, c.kind == "VIDEO", group, CallPhase.Incoming, caller = caller)
+                if (quick != null) applyPhotos(token, c.chatId, quick)
                 publish()
+                if (quick == null) scope.launch { applyPhotos(token, c.chatId, lookup.await()) }
             }
             "call.updated" -> data?.let { decode(it) }?.let { c -> if (c.callId == call?.callId) { call = c; publish(); pullNew() } }
             "call.ended" -> data?.let { decode(it) }?.let { c ->
@@ -337,6 +361,36 @@ class CallController(
     /** userId → "@handle" for the call's chat, loaded once per call. */
     private var labelOf: Map<String, String> = emptyMap()
 
+    /** The call's photos, loaded once per call from this phone's store. */
+    private var photosOf = CallPhotos()
+
+    /** A photo lookup that fails or is slow never stops a call: it rings with initials instead. */
+    private suspend fun photosFor(chatId: String): CallPhotos =
+        runCatching { kotlinx.coroutines.withTimeoutOrNull(PhotoLookupMillis) { photos(chatId) } }.getOrNull() ?: CallPhotos()
+
+    /** Changes with every call, so a slow lookup from the last call never puts its photo on this one. */
+    private var photoToken = Any()
+
+    private suspend fun loadPhotos(chatId: String) {
+        val token = photoToken
+        applyPhotos(token, chatId, photosFor(chatId))
+    }
+
+    /**
+     * A group shows the group's photo; a direct call the other person's (from contacts when the chat isn't on this
+     * phone yet). Everyone's tile gets theirs on the next [publish].
+     */
+    private fun applyPhotos(token: Any, chatId: String, p: CallPhotos) {
+        if (token !== photoToken || _state.value?.chatId != chatId) return
+        photosOf = p
+        val caller = call?.startedBy?.let { p.people[it] }
+        _state.update { s ->
+            if (s == null || s.chatId != chatId) s
+            else s.copy(photoUrl = s.photoUrl ?: if (s.group) p.chat else p.chat ?: caller, myPhotoUrl = p.me)
+        }
+        publish()
+    }
+
     private fun publish() {
         val c = call ?: return
         com.circaso.core.common.Diagnostics.note("calls: state=${c.state} people=${c.participants.joinToString { it.state + "/v=" + it.video + "/mid=" + (midOf[it.userId] ?: "-") }}")
@@ -348,7 +402,7 @@ class CallController(
             val heard = receiving == null || graceOver || mediaMids[p.userId].orEmpty().any { it in receiving }
             CallPerson(
                 p.userId, p.displayName.ifBlank { labelOf[p.userId] ?: "Someone" }, joined, p.audio, p.video, p.state == "INVITED", midOf[p.userId],
-                handle = labelOf[p.userId], live = joined && heard,
+                handle = labelOf[p.userId], live = joined && heard, photoUrl = photosOf.people[p.userId],
             )
         }
         val othersJoined = people.any { it.joined }
@@ -379,6 +433,7 @@ class CallController(
                 // A direct call is titled by the other person's full name with their @username under it; a group keeps its name.
                 title = if (!base.group) people.firstOrNull()?.name ?: base.title else base.title.ifBlank { people.firstOrNull()?.name.orEmpty() },
                 handle = if (!base.group) people.firstOrNull()?.handle else null,
+                photoUrl = if (!base.group) people.firstOrNull()?.photoUrl ?: base.photoUrl else base.photoUrl,
                 activeSince = base.activeSince ?: if (phase == CallPhase.Active) nowMillis() else null,
             )
         }
@@ -485,12 +540,20 @@ class CallController(
         call = null
         ice = emptyList()
         labelOf = emptyMap()
+        photosOf = CallPhotos()
+        photoToken = Any()
         sessionId = null
         pulled.clear()
         midOf.clear()
         _state.value = null
     }
 }
+
+/** How long the call waits on this phone's store for photos before it goes on without them. */
+private const val PhotoLookupMillis = 500L
+
+/** How long an incoming call waits for its photo so the first frame has it; after this it rings with initials. */
+private const val FirstFramePhotoMillis = 100L
 
 /** How a finished call reads in its chat, from this phone's side. */
 enum class CallLogOutcome { Completed, Missed, Declined, Cancelled, NoAnswer, Failed }
