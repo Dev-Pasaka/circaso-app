@@ -9,13 +9,19 @@ name: Google Play internal testing
 #   UPLOAD_KEYSTORE_BASE64        the upload keystore (.jks), base64: `base64 -i upload.jks | pbcopy`
 #   UPLOAD_KEYSTORE_PASSWORD, UPLOAD_KEY_ALIAS, UPLOAD_KEY_PASSWORD
 #   GOOGLE_SERVICES_JSON_BASE64   androidApp/google-services.json, base64
-#   CIRCLE_PWSDK_USERNAME, CIRCLE_PWSDK_TOKEN   the Circle SDK's Maven credentials (pwsdk.maven.* in local.properties)
+#   CIRCLE_PWSDK_TOKEN            the Circle SDK's Maven token (pwsdk.maven.password in local.properties); its user,
+#                                 CIRCLE_PWSDK_USERNAME, is a variable (a GitHub username)
 #   MAPS_ANDROID_KEY              maps.android.key
 # Variables (same page, Variables tab):
 #   PLAY_VERSION_CODE_BASE        added to the run number for versionCode; set it above the highest versionCode
 #                                 already uploaded to Play for this app (default 1000)
 #   SHARE_HOST                    optional, the share-link host (the sandbox's when unset)
 #   PLAY_PUBLISH_ENABLED          set to true once the secrets above are in; until then the job is skipped
+#   PLAY_RELEASE_STATUS           completed (default) once the app has been released; draft while the app has never been
+#                                 published, since Play only accepts draft releases for a draft app through the API
+#
+# Play's API can't make an app's very first upload: upload the first bundle by hand in Play Console (the artifact
+# "circaso-<version>" this workflow keeps on every run, even when the Play step is refused), then CI takes over.
 
 on:
   push:
@@ -67,7 +73,8 @@ jobs:
         env:
           GOOGLE_SERVICES_JSON_BASE64: ${{ secrets.GOOGLE_SERVICES_JSON_BASE64 }}
           UPLOAD_KEYSTORE_BASE64: ${{ secrets.UPLOAD_KEYSTORE_BASE64 }}
-          CIRCLE_PWSDK_USERNAME: ${{ secrets.CIRCLE_PWSDK_USERNAME }}
+          # The Circle SDK's Maven user is a GitHub username, not a secret: a variable, or the secret if one is set.
+          CIRCLE_PWSDK_USERNAME: ${{ secrets.CIRCLE_PWSDK_USERNAME || vars.CIRCLE_PWSDK_USERNAME }}
           CIRCLE_PWSDK_TOKEN: ${{ secrets.CIRCLE_PWSDK_TOKEN }}
           MAPS_ANDROID_KEY: ${{ secrets.MAPS_ANDROID_KEY }}
           SHARE_HOST: ${{ vars.SHARE_HOST }}
@@ -111,7 +118,7 @@ jobs:
           packageName: com.circaso.app
           releaseFiles: androidApp/build/outputs/bundle/release/androidApp-release.aab
           track: internal
-          status: completed
+          status: ${{ vars.PLAY_RELEASE_STATUS || 'completed' }}
           mappingFile: androidApp/build/outputs/mapping/release/mapping.txt
           whatsNewDirectory: whatsnew
 
