@@ -161,6 +161,8 @@ internal class ViewerFakeMoments : MomentsRepository {
     fun setReaction(id: String, emoji: String?) = list.update { all -> all.map { if (it.momentId == id) it.copy(reaction = emoji) else it } }
 
     override val moments: Flow<List<Moment>> = list
+    val lockedList = MutableStateFlow<List<com.circaso.feature.status.domain.LockedMoment>>(emptyList())
+    override val locked: Flow<List<com.circaso.feature.status.domain.LockedMoment>> = lockedList
     override val pending: Flow<List<PendingMoment>> = MutableStateFlow(emptyList())
     override val privacy: Flow<MomentPrivacy> = MutableStateFlow(MomentPrivacy())
     override val muted: Flow<Set<String>> = MutableStateFlow(emptySet())

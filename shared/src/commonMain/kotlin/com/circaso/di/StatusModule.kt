@@ -28,6 +28,8 @@ val statusModule = module {
             dao = get(), remote = get(), keys = get(), contacts = get(), crypto = get(), files = get(),
             storage = get(named("plain")), outbox = get(), kickOutbox = get(named("kickOutbox")), json = get(),
             ownUserId = get(named("ownUserId")),
+            // A new phone asks for keys only once its own are on the server, or a poster could seal for the old ones.
+            keysPublished = { get<com.circaso.feature.messaging.domain.KeysRepository>().maintain() is com.circaso.core.common.AppResult.Success },
             uploads = getOrNull<com.circaso.core.platform.BackgroundUploads>() ?: com.circaso.core.platform.NoBackgroundUploads,
         )
     }
@@ -36,6 +38,19 @@ val statusModule = module {
     single { MomentPostHandler { get<MomentsRepositoryImpl>() } } bind OutboxHandler::class
     single { MomentKeyCopiesHandler { get<MomentsRepositoryImpl>() } } bind OutboxHandler::class
     single<MomentsRepository> { get<MomentsRepositoryImpl>() }
+    // Moments fetched (and keys asked for) at launch, sign-in and reconnect, whatever screen shows; started in CoreModule.
+    single {
+        val auth = get<com.circaso.core.session.AuthManager>()
+        val connection = get<com.circaso.core.sync.ConnectionState>()
+        com.circaso.feature.status.data.repository.MomentsStarter(
+            ready = kotlinx.coroutines.flow.combine(auth.state, connection.status) { state, status ->
+                state == com.circaso.core.session.AuthState.Active && status == com.circaso.core.platform.ConnectionStatus.Online
+            },
+            socket = get<com.circaso.core.realtime.RealtimeClient>().connected,
+            repository = { get() },
+            scope = get(),
+        )
+    }
     // Debug builds only: a dummy upload through the real pipeline, never posted (see DebugUploadHandler).
     single {
         com.circaso.feature.status.data.repository.DebugUploadHandler(

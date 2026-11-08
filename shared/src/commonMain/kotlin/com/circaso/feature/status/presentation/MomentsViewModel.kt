@@ -10,6 +10,7 @@ import com.circaso.core.sync.nowMillis
 import com.circaso.feature.contacts.domain.Contact
 import com.circaso.feature.contacts.domain.ObserveContactsUseCase
 import com.circaso.feature.profile.domain.ObserveProfileUseCase
+import com.circaso.feature.status.domain.LockedMoment
 import com.circaso.feature.status.domain.Moment
 import com.circaso.feature.status.domain.MomentRing
 import com.circaso.feature.status.domain.MomentsRepository
@@ -81,13 +82,23 @@ data class MomentsUiState(
     val loading: Boolean get() = !refreshed && rings.isEmpty() && myMoments.isEmpty() && online
     val empty: Boolean get() = refreshed && rings.isEmpty() && (!failed || checkFailedWithData)
 
-    /** Recent: people with a moment I haven't seen, newest first (a coloured ring). Muted people never show here. */
-    val recent: List<MomentRing> get() = rings.filter { it.unseen && !it.muted }.sortedByDescending { it.latestAt }
+    /**
+     * Recent: people with a moment I haven't seen, newest first (a coloured ring), and people whose moments are still
+     * on their way to this phone (a new phone waiting for keys), so they show instead of nothing. Muted never here.
+     */
+    val recent: List<MomentRing> get() = rings.filter { it.isRecent() && !it.muted }
+        // What can be watched first; a ring sorts by the newest moment it shows.
+        .sortedWith(compareBy<MomentRing> { it.allLocked }.thenByDescending { it.shownAt() })
     /** Viewed: everything of theirs seen, newest first (a quiet ring). */
-    val viewed: List<MomentRing> get() = rings.filter { !it.unseen && !it.muted }.sortedByDescending { it.latestAt }
+    val viewed: List<MomentRing> get() = rings.filter { !it.isRecent() && !it.muted }
+        .sortedWith(compareBy<MomentRing> { it.allLocked }.thenByDescending { it.shownAt() })
     /** Muted: at the end, folded away until opened. */
     val mutedRings: List<MomentRing> get() = rings.filter { it.muted }.sortedByDescending { it.latestAt }
-    /** The Moments chip's dot: someone I follow has posted something I haven't seen. */
+    private fun MomentRing.shownAt() = moments.maxOfOrNull { it.postedAt } ?: latestAt
+
+    private fun MomentRing.isRecent() = unseen || (moments.isEmpty() && waiting > 0)
+
+    /** The Moments chip's dot: someone I follow has posted something I haven't seen (and can open). */
     val hasUnseen: Boolean get() = rings.any { it.unseen && !it.muted }
     /** Whose avatar gets a ring in the chat list (unseen, not muted), by user id. */
     val unseenPosters: Set<String> get() = rings.filter { it.unseen && !it.muted }.mapTo(mutableSetOf()) { it.posterId }
@@ -109,15 +120,16 @@ class MomentsViewModel(
 
     init {
         viewModelScope.launch {
-            combine(moments.moments, observeContacts(), moments.muted, observeProfile()) { all, contacts, muted, me ->
-                Triple(all, contacts, muted) to me
-            }.collect { (data, me) ->
+            combine(moments.moments, observeContacts(), moments.muted, observeProfile(), moments.locked) { all, contacts, muted, me, locked ->
+                Triple(all, contacts, muted) to (me to locked)
+            }.collect { (data, extra) ->
                 val (all, contacts, muted) = data
+                val (me, locked) = extra
                 _state.update {
                     it.copy(
                         myName = me?.displayName.orEmpty(), myAvatarUrl = me?.avatarUrl,
                         myMoments = all.filter { m -> m.mine }.sortedBy { m -> m.postedAt },
-                        rings = rings(all.filterNot { m -> m.mine }, contacts, muted),
+                        rings = rings(all.filterNot { m -> m.mine }, locked, contacts, muted),
                         hasContacts = contacts.isNotEmpty(), loaded = true,
                     )
                 }
@@ -170,13 +182,21 @@ class MomentsViewModel(
     fun onRetryPost(localId: String) { viewModelScope.launch { moments.retry(localId) } }
     fun onDeletePost(localId: String) { viewModelScope.launch { moments.discard(localId) } }
 
-    /** Only people in my contacts (both ways: they chose me as audience, I have them saved); muted people last. */
-    private fun rings(others: List<Moment>, contacts: List<Contact>, muted: Set<String>): List<MomentRing> {
+    /**
+     * Only people in my contacts (both ways: they chose me as audience, I have them saved); muted people last. A
+     * person whose moments this phone can't open yet still gets a ring ([MomentRing.locked]), never silence.
+     */
+    private fun rings(others: List<Moment>, locked: List<LockedMoment>, contacts: List<Contact>, muted: Set<String>): List<MomentRing> {
         val byId = contacts.associateBy { it.person.userId }
         val now = nowMillis()
-        return others.filter { it.expiresAt > now }.groupBy { it.posterId }.mapNotNull { (posterId, list) ->
+        val readable = others.filter { it.expiresAt > now }.groupBy { it.posterId }
+        val closed = locked.filter { it.expiresAt > now }.groupBy { it.posterId }
+        return (readable.keys + closed.keys).mapNotNull { posterId ->
             val person = byId[posterId]?.person ?: return@mapNotNull null
-            MomentRing(posterId, person.displayName, person.avatarUrl, list.sortedBy { it.postedAt }, muted = posterId in muted)
+            MomentRing(
+                posterId, person.displayName, person.avatarUrl, readable[posterId].orEmpty().sortedBy { it.postedAt },
+                muted = posterId in muted, locked = closed[posterId].orEmpty().sortedBy { it.postedAt },
+            )
         }.sortedWith(compareBy<MomentRing> { it.muted }.thenBy { !it.unseen }.thenByDescending { it.latestAt })
     }
 }

@@ -8,6 +8,8 @@ import com.circaso.core.platform.ConnectivityMonitor
 import com.circaso.core.sync.ConnectionState
 import com.circaso.feature.contacts.domain.ObserveContactsUseCase
 import com.circaso.feature.profile.domain.ObserveProfileUseCase
+import com.circaso.feature.status.domain.LockState
+import com.circaso.feature.status.domain.LockedMoment
 import com.circaso.feature.status.presentation.MomentsViewModel
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -47,6 +49,44 @@ class MomentsViewModelTest {
         // Wanjiru (a contact) has a moment I've seen: Viewed, no dot.
         assertEquals(listOf("w"), s.viewed.map { it.posterId })
         assertFalse(s.hasUnseen)
+    }
+
+    @Test fun aNewPhoneShowsTheRingWaitingForTheirPhoneWithNoDot() = runTest(dispatcher) {
+        // Signed in on a new phone: Wanjiru's moments are listed but none opens here yet.
+        repo.list.value = emptyList()
+        repo.lockedList.value = listOf(LockedMoment("m1", "w", 10, Long.MAX_VALUE, LockState.Waiting), LockedMoment("m2", "w", 20, Long.MAX_VALUE, LockState.Waiting))
+        val s = vm().state.value
+
+        val ring = s.recent.single()
+        assertEquals("w", ring.posterId)
+        assertTrue(ring.allLocked)
+        assertEquals(2, ring.waiting)
+        assertEquals(20, ring.latestAt)
+        assertFalse(s.empty, "not the empty state: someone has moments")
+        assertFalse(s.hasUnseen, "no dot for something that can't be opened yet")
+        assertTrue(s.unseenPosters.isEmpty())
+    }
+
+    @Test fun onceTheKeysComeTheRingIsAnOrdinaryOne() = runTest(dispatcher) {
+        repo.list.value = emptyList()
+        repo.lockedList.value = listOf(LockedMoment("m1", "w", 1, Long.MAX_VALUE, LockState.Waiting))
+        val vm = vm()
+        assertTrue(vm.state.value.recent.single().allLocked)
+
+        repo.lockedList.value = emptyList()
+        repo.list.value = listOf(moment("m1").copy(viewed = false))
+        val ring = vm.state.value.recent.single()
+        assertFalse(ring.allLocked)
+        assertEquals(listOf("m1"), ring.moments.map { it.momentId })
+        assertTrue(vm.state.value.hasUnseen)
+    }
+
+    @Test fun unavailableMomentsAloneSitWithTheViewedOnes() = runTest(dispatcher) {
+        repo.list.value = emptyList()
+        repo.lockedList.value = listOf(LockedMoment("m1", "w", 1, Long.MAX_VALUE, LockState.Unavailable))
+        val s = vm().state.value
+        assertTrue(s.recent.isEmpty())
+        assertEquals(0, s.viewed.single().waiting)
     }
 
     @Test fun offlineIsNotAnError() = runTest(dispatcher) {

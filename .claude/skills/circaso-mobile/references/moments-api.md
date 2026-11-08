@@ -45,7 +45,7 @@ this file is updated to match.
 | ST7 | `DELETE /moments/{momentId}` | → `{deleted: true}` | Poster only. Removes the media too; sends `status.deleted` to the audience. |
 | ST8 | `GET /moments/media/{mediaId}` | → `{downloadUrl, expiresAt, sizeBytes}` | 15-minute link for the poster or anyone in the audience of a live moment carrying it. |
 | ST9 | `POST /moments/keys/request` | `{posterIds: [userId]}` → `{requested: [userId]}` | 1–100 distinct posters, never me. Each poster with a live moment shown to me (no block either way) gets `status.key_requested {requesterId}`, at most once per 10 minutes per pair; others skipped silently. Error `status.keys_invalid` (400). |
-| ST10 | `POST /moments/key-copies` | `{copies: [{momentId, userId, ciphertext}]}` → `{copied}` | The poster's answer: per live moment of mine, the body sealed again over the 1:1 session (a `momentBody` payload), ≤ 72 KiB decoded, 1–200 copies, one per (moment, person), never me. Replaces that person's `keyCopy` on that moment; skipped when not my live moment, not in its audience, or blocked. Each person reached gets `status.keys_ready {posterId}`. |
+| ST10 | `POST /moments/key-copies` | `{copies: [{momentId, userId, ciphertext}]}` → `{copied}` | The poster's answer: per live moment of mine, the body sealed again over the 1:1 session (a `momentBody` payload), ≤ 72 KiB decoded, up to 200 copies, one per (moment, person), never me, plus optional `answered` (2026-11-08, see below). Replaces that person's `keyCopy` on that moment; skipped when not my live moment, not in its audience, or blocked. Each person reached gets `status.keys_ready {posterId}`. |
 
 `Moment`: `{momentId, posterId, ciphertext, keyCopy: String?, mediaIds, postedAt, expiresAt, mine, viewed, reacted,
 viewCount}`. `keyCopy` is the caller's own copy, if one was sent with this moment (or replaced by ST10). It is a 1:1
@@ -63,6 +63,16 @@ moments key (so the next moment carries a copy), seals each live moment's body f
 gets `status.keys_ready` and refreshes. Any identity change seen in chats also forgets that person's delivery. My own
 moments posted from an earlier phone can't be recovered (no other phone of mine holds them) and stay hidden.
 
+**2026-11-08 (backend PR "moment keys on a new device"):** a poster without a socket gets `status.key_requested` as a
+**silent push** (`kind` `moment.keys_requested`, `userId` the requester; Android data message, iOS background push);
+the app answers inside the push window (`MomentKeyRequestPush`). ST10 takes `answered: [userId]` and may have no
+copies: the poster always names the requester, so a phone whose moments came from the poster's earlier phone still
+sends `status.keys_ready`. The viewer shows others' unreadable moments as a ring, never silence: **Waiting** ("Waiting
+for <name>’s phone", or "Waiting for a connection" offline) until the answer; whatever still doesn't open after an
+answer to a request this run made is **Unavailable** ("Can’t be opened on this phone") and isn't asked about again.
+The same moments are asked about again after 30 minutes while still waiting. Before release, the backend must accept
+`answered` (an older server answers 400, dropped quietly, and the viewer keeps waiting until the moments expire).
+
 Errors (`status.*`): `audience_invalid` (400), `moment_too_large` (400), `media_invalid` (400: size or kind),
 `media_not_found` (404: also when not allowed, so nothing leaks), `moment_not_found` (404: missing, expired, deleted,
 or not visible), `not_poster` (403), `too_many_moments` (429: more than 50 in 24 h, `Retry-After`).
@@ -74,7 +84,7 @@ or not visible), `not_poster` (403), `too_many_moments` (429: more than 50 in 24
 - `status.viewed` `{momentId, viewerId, viewedAt, reacted}` to the poster.
 - `status.key_requested` `{requesterId}` to a poster (ST9): answer with ST10.
 - `status.keys_ready` `{posterId}` to a viewer (ST10): fetch ST4 again.
-- No pushes, except the reaction push (`moment.loved`). A reply to a moment is an ordinary M12 chat message quoting it.
+- No pushes, except the reaction push (`moment.loved`) and the silent key request (`moment.keys_requested`, 2026-11-08). A reply to a moment is an ordinary M12 chat message quoting it.
 
 ## Retention
 

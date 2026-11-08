@@ -1,5 +1,10 @@
 package com.circaso.feature.status.presentation
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
@@ -26,6 +31,9 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.text.BasicText
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
@@ -118,15 +126,21 @@ fun LazyListScope.momentsList(
     }
     if (recent.isNotEmpty()) {
         item(key = "moments-recent", contentType = "label") { SectionLabel("Recent", rowModifier()) }
-        items(recent, key = { "moment-" + it.posterId }, contentType = { "ring" }) { r -> RingRow(r, RingStyle.Unseen, now, rowModifier()) { actions.onOpenRing(r.posterId) } }
+        items(recent, key = { "moment-" + it.posterId }, contentType = { if (it.allLocked) "locked" else "ring" }) { r ->
+            if (r.allLocked) LockedRingRow(r, rowModifier(), online = state.online) else RingRow(r, RingStyle.Unseen, now, rowModifier()) { actions.onOpenRing(r.posterId) }
+        }
     }
     if (viewed.isNotEmpty()) {
         item(key = "moments-viewed", contentType = "label") { SectionLabel("Viewed", rowModifier()) }
-        items(viewed, key = { "moment-" + it.posterId }, contentType = { "ring" }) { r -> RingRow(r, RingStyle.Seen, now, rowModifier()) { actions.onOpenRing(r.posterId) } }
+        items(viewed, key = { "moment-" + it.posterId }, contentType = { if (it.allLocked) "locked" else "ring" }) { r ->
+            if (r.allLocked) LockedRingRow(r, rowModifier(), online = state.online) else RingRow(r, RingStyle.Seen, now, rowModifier()) { actions.onOpenRing(r.posterId) }
+        }
     }
     if (muted.isNotEmpty()) {
         item(key = "moments-muted", contentType = "muted-head") { MutedHeader(muted.size, mutedOpen, onToggleMuted, rowModifier()) }
-        if (mutedOpen) items(muted, key = { "moment-" + it.posterId }, contentType = { "ring" }) { r -> RingRow(r, RingStyle.Seen, now, rowModifier(), dimmed = true) { actions.onOpenRing(r.posterId) } }
+        if (mutedOpen) items(muted, key = { "moment-" + it.posterId }, contentType = { if (it.allLocked) "locked" else "ring" }) { r ->
+            if (r.allLocked) LockedRingRow(r, rowModifier(), online = state.online, dimmed = true) else RingRow(r, RingStyle.Seen, now, rowModifier(), dimmed = true) { actions.onOpenRing(r.posterId) }
+        }
     }
     when {
         q.isNotEmpty() && recent.isEmpty() && viewed.isEmpty() && muted.isEmpty() -> item(key = "moments-none-match", contentType = "empty") {
@@ -285,17 +299,70 @@ private fun MyMomentRow(state: MomentsUiState, actions: MomentsActions, now: Lon
 private fun RingRow(ring: MomentRing, style: RingStyle, now: Long, modifier: Modifier, dimmed: Boolean = false, onClick: () -> Unit) {
     val c = CircasoTheme.colors
     val t = CircasoTheme.typography
-    val time = momentTime(ring.latestAt, now)
+    val time = momentTime(ring.moments.maxOf { it.postedAt }, now)
     val count = ring.moments.size
     val what = when { style == RingStyle.Unseen -> "new moment"; else -> "seen" } + if (dimmed) ", muted" else ""
+    // Some of theirs can't be opened on this phone yet (a new phone): said, so the count never looks short.
+    val sub = if (ring.waiting > 0) "$time · ${ring.waiting} more on the way" else time
     MomentRowFrame(
         modifier,
-        label = "${ring.name}, $what, $time" + if (count > 1) ", $count moments" else "",
+        label = "${ring.name}, $what, $time" + (if (count > 1) ", $count moments" else "") + if (ring.waiting > 0) ", ${ring.waiting} more on the way" else "",
         onClick = onClick,
         leading = { Avatar(ring.name, Modifier.momentRing(ring.arcs(), c).alpha(if (dimmed) 0.5f else 1f), size = MomentAvatar, imageUrl = ring.avatarUrl) },
     ) {
         BasicText(ring.name, style = t.body.copy(color = if (dimmed) c.inkSecondary else c.ink), maxLines = 1, overflow = TextOverflow.Ellipsis)
-        BasicText(time, style = t.subhead.copy(color = c.inkSecondary), maxLines = 1, overflow = TextOverflow.Ellipsis)
+        BasicText(sub, style = t.subhead.copy(color = c.inkSecondary), maxLines = 2, overflow = TextOverflow.Ellipsis)
+    }
+}
+
+/**
+ * A person whose moments this phone can't open yet (decided 2026-11-08; no frame, the S1 row's own parts). A new
+ * phone has new keys, so it asks the poster's phone for fresh copies: the row says whose phone it is waiting for, with
+ * the clock badge My moment uses while waiting, instead of leaving the person out. Unavailable (shared from the
+ * poster's earlier phone, so their phone answered without them) says so, with a lock. A tap opens the reason under
+ * the row; there is nothing to view yet.
+ */
+@Composable
+internal fun LockedRingRow(ring: MomentRing, modifier: Modifier, online: Boolean = true, dimmed: Boolean = false, initiallyOpen: Boolean = false) {
+    val c = CircasoTheme.colors
+    val t = CircasoTheme.typography
+    var open by rememberSaveable(ring.posterId) { mutableStateOf(initiallyOpen) }
+    val first = ring.name.trim().substringBefore(' ').ifBlank { ring.name }
+    val waiting = ring.waiting > 0
+    val n = ring.locked.size
+    // Offline, this phone is the reason (it may not have asked yet): said as My moment says it.
+    val sub = when { waiting && !online -> "Waiting for a connection"; waiting -> "Waiting for $first’s phone"; else -> "Can’t be opened on this phone" }
+    Column(modifier) {
+        MomentRowFrame(
+            Modifier.semantics { stateDescription = if (open) "Expanded" else "Collapsed" },
+            label = "${ring.name}, $sub" + if (dimmed) ", muted" else "",
+            onClick = { open = !open },
+            leading = {
+                Box(Modifier.size(MomentAvatar).alpha(if (dimmed) 0.5f else 1f)) {
+                    Avatar(ring.name, Modifier.momentRing(ring.locked.map { true }, c), size = MomentAvatar, imageUrl = ring.avatarUrl)
+                    Badge(c.fillStrong) { CircasoIconImage(if (waiting) CircasoIcon.Clock else CircasoIcon.Lock, c.ink, Modifier.size(BadgeGlyph)) }
+                }
+            },
+        ) {
+            BasicText(ring.name, style = t.body.copy(color = if (dimmed) c.inkSecondary else c.ink), maxLines = 1, overflow = TextOverflow.Ellipsis)
+            BasicText(sub, style = t.subhead.copy(color = c.inkSecondary), maxLines = 2, overflow = TextOverflow.Ellipsis)
+        }
+        val reduce = CircasoTheme.reduceMotion
+        AnimatedVisibility(
+            open,
+            enter = if (reduce) fadeIn(snap()) else expandVertically(tween(CircasoMotion.QuickMs)) + fadeIn(tween(CircasoMotion.QuickMs)),
+            exit = if (reduce) fadeOut(snap()) else shrinkVertically(tween(CircasoMotion.QuickMs)) + fadeOut(tween(CircasoMotion.QuickMs)),
+        ) {
+            BasicText(
+                when {
+                    waiting && !online -> "Moments are end-to-end encrypted, so this phone needs a key from $first’s phone. It asks as soon as it’s online. You don’t need to do anything."
+                    waiting -> "Moments are end-to-end encrypted, so this phone needs a key from $first’s phone. They’ll show here once $first’s phone sends it. You don’t need to do anything."
+                    else -> "$first’s phone couldn’t send the key for ${if (n == 1) "this moment" else "these moments"}, so ${if (n == 1) "it" else "they"} can’t be opened on this phone. $first’s next moments will show as usual."
+                },
+                Modifier.fillMaxWidth().padding(start = CircasoSpacing.s4 + MomentAvatar + CircasoSpacing.s3, end = CircasoSpacing.s4, bottom = CircasoSpacing.s3),
+                style = t.subhead.copy(color = c.inkSecondary),
+            )
+        }
     }
 }
 

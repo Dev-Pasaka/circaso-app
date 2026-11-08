@@ -153,6 +153,7 @@ fun initKoin(platform: Module) {
     koin.get<PushTokenRegistrar>().start()
     koin.get<KeyMaintainer>().start() // encryption keys on the server, whenever signed in and online
     koin.get<com.circaso.feature.messaging.data.repository.MessagingStarter>().start()
+    koin.get<com.circaso.feature.status.data.repository.MomentsStarter>().start() // contacts' moments at launch and sign-in
     scope.launch {
         koin.get<AppPreferences>().themeOverrides.first()
         // Rows a crash left half-sent go back in line at the start of every drain (OutboxProcessor), under its lock.

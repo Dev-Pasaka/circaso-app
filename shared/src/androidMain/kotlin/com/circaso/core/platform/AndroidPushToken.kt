@@ -35,6 +35,21 @@ class CircasoMessagingService : FirebaseMessagingService() {
     override fun onMessageReceived(message: RemoteMessage) {
         // Spaces is archived (2026-11-05): an older server's space.* pushes have nothing to open here, so say nothing.
         if (message.data["kind"]?.startsWith("space.") == true) return
+        // Someone's new phone can't open my moments (silent, 2026-11-08): seal fresh copies for it now, showing nothing.
+        if (message.data["kind"] == com.circaso.feature.status.data.repository.MomentKeyRequestPush.Kind) {
+            runCatching {
+                val koin = KoinPlatform.getKoin()
+                runBlocking {
+                    com.circaso.feature.status.data.repository.MomentKeyRequestPush.handle(
+                        message.data,
+                        repository = { koin.get() },
+                        drain = { koin.get<com.circaso.core.sync.OutboxProcessor>().drain() },
+                        windowMillis = SyncWindowMillis,
+                    )
+                }
+            }
+            return
+        }
         runCatching {
             val koin = KoinPlatform.getKoin()
             val notices = koin.get<PushNotices>()
