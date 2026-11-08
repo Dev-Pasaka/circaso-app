@@ -1,0 +1,131 @@
+name: Google Play internal testing
+
+# Every push to main builds a signed release bundle and publishes it to Play's internal testing track for
+# com.circaso.app (Pasaka, 2026-11-08). It can also be run by hand from the Actions tab.
+#
+# Secrets (repository Settings > Secrets and variables > Actions):
+#   PLAY_SERVICE_ACCOUNT_JSON     the Google Cloud service account's JSON key; the account is invited in Play Console
+#                                 (Users and permissions) with "Release to testing tracks" for this app
+#   UPLOAD_KEYSTORE_BASE64        the upload keystore (.jks), base64: `base64 -i upload.jks | pbcopy`
+#   UPLOAD_KEYSTORE_PASSWORD, UPLOAD_KEY_ALIAS, UPLOAD_KEY_PASSWORD
+#   GOOGLE_SERVICES_JSON_BASE64   androidApp/google-services.json, base64
+#   CIRCLE_PWSDK_USERNAME, CIRCLE_PWSDK_TOKEN   the Circle SDK's Maven credentials (pwsdk.maven.* in local.properties)
+#   MAPS_ANDROID_KEY              maps.android.key
+# Variables (same page, Variables tab):
+#   PLAY_VERSION_CODE_BASE        added to the run number for versionCode; set it above the highest versionCode
+#                                 already uploaded to Play for this app (default 1000)
+#   SHARE_HOST                    optional, the share-link host (the sandbox's when unset)
+#   PLAY_PUBLISH_ENABLED          set to true once the secrets above are in; until then the job is skipped
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      release_notes:
+        description: "What's new (shown to internal testers)"
+        required: false
+
+concurrency:
+  group: play-internal
+  cancel-in-progress: false   # a release in flight finishes; the next waits
+
+permissions:
+  contents: read
+
+jobs:
+  internal:
+    name: Build and publish to internal testing
+    # Off until the secrets are in place (repository variable PLAY_PUBLISH_ENABLED=true), so pushes don't fail meanwhile.
+    if: ${{ vars.PLAY_PUBLISH_ENABLED == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    environment: play   # optional protection rules (who may publish) live on this environment
+    steps:
+      - uses: actions/checkout@v4
+
+      # The runner's disk is tight for a KMP app with libsignal; drop toolchains this job never uses.
+      - name: Free disk space
+        run: sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/.ghcup /usr/local/share/boost /opt/hostedtoolcache/CodeQL
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Versions
+        id: v
+        run: |
+          base="${{ vars.PLAY_VERSION_CODE_BASE }}"
+          code=$(( ${base:-1000} + ${{ github.run_number }} ))
+          echo "code=$code" >> "$GITHUB_OUTPUT"
+          echo "name=1.0.$code" >> "$GITHUB_OUTPUT"
+          echo "versionCode $code, versionName 1.0.$code"
+
+      - name: Local settings and signing
+        env:
+          GOOGLE_SERVICES_JSON_BASE64: ${{ secrets.GOOGLE_SERVICES_JSON_BASE64 }}
+          UPLOAD_KEYSTORE_BASE64: ${{ secrets.UPLOAD_KEYSTORE_BASE64 }}
+          CIRCLE_PWSDK_USERNAME: ${{ secrets.CIRCLE_PWSDK_USERNAME }}
+          CIRCLE_PWSDK_TOKEN: ${{ secrets.CIRCLE_PWSDK_TOKEN }}
+          MAPS_ANDROID_KEY: ${{ secrets.MAPS_ANDROID_KEY }}
+          SHARE_HOST: ${{ vars.SHARE_HOST }}
+        run: |
+          set -euo pipefail
+          for v in GOOGLE_SERVICES_JSON_BASE64 UPLOAD_KEYSTORE_BASE64 CIRCLE_PWSDK_USERNAME CIRCLE_PWSDK_TOKEN; do
+            [ -n "${!v}" ] || { echo "::error::Secret $v is not set"; exit 1; }
+          done
+          printf '%s' "$GOOGLE_SERVICES_JSON_BASE64" | base64 -d > androidApp/google-services.json
+          printf '%s' "$UPLOAD_KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/upload.jks"
+          {
+            echo "sdk.dir=$ANDROID_HOME"
+            echo "pwsdk.maven.username=$CIRCLE_PWSDK_USERNAME"
+            echo "pwsdk.maven.password=$CIRCLE_PWSDK_TOKEN"
+            echo "maps.android.key=$MAPS_ANDROID_KEY"
+            [ -n "$SHARE_HOST" ] && echo "share.host=$SHARE_HOST"
+          } > local.properties
+
+      - name: Build the signed bundle
+        env:
+          CIRCASO_UPLOAD_KEYSTORE: ${{ runner.temp }}/upload.jks
+          CIRCASO_UPLOAD_KEYSTORE_PASSWORD: ${{ secrets.UPLOAD_KEYSTORE_PASSWORD }}
+          CIRCASO_UPLOAD_KEY_ALIAS: ${{ secrets.UPLOAD_KEY_ALIAS }}
+          CIRCASO_UPLOAD_KEY_PASSWORD: ${{ secrets.UPLOAD_KEY_PASSWORD }}
+        run: >-
+          ./gradlew :androidApp:bundleRelease --console=plain
+          -Pcircaso.versionCode=${{ steps.v.outputs.code }}
+          -Pcircaso.versionName=${{ steps.v.outputs.name }}
+
+      - name: Release notes
+        run: |
+          mkdir -p whatsnew
+          notes="${{ github.event.inputs.release_notes }}"
+          [ -n "$notes" ] || notes="$(git log -1 --pretty=%s | cut -c1-480)"
+          printf '%s\n' "$notes" > whatsnew/whatsnew-en-US
+
+      - name: Publish to internal testing
+        uses: r0adkll/upload-google-play@v1.1.3
+        with:
+          serviceAccountJsonPlainText: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}
+          packageName: com.circaso.app
+          releaseFiles: androidApp/build/outputs/bundle/release/androidApp-release.aab
+          track: internal
+          status: completed
+          mappingFile: androidApp/build/outputs/mapping/release/mapping.txt
+          whatsNewDirectory: whatsnew
+
+      - name: Keep the bundle and mapping
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: circaso-${{ steps.v.outputs.name }}
+          path: |
+            androidApp/build/outputs/bundle/release/*.aab
+            androidApp/build/outputs/mapping/release/mapping.txt
+          if-no-files-found: ignore
+          retention-days: 14
+
+      - name: Remove the key from the runner
+        if: always()
+        run: rm -f "$RUNNER_TEMP/upload.jks" androidApp/google-services.json local.properties

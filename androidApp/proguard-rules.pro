@@ -19,3 +19,12 @@
 # If you keep the line number information, uncomment this to
 # hide the original source file name.
 #-renamesourcefileattribute SourceFile
+# Circle's wallet SDK refers to its optional Facebook and Firebase social sign-in, which Circaso doesn't ship (it signs in
+# with its own Google and Apple flow). Those paths are never called; R8 must not fail on the missing classes.
+-dontwarn com.facebook.**
+-dontwarn com.google.firebase.auth.ktx.**
+-dontwarn com.google.firebase.ktx.Firebase
+
+# Readable crash reports in Play: keep line numbers (the mapping file CI uploads restores names).
+-keepattributes SourceFile,LineNumberTable
+-renamesourcefileattribute SourceFile

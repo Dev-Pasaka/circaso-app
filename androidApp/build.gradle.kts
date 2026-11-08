@@ -48,8 +48,9 @@ android {
         applicationId = "com.circaso.app"
         minSdk = libs.versions.android.minSdk.get().toInt()
         targetSdk = libs.versions.android.targetSdk.get().toInt()
-        versionCode = 1
-        versionName = "1.0"
+        // CI sets both for every Play upload (each upload needs a higher code): -Pcircaso.versionCode / -Pcircaso.versionName.
+        versionCode = providers.gradleProperty("circaso.versionCode").map { it.toInt() }.getOrElse(1)
+        versionName = providers.gradleProperty("circaso.versionName").getOrElse("1.0")
         // Google Maps for Android (live location's map). Per developer, like the Circle credentials:
         // `maps.android.key=…` in local.properties. Restrict it in the Cloud console to this package and signing
         // certificate, and to the Maps SDK for Android. Without it the map falls back to Circaso's drawn tile.
@@ -69,8 +70,24 @@ android {
             excludes += "**/libsignal_jni_testing.so"
         }
     }
+    // The Play upload key, only when CI (or a developer) provides it through the environment; without it a release
+    // build is unsigned, as before. The key never lives in the repo.
+    val uploadStore = System.getenv("CIRCASO_UPLOAD_KEYSTORE")?.takeIf { it.isNotBlank() }?.let(::file)?.takeIf { it.exists() }
+    signingConfigs {
+        if (uploadStore != null) {
+            create("upload") {
+                storeFile = uploadStore
+                storePassword = System.getenv("CIRCASO_UPLOAD_KEYSTORE_PASSWORD")
+                keyAlias = System.getenv("CIRCASO_UPLOAD_KEY_ALIAS")
+                keyPassword = System.getenv("CIRCASO_UPLOAD_KEY_PASSWORD")
+            }
+        }
+    }
     buildTypes {
         release {
+            if (uploadStore != null) signingConfig = signingConfigs.getByName("upload")
+            // To try a release build on a phone without the upload key: -Pcircaso.releaseDebugSigned=true.
+            else if (providers.gradleProperty("circaso.releaseDebugSigned").orNull == "true") signingConfig = signingConfigs.getByName("debug")
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(
