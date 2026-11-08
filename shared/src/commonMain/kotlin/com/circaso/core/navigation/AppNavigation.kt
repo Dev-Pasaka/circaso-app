@@ -154,11 +154,11 @@ fun AppNavigation(forceUpdate: Boolean, home: @Composable () -> Unit) {
     // sliding as if pushed or popped.
     var tabEpoch by remember { androidx.compose.runtime.mutableIntStateOf(0) }
     // The back stack a tab change left behind: the scene change it causes is the tab swapping in, not a push or a back.
-    // Held until the stack changes again, so every spec AnimatedContent asks during that one change agrees.
+    // It counts only while the stack is still exactly that, worked out during composition so it can't race a frame.
     var tabSwapStack by remember { androidx.compose.runtime.mutableStateOf<List<NavKey>?>(null) }
-    LaunchedEffect(Unit) {
-        androidx.compose.runtime.snapshotFlow { backStack.toList() }.collect { now -> if (tabSwapStack != null && now != tabSwapStack) tabSwapStack = null }
-    }
+    val swapPending = tabSwapStack != null && tabSwapStack == backStack.toList()
+    // Forgotten the first time the stack moves on, so coming back to the same stack later is an ordinary back.
+    if (tabSwapStack != null && !swapPending) androidx.compose.runtime.SideEffect { tabSwapStack = null }
     fun switchTab(to: Int, restore: Boolean = true) {
         if (to == homeTab) return
         if (!restore) tabStacks.forget(to)
@@ -251,14 +251,14 @@ fun AppNavigation(forceUpdate: Boolean, home: @Composable () -> Unit) {
     // Whether a scene change is a tab change swapping in: its target is the stack switchTab left (pure, so the
     // several times AnimatedContent asks during one change all agree).
     fun <S> androidx.compose.animation.AnimatedContentTransitionScope<androidx.navigation3.scene.Scene<S>>.tabSwap(): Boolean where S : Any =
-        tabSwapStack?.lastOrNull()?.let { top -> targetState.entries.lastOrNull()?.contentKey == "$top:${top::class}" } == true
+        swapPending && tabSwapStack?.lastOrNull()?.let { top -> targetState.entries.lastOrNull()?.contentKey == "$top:${top::class}" } == true
     val lastDepth = remember { IntArray(1) { backStack.size } }
     val popping = remember(backStack.size) { (backStack.size < lastDepth[0]).also { lastDepth[0] = backStack.size } }
     // Sheets and photo viewers draw over the whole window, not inside the pane that opened them (WindowOverlay.kt);
     // only over the screens: the share sheet, toasts and calls below stay above them.
     com.circaso.designsystem.chrome.WindowOverlayLayer(enabled = launchValue("-window-overlay")?.takeIf { client.debugBuild } != "off") {
     // A tab change that shortens the stack isn't a back: the screen it shows must not start dimmed.
-    CompositionLocalProvider(LocalNavPopping provides (popping && tabSwapStack == null)) {
+    CompositionLocalProvider(LocalNavPopping provides (popping && !swapPending), LocalNavCut provides swapPending) {
     NavDisplay(
         backStack = backStack,
         onBack = ::pop,

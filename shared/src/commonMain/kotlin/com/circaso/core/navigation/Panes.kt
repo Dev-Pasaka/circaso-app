@@ -297,6 +297,9 @@ private val SwipeSpring = spring<Float>(dampingRatio = Spring.DampingRatioNoBoun
 /** How dark the screen underneath is while one is pushed over it (UIKit's dimming view is about this). */
 internal const val UnderneathDim = 0.12f
 
+/** True while Home's tab is swapping in: screens change at once, nothing dims (iPadOS). */
+val LocalNavCut = androidx.compose.runtime.compositionLocalOf { false }
+
 /** Whether the latest back stack change was a pop: the screen coming back starts dimmed and brightens. */
 val LocalNavPopping = androidx.compose.runtime.compositionLocalOf { false }
 
@@ -313,7 +316,8 @@ fun <T : Any> rememberDimNavEntryDecorator(): androidx.navigation3.runtime.NavEn
 private fun DimWhenUnderneath(content: @Composable () -> Unit) {
     val scope = androidx.navigation3.ui.LocalNavAnimatedContentScope.current
     val popping = LocalNavPopping.current
-    val still = CircasoTheme.reduceMotion
+    // A tab swap is a cut: nothing to animate, so the old screen goes in the same frame.
+    val still = CircasoTheme.reduceMotion || LocalNavCut.current
     val dim by scope.transition.animateFloat(
         transitionSpec = { spring(dampingRatio = Spring.DampingRatioNoBouncy, stiffness = 420f) },
         label = "dim",

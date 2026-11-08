@@ -96,8 +96,8 @@ fun HomeScreen(
         // No title bar on the tabs (Pasaka, 2026-10-30): the tab bar already says where you are, and each screen's
         // actions live in it (the Chats button, the eye on the wallet card).
         banner = { when (tab) { Tab.Chats -> chatsBanner(); Tab.Wallet -> ConnectionBanner(); Tab.You -> Unit } },
-        // On its side, or with room to spare, the tabs move to the left edge (Material's rail, iPad's sidebar);
-        // in a split's narrow list pane they stay at the bottom of the pane.
+        // On its side, with room to spare, or in a tablet's list pane, the tabs move to the left edge (Material's
+        // rail, iPad's sidebar), in the same place on every tab; a phone upright keeps them at the bottom.
         bottomBar = if (rail) null else {
             {
                 CircasoTabBar(
