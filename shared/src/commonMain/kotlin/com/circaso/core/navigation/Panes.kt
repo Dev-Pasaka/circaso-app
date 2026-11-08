@@ -170,8 +170,12 @@ private fun <T : Any> ListDetail(list: NavEntry<T>, detail: NavEntry<T>?, undern
     val motion = remember { DetailMotion() }
     val change = remember(detail?.contentKey, depth, tabEpoch) { motion.next(depth, tabEpoch) }
     Row(Modifier.fillMaxSize().background(c.bg)) {
-        ProvideWindowLayout(Modifier.width(WindowLayout.ListPaneWidth).fillMaxHeight()) {
-            androidx.compose.runtime.CompositionLocalProvider(LocalListHasDetail provides (detail != null)) { list.Content() }
+        // The list and, at its leading edge, the tabs' rail (the same rail the full-window Wallet shows).
+        ProvideWindowLayout(Modifier.width(WindowLayout.ListPaneWidth + WindowLayout.RailRoom).fillMaxHeight()) {
+            androidx.compose.runtime.CompositionLocalProvider(
+                LocalListHasDetail provides (detail != null),
+                com.circaso.designsystem.adaptive.LocalTabsAsRail provides true,
+            ) { list.Content() }
         }
         Box(Modifier.width(0.5.dp).fillMaxHeight().background(c.separator))
         ProvideWindowLayout(Modifier.weight(1f).fillMaxHeight().clipToBounds()) {
@@ -196,6 +200,7 @@ private fun <T : Any> ListDetail(list: NavEntry<T>, detail: NavEntry<T>?, undern
                     when (change.kind) {
                         // A chat picked from the list replaces the one shown: it swaps in place (iPad Messages).
                         DetailChange.Swap -> fadeIn(spring(stiffness = Spring.StiffnessMediumLow)) togetherWith fadeOut(spring(stiffness = Spring.StiffnessMedium))
+                        DetailChange.Cut -> EnterTransition.None togetherWith ExitTransition.None
                         DetailChange.Push -> pushTransition(still)
                         DetailChange.Pop -> popTransition(still)
                     }.apply { targetContentZIndex = change.z }
@@ -211,7 +216,8 @@ private fun <T : Any> ListDetail(list: NavEntry<T>, detail: NavEntry<T>?, undern
     }
 }
 
-internal enum class DetailChange { Push, Pop, Swap }
+/** Swap: another item picked from the list (a short fade). Cut: another tab's screen (in place, at once, as iPadOS). */
+internal enum class DetailChange { Push, Pop, Swap, Cut }
 internal data class DetailStep(val kind: DetailChange, val z: Float)
 
 /** Remembers the depth above the list between changes, and the stacking order NavDisplay would give. */
@@ -222,7 +228,7 @@ internal class DetailMotion {
     fun next(newDepth: Int, tabEpoch: Int = epoch): DetailStep {
         val kind = when {
             depth < 0 -> DetailChange.Swap
-            tabEpoch != epoch -> DetailChange.Swap // another tab: its screen replaces this one in place
+            tabEpoch != epoch -> DetailChange.Cut // another tab: its screen replaces this one in place, at once
             newDepth > depth -> DetailChange.Push
             newDepth < depth -> DetailChange.Pop
             else -> DetailChange.Swap // same depth, another screen: picked from the list

@@ -86,7 +86,9 @@ fun HomeScreen(
         if (tab != Tab.Chats) (onBackToTab ?: select)(Tab.Chats.ordinal) else confirmExit = true
     }
     val layout = com.circaso.designsystem.adaptive.LocalWindowLayout.current
-    val rail = layout.short || layout.widthClass != com.circaso.designsystem.adaptive.WidthClass.Compact
+    // A rail on a phone on its side, a wide window, and in a tablet's list pane: one place for the tabs on a tablet,
+    // whichever tab is showing.
+    val rail = layout.short || layout.widthClass != com.circaso.designsystem.adaptive.WidthClass.Compact || com.circaso.designsystem.adaptive.LocalTabsAsRail.current
     CircasoScaffold(
         grouped = tab == Tab.You,
         // On its side, Wallet and You are laid out in two columns: a wider frame for them; Chats stays one column.

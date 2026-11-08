@@ -103,6 +103,9 @@ fun AppNavigation(forceUpdate: Boolean, home: @Composable () -> Unit) {
     val state by auth.state.collectAsState()
     val stored by auth.stored.collectAsState()
     val twoPaneNow = com.circaso.designsystem.adaptive.LocalWindowLayout.current.twoPane
+    // Home's tab (see switchTab below). The Wallet tab is a dashboard: on a tablet it takes the whole window.
+    var homeTab by androidx.compose.runtime.saveable.rememberSaveable { androidx.compose.runtime.mutableIntStateOf(0) }
+    val splitHome = twoPaneNow && homeTab != com.circaso.feature.home.presentation.Tab.Wallet.ordinal
     val backStack = rememberNavBackStack(SavedStateConfiguration { serializersModule = routeSerializers }, SplashRoute)
 
     val root: Route = when (state) {
@@ -134,7 +137,7 @@ fun AppNavigation(forceUpdate: Boolean, home: @Composable () -> Unit) {
     // From the list in a split, a chat replaces what the detail pane shows (iPad Messages): Home stays the only
     // thing under it, so Back from the chat returns to the empty pane, not through every chat opened before.
     fun openChatFromList(id: String) {
-        if (twoPaneNow) while (backStack.size > 1 && backStack.last() != HomeRoute) backStack.removeAt(backStack.lastIndex)
+        if (splitHome) while (backStack.size > 1 && backStack.last() != HomeRoute) backStack.removeAt(backStack.lastIndex)
         backStack.add(ChatRoute(id))
     }
     // The Groups wallet's sheet actions (one place for the tab's header and its sheet).
@@ -146,19 +149,23 @@ fun AppNavigation(forceUpdate: Boolean, home: @Composable () -> Unit) {
     fun backToHome() { droppedTo[0] = -1; while (backStack.size > 1 && backStack.last() != HomeRoute) backStack.removeAt(backStack.lastIndex) }
     // Home's tab lives here, with the screens each tab opened (TabStacks): changing tab swaps the detail pane's
     // screens for the new tab's, so another tab's sub-screens never show, not even on Back.
-    var homeTab by androidx.compose.runtime.saveable.rememberSaveable { androidx.compose.runtime.mutableIntStateOf(0) }
     val tabStacks = remember { TabStacks<NavKey>() }
     // Bumped on each tab change, so the detail pane swaps to the new tab's screen in place (iPadOS) rather than
     // sliding as if pushed or popped.
     var tabEpoch by remember { androidx.compose.runtime.mutableIntStateOf(0) }
-    val tabSwapTop = remember { arrayOfNulls<NavKey>(1) }
+    // The back stack a tab change left behind: the scene change it causes is the tab swapping in, not a push or a back.
+    // Held until the stack changes again, so every spec AnimatedContent asks during that one change agrees.
+    var tabSwapStack by remember { androidx.compose.runtime.mutableStateOf<List<NavKey>?>(null) }
+    LaunchedEffect(Unit) {
+        androidx.compose.runtime.snapshotFlow { backStack.toList() }.collect { now -> if (tabSwapStack != null && now != tabSwapStack) tabSwapStack = null }
+    }
     fun switchTab(to: Int, restore: Boolean = true) {
         if (to == homeTab) return
         if (!restore) tabStacks.forget(to)
         tabStacks.switch(backStack, HomeRoute, from = homeTab, to = to, keep = twoPaneNow)
         homeTab = to
         tabEpoch++
-        tabSwapTop[0] = backStack.lastOrNull()
+        tabSwapStack = backStack.toList()
     }
     // Signed out (Home gone from the stack): no tab's screens may come back after the next sign-in, and the next
     // person starts on Chats.
@@ -240,24 +247,18 @@ fun AppNavigation(forceUpdate: Boolean, home: @Composable () -> Unit) {
     ) {
     Box {
     val twoPane = com.circaso.designsystem.adaptive.LocalWindowLayout.current.twoPane
-    val splitHome = twoPane && homeTab != com.circaso.feature.home.presentation.Tab.Wallet.ordinal
-    // The scene change a tab change causes lands on this top screen (Home, or the tab's restored screen): that change
-    // is the tab swapping in, not a push or a back. Matched by NavEntry's default content key.
-    fun <S> androidx.compose.animation.AnimatedContentTransitionScope<androidx.navigation3.scene.Scene<S>>.tabSwap(): Boolean where S : Any {
-        val top = tabSwapTop[0] ?: return false
-        // One shot: the first scene change after a tab change is either the swap or something else (then the swap
-        // caused none), so it is forgotten either way and a later pop back to the same screen still animates.
-        tabSwapTop[0] = null
-        return targetState.entries.lastOrNull()?.contentKey == "$top:${top::class}"
-    }
     val still = com.circaso.designsystem.theme.CircasoTheme.reduceMotion
-    // Pop or push, decided once per change of depth (not on every recomposition mid-animation).
+    // Whether a scene change is a tab change swapping in: its target is the stack switchTab left (pure, so the
+    // several times AnimatedContent asks during one change all agree).
+    fun <S> androidx.compose.animation.AnimatedContentTransitionScope<androidx.navigation3.scene.Scene<S>>.tabSwap(): Boolean where S : Any =
+        tabSwapStack?.lastOrNull()?.let { top -> targetState.entries.lastOrNull()?.contentKey == "$top:${top::class}" } == true
     val lastDepth = remember { IntArray(1) { backStack.size } }
     val popping = remember(backStack.size) { (backStack.size < lastDepth[0]).also { lastDepth[0] = backStack.size } }
     // Sheets and photo viewers draw over the whole window, not inside the pane that opened them (WindowOverlay.kt);
     // only over the screens: the share sheet, toasts and calls below stay above them.
     com.circaso.designsystem.chrome.WindowOverlayLayer(enabled = launchValue("-window-overlay")?.takeIf { client.debugBuild } != "off") {
-    CompositionLocalProvider(LocalNavPopping provides popping) {
+    // A tab change that shortens the stack isn't a back: the screen it shows must not start dimmed.
+    CompositionLocalProvider(LocalNavPopping provides (popping && tabSwapStack == null)) {
     NavDisplay(
         backStack = backStack,
         onBack = ::pop,

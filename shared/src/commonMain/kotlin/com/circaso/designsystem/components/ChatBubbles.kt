@@ -363,7 +363,7 @@ fun SuggestionChip(
         modifier.minimumInteractiveComponentSize().heightIn(min = 34.dp).clip(CircasoShapes.pill).background(if (on) c.ink else c.fill)
             .pressable(role = if (selected != null) Role.RadioButton else Role.Button, onClick = onClick)
             .then(if (selected != null) Modifier.semantics { this.selected = on } else Modifier)
-            .padding(horizontal = if (compact) 10.dp else 14.dp, vertical = 6.dp),
+            .padding(horizontal = if (compact) ChipSideCompact else ChipSide, vertical = 6.dp),
         contentAlignment = Alignment.Center,
     ) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -455,3 +455,7 @@ fun ThreadHeader(
 /** Keeps the header balanced when there is no trailing action (the design leaves a 36 dp gap). */
 @Composable
 fun RowScope.HeaderSpacer() { Box(Modifier.width(CircasoSizes.iconButton)) }
+
+/** A chip's sides: the design's 14 dp, and 10 dp for a row that would otherwise just overflow its column. */
+private val ChipSide = 14.dp
+private val ChipSideCompact = 10.dp

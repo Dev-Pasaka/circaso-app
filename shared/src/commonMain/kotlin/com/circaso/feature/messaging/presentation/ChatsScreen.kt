@@ -166,20 +166,13 @@ fun ChatsContent(
             // All · Unread · Groups · Moments (as WhatsApp): one is always picked; Unread shows how many chats are
             // waiting. With large text the row scrolls sideways rather than clipping the last chip.
             val unread = state.chats.count { it.unread > 0 }
-            // The row starts and ends on the screen's 16 dp line, like the logo and search above it. When the chips
-            // would just overflow (a tablet's 360 dp list pane) they take tighter sides so the last one ends on that
-            // line too; only when even that doesn't fit (the largest text) does the row scroll, its padding inside
-            // the scroll so the last chip still stops 16 dp from the edge.
-            val scroll = androidx.compose.foundation.rememberScrollState()
-            val width = com.circaso.designsystem.adaptive.LocalWindowLayout.current.width
-            val fontScale = androidx.compose.ui.platform.LocalDensity.current.fontScale
-            var compact by androidx.compose.runtime.remember(width, fontScale, moments != null) { androidx.compose.runtime.mutableStateOf(false) }
-            androidx.compose.runtime.LaunchedEffect(scroll.maxValue) { if (scroll.maxValue > 0) compact = true }
-            Row(
-                Modifier.fillMaxWidth().horizontalScroll(scroll).padding(horizontal = CircasoSpacing.s4, vertical = CircasoSpacing.s1),
-                horizontalArrangement = Arrangement.spacedBy(CircasoSpacing.s2),
-            ) {
-                ChatFilter.entries.filter { it != ChatFilter.Moments || moments != null }.forEach { f ->
+            // The row starts and ends on the screen's 16 dp line, like the logo and search above it. Chips that would
+            // overflow the column (a tablet's list pane, a 360 dp phone) take tighter sides so the last one still ends
+            // on that line, decided in the same layout pass so nothing flashes; only when even that doesn't fit (the
+            // largest text) does the row scroll, its padding inside the scroll so the last chip stops 16 dp in.
+            val filters = ChatFilter.entries.filter { it != ChatFilter.Moments || moments != null }
+            val chips: @Composable (Boolean) -> Unit = { compact ->
+                filters.forEach { f ->
                     // Moments carries a dot while someone I follow has posted something I haven't seen.
                     val dot = f == ChatFilter.Moments && moments?.state?.hasUnseen == true && state.filter != ChatFilter.Moments
                     com.circaso.designsystem.components.SuggestionChip(
@@ -194,6 +187,23 @@ fun ChatsContent(
                         compact = compact,
                     )
                 }
+            }
+            val scroll = androidx.compose.foundation.rememberScrollState()
+            androidx.compose.ui.layout.SubcomposeLayout(Modifier.fillMaxWidth()) { constraints ->
+                // Measured once at the regular size, off screen, to see whether it fits.
+                val inset = CircasoSpacing.s4.roundToPx() * 2
+                val gap = CircasoSpacing.s2.roundToPx()
+                val natural = subcompose("measure") { chips(false) }
+                    .map { it.maxIntrinsicWidth(androidx.compose.ui.unit.Constraints.Infinity) }
+                val needed = natural.sum() + gap * (natural.size - 1).coerceAtLeast(0) + inset
+                val compact = needed > constraints.maxWidth
+                val row = subcompose("row") {
+                    Row(
+                        Modifier.fillMaxWidth().horizontalScroll(scroll).padding(horizontal = CircasoSpacing.s4, vertical = CircasoSpacing.s1),
+                        horizontalArrangement = Arrangement.spacedBy(CircasoSpacing.s2),
+                    ) { chips(compact) }
+                }.map { it.measure(constraints.copy(minHeight = 0)) }
+                layout(constraints.maxWidth, row.maxOf { it.height }) { row.forEach { it.place(0, 0) } }
             }
         }
         if (showMoments) {

@@ -195,11 +195,13 @@ fun PreviewScreens(name: String) {
         // The split view as a wide window shows it: the chat list beside an open chat, or beside the empty pane.
         // split-you-signout: a sheet opened from the list pane (You's Sign Out) must cover the window, not the pane.
         "split", "split-wallet", "split-you-signout" -> androidx.compose.foundation.layout.Row(androidx.compose.ui.Modifier.fillMaxSize()) {
-            com.circaso.designsystem.adaptive.ProvideWindowLayout(androidx.compose.ui.Modifier.width(com.circaso.designsystem.adaptive.WindowLayout.ListPaneWidth).fillMaxHeight()) {
+            com.circaso.designsystem.adaptive.ProvideWindowLayout(androidx.compose.ui.Modifier.width(com.circaso.designsystem.adaptive.WindowLayout.ListPaneWidth + com.circaso.designsystem.adaptive.WindowLayout.RailRoom).fillMaxHeight()) {
+              androidx.compose.runtime.CompositionLocalProvider(com.circaso.designsystem.adaptive.LocalTabsAsRail provides true) {
                 if (name == "split-you-signout") YouContent(
                     YouUiState(profile = profile, maskedPhone = "+254 7•• ••• 678", confirmSignOut = true),
                     YouActions({}, {}, {}, {}, {}), "1.0.0", PaddingValues(bottom = 90.dp), {}, {}, {},
                 ) else PreviewScreens("home")
+              }
             }
             androidx.compose.foundation.layout.Box(androidx.compose.ui.Modifier.width(0.5.dp).fillMaxHeight().background(com.circaso.designsystem.theme.CircasoTheme.colors.separator))
             com.circaso.designsystem.adaptive.ProvideWindowLayout(androidx.compose.ui.Modifier.weight(1f).fillMaxHeight()) {

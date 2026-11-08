@@ -46,8 +46,8 @@ class DetailMotionTest {
         val motion = DetailMotion()
         motion.next(0, tabEpoch = 0)
         assertEquals(DetailChange.Push, motion.next(2, tabEpoch = 0).kind) // You: Security, then its log
-        assertEquals(DetailChange.Swap, motion.next(0, tabEpoch = 1).kind) // to Chats, nothing open: no slide back
-        assertEquals(DetailChange.Swap, motion.next(1, tabEpoch = 2).kind) // back to a tab with a chat: no push
+        assertEquals(DetailChange.Cut, motion.next(0, tabEpoch = 1).kind) // to Chats, nothing open: no slide back
+        assertEquals(DetailChange.Cut, motion.next(1, tabEpoch = 2).kind) // back to a tab with a chat: no push
         assertEquals(DetailChange.Push, motion.next(2, tabEpoch = 2).kind) // then ordinary navigation again
     }
 }
