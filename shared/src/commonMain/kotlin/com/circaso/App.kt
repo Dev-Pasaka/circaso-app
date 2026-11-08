@@ -84,14 +84,15 @@ fun App() {
                 Box(Modifier.fillMaxSize()) {
                     // While a page is open, screen readers stay in the browser, not in the app underneath it.
                     Box(Modifier.fillMaxSize().then(if (browsing != null) Modifier.clearAndSetSemantics {} else Modifier)) {
-                        AppNavigation(forceUpdate = outdated) {
+                        // Sheets and photo viewers draw over the whole window, not inside the pane that opened them.
+                        com.circaso.designsystem.chrome.WindowOverlayLayer(enabled = com.circaso.gallery.launchValue("-window-overlay") != "off") { AppNavigation(forceUpdate = outdated) {
                             ThemeGallery(
                                 darkTheme = isDark,
                                 highContrast = isHigh,
                                 onToggleDark = { scope.launch { prefs.setDark(!isDark) } },
                                 onToggleContrast = { scope.launch { prefs.setHighContrast(!isHigh) } },
                             )
-                        }
+                        } }
                     }
                     InAppBrowserHost()
                 }

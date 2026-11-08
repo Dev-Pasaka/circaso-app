@@ -290,6 +290,18 @@ internal fun BoxScope.AlbumViewer(
     onPlayVideo: (Message.Media) -> Unit,
     onClose: () -> Unit,
 ) {
+    // Over the whole window, even from a chat in the detail pane.
+    com.circaso.designsystem.chrome.OverWindow { AlbumViewerInPlace(album, load, onPlayVideo, onClose) }
+}
+
+@OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class)
+@Composable
+private fun BoxScope.AlbumViewerInPlace(
+    album: Pair<List<Message.Media>, Int>?,
+    load: suspend (MediaDetails) -> MediaLoad,
+    onPlayVideo: (Message.Media) -> Unit,
+    onClose: () -> Unit,
+) {
     androidx.compose.ui.backhandler.BackHandler(enabled = album != null, onBack = onClose)
     var last by remember { mutableStateOf(album) }
     if (album != null) last = album

@@ -167,7 +167,11 @@ fun YouContent(
         banner = { ConnectionBanner(showing = "Showing what is saved on this phone") },
         overlay = {
             state.profile?.avatarUrl?.let { photo ->
-                PhotoViewer(photo, state.profile.displayName, photoBounds, viewingPhoto, photoOpen, onClose = { viewingPhoto = false })
+                // Over the whole window: on an iPad the You tab is the narrow list pane, and the photo opens over everything
+                // (Pasaka, 2026-11-08: it opened inside the list pane). It grows from the circle in window coordinates.
+                com.circaso.designsystem.chrome.OverWindow {
+                    PhotoViewer(photo, state.profile.displayName, photoBounds, viewingPhoto, photoOpen, onClose = { viewingPhoto = false })
+                }
             }
             ConfirmSheet(
                 visible = state.confirmSignOut,

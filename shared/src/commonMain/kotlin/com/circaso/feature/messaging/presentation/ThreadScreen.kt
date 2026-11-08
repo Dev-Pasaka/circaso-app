@@ -1668,6 +1668,13 @@ private fun androidx.compose.foundation.layout.BoxScope.FullScreenVideo(path: St
 @OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class)
 @Composable
 internal fun androidx.compose.foundation.layout.BoxScope.ImageViewer(bytes: ByteArray?, onClose: () -> Unit) {
+    // Over the whole window, even from a chat in the detail pane (iPad Photos and Messages show a photo full screen).
+    com.circaso.designsystem.chrome.OverWindow { ImageViewerInPlace(bytes, onClose) }
+}
+
+@OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class)
+@Composable
+private fun androidx.compose.foundation.layout.BoxScope.ImageViewerInPlace(bytes: ByteArray?, onClose: () -> Unit) {
     androidx.compose.ui.backhandler.BackHandler(enabled = bytes != null, onBack = onClose)
     // Keep the last photo through the fade out (bytes is already null by then).
     var shown by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf<ByteArray?>(null) }
