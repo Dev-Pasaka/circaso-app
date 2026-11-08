@@ -59,6 +59,9 @@ android {
         // Share links (decision 2026-11-06): the host whose /s/{code} links open the app (App Links). The sandbox by
         // default; `share.host=…` in local.properties (or -Pshare.host) for the production short domain.
         manifestPlaceholders["shareHost"] = shareHost
+        // Phones only (Pasaka, 2026-11-08): releases go to people's Android phones, not emulators or Chromebooks, so
+        // the bundle carries ARM code alone (x86 doubled its native libraries for no reader).
+        ndk { abiFilters += setOf("arm64-v8a", "armeabi-v7a") }
     }
     packaging {
         resources {
@@ -86,6 +89,9 @@ android {
     }
     buildTypes {
         release {
+            // No native debug symbols in the bundle: they are only for crash reports inside the native libraries we
+            // ship from others (ONNX Runtime, WebRTC, libsignal) and doubled the upload.
+            ndk { debugSymbolLevel = "NONE" }
             if (uploadStore != null) signingConfig = signingConfigs.getByName("upload")
             // To try a release build on a phone without the upload key: -Pcircaso.releaseDebugSigned=true.
             else if (providers.gradleProperty("circaso.releaseDebugSigned").orNull == "true") signingConfig = signingConfigs.getByName("debug")
