@@ -94,6 +94,8 @@ kotlin {
             implementation(libs.libsignal.android)
             implementation(libs.libsignal.client)
             // Silero VAD for Asha's barge-in (approved 2026-11-07): one session, one thread, the model from resources.
+            // ONNX Runtime reduced to Silero's operators, from third_party/onnxruntime-minimal (1.2 MB of an arm64
+            // download, not 12.3).
             implementation(libs.onnxruntime.android)
         }
         iosMain { kotlin.srcDir(generateMapsIosKey) }

@@ -12,8 +12,13 @@ import java.nio.ByteOrder
 import java.nio.FloatBuffer
 
 /**
- * Silero VAD on ONNX Runtime for Android (`onnxruntime-android`): one session per call screen, one thread, every graph
- * optimisation, built from the model's bytes. A window takes well under a millisecond on a phone.
+ * Silero VAD on ONNX Runtime for Android: one session per call screen, one thread, built from the model's bytes. A
+ * window takes well under a millisecond on a phone.
+ *
+ * The runtime is the reduced build in `third_party/onnxruntime-minimal` (only Silero's operators, ORT-format models
+ * only), so the model is `silero_vad.ort`, its graph optimised once, offline. ONNX Runtime applies no optimisation to
+ * an ORT-format model at load, so the level set here changes nothing, and the host tests (full `onnxruntime-jvm`, the
+ * same model through this same class) run the very graph the phone runs.
  */
 class AndroidVadEngine : VadEngine {
     override fun load(model: ByteArray): VadModel? = try {

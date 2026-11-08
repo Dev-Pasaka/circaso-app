@@ -17,14 +17,14 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 /**
- * The VAD wrapper on the real thing: the bundled Silero VAD v5 model (MIT) on ONNX Runtime (the JVM build, for the
+ * The VAD wrapper on the real thing: the bundled Silero VAD v5 model (MIT, in ORT format as the app ships it) on ONNX Runtime (the JVM build, for the
  * host; the app ships the Android one with the same API), through the app's own [AndroidVadEngine].
  *
  * The speech fixture (`vad/speech_16k.wav`, 3.5 s, 16 kHz mono) is cut from a LibriVox recording, public domain
  * (archive.org `spc195_1909_librivox`, "A plus B squared"); noise and silence are generated here.
  */
 class SileroVadModelTest {
-    private val model = assertNotNull(AndroidVadEngine().load(File("src/commonMain/composeResources/files/silero_vad.onnx").readBytes()), "the model opens")
+    private val model = assertNotNull(AndroidVadEngine().load(File("src/androidMain/composeResources/files/silero_vad.ort").readBytes()), "the model opens")
 
     @AfterTest fun close() = model.close()
 

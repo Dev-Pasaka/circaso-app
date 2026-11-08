@@ -41,7 +41,8 @@ googleid = "1.2.1"
 androidx-splashscreen = "1.2.0"
 androidx-profileinstaller = "1.4.1"
 libsignal = "0.106.1"
-# Silero VAD for Asha's barge-in (approved 2026-11-07): ONNX Runtime, latest stable at build time.
+# Silero VAD for Asha's barge-in (approved 2026-11-07): ONNX Runtime, latest stable at build time. The app ships it
+# rebuilt from this tag with only Silero's operators (third_party/onnxruntime-minimal); the host tests use the full JVM build.
 onnxruntime = "1.31.1"
 desugar-jdk-libs = "2.1.5"
 ndk = "30.0.16248370"
@@ -110,7 +111,7 @@ androidx-core-splashscreen = { module = "androidx.core:core-splashscreen", versi
 androidx-profileinstaller = { module = "androidx.profileinstaller:profileinstaller", version.ref = "androidx-profileinstaller" }
 libsignal-android = { module = "org.signal:libsignal-android", version.ref = "libsignal" }
 libsignal-client = { module = "org.signal:libsignal-client", version.ref = "libsignal" }
-onnxruntime-android = { module = "com.microsoft.onnxruntime:onnxruntime-android", version.ref = "onnxruntime" }
+onnxruntime-android = { module = "com.circaso.thirdparty:onnxruntime-android-silero", version.ref = "onnxruntime" }
 # The same runtime for the JVM: host tests only, so the VAD wrapper is tested on the real model. Never in the app.
 onnxruntime-jvm = { module = "com.microsoft.onnxruntime:onnxruntime", version.ref = "onnxruntime" }
 ktor-client-mock = { module = "io.ktor:ktor-client-mock", version.ref = "ktor" }
