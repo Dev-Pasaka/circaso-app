@@ -10,6 +10,9 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -102,15 +105,15 @@ fun BoxScope.CircasoSheet(
         val scope = rememberCoroutineScope()
         val bottomInset = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
         val dismissAt = with(androidx.compose.ui.platform.LocalDensity.current) { 100.dp.toPx() }
-        val shape = if (floating) androidx.compose.foundation.shape.RoundedCornerShape(34.dp) else CircasoShapes.sheet
+        val shape = if (floating) CircasoShapes.sheetFloating else CircasoShapes.sheet
         Column(
             Modifier
-                // A sheet on a tablet or a phone on its side is a centred card, not a strip across the screen.
+                // A tablet's sheet is a centred card; a phone on its side keeps the bottom sheet, never a full-width strip.
                 .widthIn(max = if (floating) FloatingSheetWidth else 600.dp)
                 .fillMaxWidth()
                 .windowInsetsPadding(WindowInsets.displayCutout.union(WindowInsets.navigationBars).only(WindowInsetsSides.Horizontal))
                 .offset { IntOffset(0, drag.value.roundToInt()) }
-                .shadow(if (floating) 28.dp else 14.dp, shape, ambientColor = Color.Black.copy(alpha = 0.12f), spotColor = Color.Black.copy(alpha = 0.18f))
+                .shadow(if (floating) FloatingSheetShadow else 14.dp, shape, ambientColor = Color.Black.copy(alpha = 0.12f), spotColor = Color.Black.copy(alpha = 0.18f))
                 .clip(shape)
                 .background(c.surface)
                 .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null, onClick = {})
@@ -128,14 +131,41 @@ fun BoxScope.CircasoSheet(
                 .padding(start = 20.dp, end = 20.dp, top = 8.dp, bottom = if (floating) 24.dp else maxOf(bottomInset, 24.dp)),
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
-            Box(Modifier.align(Alignment.CenterHorizontally).width(36.dp).height(5.dp).clip(CircasoShapes.pill).background(c.fillStrong))
-            content()
+            // iPadOS form sheets have no grabber: the card closes with its Close, the scrim or Back (dragging still works).
+            if (!floating) Box(Modifier.align(Alignment.CenterHorizontally).width(36.dp).height(5.dp).clip(CircasoShapes.pill).background(c.fillStrong))
+            // Taller than the room it has (the largest text, a keyboard up on a tablet): the content scrolls inside the
+            // card instead of losing its top or its button off the screen. Sheets with their own list (Group Wallets)
+            // size that list to fit, so this never scrolls for them.
+            // Only scrollable when it overflows, so a sheet that fits still follows a downward drag to close.
+            val scroll = rememberScrollState()
+            Column(
+                Modifier.weight(1f, fill = false).verticalScroll(scroll, enabled = scroll.maxValue > 0),
+                verticalArrangement = Arrangement.spacedBy(16.dp),
+                content = content,
+            )
         }
     }
 }
 
 /** iPadOS's form sheet is 540 pt wide; ours matches so a sheet reads as a card on any tablet. */
 private val FloatingSheetWidth = 540.dp
+
+/** A floating card's shadow: deeper than a bottom sheet's, since it sits over the screen rather than at its edge. */
+private val FloatingSheetShadow = 28.dp
+
+/**
+ * Rows and tiles inside a sheet sit on a group a step off the sheet's own surface (grey on white, lighter on dark):
+ * Asha's menu and the Group Wallets sheet.
+ */
+@Composable
+fun sheetGroupColor(): Color = CircasoTheme.colors.let { if (it.isDark) it.fill else it.bgGrouped }
+
+/** In high contrast a sheet's grey groups get a hairline edge: grey on white alone is nearly invisible there. */
+@Composable
+fun Modifier.sheetGroupEdge(shape: androidx.compose.ui.graphics.Shape): Modifier {
+    val c = CircasoTheme.colors
+    return if (c.isHighContrast) this.border(1.dp, c.separator, shape) else this
+}
 
 /** The design's `.cx-sheet-head`: the sheet's title with a Close on the right. */
 @Composable

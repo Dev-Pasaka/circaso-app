@@ -140,6 +140,7 @@ fun AppNavigation(forceUpdate: Boolean, home: @Composable () -> Unit) {
     fun groupMenuActions() = com.circaso.feature.wallet.presentation.GroupMenuActions(
         onOpenChat = ::openChatFromList, onGroupInfo = { backStack.add(ChatInfoRoute(it)) },
         onPay = { wid -> backStack.add(PayRoute(fromWalletId = wid)) }, onSendToWallet = { wid -> backStack.add(SendToWalletRoute(wid)) },
+        onNetwork = { wid, chain -> backStack.add(NetworkAssetsRoute(chain, wid)) },
     )
     fun backToHome() { droppedTo[0] = -1; while (backStack.size > 1 && backStack.last() != HomeRoute) backStack.removeAt(backStack.lastIndex) }
     // A tapped notification (Pasaka, 2026-11-06): once signed in and Home is underneath, open where it points, over
