@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -313,7 +314,8 @@ private fun BoxScope.VideoCall(call: CallUi, actions: CallActions, money: String
         Spacer(Modifier.weight(1f))
         money?.let { MoneyNote(it, Modifier.align(Alignment.CenterHorizontally)); Spacer(Modifier.height(CircasoSpacing.s3)) }
         Row(
-            Modifier.fillMaxWidth().clip(CircasoShapes.pill).background(CallColors.Panel).padding(horizontal = CircasoSpacing.s3, vertical = CircasoSpacing.s2),
+            // A compact glass bar, centred: on a tablet or a phone on its side it keeps a hand's width (FaceTime).
+            Modifier.readableWidth(VideoBarWidth).clip(CircasoShapes.pill).background(CallColors.Panel).padding(horizontal = CircasoSpacing.s3, vertical = CircasoSpacing.s2),
             horizontalArrangement = Arrangement.SpaceEvenly, verticalAlignment = Alignment.CenterVertically,
         ) {
             ControlButton(CircasoIcon.FlipCamera, null, "Flip camera", actions.onFlip, enabled = call.camera)
@@ -325,10 +327,15 @@ private fun BoxScope.VideoCall(call: CallUi, actions: CallActions, money: String
     }
     // Me, in the corner above the controls, mirrored like a mirror when it's the front camera.
     if (call.camera) {
+        // Design H3: top right, under the top row, 104 x 150 on a phone. The camera turns with the screen, so on its
+        // side the preview is landscape too; a tablet's is larger, in proportion to its screen.
+        val layout = com.circaso.designsystem.adaptive.LocalWindowLayout.current
+        val tablet = minOf(layout.width, layout.height) >= 600.dp
+        val (long, narrow) = if (tablet) 220.dp to 152.dp else 150.dp to 104.dp
+        val landscape = layout.width > layout.height
         Box(
-            // Design H3: top right, under the top row, 104 x 150.
             Modifier.align(Alignment.TopEnd).windowInsetsPadding(WindowInsets.safeDrawing).padding(end = CircasoSpacing.s4, top = 64.dp)
-                .width(104.dp).height(150.dp).clip(CircasoShapes.lg).border(1.dp, Color.White.copy(alpha = 0.2f), CircasoShapes.lg),
+                .width(if (landscape) long else narrow).height(if (landscape) narrow else long).clip(CircasoShapes.lg).border(1.dp, Color.White.copy(alpha = 0.2f), CircasoShapes.lg),
         ) { CallVideo(VideoSource.Local, Modifier.fillMaxSize(), mirror = call.frontCamera) }
     }
 }
@@ -351,12 +358,13 @@ private fun GroupCall(call: CallUi, actions: CallActions, chama: Chama?, fiat: F
             else Spacer(Modifier.size(44.dp))
         }
         val tiles = call.people.filter { it.joined || it.ringing }
-        // Two across on a phone; more as the screen widens (on its side, tablets), each tile about a phone's half.
-        Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.BottomCenter) {
-            LazyVerticalGrid(GridCells.Adaptive(minSize = 150.dp), Modifier.fillMaxSize().readableWidth(com.circaso.designsystem.adaptive.WindowLayout.WideContentWidth), horizontalArrangement = Arrangement.spacedBy(CircasoSpacing.s2), verticalArrangement = Arrangement.spacedBy(CircasoSpacing.s2)) {
-                items(tiles, key = { it.userId }) { p -> Tile(p) }
-                item(key = "me") { MeTile(call) }
-            }
+        // Everyone fits on screen at the largest size the space allows, as FaceTime lays out a group: more columns as
+        // the screen widens, never a tile stretched or cut off. On a phone on its side the live goal moves beside the
+        // tiles so they keep their height.
+        val beside = com.circaso.designsystem.adaptive.LocalWindowLayout.current.short && chama != null
+        Row(Modifier.weight(1f).fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(CircasoSpacing.s3)) {
+        Box(Modifier.weight(1f).fillMaxHeight(), contentAlignment = Alignment.BottomCenter) {
+            FittedTiles(tiles.size + 1, Modifier.fillMaxSize()) { i -> if (i < tiles.size) Tile(tiles[i]) else MeTile(call) }
             // H5 after the PIN: a short line that the contribution is on its way, over the grid's lower edge just above
             // the live goal (a transform only, so the video tiles aren't measured again each frame).
             val reduce = CircasoTheme.reduceMotion
@@ -370,8 +378,11 @@ private fun GroupCall(call: CallUi, actions: CallActions, chama: Chama?, fiat: F
                 Landed(landed?.also { last[0] = it } ?: last[0])
             }
         }
-        if (chama != null) LiveGoal(chama, fiat)
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
+        if (beside && chama != null) Box(Modifier.width(280.dp).fillMaxHeight(), contentAlignment = Alignment.BottomCenter) { LiveGoal(chama, fiat) }
+        }
+        if (!beside && chama != null) Box(Modifier.readableWidth()) { LiveGoal(chama, fiat) }
+        // The controls stay a hand's width apart on a tablet instead of spreading across the window.
+        Row(Modifier.readableWidth(ControlsWidth), horizontalArrangement = Arrangement.SpaceEvenly) {
             ControlButton(if (call.mic) CircasoIcon.Mic else CircasoIcon.MicOff, null, if (call.mic) "Mute" else "Unmute", actions.onMute, on = !call.mic)
             ControlButton(if (call.camera) CircasoIcon.Video else CircasoIcon.VideoOff, null, if (call.camera) "Turn camera off" else "Turn camera on", actions.onCamera, on = !call.camera)
             // Design H4: the money moment is a button of its own, on the money card's colours.
@@ -395,7 +406,7 @@ private fun Tile(p: CallPerson) {
     val t = CircasoTheme.typography
     val mid = p.videoMid
     // Wider than tall, so six people fit on a phone without scrolling (design H4's 2 x 3 grid).
-    Box(Modifier.fillMaxWidth().aspectRatio(1.15f).clip(CircasoShapes.lg).background(CallColors.Control)) {
+    Box(Modifier.fillMaxSize().clip(CircasoShapes.lg).background(CallColors.Control)) {
         if (p.video && mid != null) CallVideo(VideoSource.Remote(mid), Modifier.fillMaxSize())
         else Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Avatar(p.name, size = CircasoSizes.avatarLg) }
         Row(Modifier.align(Alignment.BottomStart).padding(CircasoSpacing.s2), horizontalArrangement = Arrangement.spacedBy(CircasoSpacing.s1), verticalAlignment = Alignment.CenterVertically) {
@@ -410,12 +421,68 @@ private fun Tile(p: CallPerson) {
 @Composable
 private fun MeTile(call: CallUi) {
     val t = CircasoTheme.typography
-    Box(Modifier.fillMaxWidth().aspectRatio(1.15f).clip(CircasoShapes.lg).background(CallColors.Control)) {
+    Box(Modifier.fillMaxSize().clip(CircasoShapes.lg).background(CallColors.Control)) {
         if (call.camera) CallVideo(VideoSource.Local, Modifier.fillMaxSize(), mirror = call.frontCamera)
         else Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Avatar("You", size = CircasoSizes.avatarLg) }
         BasicText("You", style = t.footnote.copy(color = CallColors.Ink, fontWeight = FontWeight.SemiBold), modifier = Modifier.align(Alignment.BottomStart).padding(CircasoSpacing.s2))
     }
 }
+
+/**
+ * [count] tiles laid out at the largest size that fits the space without scrolling (FaceTime's group grid): it tries
+ * every column count and keeps the one with the biggest tile, each tile wider than tall (design H4's 1.15). Rows are
+ * centred, the last one too. With so many people that a tile would be smaller than [MinTile], it scrolls instead.
+ */
+@Composable
+private fun FittedTiles(count: Int, modifier: Modifier = Modifier, tile: @Composable (Int) -> Unit) {
+    androidx.compose.foundation.layout.BoxWithConstraints(modifier) {
+        val gap = CircasoSpacing.s2
+        val aspect = TileAspect
+        val (bestCols, bestWidth) = fitTiles(count, maxWidth, maxHeight, gap, aspect)
+        if (bestWidth < MinTile) {
+            LazyVerticalGrid(GridCells.Adaptive(minSize = MinTile), Modifier.fillMaxSize(), horizontalArrangement = Arrangement.spacedBy(gap), verticalArrangement = Arrangement.spacedBy(gap)) {
+                items(count) { i -> Box(Modifier.fillMaxWidth().aspectRatio(aspect)) { tile(i) } }
+            }
+        } else {
+            Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(gap, Alignment.CenterVertically), horizontalAlignment = Alignment.CenterHorizontally) {
+                (0 until count).chunked(bestCols).forEach { row ->
+                    Row(horizontalArrangement = Arrangement.spacedBy(gap)) {
+                        row.forEach { i -> Box(Modifier.width(bestWidth).aspectRatio(aspect)) { tile(i) } }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/** A call tile is a little wider than tall (design H4: six people fit a phone in a 2 x 3 grid). */
+private const val TileAspect = 1.15f
+
+/**
+ * The column count that gives [count] tiles of [aspect] (width / height) the largest width inside [width] x [height]
+ * with [gap] between them, and that width.
+ */
+internal fun fitTiles(count: Int, width: androidx.compose.ui.unit.Dp, height: androidx.compose.ui.unit.Dp, gap: androidx.compose.ui.unit.Dp, aspect: Float): Pair<Int, androidx.compose.ui.unit.Dp> {
+    var bestCols = 1
+    var bestWidth = 0.dp
+    for (cols in 1..maxOf(count, 1)) {
+        val rows = (count + cols - 1) / cols
+        val byWidth = (width - gap * (cols - 1)) / cols
+        val byHeight = ((height - gap * (rows - 1)) / rows) * aspect
+        val w = minOf(byWidth, byHeight)
+        if (w > bestWidth) { bestWidth = w; bestCols = cols }
+    }
+    return bestCols to bestWidth
+}
+
+/** Below this a tile can't show a face: the grid scrolls instead of shrinking further. */
+private val MinTile = 96.dp
+
+/** The call controls' row never runs wider than this, centred (FaceTime keeps them together on an iPad). */
+private val ControlsWidth = 440.dp
+
+/** The video call's glass control bar at its widest. */
+private val VideoBarWidth = 520.dp
 
 /** H4's goal card: "LIVE · contributions land as they happen", moving as the frames arrive. */
 @Composable
