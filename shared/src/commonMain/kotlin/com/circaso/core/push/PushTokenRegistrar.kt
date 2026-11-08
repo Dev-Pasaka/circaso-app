@@ -7,7 +7,6 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.distinctUntilChanged
-import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -34,7 +33,11 @@ class PushTokenRegistrar(
     private val lock = Mutex() // the start-up sync and the platform's first token can arrive together
 
     fun start() {
-        scope.launch { ready.distinctUntilChanged().filter { it }.collect { sync() } }
+        // Signing out forgets what was sent: the server clears a device's tokens on sign-out, so the next sign-in sends
+        // them again even when the token itself hasn't changed. Only going offline keeps it (no resend per reconnect).
+        scope.launch {
+            ready.distinctUntilChanged().collect { if (it) sync() else if (userId() == null) lock.withLock { lastSent = null } }
+        }
     }
 
     /** The platform issued a new token. */

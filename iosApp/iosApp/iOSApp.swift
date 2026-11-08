@@ -14,6 +14,7 @@ struct iOSApp: App {
         VadBridge.shared.api = VadImpl() // Silero VAD for talking over Asha; see IosVadEngine.kt
         LocationBridge.shared.provider = LocationImpl() // "Share location" in chats; see Media.kt
         CallEngineBridge.shared.provider = CallEngineImpl() // WebRTC calls through Cloudflare Realtime; see CallEngine.kt
+        CallKitVoip.install() // calls ring with Circaso closed: PushKit VoIP pushes and CallKit; see IosCallKit.kt
         QrScannerBridge.shared.provider = QrScannerImpl() // VisionKit QR scanning (design E4/E5); see Qr.kt
         MomentCameraBridge.shared.provider = MomentCameraImpl() // AVFoundation camera for Moments (M1); see MomentCamera.kt
         MediaLibraryBridge.shared.provider = MediaLibraryImpl() // Photos, PHPicker and Files for Moments; see MediaLibrary.kt

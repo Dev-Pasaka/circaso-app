@@ -1,5 +1,12 @@
 package com.circaso.di
 
+import com.circaso.core.common.map
+import com.circaso.core.network.call
+import io.ktor.client.request.setBody
+import io.ktor.client.request.url
+import io.ktor.http.ContentType
+import io.ktor.http.HttpMethod
+import io.ktor.http.contentType
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
 import androidx.room.Room
@@ -81,6 +88,31 @@ fun initKoinIos() {
         single<com.circaso.core.platform.MediaLibrary> { com.circaso.core.platform.IosMediaLibrary() } // Photos recents here; loading and pickers on the Swift side, see MediaLibraryBridge
         // APNs needs the Push Notifications capability and a server-side key; until then there is no address to send.
         single<PushTokenProvider> { NoPushToken }
+        // Calls ring through PushKit (VoIP pushes, sent by the server straight to APNs) and CallKit, even with Circaso
+        // closed: this phone's VoIP token goes to `PUT /v1/devices/current/voip-token`. See IosCallKit.kt.
+        single(org.koin.core.qualifier.named("voip"), createdAtStart = true) {
+            val auth = get<com.circaso.core.session.AuthManager>(); val api = get<com.circaso.core.network.CircasoApi>()
+            val connection = get<com.circaso.core.sync.ConnectionState>()
+            com.circaso.core.push.PushTokenRegistrar(
+                ready = kotlinx.coroutines.flow.combine(auth.state, connection.status) { a, c ->
+                    a == com.circaso.core.session.AuthState.Active && c == com.circaso.core.platform.ConnectionStatus.Online
+                },
+                userId = { auth.userId },
+                provider = com.circaso.core.calls.IosVoipTokenProvider,
+                send = { token ->
+                    api.call<com.circaso.core.network.NoBody> {
+                        method = HttpMethod.Put
+                        url("/v1/devices/current/voip-token")
+                        contentType(ContentType.Application.Json)
+                        setBody(com.circaso.core.calls.VoipTokenRequest(token))
+                    }.map { }
+                },
+                scope = get(),
+            ).also { registrar ->
+                registrar.start()
+                com.circaso.core.calls.IosCallKitBridge.onToken = registrar::onNewToken
+            }
+        }
         single<RoomDatabase.Builder<CircasoDatabase>> {
             Room.databaseBuilder<CircasoDatabase>(name = applicationSupportPath(DatabaseName))
         }

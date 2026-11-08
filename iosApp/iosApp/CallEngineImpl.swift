@@ -189,9 +189,12 @@ final class CallEngineImpl: NSObject, CallEngineProvider, RTCPeerConnectionDeleg
         receiving.removeAll()
         receivingListener?([])
         let session = RTCAudioSession.sharedInstance()
-        session.lockForConfiguration()
-        try? session.setActive(false)
-        session.unlockForConfiguration()
+        if !CallKitVoip.shared.ownsAudio { // CallKit deactivates its own session when its call ends
+            session.isAudioEnabled = false
+            session.lockForConfiguration()
+            try? session.setActive(false)
+            session.unlockForConfiguration()
+        }
     }
 
     func videoView(source: String, mirror: Bool, fill: Bool) -> UIView {
@@ -215,7 +218,12 @@ final class CallEngineImpl: NSObject, CallEngineProvider, RTCPeerConnectionDeleg
         session.lockForConfiguration()
         defer { session.unlockForConfiguration() }
         try? session.setCategory(.playAndRecord, mode: speaker ? .videoChat : .voiceChat, options: [.allowBluetooth, .allowBluetoothA2DP])
-        try? session.setActive(true)
+        // A call CallKit rang: CallKit activates the session and then turns WebRTC's audio on (CallKitVoip).
+        // Any other call (one this phone started) turns it on here; WebRTC runs in manual-audio mode.
+        if !CallKitVoip.shared.ownsAudio {
+            try? session.setActive(true)
+            session.isAudioEnabled = true
+        }
         try? session.overrideOutputAudioPort(speaker ? .speaker : .none)
     }
 

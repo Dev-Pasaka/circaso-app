@@ -54,6 +54,7 @@
 		<string>audio</string>
 		<string>location</string>
 		<string>processing</string>
+		<string>voip</string>
 	</array>
 </dict>
 </plist>
