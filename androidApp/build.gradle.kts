@@ -48,9 +48,10 @@ android {
         applicationId = "com.circaso.app"
         minSdk = libs.versions.android.minSdk.get().toInt()
         targetSdk = libs.versions.android.targetSdk.get().toInt()
-        // CI sets both for every Play upload (each upload needs a higher code): -Pcircaso.versionCode / -Pcircaso.versionName.
+        // The version: raise versionCode by one for every bundle uploaded to Play by hand (Play refuses a code it has
+        // seen). CI overrides both with -Pcircaso.versionCode / -Pcircaso.versionName (its codes start above 1000).
         versionCode = providers.gradleProperty("circaso.versionCode").map { it.toInt() }.getOrElse(1)
-        versionName = providers.gradleProperty("circaso.versionName").getOrElse("1.0")
+        versionName = providers.gradleProperty("circaso.versionName").getOrElse("1.0.0")
         // Google Maps for Android (live location's map). Per developer, like the Circle credentials:
         // `maps.android.key=…` in local.properties. Restrict it in the Cloud console to this package and signing
         // certificate, and to the Maps SDK for Android. Without it the map falls back to Circaso's drawn tile.
