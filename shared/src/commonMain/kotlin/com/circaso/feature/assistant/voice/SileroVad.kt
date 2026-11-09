@@ -5,7 +5,7 @@ import com.circaso.core.common.Diagnostics
 import org.jetbrains.compose.resources.ExperimentalResourceApi
 
 /**
- * Silero VAD v5 (MIT, `files/silero_vad.onnx`, 16 kHz) on this platform's ONNX Runtime: the one platform piece of the
+ * Silero VAD v5 (MIT, 16 kHz) on this platform's ONNX Runtime: the one platform piece of the
  * voice activity detector. The graph takes `input` [1, 576] (64 samples of context, then a 512-sample window, floats
  * in -1..1), `state` [2, 1, 128] and `sr` (16000); it gives `output` [1, 1] (the chance the window is speech) and
  * `stateN`. Everything around it (framing, context, state) is [SileroVad], in common code.
@@ -37,9 +37,16 @@ class VadLoader(
     }
 
     companion object {
-        const val ModelFile = "files/silero_vad.onnx"
+        val ModelFile: String get() = BundledVadModel
     }
 }
+
+/**
+ * The bundled model, per platform. Android ships `files/silero_vad.ort` (the same graph converted to ORT format, for
+ * the reduced ONNX Runtime in `third_party/onnxruntime-minimal`, which reads only that format); iOS ships the original
+ * `files/silero_vad.onnx` for the full `onnxruntime-objc` pod.
+ */
+internal expect val BundledVadModel: String
 
 /**
  * Silero VAD's streaming wrapper, as its own Python `OnnxWrapper` does it: 16 kHz samples are cut into 512-sample

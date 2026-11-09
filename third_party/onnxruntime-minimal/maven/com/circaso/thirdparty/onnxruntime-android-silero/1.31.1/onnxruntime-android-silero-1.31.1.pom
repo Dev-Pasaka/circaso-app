@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+  <groupId>com.circaso.thirdparty</groupId>
+  <artifactId>onnxruntime-android-silero</artifactId>
+  <version>1.31.1</version>
+  <packaging>aar</packaging>
+  <description>ONNX Runtime 1.31.1 (MIT, Microsoft) for Android, reduced to the operators of Silero VAD v5. Built by third_party/onnxruntime-minimal/build.sh.</description>
+  <licenses><license><name>MIT License</name><url>https://github.com/microsoft/onnxruntime/blob/main/LICENSE</url></license></licenses>
+</project>

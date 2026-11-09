@@ -24,6 +24,12 @@ dependencyResolutionManagement {
             }
         }
         mavenCentral()
+        // ONNX Runtime reduced to Silero VAD's operators (third_party/onnxruntime-minimal: built from source, README
+        // there), the only place this module comes from.
+        exclusiveContent {
+            forRepository { maven { name = "OnnxRuntimeMinimal"; url = uri("third_party/onnxruntime-minimal/maven") } }
+            filter { includeModule("com.circaso.thirdparty", "onnxruntime-android-silero") }
+        }
         // libsignal moved off Maven Central after 0.86; Signal publishes newer builds here.
         maven {
             name = "SignalBuildArtifacts"
