@@ -63,12 +63,20 @@ fun App() {
     CircasoTheme(darkTheme = isDark, highContrast = isHigh) {
         // In front or not, for the "Online" / "last seen" others see (away 15 s after leaving the app).
         val presence: com.circaso.core.realtime.PresenceReporter = koinInject()
+        // Leaving the screen is the last moment the chat keys can change before iOS suspends Circaso: its
+        // notification extension words pushes from what is written now (Android: nothing to write).
+        val notificationSnapshot: com.circaso.core.notifications.NotificationSnapshotWriter = koinInject()
+        val shownNotifications: com.circaso.core.platform.ChatNotifications = koinInject()
         val lifecycle = androidx.lifecycle.compose.LocalLifecycleOwner.current
         androidx.compose.runtime.DisposableEffect(lifecycle) {
             val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
                 when (event) {
-                    androidx.lifecycle.Lifecycle.Event.ON_START -> presence.onForeground()
-                    androidx.lifecycle.Lifecycle.Event.ON_STOP -> presence.onBackground()
+                    androidx.lifecycle.Lifecycle.Event.ON_START -> {
+                        presence.onForeground()
+                        // Back in the chat that was open: what was notified for it while away is on screen now.
+                        shownNotifications.activeChatId?.let(shownNotifications::clear)
+                    }
+                    androidx.lifecycle.Lifecycle.Event.ON_STOP -> { presence.onBackground(); notificationSnapshot.onBackground() }
                     else -> Unit
                 }
             }

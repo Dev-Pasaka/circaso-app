@@ -16,6 +16,9 @@ import kotlinx.serialization.json.put
  */
 class PresenceReporter(private val realtime: RealtimeClient, private val scope: CoroutineScope) {
     private var foreground = false
+
+    /** Circaso is on screen (between the app's ON_START and ON_STOP). */
+    val inForeground: Boolean get() = foreground
     private var heartbeat: Job? = null
     private var leaving: Job? = null
 

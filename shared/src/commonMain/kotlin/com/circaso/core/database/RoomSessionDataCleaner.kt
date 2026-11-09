@@ -9,7 +9,12 @@ import com.circaso.feature.messaging.data.local.clearAll
  * unsent queue. Also forgets the realtime sequence numbers: they count per user, so another account (or the same one
  * after a server reset) starts again from 1 and the old numbers would make the app drop every new frame.
  */
-class RoomSessionDataCleaner(private val db: CircasoDatabase, private val cursors: RealtimeCursors) : SessionDataCleaner {
+class RoomSessionDataCleaner(
+    private val db: CircasoDatabase,
+    private val cursors: RealtimeCursors,
+    /** What lives outside the database: the notifications showing, Android's conversation shortcuts, iOS's snapshot. */
+    private val afterClear: suspend () -> Unit = {},
+) : SessionDataCleaner {
     override suspend fun clearUserData() {
         cursors.clear()
         db.profileDao().clear()
@@ -25,5 +30,6 @@ class RoomSessionDataCleaner(private val db: CircasoDatabase, private val cursor
         db.reactionsDao().clear()
         db.recoveryDao().clear()
         db.momentsDao().apply { clearMoments(); clearPending() } // the moments sender keys go with the Signal store above
+        runCatching { afterClear() }
     }
 }

@@ -21,7 +21,6 @@ import com.circaso.core.platform.AudioPlayer
 import com.circaso.core.platform.AudioRecorder
 import com.circaso.core.platform.ClientInfo
 import com.circaso.core.platform.ImagePicker
-import com.circaso.core.platform.NoPushToken
 import com.circaso.core.platform.PushTokenProvider
 import com.circaso.core.platform.IosImagePicker
 import com.circaso.core.platform.ConnectivityMonitor
@@ -41,7 +40,6 @@ import com.circaso.core.platform.IosLocalSealer
 import com.circaso.core.platform.IosSecureStorage
 import com.circaso.core.platform.ChatNotifications
 import com.circaso.core.platform.LocalSealer
-import com.circaso.core.platform.NoChatNotifications
 import com.circaso.core.platform.IosSocialSignIn
 import com.circaso.feature.auth.domain.SocialSignIn
 import com.circaso.core.platform.IosStoreLauncher
@@ -69,7 +67,9 @@ fun initKoinIos() {
         single<DeviceKeyStore> { IosDeviceKeyStore() }
         single<SignalCrypto> { IosSignalCrypto() } // libsignal lives on the Swift side; see SignalBridge
         single<LocalSealer> { IosLocalSealer(get(), get()) }
-        single<ChatNotifications> { NoChatNotifications } // the server's APNs alert shows as is until the Notification Service Extension (M7)
+        // Pushes are shown by iOS, worded by the Notification Service Extension from the snapshot written below.
+        single<ChatNotifications> { com.circaso.core.notifications.IosChatNotifications() }
+        single<com.circaso.core.notifications.NotificationSnapshotFile> { com.circaso.core.notifications.IosNotificationSnapshotFile() }
         single<AudioRecorder> { IosAudioRecorder() }
         single<AudioPlayer> { IosAudioPlayer() }
         single<com.circaso.core.qr.QrScanner> { com.circaso.core.qr.IosQrScanner() }
@@ -86,8 +86,8 @@ fun initKoinIos() {
         single<com.circaso.core.platform.GroupPhotoEncoder> { com.circaso.core.platform.IosGroupPhotoEncoder() }
         single<com.circaso.core.platform.MomentCamera> { com.circaso.core.platform.IosMomentCamera() } // AVFoundation lives on the Swift side; see MomentCameraBridge
         single<com.circaso.core.platform.MediaLibrary> { com.circaso.core.platform.IosMediaLibrary() } // Photos recents here; loading and pickers on the Swift side, see MediaLibraryBridge
-        // APNs needs the Push Notifications capability and a server-side key; until then there is no address to send.
-        single<PushTokenProvider> { NoPushToken }
+        // The APNs device token (AppDelegate hands it to IosPushBridge); the server sends iPhone pushes straight to APNs.
+        single<PushTokenProvider> { com.circaso.core.notifications.IosApnsTokenProvider }
         // Calls ring through PushKit (VoIP pushes, sent by the server straight to APNs) and CallKit, even with Circaso
         // closed: this phone's VoIP token goes to `PUT /v1/devices/current/voip-token`. See IosCallKit.kt.
         single(org.koin.core.qualifier.named("voip"), createdAtStart = true) {

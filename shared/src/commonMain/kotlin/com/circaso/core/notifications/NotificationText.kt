@@ -62,6 +62,12 @@ object NotificationText {
     const val PrivateIncomingCall = "Incoming call"
     const val PrivateMissedCall = "Missed call"
 
+    /** What a chat message says, without who said it: its preview, or "New message" when there's none. */
+    fun chatLine(event: NotificationEvent.ChatMessage): String = said(event) ?: PrivateMessage
+
+    private fun said(event: NotificationEvent.ChatMessage): String? =
+        event.text?.takeIf { it.isNotBlank() }?.let { if (event.momentReply) "Replied to your moment: $it" else it }
+
     /**
      * The words for [event]. With [private] on, nothing that names a person, a group, an amount or what was said:
      * money is "You received money", chats "New message", calls "Incoming call". [fiat] is the person's currency and
@@ -71,7 +77,7 @@ object NotificationText {
         fun amount(m: Money?) = m?.let { MoneyWording.amount(it, fiat, usdPrice(it.asset)) }
         return when (event) {
             is NotificationEvent.ChatMessage -> if (private) NotificationContent(AppName, PrivateMessage) else {
-                val said = event.text?.takeIf { it.isNotBlank() }?.let { if (event.momentReply) "Replied to your moment: $it" else it }
+                val said = said(event)
                 if (event.group) {
                     NotificationContent(
                         event.chatName ?: "Group",

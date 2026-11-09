@@ -497,6 +497,12 @@ class InboxProcessor(
     private var unreadableSince = false
 
     /**
+     * A message came over the open socket (not from a push's inbox pull). Android sets it to notify while Circaso is
+     * in the background with its socket still open, where the server sends no push (2026-11-09). Called outside the lock.
+     */
+    var onLiveMessage: ((chatId: String, messageId: String) -> Unit)? = null
+
+    /**
      * Asks the senders of messages this phone couldn't open to send them again (outside the inbox lock: it goes to
      * the network). After a sync always (older unreadable rows and asks the rate limit held back); after a live frame
      * only when it was unreadable.
@@ -536,11 +542,20 @@ class InboxProcessor(
         val dto = runCatching {
             InboxMessageDto(
                 messageId = data.string("messageId")!!, chatId = data.string("chatId")!!, senderId = data.string("senderId")!!,
-                kind = data.string("kind")!!, ciphertext = data.string("ciphertext") ?: return sync().let { }, sentAt = data.string("sentAt")!!,
+                kind = data.string("kind")!!, ciphertext = data.string("ciphertext") ?: return sync().let { liveArrived(data) }, sentAt = data.string("sentAt")!!,
             )
         }.getOrNull() ?: return
         lock.withLock { if (handle(dto)) ack(listOf(dto.messageId)) }
         askAgain(always = false)
+        if (dto.kind == MessagingWire.KindMessage) onLiveMessage?.invoke(dto.chatId, dto.messageId)
+    }
+
+    /** A frame too large to carry its ciphertext: it was pulled from the inbox just now, and is notified the same way. */
+    private fun liveArrived(data: JsonObject) {
+        if (data.string("kind") != MessagingWire.KindMessage) return
+        val chatId = data.string("chatId") ?: return
+        val messageId = data.string("messageId") ?: return
+        onLiveMessage?.invoke(chatId, messageId)
     }
 
     private suspend fun ack(ids: List<String>) {

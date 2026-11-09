@@ -251,7 +251,7 @@ Media3 1.4.1, multiplatform-markdown-renderer 0.46.0.
    First: run the Moments-in-Chats change and the Room v20 upgrade (an install with Spaces data) on a device.
 1. Check the splash and notification icon on a device; commit.
 2. Merge the backend presence PR (`presence.changed` frames); until then Online / last seen shows only when the server sends it.
-3. **iOS push** in the app: APNs token (`IosKoin` uses `NoPushToken` and `NoChatNotifications` today) and the Notification Service Extension that decrypts messages (M7).
+3. **iOS push** in the app: APNs token and the Notification Service Extension written 2026-11-09 (branch `feat/rich-chat-notifications`), not yet built or run on an iPhone; needs the App Group on both app ids and the server's APNs key (see the PR).
 4. **iOS calls in the background**: CallKit + PushKit VoIP push (iOS only rings while the app is open).
 5. Release readiness: run the R8 release build on a device (Room, Credential Manager and Ktor use reflection), add a baseline profile, re-measure cold start (target well under 1 s).
 6. Refresh `mobile-integration.md` from the backend repo (the copy is from 2026-10-28; media, history and calls have moved since).

@@ -84,7 +84,18 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
     /// Set before launch finishes, so a tap that started Circaso (cold) is delivered too.
     func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil) -> Bool {
         UNUserNotificationCenter.current().delegate = self
+        // The APNs token for chat, money and group pushes (no prompt: showing them waits for the person's yes,
+        // asked when the Chats tab first shows). The server sends iPhone pushes straight to APNs.
+        application.registerForRemoteNotifications()
         return true
+    }
+
+    func application(_ application: UIApplication, didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data) {
+        IosPushBridge.shared.tokenUpdated(hex: deviceToken.map { String(format: "%02x", $0) }.joined())
+    }
+
+    func application(_ application: UIApplication, didFailToRegisterForRemoteNotificationsWithError error: Error) {
+        // No token now (simulator, no network); iOS tries again at the next launch.
     }
 
     /// Tapped, cold, in the background or on screen: open where it points (NotificationTaps → the navigation).
@@ -95,9 +106,9 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
         completionHandler()
     }
 
-    /// On screen: still show it (the app decides what to post; a chat on screen never posts one).
+    /// On screen: still show it, except a push for the chat that is open (it is already on screen).
     func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification, withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void) {
-        completionHandler([.banner, .list, .sound])
+        completionHandler(IosChatPushKt.shouldPresent(userInfo: notification.request.content.userInfo) ? [.banner, .list, .sound] : [])
     }
 
     func application(_ application: UIApplication, handleEventsForBackgroundURLSession identifier: String, completionHandler: @escaping () -> Void) {

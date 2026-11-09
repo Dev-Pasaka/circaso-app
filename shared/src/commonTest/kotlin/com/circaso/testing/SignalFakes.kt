@@ -56,6 +56,8 @@ class FakeSignalDao : SignalDao {
     override suspend fun deletePreKey(keyId: Int) { preKeys.remove(keyId) }
     override suspend fun deletePreKeys(keyIds: List<Int>) { keyIds.forEach { preKeys.remove(it) } }
     override suspend fun deletePreKeysCreatedBefore(before: Long) { preKeys.values.removeAll { it.createdAt < before } }
+    override suspend fun sessions() = sessions.values.toList()
+    override suspend fun senderKeys() = senderKeys.values.toList()
     override suspend fun session(userId: String) = sessions[userId]
     override suspend fun upsertSession(session: SessionEntity) { sessions[session.userId] = session }
     override suspend fun deleteSession(userId: String) { sessions.remove(userId) }

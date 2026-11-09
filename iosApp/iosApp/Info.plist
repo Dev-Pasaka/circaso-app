@@ -49,6 +49,10 @@
 	<string>Circaso uses the microphone during calls you start or answer, while you talk to Asha, and for the sound of a video moment you record. Voice to Asha is turned into text and not kept.</string>
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>Circaso shows your recent photos and videos when you attach them to a chat, and so you can share one as a moment. Nothing leaves your phone until you send it.</string>
+	<key>NSUserActivityTypes</key>
+	<array>
+		<string>INSendMessageIntent</string>
+	</array>
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>audio</string>

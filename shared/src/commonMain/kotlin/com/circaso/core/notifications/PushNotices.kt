@@ -14,6 +14,15 @@ import com.circaso.core.common.AppResult
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withTimeoutOrNull
 
+/**
+ * Notifies a message that came over the open socket while Circaso isn't on screen (Android keeps its socket while the
+ * process lives, and the server pushes only to phones without one). iOS has none: it is suspended off screen.
+ */
+interface LiveMessageNotifier {
+    /** Returns at once; the wording and showing happen on the app's scope. */
+    fun notify(chatId: String, messageId: String)
+}
+
 /** The notification channel a notice goes on: money has its own chime, calls ring. */
 enum class NoticeChannel { Message, Money, Call }
 
@@ -28,6 +37,32 @@ data class Notice(
     val destination: NotificationDestination?,
     /** The chat it belongs to, for "no notification for the chat on screen" and clearing it when the chat opens. */
     val chatId: String? = null,
+    /**
+     * A chat message's parts, for a conversation notification (Android's MessagingStyle with the sender's photo, iOS's
+     * communication notification): who said what, in which chat. Null with Notification privacy on, and for anything
+     * that isn't a message; then [content] is shown as it is.
+     */
+    val conversation: NoticeConversation? = null,
+)
+
+/**
+ * One message in a conversation notification. [title] is the group's name (null for a direct chat, which is titled
+ * by the sender); [line] is what was said without the sender's name ("📷 Photo", "Reacted 👍 to …"). The photos are
+ * what the app itself shows: [senderPhoto] the profile picture's link, [groupPhoto] the group's decrypted local copy;
+ * either may be missing, and the platform then draws initials.
+ */
+data class NoticeConversation(
+    val chatId: String,
+    val group: Boolean,
+    val title: String?,
+    val senderId: String?,
+    val senderName: String,
+    val senderPhoto: String?,
+    val groupPhoto: String?,
+    val line: String,
+    val at: Long,
+    /** The message it is about, so a line already shown (a push and a live frame for one message) isn't added twice. */
+    val messageId: String? = null,
 )
 
 /**
@@ -51,8 +86,11 @@ class PushNotices(
 
     private suspend fun compose(event: NotificationEvent) = NotificationText.compose(event, privacyOn(), fiat())
 
-    /** Null when there is nothing to show (a control message, a taken-back reaction, a ringing call). */
-    suspend fun forPush(data: Map<String, String>): Notice? {
+    /**
+     * Null when there is nothing to show (a control message, a taken-back reaction, a ringing call). [sync] false: the
+     * message is already on this phone (it came over the socket), so the inbox isn't pulled first.
+     */
+    suspend fun forPush(data: Map<String, String>, sync: Boolean = true): Notice? {
         val kind = data["kind"]
         val chatId = data["chatId"]?.takeIf { it.isNotBlank() }
         return when {
@@ -62,13 +100,13 @@ class PushNotices(
             kind == "call.missed" || kind == "call.ended" -> missedCall(chatId, data["callId"], data["callerName"], data["callKind"] == "VIDEO")
             kind != null && kind.startsWith("space.") -> null // Spaces is archived (2026-11-05)
             chatId != null && data["messageId"] == null && kind == null -> addedToGroup(chatId)
-            chatId != null && data["messageId"] != null -> message(chatId, data["messageId"]!!)
+            chatId != null && data["messageId"] != null -> message(chatId, data["messageId"]!!, data["senderId"]?.takeIf { it.isNotBlank() }, sync)
             else -> null
         }
     }
 
     private suspend fun addedToGroup(chatId: String): Notice {
-        chatsRepo.refreshChat(chatId)
+        withTimeoutOrNull(SyncMillis) { chatsRepo.refreshChat(chatId) }
         val content = compose(NotificationEvent.AddedToGroup(chats.chat(chatId)?.name))
         return Notice(content, NoticeChannel.Message, "chat:$chatId", NotificationDestination.Chat(chatId), chatId)
     }
@@ -76,21 +114,72 @@ class PushNotices(
     private suspend fun senderName(chatId: String, userId: String?) =
         userId?.let { id -> chats.members(chatId).firstOrNull { it.userId == id }?.displayName }
 
-    private suspend fun message(chatId: String, messageId: String): Notice? {
-        messages.syncInbox()
+    /**
+     * Who sent it and the photos, as the chat list shows them: the member's name, else (a direct chat) the chat's own
+     * title, which is the other person. Null name means not known on this phone; the wording then falls back.
+     */
+    private suspend fun who(chatId: String, userId: String?, group: Boolean): Who {
+        val member = userId?.let { id -> chats.members(chatId).firstOrNull { it.userId == id } }
+        val chat = withTimeoutOrNull(LookupMillis) { chatsRepo.chat(chatId).first() }
+        val name = member?.displayName?.takeIf { it.isNotBlank() } ?: chat?.title?.takeIf { !group && it.isNotBlank() && it != "Chat" }
+        val photo = member?.avatarUrl ?: chat?.avatarUrl?.takeIf { !group }
+        return Who(name, photo, chat?.avatarUrl?.takeIf { group }, chat?.title?.takeIf { group })
+    }
+
+    private class Who(val name: String?, val photo: String?, val groupPhoto: String?, val groupName: String?)
+
+    /**
+     * Null with privacy on, and when the sender isn't known on this phone: then the plain words show, never a person
+     * made up (and never one named "Circaso", which a stranger's message must not look like).
+     */
+    private suspend fun conversation(chatId: String, group: Boolean, senderId: String?, who: Who, chatName: String?, line: String, at: Long?, messageId: String? = null): NoticeConversation? {
+        if (privacyOn()) return null
+        val sender = who.name ?: return null
+        return NoticeConversation(
+            chatId = chatId, group = group, title = if (group) chatName ?: who.groupName ?: "Group" else null,
+            senderId = senderId, senderName = sender,
+            senderPhoto = who.photo, groupPhoto = who.groupPhoto, line = line, at = at ?: com.circaso.core.sync.nowMillis(), messageId = messageId,
+        )
+    }
+
+    /**
+     * [senderId] comes with the push (ids only, 2026-11-09): when the inbox can't be pulled now (the connection
+     * dropped after the push), the notification still names the sender, rather than nothing being shown at all.
+     */
+    private suspend fun message(chatId: String, messageId: String, senderId: String? = null, sync: Boolean = true): Notice? {
+        // Bounded, so a slow network still leaves time to word and show it (FCM gives about ten seconds in all).
+        val synced = !sync || withTimeoutOrNull(SyncMillis) { messages.syncInbox() } is AppResult.Success
         val chat = chats.chat(chatId)
         val group = chat?.kind == "GROUP"
         // A reaction isn't a message: name it as WhatsApp does, or say nothing when one was taken back.
         inbox.reactionCarriedBy(messageId)?.let { r ->
-            val target = messagesDao.byMessageId(r.targetMessageId)?.text
-            val content = compose(NotificationEvent.Reaction(chat?.name, group, senderName(chatId, r.senderId), r.emoji, target))
-            return Notice(content, NoticeChannel.Message, "chat:$chatId", NotificationDestination.Chat(chatId, r.targetMessageId), chatId)
+            val target = messagesDao.byMessageId(r.targetMessageId)?.let { MessagePreview.of(it.kind, it.text, it.status) }
+            val who = who(chatId, r.senderId, group)
+            val chatName = chat?.name ?: who.groupName
+            val content = compose(NotificationEvent.Reaction(chatName, group, who.name, r.emoji, target))
+            val line = NotificationText.compose(NotificationEvent.Reaction(null, false, who.name, r.emoji, target), false, null).text
+            val conversation = conversation(chatId, group, r.senderId, who, chatName, line, null)
+            return Notice(content, NoticeChannel.Message, "chat:$chatId", NotificationDestination.Chat(chatId, r.targetMessageId), chatId, conversation)
         }
-        val row = messagesDao.byMessageId(messageId) ?: return null // a control message: nothing to show
-        val sender = senderName(chatId, row.senderId)
-        if (row.kind == MessageKind.Payment && row.transferId != null) return paymentCard(chatId, chat?.name, group, sender, row)
-        val content = compose(NotificationEvent.ChatMessage(chat?.name, group, sender, row.text, momentReply = row.momentQuote != null))
-        return Notice(content, NoticeChannel.Message, "chat:$chatId", NotificationDestination.Chat(chatId, messageId, row.localId), chatId)
+        val row = messagesDao.byMessageId(messageId) ?: return if (synced || senderId == null) null else unopened(chatId, messageId, senderId, group, chat?.name)
+        val who = who(chatId, row.senderId, group)
+        val chatName = chat?.name ?: who.groupName
+        if (row.kind == MessageKind.Payment && row.transferId != null) return paymentCard(chatId, chatName, group, who.name, row)
+        val said = MessagePreview.of(row.kind, row.text, row.status)
+        val event = NotificationEvent.ChatMessage(chatName, group, who.name, said, momentReply = row.momentQuote != null)
+        val content = compose(event)
+        val line = NotificationText.chatLine(event)
+        val conversation = conversation(chatId, group, row.senderId, who, chatName, line, row.orderAt, messageId)
+        return Notice(content, NoticeChannel.Message, "chat:$chatId", NotificationDestination.Chat(chatId, messageId, row.localId), chatId, conversation)
+    }
+
+    /** A message this phone couldn't pull yet: who sent it and where, without what it says. */
+    private suspend fun unopened(chatId: String, messageId: String, senderId: String, group: Boolean, name: String?): Notice {
+        val who = who(chatId, senderId, group)
+        val chatName = name ?: who.groupName
+        val event = NotificationEvent.ChatMessage(chatName, group, who.name, null)
+        val conversation = conversation(chatId, group, senderId, who, chatName, NotificationText.chatLine(event), null, messageId)
+        return Notice(compose(event), NoticeChannel.Message, "chat:$chatId", NotificationDestination.Chat(chatId, messageId), chatId, conversation)
     }
 
     /** A money card in a chat: money, on the money channel, worded in the person's currency. */
@@ -113,7 +202,7 @@ class PushNotices(
         val transactionId = data["transactionId"]?.takeIf { it.isNotBlank() }
         val chatId = data["chatId"]?.takeIf { it.isNotBlank() }
         val key = transferId ?: transactionId
-        if (chatId != null) messages.syncInbox()
+        if (chatId != null) withTimeoutOrNull(SyncMillis) { messages.syncInbox() }
         val card = if (chatId != null && transferId != null) messagesDao.paymentCardLocalId(chatId, transferId)?.let { messagesDao.byLocalId(it) } else null
         val destination = NotificationDestination.Payment(chatId, transferId, transactionId)
         if (card != null && chatId != null) {
@@ -134,7 +223,7 @@ class PushNotices(
 
     /** `chama.contribution`: the member's card in the group chat carries the amount; it shows as the same notice. */
     private suspend fun contribution(chatId: String, userId: String?): Notice {
-        messages.syncInbox()
+        withTimeoutOrNull(SyncMillis) { messages.syncInbox() }
         val chatName = chats.chat(chatId)?.name
         val sender = senderName(chatId, userId)
         val card = userId?.let { latestCardFrom(chatId, it) }
@@ -183,6 +272,10 @@ class PushNotices(
     private companion object {
         /** How far back a contribution's card is looked for in its group chat. */
         const val RecentCards = 30
+        /** A local lookup (the chat's title and photos); never worth holding the notification for longer. */
+        const val LookupMillis = 1_000L
+        /** The inbox pull inside a push's window: the rest of the window words and shows it, by name only if need be. */
+        const val SyncMillis = 4_500L
     }
 }
 

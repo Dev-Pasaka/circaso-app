@@ -61,7 +61,15 @@ val coreModule = module {
     single { SessionStore(get(), get()) }
     single { DeviceIdentity(get(), get()) }
     // The session manager is both the token source and the refresher; the API client reaches it lazily to avoid a cycle.
-    single<SessionDataCleaner> { RoomSessionDataCleaner(get(), get<AppPreferences>()) }
+    single<SessionDataCleaner> {
+        val koin = getKoin()
+        RoomSessionDataCleaner(get(), get<AppPreferences>()) {
+            // Another person may sign in next: nothing of this one's chats stays on show (notifications, shortcuts,
+            // iOS's donated conversations and its extension's snapshot).
+            koin.getOrNull<com.circaso.core.platform.ChatNotifications>()?.clearShown()
+            koin.getOrNull<com.circaso.core.notifications.NotificationSnapshotFile>()?.write(null)
+        }
+    }
     single { AuthManager(get(), get(), refreshOverHttp(lazy { get<CircasoApi>() }), cleaner = get()) }
     single<AccessTokenProvider> { get<AuthManager>() }
     single<SessionRefresher> { get<AuthManager>() }
