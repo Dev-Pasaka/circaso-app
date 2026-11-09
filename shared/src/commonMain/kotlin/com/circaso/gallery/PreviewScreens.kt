@@ -504,6 +504,18 @@ fun PreviewScreens(name: String) {
             )),
             null, sampleChama(),
         )
+        // The group call with contributions landing (2026-11-09): one, a coin, then three at once; again every few seconds.
+        "call-group-contributions", "call-group-contributions-row" -> CallPreview(
+            com.circaso.feature.calls.CallUi("c2", "g1", "Holiday Fund", false, true, com.circaso.feature.calls.CallPhase.Active, activeSince = now - 1_100_000, photoUrl = PreviewPhotos.Group, people = listOf(
+                com.circaso.feature.calls.CallPerson("4", "Otieno Odhiambo", true, true, false, false, null, photoUrl = PreviewPhotos.Otieno),
+                com.circaso.feature.calls.CallPerson("3", "Wanjiru Kamau", true, false, false, false, null, photoUrl = PreviewPhotos.Wanjiru),
+                com.circaso.feature.calls.CallPerson("5", "Achieng Akinyi", true, true, false, false, null),
+                com.circaso.feature.calls.CallPerson("6", "Juma Kariuki", true, true, false, false, null),
+            )),
+            null, sampleChama(),
+            contributions = if (name == "call-group-contributions") sampleContributions() else kotlinx.coroutines.flow.emptyFlow(),
+            preset = if (name == "call-group-contributions-row") presetContributions() else emptyList(),
+        )
         "transfer" -> TransferContent(TransferUiState(transfer = sampleTransfers().first(), fiat = sampleWallet().fiat), {})
         // Transactions (E7): the list, its shape while it is read, nothing yet, offline, a failed read, a date range.
         "activity", "activity-loading", "activity-empty", "activity-offline", "activity-error", "activity-range", "activity-group" -> {
@@ -572,11 +584,56 @@ private fun sampleTransfers() = listOf(
 )
 
 @Composable
-private fun CallPreview(call: com.circaso.feature.calls.CallUi, money: String?, chama: Chama? = null) {
+private fun CallPreview(
+    call: com.circaso.feature.calls.CallUi,
+    money: String?,
+    chama: Chama? = null,
+    contributions: kotlinx.coroutines.flow.Flow<com.circaso.feature.chama.domain.GroupContribution> = kotlinx.coroutines.flow.emptyFlow(),
+    /** Already there when the screen opens (the row, and one still on its way), for a still capture. */
+    preset: List<com.circaso.feature.chama.domain.GroupContribution> = emptyList(),
+) {
     androidx.compose.foundation.layout.Box(androidx.compose.ui.Modifier.fillMaxSize()) {
-        CallOverlay(call, com.circaso.feature.calls.presentation.CallActions({}, {}, {}, {}, {}, {}, {}, {}, {}, {}, null), money, chama, sampleWallet().fiat)
+        val celebrations = androidx.compose.runtime.remember { com.circaso.feature.calls.presentation.CallCelebrationsModel() }
+        val fiat = sampleWallet().fiat
+        androidx.compose.runtime.LaunchedEffect(Unit) {
+            preset.forEach { celebrations.receive(com.circaso.feature.calls.presentation.celebrationOf(it, call.people, "me", fiat), it.confirmed, visible = false) }
+            contributions.collect { celebrations.receive(com.circaso.feature.calls.presentation.celebrationOf(it, call.people, "me", fiat), it.confirmed, visible = !call.minimised) }
+        }
+        CallOverlay(call, com.circaso.feature.calls.presentation.CallActions({}, {}, {}, {}, {}, {}, {}, {}, {}, {}, null), money, chama, fiat, celebrations, myUserId = "me")
     }
 }
+
+/**
+ * A scripted run of contributions into Holiday Fund, each sent and then confirmed a moment later: Wanjiru in USDC,
+ * Otieno in ETH, then Juma, Achieng and me at once.
+ */
+private fun sampleContributions() = kotlinx.coroutines.flow.flow {
+    var round = 0
+    fun c(user: String, coin: String, amount: String, usd: String?, confirmed: Boolean) =
+        com.circaso.feature.chama.domain.GroupContribution("g1", "p$round-$user", user, null, coin, amount, usd, confirmed)
+    suspend fun kotlinx.coroutines.flow.FlowCollector<com.circaso.feature.chama.domain.GroupContribution>.both(vararg x: List<String?>) {
+        x.forEach { emit(c(it[0]!!, it[1]!!, it[2]!!, it[3], confirmed = false)) }
+        kotlinx.coroutines.delay(1_500)
+        x.forEach { emit(c(it[0]!!, it[1]!!, it[2]!!, it[3], confirmed = true)) }
+    }
+    while (true) {
+        round++
+        kotlinx.coroutines.delay(1_000)
+        both(listOf("3", "USDC", "7.751938", "7751938"))
+        kotlinx.coroutines.delay(2_000)
+        both(listOf("4", "ETH", "0.01", "30000000"))
+        kotlinx.coroutines.delay(2_600)
+        both(listOf("6", "USDC", "19.379845", "19379845"), listOf("5", "USDC", "3.875969", "3875969"), listOf("me", "USDC", "7.751938", "7751938"))
+        kotlinx.coroutines.delay(4_000)
+    }
+}
+
+/** For a still capture: Juma and Wanjiru landed, Achieng's on its way. */
+private fun presetContributions() = listOf(
+    com.circaso.feature.chama.domain.GroupContribution("g1", "r1", "3", null, "USDC", "7.751938", "7751938", confirmed = true),
+    com.circaso.feature.chama.domain.GroupContribution("g1", "r2", "6", null, "USDC", "19.379845", "19379845", confirmed = true),
+    com.circaso.feature.chama.domain.GroupContribution("g1", "r3", "5", null, "USDC", "3.875969", "3875969", confirmed = false),
+)
 
 
 /** One of Wanjiru's moments, posted 34 minutes ago; the photo and video carry the sample photo as their placeholder. */

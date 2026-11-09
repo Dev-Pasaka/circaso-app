@@ -28,14 +28,23 @@ import com.circaso.designsystem.theme.CircasoTheme
 
 /** `.cx-goal`: "KES 32,400 of 50,000 · 65%", an 8 dp track filled in the money colour, a meta line under it. */
 @Composable
-fun GoalProgress(raised: String, of: String, progress: Float, modifier: Modifier = Modifier, meta: String? = null, label: String = "Goal progress") {
+fun GoalProgress(
+    raised: String,
+    of: String,
+    progress: Float,
+    modifier: Modifier = Modifier,
+    meta: String? = null,
+    label: String = "Goal progress",
+    /** On the raised amount, for a screen that aims something at it (a group call's coin landing). */
+    raisedModifier: Modifier = Modifier,
+) {
     val c = CircasoTheme.colors
     val t = CircasoTheme.typography
     val shown by animateFloatAsState(progress.coerceIn(0f, 1f), tween(if (CircasoTheme.reduceMotion) 0 else CircasoMotion.BaseMs), label = "goal")
     val percent = (progress.coerceIn(0f, 1f) * 100).toInt()
     Column(modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(com.circaso.designsystem.theme.CircasoSpacing.s2)) {
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.Bottom) {
-            BasicText(raised, style = t.amountSmall.copy(color = c.ink))
+            BasicText(raised, raisedModifier, style = t.amountSmall.copy(color = c.ink))
             BasicText("of $of", style = t.subhead.copy(color = c.inkSecondary), modifier = Modifier.weight(1f))
             BasicText("$percent%", style = t.subhead.copy(color = c.ink, fontWeight = FontWeight.SemiBold))
         }

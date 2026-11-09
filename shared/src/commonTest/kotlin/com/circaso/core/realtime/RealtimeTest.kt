@@ -191,6 +191,18 @@ class RealtimeTest {
         assertEquals(listOf("contacts", "blocks", "profile"), calls.log)
     }
 
+    @Test fun aChamaResyncGoesToChamaNotTheContacts() = runTest {
+        val seen = mutableListOf<String>()
+        val calls = Calls()
+        RealtimeDispatcher(
+            frames = MutableSharedFlow(), scope = kotlinx.coroutines.CoroutineScope(UnconfinedTestDispatcher()),
+            onSessionRevoked = {}, refreshContacts = { calls.log += "contacts" }, refreshBlocks = {}, refreshOwnProfile = {},
+            isOwnUser = { false }, onChamaFrame = { type, _ -> seen += type },
+        ).handle(f("chama", "resync"))
+        assertEquals(listOf("resync"), seen)
+        assertTrue(calls.log.isEmpty())
+    }
+
     @Test fun unknownFramesDoNothing() = runTest {
         val calls = Calls(); dispatcher(calls).handle(f("chats", "message.created"))
         assertTrue(calls.log.isEmpty())
