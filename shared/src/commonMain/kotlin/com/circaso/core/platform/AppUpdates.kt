@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.ui.draw.shadow
 import androidx.compose.foundation.text.BasicText
@@ -35,39 +36,49 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 
 /**
- * A newer Circaso downloaded in the background (Google Play's flexible in-app update, Pasaka 2026-11-08): the app shows
- * "A new version is ready · Restart" until the person restarts or dismisses it. Android's MainActivity reports the
- * download and how to install it; on iOS nothing reports, so nothing shows (the App Store updates apps itself).
+ * A newer Circaso on Google Play, while the app is in use (Pasaka, 2026-11-08/09): Android's MainActivity checks Play at
+ * launch, on every return to the app and every 10 minutes, and reports here. The bar at the top says what's happening:
+ * "A new version is available · Update" (a tap downloads it in the background), "Downloading update… 45%", then
+ * "A new version is ready · Restart". On iOS nothing reports, so nothing shows (the App Store updates apps itself).
  */
 object AppUpdates {
-    private val _ready = MutableStateFlow(false)
-    val ready: StateFlow<Boolean> = _ready
-    private var install: (() -> Unit)? = null
-
-    /** The update is on the phone; [install] restarts Circaso into it. */
-    fun downloaded(install: () -> Unit) {
-        this.install = install
-        _ready.value = true
+    sealed interface Status {
+        data object None : Status
+        /** On Play, not downloaded; [start] downloads it in the background (flexible update). */
+        data class Available(val start: () -> Unit) : Status
+        /** Downloading; [percent] 0..100, or null before Play says how big it is. */
+        data class Downloading(val percent: Int?) : Status
+        /** On the phone; [install] restarts Circaso into it. */
+        data class Ready(val install: () -> Unit) : Status
     }
 
-    fun restartNow() {
-        _ready.value = false
-        install?.invoke()
+    private val _status = MutableStateFlow<Status>(Status.None)
+    val status: StateFlow<Status> = _status
+    /** Hidden by "Later" until something new happens (a different status kind). */
+    private val _dismissed = MutableStateFlow(false)
+    val dismissed: StateFlow<Boolean> = _dismissed
+
+    fun report(status: Status) {
+        val old = _status.value
+        if (old::class != status::class) _dismissed.value = false
+        _status.value = status
     }
 
     fun later() {
-        _ready.value = false
+        _dismissed.value = true
     }
 }
 
 /** The quiet bar at the top of the window while a downloaded update waits for a restart. */
 @Composable
 fun BoxScope.AppUpdateBar() {
-    val ready by AppUpdates.ready.collectAsState()
+    val status by AppUpdates.status.collectAsState()
+    val dismissed by AppUpdates.dismissed.collectAsState()
     val c = CircasoTheme.colors
     val t = CircasoTheme.typography
+    val shown = status !is AppUpdates.Status.None && !dismissed
     AnimatedVisibility(
-        visible = ready,
+        visible = shown,
         modifier = Modifier.align(Alignment.TopCenter).windowInsetsPadding(WindowInsets.safeDrawing).padding(top = CircasoSpacing.s2, start = CircasoSpacing.s4, end = CircasoSpacing.s4),
         enter = slideInVertically { -it } + fadeIn(),
         exit = slideOutVertically { -it } + fadeOut(),
@@ -75,13 +86,30 @@ fun BoxScope.AppUpdateBar() {
         Row(
             Modifier.widthIn(max = 440.dp).shadow(8.dp, CircasoShapes.pill).clip(CircasoShapes.pill).background(c.surfaceRaised)
                 .padding(start = CircasoSpacing.s4, end = CircasoSpacing.s1, top = CircasoSpacing.s1, bottom = CircasoSpacing.s1)
+                .heightIn(min = 40.dp)
                 .semantics { liveRegion = LiveRegionMode.Polite },
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(CircasoSpacing.s2),
         ) {
-            BasicText("A new version of Circaso is ready", Modifier.weight(1f, fill = false), style = t.subhead.copy(color = c.ink), maxLines = 2)
-            CircasoButton("Later", AppUpdates::later, style = com.circaso.designsystem.components.ButtonStyle.Plain, size = ButtonSize.Small)
-            CircasoButton("Restart", AppUpdates::restartNow, size = ButtonSize.Small)
+            val text = when (val s = status) {
+                is AppUpdates.Status.Available -> "A new version of Circaso is available"
+                is AppUpdates.Status.Downloading -> s.percent?.let { "Downloading update… $it%" } ?: "Downloading update…"
+                is AppUpdates.Status.Ready -> "A new version of Circaso is ready"
+                AppUpdates.Status.None -> ""
+            }
+            BasicText(text, Modifier.weight(1f, fill = false), style = t.subhead.copy(color = c.ink, fontFeatureSettings = "tnum"), maxLines = 2)
+            when (val s = status) {
+                is AppUpdates.Status.Available -> {
+                    CircasoButton("Later", AppUpdates::later, style = com.circaso.designsystem.components.ButtonStyle.Plain, size = ButtonSize.Small)
+                    CircasoButton("Update", s.start, size = ButtonSize.Small)
+                }
+                is AppUpdates.Status.Ready -> {
+                    CircasoButton("Later", AppUpdates::later, style = com.circaso.designsystem.components.ButtonStyle.Plain, size = ButtonSize.Small)
+                    CircasoButton("Restart", s.install, size = ButtonSize.Small)
+                }
+                is AppUpdates.Status.Downloading -> CircasoButton("Hide", AppUpdates::later, style = com.circaso.designsystem.components.ButtonStyle.Plain, size = ButtonSize.Small)
+                AppUpdates.Status.None -> Unit
+            }
         }
     }
 }

@@ -14,55 +14,66 @@ import com.circaso.di.isStartupReady
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.repeatOnLifecycle
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
-    // Google Play In-App Updates (Pasaka, 2026-11-08): at launch, a newer Circaso on Play downloads in the background
-    // (flexible) and the app offers "Restart"; a release published with priority 4 or 5 asks for the update before
-    // the app can be used (immediate). Only builds installed from Play see updates; others get no answer and move on.
+    // Google Play In-App Updates (Pasaka, 2026-11-08/09). Play is asked at launch, on every return to the app and every
+    // 10 minutes while it's open. At launch a newer version starts downloading in the background (flexible); found
+    // while the app is in use, the bar offers "Update" instead of a Play dialog. A release published with priority 4-5
+    // (CI) asks for the update at once (immediate). Only builds installed from Play see updates.
     private val playUpdates by lazy { com.google.android.play.core.appupdate.AppUpdateManagerFactory.create(this) }
-    private val updateDownloaded = com.google.android.play.core.install.InstallStateUpdatedListener { state ->
-        if (state.installStatus() == com.google.android.play.core.install.model.InstallStatus.DOWNLOADED) {
-            com.circaso.core.platform.AppUpdates.downloaded { playUpdates.completeUpdate() }
+    private val updateProgress = com.google.android.play.core.install.InstallStateUpdatedListener { state ->
+        when (state.installStatus()) {
+            com.google.android.play.core.install.model.InstallStatus.DOWNLOADING -> {
+                val total = state.totalBytesToDownload()
+                val percent = if (total > 0) (state.bytesDownloaded() * 100 / total).toInt().coerceIn(0, 100) else null
+                com.circaso.core.platform.AppUpdates.report(com.circaso.core.platform.AppUpdates.Status.Downloading(percent))
+            }
+            com.google.android.play.core.install.model.InstallStatus.DOWNLOADED ->
+                com.circaso.core.platform.AppUpdates.report(com.circaso.core.platform.AppUpdates.Status.Ready { playUpdates.completeUpdate() })
+            com.google.android.play.core.install.model.InstallStatus.FAILED,
+            com.google.android.play.core.install.model.InstallStatus.CANCELED -> checkForUpdate(startFlexible = false)
+            else -> Unit
         }
     }
 
-    private fun checkForUpdate() {
+    private fun startUpdate(info: com.google.android.play.core.appupdate.AppUpdateInfo, type: Int) {
+        runCatching {
+            playUpdates.startUpdateFlowForResult(info, this, com.google.android.play.core.appupdate.AppUpdateOptions.defaultOptions(type), UpdateRequestCode)
+        }
+    }
+
+    /** Asks Play what it has. [startFlexible]: at launch a flexible update starts by itself; later the bar offers it. */
+    private fun checkForUpdate(startFlexible: Boolean) {
         playUpdates.appUpdateInfo.addOnSuccessListener { info ->
-            val available = info.updateAvailability() == com.google.android.play.core.install.model.UpdateAvailability.UPDATE_AVAILABLE
-            val immediateType = com.google.android.play.core.install.model.AppUpdateType.IMMEDIATE
-            val flexibleType = com.google.android.play.core.install.model.AppUpdateType.FLEXIBLE
-            val type = when {
-                !available -> null
-                info.updatePriority() >= ImmediateUpdatePriority && info.isUpdateTypeAllowed(immediateType) -> immediateType
-                info.isUpdateTypeAllowed(flexibleType) -> flexibleType
-                else -> null
-            } ?: return@addOnSuccessListener
-            runCatching {
-                playUpdates.startUpdateFlowForResult(info, this, com.google.android.play.core.appupdate.AppUpdateOptions.defaultOptions(type), UpdateRequestCode)
+            val immediate = com.google.android.play.core.install.model.AppUpdateType.IMMEDIATE
+            val flexible = com.google.android.play.core.install.model.AppUpdateType.FLEXIBLE
+            val availability = info.updateAvailability()
+            when {
+                info.installStatus() == com.google.android.play.core.install.model.InstallStatus.DOWNLOADED ->
+                    com.circaso.core.platform.AppUpdates.report(com.circaso.core.platform.AppUpdates.Status.Ready { playUpdates.completeUpdate() })
+                info.installStatus() == com.google.android.play.core.install.model.InstallStatus.DOWNLOADING -> Unit // the listener reports progress
+                // An immediate update the person left half way: Play requires it to be resumed.
+                availability == com.google.android.play.core.install.model.UpdateAvailability.DEVELOPER_TRIGGERED_UPDATE_IN_PROGRESS -> startUpdate(info, immediate)
+                availability != com.google.android.play.core.install.model.UpdateAvailability.UPDATE_AVAILABLE ->
+                    com.circaso.core.platform.AppUpdates.report(com.circaso.core.platform.AppUpdates.Status.None)
+                info.updatePriority() >= ImmediateUpdatePriority && info.isUpdateTypeAllowed(immediate) -> startUpdate(info, immediate)
+                info.isUpdateTypeAllowed(flexible) && startFlexible -> startUpdate(info, flexible)
+                info.isUpdateTypeAllowed(flexible) ->
+                    com.circaso.core.platform.AppUpdates.report(com.circaso.core.platform.AppUpdates.Status.Available { startUpdate(info, flexible) })
             }
         }
     }
 
     override fun onResume() {
         super.onResume()
-        playUpdates.appUpdateInfo.addOnSuccessListener { info ->
-            // Downloaded while Circaso was in the background: offer the restart again.
-            if (info.installStatus() == com.google.android.play.core.install.model.InstallStatus.DOWNLOADED) {
-                com.circaso.core.platform.AppUpdates.downloaded { playUpdates.completeUpdate() }
-            }
-            // An immediate update the person left half way: Play requires it to be resumed.
-            if (info.updateAvailability() == com.google.android.play.core.install.model.UpdateAvailability.DEVELOPER_TRIGGERED_UPDATE_IN_PROGRESS) {
-                runCatching {
-                    playUpdates.startUpdateFlowForResult(info, this, com.google.android.play.core.appupdate.AppUpdateOptions.defaultOptions(com.google.android.play.core.install.model.AppUpdateType.IMMEDIATE), UpdateRequestCode)
-                }
-            }
-        }
+        checkForUpdate(startFlexible = false)
     }
 
     override fun onDestroy() {
-        playUpdates.unregisterListener(updateDownloaded)
+        playUpdates.unregisterListener(updateProgress)
         super.onDestroy()
     }
 
@@ -102,8 +113,17 @@ class MainActivity : ComponentActivity() {
         // Photos, videos and files shared from another app's share sheet (not again when the activity is recreated).
         if (savedInstanceState == null) com.circaso.core.platform.AndroidShareIntake.handle(this, intent)
         debugUpload(intent)
-        playUpdates.registerListener(updateDownloaded)
-        if (savedInstanceState == null) checkForUpdate() // once per launch, not again when the activity is recreated
+        playUpdates.registerListener(updateProgress)
+        if (savedInstanceState == null) checkForUpdate(startFlexible = true) // at launch, not again when recreated
+        // While Circaso is open, ask Play again every 10 minutes (onResume covers coming back to it).
+        lifecycleScope.launch {
+            repeatOnLifecycle(androidx.lifecycle.Lifecycle.State.RESUMED) {
+                while (true) {
+                    kotlinx.coroutines.delay(UpdateCheckEveryMillis)
+                    checkForUpdate(startFlexible = false)
+                }
+            }
+        }
     }
 
     override fun onNewIntent(intent: android.content.Intent) {
@@ -208,6 +228,9 @@ private const val ImmediateUpdatePriority = 4
 
 /** Request code for Play's update screen (its result needs no handling: a declined flexible update simply waits). */
 private const val UpdateRequestCode = 4_201
+
+/** How often Play is asked again while Circaso stays open. */
+private const val UpdateCheckEveryMillis = 10 * 60 * 1000L
 
 @Preview
 @Composable

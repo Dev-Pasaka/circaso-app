@@ -108,7 +108,7 @@ val coreModule = module {
     }
     single { AppPreferences(get()) }
     // Group wallets (phase 2): on in debug builds, off in release; turns itself off on a server without them.
-    single { com.circaso.core.flags.GroupWalletsFlag(defaultOn = get<ClientInfo>().debugBuild, override = get<AppPreferences>().groupWalletsOverride, scope = get()) }
+    single { com.circaso.core.flags.GroupWalletsFlag(defaultOn = true, override = get<AppPreferences>().groupWalletsOverride, scope = get()) }
     single {
         val auth = get<AuthManager>(); val api = get<CircasoApi>(); val connection = get<ConnectionState>()
         PushTokenRegistrar(

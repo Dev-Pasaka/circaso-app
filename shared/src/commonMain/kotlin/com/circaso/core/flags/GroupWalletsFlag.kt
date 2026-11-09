@@ -13,7 +13,8 @@ import kotlinx.coroutines.launch
  * Group wallets (Spaces phase 2, backend PR #28) sit behind this flag, because a server without them is dangerous,
  * not just missing: it **ignores** `walletId` and would pay from the person's personal wallet. Two halves decide it:
  *
- * - **Wanted**: on by default in debug builds, off in release builds, unless overridden on the phone
+ * - **Wanted**: on by default in every build since the first Play release (2026-11-09: the server has had group wallets
+ *   since PR #28, and release builds hid them), unless overridden on the phone
  *   (`AppPreferences.groupWalletsOverride`; in a debug build the `-group-wallets=on|off` launch argument sets it).
  * - **Server**: the first answer from a group-wallet route settles it. `404 request.not_found` from W15 or W16 means
  *   the server predates PR #28: the flag turns itself off for this run and nothing group-shaped is shown or sent.
