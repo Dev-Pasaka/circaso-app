@@ -159,7 +159,8 @@ class FakeChatsRemote : ChatsRemote {
     val updates = mutableListOf<Pair<String, UpdateGroupRequest>>()
     override suspend fun createGroup(request: CreateGroupRequest, idempotencyKey: String): AppResult<ChatDto> = createGroupResult(request, idempotencyKey)
     override suspend fun updateGroup(chatId: String, request: UpdateGroupRequest): AppResult<ChatDto> { updates += chatId to request; return updateGroupResult(chatId, request) }
-    override suspend fun addMembers(chatId: String, request: AddMembersRequest): AppResult<ChatDto> = AppResult.Failure(AppError.Network)
+    var addMembersResult: (String, AddMembersRequest) -> AppResult<ChatDto> = { _, _ -> AppResult.Failure(AppError.Network) }
+    override suspend fun addMembers(chatId: String, request: AddMembersRequest): AppResult<ChatDto> = addMembersResult(chatId, request)
     override suspend fun removeMember(chatId: String, userId: String): AppResult<MemberRemovedResponse> = AppResult.Success(MemberRemovedResponse(true))
     override suspend fun setRole(chatId: String, userId: String, request: SetRoleRequest): AppResult<ChatDto> = AppResult.Failure(AppError.Network)
 }

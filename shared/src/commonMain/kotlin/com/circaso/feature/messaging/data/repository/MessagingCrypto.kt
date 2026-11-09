@@ -15,6 +15,7 @@ import com.circaso.feature.messaging.data.local.ChatsDao
 import com.circaso.feature.messaging.data.local.GroupMetaKeyEntity
 import com.circaso.feature.messaging.data.local.SealedRecordStore
 import com.circaso.feature.messaging.data.local.SenderKeyDeliveryEntity
+import com.circaso.feature.messaging.data.remote.InviteKeyDto
 import com.circaso.feature.messaging.data.remote.MessagesRemote
 import com.circaso.feature.messaging.data.remote.MessagingWire
 import com.circaso.feature.messaging.data.remote.RecipientDto
@@ -387,6 +388,56 @@ class GroupKeys(
         }
     }
 
+    // ---- group invites: the name and photo shown before someone joins (backend PR #83)
+
+    /** The group's newest metadata key and its version, for sealing it into invites (M9). */
+    suspend fun latestMetaKeyVersioned(chatId: String): Pair<Int, ByteArray>? =
+        chats.latestMetaKey(chatId)?.let { it.metaVersion to store.openBytes(it.key, "meta:$chatId:${it.metaVersion}") }
+
+    /**
+     * [key] (the group's metadata key at [metaVersion]) sealed 1:1 for each of [userIds] as a `metaKey` payload, the
+     * same one a member hands a new phone, so the invite each receives can show the group's name and photo. Best
+     * effort and bounded: someone it can't seal for (no keys yet, or offline) is left out and sees "a group" until
+     * they join; at most [InviteKeysAtMost] people, so a big add doesn't wait on dozens of bundle fetches.
+     */
+    suspend fun sealInviteKeys(key: ByteArray, metaVersion: Int, userIds: List<String>): List<InviteKeyDto> {
+        val me = ownUserId()
+        val plaintext = ChatPayload.encode(ChatPayload(type = ChatPayload.MetaKey, metaKey = Base64.encode(key), metaVersion = metaVersion))
+        val sealed = mutableListOf<InviteKeyDto>()
+        for (userId in userIds.filter { it != me }.distinct().take(InviteKeysAtMost)) {
+            when (val s = sessions.seal(userId, plaintext)) {
+                is AppResult.Success -> sealed += InviteKeyDto(userId, Base64.encode(s.value.wire))
+                is AppResult.Failure -> if (s.error is AppError.Network) break
+            }
+        }
+        return sealed
+    }
+
+    /**
+     * Opens the key [inviterId] sealed for me in an invite to [chatId] and keeps it as that group's, when it opens the
+     * invite's [sealedMeta] (a key that doesn't is never kept). Once kept, the group's name and photo open like any
+     * group's, and a second look at the same invite (a duplicate to the session) needs nothing more. True when this
+     * phone now holds a key that opens [sealedMeta].
+     */
+    suspend fun openInviteKey(chatId: String, inviterId: String, sealedKey: String?, sealedMeta: String?, metaVersion: Int): Boolean {
+        if (sealedMeta == null) return false
+        if (openGroupMeta(chatId, sealedMeta, metaVersion) != null) return true
+        val wire = sealedKey?.let { runCatching { Base64.decode(it) }.getOrNull() } ?: return false
+        val frame = WireFormat.decode(wire) ?: return false
+        val kind = when (frame.type) {
+            WireFormat.Type.PreKeyMessage -> com.circaso.core.crypto.CiphertextKind.PreKey
+            WireFormat.Type.WhisperMessage -> com.circaso.core.crypto.CiphertextKind.Whisper
+            else -> return false
+        }
+        val opened = sessions.open(inviterId, kind, frame.body) as? Opened.Plain ?: return false
+        val payload = ChatPayload.decode(opened.bytes) ?: return false
+        val key = payload.metaKey?.let { runCatching { Base64.decode(it) }.getOrNull() } ?: return false
+        // Kept under the version it opens now: the group may have been named again since the invite was sealed.
+        if (!opens(key, sealedMeta)) return false
+        rememberMetaKey(chatId, metaVersion, key)
+        return true
+    }
+
     private suspend fun metaKeyPayload(chatId: String, row: GroupMetaKeyEntity) = ChatPayload(
         type = ChatPayload.MetaKey,
         metaKey = Base64.encode(store.openBytes(row.key, "meta:$chatId:${row.metaVersion}")),
@@ -541,5 +592,7 @@ class GroupKeys(
         const val AskAtMost = 20
         /** One answer per person and group this often at most. */
         const val AnswerEveryMillis = 60_000L
+        /** The most people one create or add seals the group's key for (see [sealInviteKeys]). */
+        const val InviteKeysAtMost = 64
     }
 }

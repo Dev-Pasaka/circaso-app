@@ -45,6 +45,11 @@ final class CallEngineImpl: NSObject, CallEngineProvider, RTCPeerConnectionDeleg
         return RTCCVPixelBuffer(pixelBuffer: buffer)
     }()
     private let constraints = RTCMediaConstraints(mandatoryConstraints: nil, optionalConstraints: nil)
+    /// The screen going out on the video track instead of the camera (ScreenShareImpl feeds it); see `beginScreen`.
+    private(set) var screenSharing = false
+    /// Whether the camera should be on once the share stops (it was on before, or was turned on during it).
+    private var cameraAfterShare = false
+    private lazy var screenCapturer = RTCVideoCapturer()
 
     func start(iceServersJson: String, video: Bool, userId: String, completion: @escaping (String?, String?) -> Void) {
         AVAudioApplication.requestRecordPermission { granted in
@@ -164,6 +169,8 @@ final class CallEngineImpl: NSObject, CallEngineProvider, RTCPeerConnectionDeleg
     func setMicrophone(on: Bool) { audio?.isEnabled = on }
 
     func setCamera(on: Bool, completion: @escaping (KotlinBoolean) -> Void) {
+        // The screen has the track: the camera takes it back, in this state, when the share stops.
+        if screenSharing { cameraAfterShare = on; completion(true); return }
         if !on {
             cameraOn = false
             localVideo?.isEnabled = false
@@ -207,7 +214,48 @@ final class CallEngineImpl: NSObject, CallEngineProvider, RTCPeerConnectionDeleg
 
     func setSpeaker(on: Bool) { configureAudio(speaker: on) }
 
+    /// Screen sharing (2026-11-09): the broadcast's frames take the call's one video track from the camera or the
+    /// keep-alive, so nothing is renegotiated. Main thread.
+    func beginScreen() {
+        guard !screenSharing, let source = videoSource else { return }
+        cameraAfterShare = cameraOn
+        if cameraOn {
+            cameraOn = false
+            capturer?.stopCapture()
+            capturer = nil
+        }
+        screenSharing = true
+        keepVideoAlive(false)
+        // About 720p at 15 frames a second: text stays sharp and the upload modest.
+        source.adaptOutputFormat(toWidth: 1280, height: 720, fps: 15)
+        localVideo?.isEnabled = true
+    }
+
+    /// One frame of the shared screen, from any thread.
+    func screenFrame(_ buffer: CVPixelBuffer, rotation: RTCVideoRotation) {
+        guard screenSharing, let source = videoSource else { return }
+        let frame = RTCVideoFrame(buffer: RTCCVPixelBuffer(pixelBuffer: buffer), rotation: rotation, timeStampNs: Int64(CACurrentMediaTime() * 1_000_000_000))
+        source.capturer(screenCapturer, didCapture: frame)
+    }
+
+    /// The share is over: the camera (if it should be on) or the black keep-alive takes the track back. Main thread.
+    func endScreen() {
+        guard screenSharing else { return }
+        screenSharing = false
+        videoSource?.adaptOutputFormat(toWidth: 1280, height: 720, fps: 30)
+        let camera = cameraAfterShare
+        cameraAfterShare = false
+        if camera {
+            setCamera(on: true) { _ in }
+        } else {
+            localVideo?.isEnabled = false
+            keepVideoAlive(true)
+        }
+    }
+
     func close() {
+        screenSharing = false
+        cameraAfterShare = false
         keepVideoAlive(false)
         capturer?.stopCapture()
         capturer = nil
@@ -244,7 +292,7 @@ final class CallEngineImpl: NSObject, CallEngineProvider, RTCPeerConnectionDeleg
         guard on, let source = videoSource, let black = Self.blackFrame else { return }
         let capturer = keepAliveCapturer
         keepAliveTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] timer in
-            guard let self, self.videoSource === source, !self.cameraOn else { timer.invalidate(); return }
+            guard let self, self.videoSource === source, !self.cameraOn, !self.screenSharing else { timer.invalidate(); return }
             let frame = RTCVideoFrame(buffer: black, rotation: ._0, timeStampNs: Int64(CACurrentMediaTime() * 1_000_000_000))
             source.capturer(capturer, didCapture: frame)
         }

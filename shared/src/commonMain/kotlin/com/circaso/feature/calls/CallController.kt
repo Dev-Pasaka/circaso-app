@@ -45,6 +45,8 @@ data class CallPerson(
     val live: Boolean = joined,
     /** Their profile photo from this phone's chats or contacts; null shows their initials. */
     val photoUrl: String? = null,
+    /** Their video is their screen (CL8): shown whole, never cropped, and said ("Amina is sharing their screen"). */
+    val screen: Boolean = false,
 )
 
 /**
@@ -79,6 +81,8 @@ data class CallUi(
     val photoUrl: String? = null,
     /** My own photo, for my tile in a group call. */
     val myPhotoUrl: String? = null,
+    /** This phone is sharing its screen on the call's video track ("You're sharing your screen · Stop"). */
+    val screen: Boolean = false,
 ) {
     val joined get() = people.filter { it.joined }
     /** In the group but not on the call (missed, declined or left): who "Add people" rings. */
@@ -253,6 +257,23 @@ class CallController(
             else _state.update { it?.copy(error = "Circaso needs the camera for video. Turn it on in Settings.") }
         }
     }
+    /** Whether this phone can share its screen at all (see [CallEngine.canShareScreen]); the button is hidden when not. */
+    val canShareScreen get() = engine.canShareScreen
+
+    /**
+     * Share screen, and Stop (Pasaka, 2026-11-09). The system asks first; saying no there leaves the call as it was, with
+     * nothing to apologise for. Everyone is told it's a screen (CL8 `screen`) so they fit it instead of cropping it.
+     */
+    fun toggleScreenShare() {
+        val s = _state.value ?: return
+        if (s.phase == CallPhase.Ended || s.phase == CallPhase.Incoming || !engine.canShareScreen) return
+        val want = !s.screen
+        scope.launch {
+            val ok = engine.setScreenShare(want)
+            if (ok && _state.value?.phase.let { it != null && it != CallPhase.Ended }) media { it.copy(screen = want) }
+        }
+    }
+
     fun toggleSpeaker() { _state.update { it?.copy(speaker = !it.speaker) }; _state.value?.let { engine.setSpeaker(it.speaker) } }
     fun flipCamera() { engine.flipCamera(); _state.update { it?.copy(frontCamera = !it.frontCamera) } }
     fun minimise(on: Boolean) = _state.update { it?.copy(minimised = on) }
@@ -272,7 +293,8 @@ class CallController(
         val next = _state.value?.let(change) ?: return
         _state.value = next
         engine.setMicrophone(next.mic)
-        call?.let { c -> scope.launch { remote.media(c.callId, next.mic, next.camera) } }
+        // A shared screen goes out on the video track, so the track counts as on while it does.
+        call?.let { c -> scope.launch { remote.media(c.callId, next.mic, next.camera || next.screen, next.screen) } }
     }
 
     /** A `calls` realtime frame. */
@@ -428,6 +450,7 @@ class CallController(
                     // Tell everyone the real state: a pushed video track isn't a camera that's on (CL8).
                     remote.media(c.callId, s?.mic ?: true, s?.camera ?: false)
                     publish()
+                    watchScreen()
                 }
                 is AppResult.Failure -> { fail(r.error); return@withLock }
             }
@@ -543,6 +566,7 @@ class CallController(
             CallPerson(
                 p.userId, p.displayName.ifBlank { labelOf[p.userId] ?: "Someone" }, joined, p.audio, p.video, p.state == "INVITED", midOf[p.userId],
                 handle = labelOf[p.userId], live = joined && heard, photoUrl = photosOf.people[p.userId],
+                screen = joined && p.video && p.screen,
             )
         }
         val othersJoined = people.any { it.joined }
@@ -646,6 +670,17 @@ class CallController(
     }
 
     private var reconnectJob: Job? = null
+    private var screenJob: Job? = null
+
+    /** The system can stop a share on its own (its Stop, the screen locked): the call and everyone on it follow. */
+    private fun watchScreen() {
+        if (screenJob?.isActive == true) return
+        screenJob = scope.launch {
+            engine.screenSharing.collect { sharing ->
+                if (!sharing && _state.value?.screen == true) media { it.copy(screen = false) }
+            }
+        }
+    }
 
     private suspend fun reconnect() {
         val started = nowMillis()
@@ -677,6 +712,8 @@ class CallController(
                     call = r.value.call
                     engine.setMicrophone(s?.mic ?: true)
                     engine.setSpeaker(s?.speaker ?: false)
+                    // The share went with the old connection (the server clears it on a join too); Share screen again.
+                    _state.update { it?.copy(screen = false) }
                     remote.media(c.callId, s?.mic ?: true, s?.camera ?: false)
                     pulled.clear()
                     pullRetries = 0
@@ -701,6 +738,7 @@ class CallController(
         joinedAtMillis = 0L
         watchJob?.cancel()
         reconnectJob?.cancel()
+        screenJob?.cancel()
         receivingJob?.cancel()
         graceJob?.cancel()
         graceOver = false

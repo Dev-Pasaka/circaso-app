@@ -44,6 +44,8 @@ class PushNotices(
     private val wallet: WalletRepository,
     private val chama: ChamaRepository,
     private val prefs: AppPreferences,
+    /** Group invites (2026-11-09): an invite's push is worded from the invite itself. */
+    private val invites: com.circaso.feature.messaging.domain.GroupInvitesRepository? = null,
 ) {
     suspend fun privacyOn(): Boolean = prefs.flag(AppPreferences.NotificationPrivacy).first()
 
@@ -56,6 +58,7 @@ class PushNotices(
         val kind = data["kind"]
         val chatId = data["chatId"]?.takeIf { it.isNotBlank() }
         return when {
+            kind == InviteKind && chatId != null -> groupInvite(chatId, data["userId"])
             kind == "payment.received" -> moneyReceived(data)
             kind == "chama.contribution" && chatId != null -> contribution(chatId, data["userId"])
             kind?.startsWith("chama.request") == true && chatId != null -> payoutRequest(chatId, kind, data["requestId"])
@@ -71,6 +74,19 @@ class PushNotices(
         chatsRepo.refreshChat(chatId)
         val content = compose(NotificationEvent.AddedToGroup(chats.chat(chatId)?.name))
         return Notice(content, NoticeChannel.Message, "chat:$chatId", NotificationDestination.Chat(chatId), chatId)
+    }
+
+    /**
+     * `chat.invite` (group invites, 2026-11-09): the invites are loaded first, which opens the key the inviter sealed for
+     * me, so it reads "Amina invited you to Book club". The tap opens Chats, where the invite waits at the top. One
+     * notice per group, so a cancelled-then-repeated invite never stacks.
+     */
+    private suspend fun groupInvite(chatId: String, inviterId: String?): Notice {
+        withTimeoutOrNull(InviteLoadMillis) { invites?.refresh() }
+        val invite = invites?.let { repo -> withTimeoutOrNull(1_000) { repo.invites.first() } }?.firstOrNull { it.chatId == chatId }
+        val inviter = invite?.invitedBy?.displayName
+        val content = compose(NotificationEvent.GroupInvite(inviter, invite?.groupName))
+        return Notice(content, NoticeChannel.Message, "invite:$chatId", NotificationDestination.Invites, null)
     }
 
     private suspend fun senderName(chatId: String, userId: String?) =
@@ -183,6 +199,10 @@ class PushNotices(
     private companion object {
         /** How far back a contribution's card is looked for in its group chat. */
         const val RecentCards = 30
+        /** The invite push's `kind` (backend PR #83). */
+        const val InviteKind = "chat.invite"
+        /** How long an invite push waits for the invites to load before it words itself without the group's name. */
+        const val InviteLoadMillis = 4_000L
     }
 }
 

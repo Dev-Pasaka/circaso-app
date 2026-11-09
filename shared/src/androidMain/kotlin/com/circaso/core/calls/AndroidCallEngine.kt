@@ -5,7 +5,10 @@ import android.content.Context
 import android.content.pm.PackageManager
 import android.media.AudioDeviceInfo
 import android.media.AudioManager
+import android.media.projection.MediaProjection
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.collectAsState
@@ -39,13 +42,12 @@ import org.webrtc.MediaConstraints
 import org.webrtc.MediaStream
 import org.webrtc.PeerConnection
 import org.webrtc.PeerConnectionFactory
-import org.webrtc.RendererCommon
 import org.webrtc.RtpReceiver
 import org.webrtc.RtpTransceiver
+import org.webrtc.ScreenCapturerAndroid
 import org.webrtc.SdpObserver
 import org.webrtc.SessionDescription
 import org.webrtc.SurfaceTextureHelper
-import org.webrtc.SurfaceViewRenderer
 import org.webrtc.VideoFrame
 import org.webrtc.VideoSource as RtcVideoSource
 import org.webrtc.VideoTrack
@@ -88,6 +90,16 @@ class AndroidCallEngine(private val context: Context) : CallEngine {
     private val statsScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private var statsJob: Job? = null
     private var previousMode = AudioManager.MODE_NORMAL
+
+    /** The screen going out on the video track instead of the camera; see [setScreenShare]. */
+    private var screen: ScreenCapturerAndroid? = null
+    private var screenHelper: SurfaceTextureHelper? = null
+    /** Whether the camera should be on once the share stops (it was on before, or was turned on during it). */
+    private var cameraAfterShare = false
+    private val _sharing = MutableStateFlow(false)
+    override val screenSharing: StateFlow<Boolean> = _sharing
+    override val canShareScreen = true
+    private val mainHandler = Handler(Looper.getMainLooper())
 
     fun remoteTrack(mid: String): VideoTrack? = remote[mid]
 
@@ -201,6 +213,8 @@ class AndroidCallEngine(private val context: Context) : CallEngine {
 
     override suspend fun setCamera(on: Boolean): Boolean {
         if (on && !granted(Manifest.permission.CAMERA) && !PermissionBridge.request(Manifest.permission.CAMERA)) return false
+        // The screen has the track: the camera takes it back, in this state, when the share stops.
+        if (synchronized(guard) { screen != null }) { cameraAfterShare = on; return true }
         cameraSwitch(on)
         return !on || cameraOn
     }
@@ -247,7 +261,7 @@ class AndroidCallEngine(private val context: Context) : CallEngine {
             var started = false
             while (isActive) {
                 synchronized(guard) {
-                    if (videoSource !== source || cameraOn) return@launch
+                    if (videoSource !== source || cameraOn || screen != null) return@launch
                     if (!started) { source.capturerObserver.onCapturerStarted(true); started = true }
                     val buffer = JavaI420Buffer.allocate(KeepAliveWidth, KeepAliveHeight)
                     fill(buffer.dataY, 16)
@@ -269,12 +283,91 @@ class AndroidCallEngine(private val context: Context) : CallEngine {
 
     override fun flipCamera() { capturer?.switchCamera(null) }
 
+    /**
+     * Screen sharing (Pasaka, 2026-11-09): WebRTC's own ScreenCapturerAndroid feeds the call's existing video track,
+     * exactly as the camera does, so nothing is renegotiated and the others keep the same track. Order matters on
+     * Android 14+: the person's consent first, then the call's foreground service gains the mediaProjection type, and
+     * only then is the projection made (the capturer makes it when it starts). Stopping, by the button, the system's
+     * own Stop or the call ending, gives the track back to the camera (if it was on) or the black keep-alive.
+     */
+    override suspend fun setScreenShare(on: Boolean): Boolean {
+        if (!on) { onMain { stopScreen(restore = true) }; return true }
+        if (synchronized(guard) { screen != null }) return true
+        if (synchronized(guard) { videoSource == null }) return false
+        val consent = ScreenCaptureBridge.request(context) ?: return false
+        if (!CallService.startProjection()) {
+            android.util.Log.w("CallEngine", "screen share: the call service couldn't take the mediaProjection type")
+            return false
+        }
+        val started = onMain { startScreen(consent) }
+        if (!started) CallService.stopProjection()
+        return started
+    }
+
+    private suspend fun <T> onMain(block: () -> T): T = kotlinx.coroutines.withContext(Dispatchers.Main) { block() }
+
+    private fun startScreen(consent: android.content.Intent): Boolean = synchronized(guard) {
+        val source = videoSource ?: return@synchronized false
+        cameraAfterShare = cameraOn
+        if (cameraOn) cameraSwitch(false)
+        val cap = ScreenCapturerAndroid(consent, object : MediaProjection.Callback() {
+            // The system's Stop (status bar chip, the screen locking on some phones): the call follows.
+            override fun onStop() { mainHandler.post { stopScreen(restore = true) } }
+        })
+        screen = cap
+        keepVideoAlive(false)
+        val helper = SurfaceTextureHelper.create("screen", egl.eglBaseContext)
+        val ok = runCatching {
+            cap.initialize(helper, context, source.capturerObserver)
+            val (w, h) = screenSize()
+            cap.startCapture(w, h, ScreenFps)
+        }.onFailure { android.util.Log.w("CallEngine", "screen share didn't start", it) }.isSuccess
+        if (!ok) {
+            screen = null
+            runCatching { cap.dispose() }
+            helper.dispose()
+            if (cameraAfterShare) cameraSwitch(true) else keepVideoAlive(true)
+            return@synchronized false
+        }
+        screenHelper = helper
+        localVideo?.setEnabled(true)
+        _sharing.value = true
+        true
+    }
+
+    /** Ends the share; with [restore] the camera (or the keep-alive) takes the track back, without it the call is closing. */
+    private fun stopScreen(restore: Boolean) = synchronized(guard) {
+        val cap = screen ?: return@synchronized
+        screen = null
+        runCatching { cap.stopCapture() }
+        runCatching { cap.dispose() }
+        screenHelper?.dispose()
+        screenHelper = null
+        _sharing.value = false
+        CallService.stopProjection()
+        if (restore && videoSource != null) {
+            if (cameraAfterShare && granted(Manifest.permission.CAMERA)) cameraSwitch(true)
+            if (!cameraOn) { localVideo?.setEnabled(false); keepVideoAlive(true) }
+        }
+        cameraAfterShare = false
+    }
+
+    /** The screen at about 720p (its long side at most [ScreenLongSide]), in its own shape, even for the encoder. */
+    private fun screenSize(): Pair<Int, Int> {
+        val m = context.resources.displayMetrics
+        val long = maxOf(m.widthPixels, m.heightPixels).coerceAtLeast(1)
+        val scale = minOf(1f, ScreenLongSide.toFloat() / long)
+        fun even(v: Float) = (v.toInt() / 2 * 2).coerceAtLeast(2)
+        return even(m.widthPixels * scale) to even(m.heightPixels * scale)
+    }
+
     override fun setSpeaker(on: Boolean) = routeAudio(on)
 
     /** No WebRTC call runs while the connection is being torn down, and none after (see [sdp] and [set]). */
     private val guard = Any()
 
     override fun close() = synchronized(guard) {
+        stopScreen(restore = false)
         cameraSwitch(false)
         keepVideoAlive(false)
         remote.clear()
@@ -371,17 +464,17 @@ actual fun CallVideo(source: VideoSource, modifier: Modifier, mirror: Boolean, f
     // Recompose when a pulled track arrives, so a tile that was waiting for it picks it up.
     val mids by engine.remoteVideoMids.collectAsState()
     val track = when (source) { VideoSource.Local -> engine.localVideo; is VideoSource.Remote -> if (source.mid in mids) engine.remoteTrack(source.mid) else null }
-    val renderer = remember(source) { mutableListOf<SurfaceViewRenderer>() }
+    // A texture, not a SurfaceView, so the tile can be clipped, swapped and grown on the call's motion (CallTextureView).
+    val renderer = remember(source) { mutableListOf<CallTextureView>() }
     AndroidView(
         factory = { ctx ->
-            SurfaceViewRenderer(ctx).apply {
-                init(engine.egl.eglBaseContext, null)
-                setScalingType(if (fill) RendererCommon.ScalingType.SCALE_ASPECT_FILL else RendererCommon.ScalingType.SCALE_ASPECT_FIT)
-                setEnableHardwareScaler(true)
+            CallTextureView(ctx).apply {
+                init(engine.egl.eglBaseContext)
+                setFill(fill)
                 renderer += this
             }
         },
-        update = { it.setMirror(mirror) },
+        update = { it.setMirror(mirror); it.setFill(fill) },
         modifier = modifier,
     )
     DisposableEffect(track) {
@@ -396,3 +489,7 @@ actual fun CallVideo(source: VideoSource, modifier: Modifier, mirror: Boolean, f
 private const val KeepAliveWidth = 160
 private const val KeepAliveHeight = 90
 private const val KeepAliveFrameMillis = 500L
+
+/** A shared screen goes at about 720p and 15 frames a second: text stays sharp and the upload stays modest. */
+private const val ScreenLongSide = 1280
+private const val ScreenFps = 15

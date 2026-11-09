@@ -66,11 +66,23 @@ data class ChatDto(
      * kept past the usual 30 days. Null for none, for a direct chat, and from a server older than the field.
      */
     val avatarMediaId: String? = null,
+    /**
+     * M5 and M9 since group invites (backend PR #83, 2026-11-09): the people who now have an open invite. They join
+     * when they accept, so they aren't in [members]. Null from an older server, which put them straight in.
+     */
+    val invited: List<String>? = null,
 )
 
 @Serializable data class ChatsResponse(val chats: List<ChatDto>)
 @Serializable data class OpenDirectChatRequest(val userId: String)
-@Serializable data class CreateGroupRequest(val sealedMeta: String, val memberIds: List<String>? = null)
+
+/**
+ * The group's metadata key sealed 1:1 for one person invited (a `metaKey` payload, as a `SENDER_KEY` copy is), so their
+ * invite shows the group's name and photo before they decide. Base64 of the wire bytes.
+ */
+@Serializable data class InviteKeyDto(val userId: String, val sealedKey: String)
+
+@Serializable data class CreateGroupRequest(val sealedMeta: String, val memberIds: List<String>? = null, val inviteKeys: List<InviteKeyDto>? = null)
 /**
  * M8. [avatarMediaId] has three meanings, so it is a [JsonElement]: Kotlin null leaves the key out (keep the photo; the
  * client's `explicitNulls = false` drops it), [JsonNull] sends `null` (clear it), a string sets it. Build it with
@@ -93,9 +105,39 @@ object AvatarChange {
     /** `"avatarMediaId": "<id>"`: the group's own image attachment, uploaded and confirmed (AT1, PUT, AT2). */
     fun set(attachmentId: String): JsonElement = JsonPrimitive(attachmentId)
 }
-@Serializable data class AddMembersRequest(val memberIds: List<String>)
+@Serializable data class AddMembersRequest(val memberIds: List<String>, val inviteKeys: List<InviteKeyDto>? = null)
 @Serializable data class MemberRemovedResponse(val removed: Boolean)
 @Serializable data class SetRoleRequest(val role: String)
+
+// ---- group invites (M23–M27, backend PR #83)
+
+/**
+ * One of my open invites (M23): the group's sealed name and photo as they now are, how many are in it and who invited
+ * me; never its members or messages. [sealedKey] is the group's metadata key sealed for me by [invitedBy]'s phone.
+ */
+@Serializable
+data class InviteDto(
+    val inviteId: String,
+    val chatId: String,
+    val invitedBy: ChatProfileDto,
+    val sealedMeta: String? = null,
+    val metaVersion: Int = 0,
+    val avatarMediaId: String? = null,
+    val memberCount: Int = 0,
+    val sealedKey: String? = null,
+    val createdAt: String = "",
+    val expiresAt: String = "",
+)
+
+@Serializable data class InvitesResponse(val invites: List<InviteDto>)
+
+/** An open invite as group info lists it under "Invited" (M26). */
+@Serializable
+data class PendingInviteDto(val inviteId: String, val user: ChatProfileDto, val invitedBy: ChatProfileDto, val createdAt: String = "", val expiresAt: String = "")
+
+@Serializable data class ChatInvitesResponse(val invites: List<PendingInviteDto>)
+@Serializable data class InviteDeclinedResponse(val declined: Boolean = true)
+@Serializable data class InviteCancelledResponse(val cancelled: Boolean = true)
 
 // ---- messages and delivery (M12–M14, M22)
 

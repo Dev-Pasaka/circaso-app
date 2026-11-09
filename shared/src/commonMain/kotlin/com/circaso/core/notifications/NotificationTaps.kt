@@ -85,6 +85,7 @@ object NotificationRoutes {
         NotificationDestination.Profile -> NotificationOpening(listOf(EditProfileRoute), HomeTabName.You)
         NotificationDestination.NeedsAttention -> NotificationOpening(listOf(NeedsAttentionRoute), HomeTabName.You)
         NotificationDestination.Inbox -> NotificationOpening(listOf(NotificationsRoute), HomeTabName.You)
+        NotificationDestination.Invites -> NotificationOpening(emptyList(), HomeTabName.Chats)
     }
 }
 

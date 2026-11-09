@@ -93,6 +93,7 @@ class MainActivity : ComponentActivity() {
         // Debug previews (`--es preview <name>`): read before the first composition so the navigation sees them.
         intent?.extras?.let { bundle -> AndroidLaunchArgs.extras = bundle.keySet().mapNotNull { k -> bundle.getString(k)?.let { k to it } }.toMap() }
         PermissionBridge.register(this) // must happen while the activity is being created
+        com.circaso.core.calls.ScreenCaptureBridge.register(this) // a call's Share screen prompt
         ImagePickerBridge.register(this)
         com.circaso.core.platform.MomentPickerBridge.register(this)
         com.circaso.core.platform.AndroidShareIntake.install(this)

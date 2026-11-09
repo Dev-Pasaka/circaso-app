@@ -119,11 +119,18 @@ val messagingModule = module {
             downloadScope = get<kotlinx.coroutines.CoroutineScope>(),
         )
     }
-    single { MessagingFrameHandler(get(), get(), get(), get(), get(), get()) }
+    // Group invites (2026-11-09): people join a group by accepting.
+    single<com.circaso.feature.messaging.data.remote.InvitesRemote> { com.circaso.feature.messaging.data.remote.KtorInvitesRemote(get()) }
+    single {
+        com.circaso.feature.messaging.data.repository.GroupInvitesRepositoryImpl(
+            get(), get(), get(), get(), com.circaso.feature.messaging.data.repository.PreferencesInviteCache(get()), get(), photos = get(),
+        )
+    } bind com.circaso.feature.messaging.domain.GroupInvitesRepository::class
+    single { MessagingFrameHandler(get(), get(), get(), get(), get(), get(), invites = get()) }
     // Notifications (2026-11-06): pushes worded on the phone with privacy, and where a tap lands.
-    single { com.circaso.core.notifications.PushNotices(get(), get(), get(), get(), get(), get(), get(), get()) }
+    single { com.circaso.core.notifications.PushNotices(get(), get(), get(), get(), get(), get(), get(), get(), invites = get()) }
     factory<com.circaso.core.notifications.NotificationLookups> { com.circaso.core.notifications.AppNotificationLookups(get(), get(), get()) }
-    single { MessagingStarter(get<RealtimeClient>().connected, get(), get(), get(), live = get()) }
+    single { MessagingStarter(get<RealtimeClient>().connected, get(), get(), get(), live = get(), invites = get()) }
 
     factory { ObserveChatsUseCase(get()) }
     factory { ObserveChatUseCase(get()) }
@@ -149,7 +156,7 @@ val messagingModule = module {
     factory { ObserveTypingUseCase(get()) }
     factory { MessagingSettingsUseCase(get()) }
 
-    viewModel { ChatsViewModel(get(), get(), get(), get(), get(), get(), get(), getOrNull()) }
+    viewModel { ChatsViewModel(get(), get(), get(), get(), get(), get(), get(), getOrNull(), invites = get()) }
     viewModel {
         NewChatViewModel(
             get(), get(), get(), observeChats = get(), connect = get(), createShareLink = get(),
@@ -213,7 +220,7 @@ val messagingModule = module {
         ChatInfoViewModel(
             params.get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), observeThread = get(), media = getOrNull(),
             groupMoney = get(), myUserId = get<com.circaso.core.session.AuthManager>().userId,
-            setGroupPhoto = get(),
+            setGroupPhoto = get(), invites = get(),
             encoder = getOrNull<com.circaso.core.platform.GroupPhotoEncoder>() ?: com.circaso.core.platform.NoGroupPhotoEncoder,
             sources = getOrNull(),
         )
