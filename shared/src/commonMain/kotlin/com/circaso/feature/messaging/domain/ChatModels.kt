@@ -32,7 +32,14 @@ data class Chat(
      * name. Null means any member's.
      */
     val waitingFor: String? = null,
-)
+    /**
+     * What the photo's initials are made from when it differs from [title]: a group shown by its members' names
+     * ("You and Amina" would give "YA") uses their first names ("Amina", "Amina Brian").
+     */
+    val initialsFrom: String? = null,
+) {
+    val avatarLabel: String get() = initialsFrom ?: title
+}
 
 /**
  * A group's sealed name and photo on this phone (2026-11-09). A new phone has no key for them and asks the members:

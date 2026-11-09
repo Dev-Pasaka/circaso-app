@@ -137,6 +137,7 @@ class GroupMetaNewPhoneTest {
         assertEquals(GroupNameState.Waiting, row.nameState)
         assertEquals("Amina", row.waitingFor)
         assertNull(row.avatarUrl, "no photo until the key comes")
+        assertEquals("Amina", row.avatarLabel, "initials from the member, not \"You and\"")
         assertEquals("Waiting for Amina’s phone", groupNameLine(row, online = true))
         assertEquals("Waiting for a connection", groupNameLine(row, online = false))
     }
@@ -229,7 +230,8 @@ class GroupMetaNewPhoneTest {
         phone.groupKeys.onNoKey("g1", amina)
         val row = phone.chats.chats.first().single().chat
         assertEquals(GroupNameState.Unavailable, row.nameState)
-        assertEquals("Name and photo can’t be shown on this phone", groupNameLine(row, online = true))
+        assertEquals("Name the group again to show it here", groupNameLine(row, online = true), "the owner is told what fixes it")
+        assertEquals("Name can’t be shown on this phone", groupNameLine(row.copy(myRole = com.circaso.feature.messaging.domain.MemberRole.Member), online = true))
     }
 
     @Test fun anOwnerCanNameTheGroupAgainAsSoonAsNoMemberHasTheKey() = runSuspending {

@@ -104,7 +104,9 @@ data class ThreadUiState(
             !online -> "Waiting for network"
             isSupport -> "Verified Circaso team"
             // A group this phone can't name yet (a new phone): its name and photo are on their way from a member's phone.
-            isGroup && chat?.nameKnown == false -> "${chat.members.size} members · " + com.circaso.feature.messaging.presentation.groupNameLine(chat, online)!!.replaceFirstChar { it.lowercase() }
+            isGroup && chat?.nameKnown == false -> "${chat.members.size} members · " +
+                if (chat.nameState == com.circaso.feature.messaging.domain.GroupNameState.Unavailable) "name can’t be shown here"
+                else "waiting for ${chat.waitingFor?.let { "$it’s" } ?: "a member’s"} phone"
             isGroup -> "${chat?.members?.size ?: 0} members"
             presence?.online == true -> "Online"
             presence?.lastSeenAt != null -> lastSeenText(presence.lastSeenAt)

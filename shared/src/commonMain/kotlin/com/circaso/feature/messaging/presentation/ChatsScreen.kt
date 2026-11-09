@@ -19,6 +19,7 @@ import circaso.shared.generated.resources.circaso_mark_white
 import androidx.compose.ui.semantics.contentDescription
 import com.circaso.designsystem.components.CircasoIconImage
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.Box
 import androidx.compose.ui.draw.clip
 import androidx.compose.foundation.background
@@ -280,7 +281,8 @@ private fun ChatRow(
     val latest = summary.latest
     // A group this phone can't name yet (a new phone): the row says whose phone its name and photo are coming from,
     // in place of the last message, until a member's phone sends the key; then the name and photo swap in.
-    val waitingLine = groupNameLine(summary.chat, online)
+    // Unavailable keeps the last message (the messages still open; only the name can't): the lock badge says it.
+    val waitingLine = groupNameLine(summary.chat, online)?.takeIf { summary.chat.nameState == com.circaso.feature.messaging.domain.GroupNameState.Waiting || latest == null }
     val preview = waitingLine ?: when (latest) {
         null -> "Say hello"
         is Message.Text -> when {
@@ -318,8 +320,8 @@ private fun ChatRow(
             .semantics { this.selected = selected },
         sub = preview,
         leading = {
-            if (waitingLine != null) Box {
-                Avatar(summary.chat.title, imageUrl = summary.chat.avatarUrl)
+            if (!summary.chat.nameKnown && summary.chat.kind == com.circaso.feature.messaging.domain.ChatKind.Group) Box {
+                Avatar(summary.chat.avatarLabel, imageUrl = summary.chat.avatarUrl)
                 GroupNameBadge(summary.chat.nameState)
             }
             else if (onAvatar == null) Avatar(summary.chat.title, imageUrl = summary.chat.avatarUrl)
@@ -354,7 +356,8 @@ private fun ChatRow(
  */
 internal fun groupNameLine(chat: com.circaso.feature.messaging.domain.Chat, online: Boolean): String? = when {
     chat.kind != com.circaso.feature.messaging.domain.ChatKind.Group || chat.nameKnown -> null
-    chat.nameState == com.circaso.feature.messaging.domain.GroupNameState.Unavailable -> "Name and photo can’t be shown on this phone"
+    chat.nameState == com.circaso.feature.messaging.domain.GroupNameState.Unavailable ->
+        if (chat.myRole != com.circaso.feature.messaging.domain.MemberRole.Member) "Name the group again to show it here" else "Name can’t be shown on this phone"
     !online -> "Waiting for a connection"
     else -> "Waiting for ${chat.waitingFor?.let { "$it’s" } ?: "a member’s"} phone"
 }
@@ -364,7 +367,7 @@ internal fun groupNameLine(chat: com.circaso.feature.messaging.domain.Chat, onli
 private fun androidx.compose.foundation.layout.BoxScope.GroupNameBadge(state: com.circaso.feature.messaging.domain.GroupNameState) {
     val c = CircasoTheme.colors
     Box(
-        Modifier.align(Alignment.BottomEnd).size(GroupBadgeDisc).background(c.bg, com.circaso.designsystem.theme.CircasoShapes.circle)
+        Modifier.align(Alignment.BottomEnd).offset(GroupBadgeOffset, GroupBadgeOffset).size(GroupBadgeDisc).background(c.bg, com.circaso.designsystem.theme.CircasoShapes.circle)
             .padding(GroupBadgeEdge).clip(com.circaso.designsystem.theme.CircasoShapes.circle).background(c.fillStrong),
         contentAlignment = Alignment.Center,
     ) {
@@ -376,6 +379,8 @@ private fun androidx.compose.foundation.layout.BoxScope.GroupNameBadge(state: co
 private val GroupBadgeDisc = 18.dp
 private val GroupBadgeEdge = 2.dp
 private val GroupBadgeGlyph = 10.dp
+/** The disc's centre on the photo's circle at the lower right (45°), half over it, as the Moments badge sits. */
+private val GroupBadgeOffset = CircasoSizes.avatarMd / 2 * (kotlin.math.sqrt(2f) / 2) - (CircasoSizes.avatarMd - GroupBadgeDisc) / 2
 
 /**
  * The Chats tab's masthead: the Circaso mark (the wallet cards' mark, same size) and the name in ink. The design kit

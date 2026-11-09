@@ -422,6 +422,7 @@ internal fun ChatEntity.toDomain(members: List<ChatMemberEntity>, me: String?, g
         nameKnown = nameKnown,
         nameState = when { nameKnown -> GroupNameState.Known; keyUnavailable -> GroupNameState.Unavailable; else -> GroupNameState.Waiting },
         waitingFor = if (nameKnown) null else others.singleOrNull()?.displayName?.trim()?.substringBefore(' ')?.takeIf { it.isNotEmpty() },
+        initialsFrom = if (nameKnown) null else others.take(2).joinToString(" ") { it.displayName.trim().substringBefore(' ') }.takeIf { it.isNotBlank() },
     )
 }
 

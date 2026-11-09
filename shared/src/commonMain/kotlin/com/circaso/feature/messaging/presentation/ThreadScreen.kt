@@ -470,7 +470,7 @@ fun ThreadContent(
                 subtitle = state.subtitle,
                 onBack = onBack,
                 avatar = {
-                    Avatar(state.chat?.title ?: "", size = CircasoSizes.avatarMd, imageUrl = state.chat?.avatarUrl)
+                    Avatar(state.chat?.avatarLabel ?: "", size = CircasoSizes.avatarMd, imageUrl = state.chat?.avatarUrl)
                 },
                 // WhatsApp's header: back, who it is (tap for their profile, with video call and Send money), and Call.
                 onTitle = onInfo,
