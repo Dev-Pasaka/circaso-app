@@ -29,6 +29,7 @@ import coil3.ImageLoader
 import coil3.compose.setSingletonImageLoaderFactory
 import coil3.network.ktor3.KtorNetworkFetcherFactory
 import org.koin.compose.koinInject
+import com.circaso.core.platform.AppUpdateBar
 
 @Composable
 @Preview
@@ -94,6 +95,8 @@ fun App() {
                         }
                     }
                     InAppBrowserHost()
+                    // A newer Circaso downloaded in the background (Play's flexible update): restart into it.
+                    AppUpdateBar()
                 }
             }
         } }

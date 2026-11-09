@@ -34,3 +34,14 @@
 -if class androidx.credentials.CredentialManager
 -keep class androidx.credentials.playservices.** { *; }
 -keep class com.google.android.libraries.identity.googleid.** { *; }
+
+# libsignal's native code calls back into Java by name: the stores' loadSession, storeSession, getIdentityKeyPair, …
+# Its own rules don't cover the stores (InMemorySignalProtocolStore and friends) or classes extending them, so R8
+# renamed loadSession and the first sign-in crashed: "JNI error Method not found: loadSession". Keep libsignal whole.
+-keep class org.signal.libsignal.** { *; }
+-keep class * extends org.signal.libsignal.protocol.groups.state.InMemorySenderKeyStore { *; }
+-keep class * implements org.signal.libsignal.protocol.state.** { *; }
+-keep class * implements org.signal.libsignal.protocol.groups.state.** { *; }
+
+# Any class with native methods keeps their names, and the classes in their signatures (JNI looks both up by name).
+-keepclasseswithmembernames,includedescriptorclasses class * { native <methods>; }

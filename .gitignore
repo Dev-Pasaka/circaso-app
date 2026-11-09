@@ -34,3 +34,6 @@ iosApp/Pods/
 
 # Agents' scratch worktrees
 .claude/worktrees/
+
+# Android Studio's signed bundles/APKs (Build > Generate Signed App Bundle)
+androidApp/release/

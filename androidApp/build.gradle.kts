@@ -21,6 +21,8 @@ dependencies {
     implementation(libs.androidx.activity.compose)
     implementation(libs.androidx.core.splashscreen)
     implementation(libs.androidx.profileinstaller)
+    implementation(libs.play.app.update) // Play In-App Updates: checks for a newer Circaso at launch
+    implementation(libs.play.app.update.ktx)
 
     implementation(libs.compose.uiToolingPreview)
     debugImplementation(libs.compose.uiTooling)

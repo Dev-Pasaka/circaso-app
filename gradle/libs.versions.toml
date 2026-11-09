@@ -1,4 +1,6 @@
 [versions]
+# Google Play In-App Updates (Pasaka, 2026-11-08): flexible at launch, immediate for releases marked high priority.
+play-app-update = "2.1.0"
 # Circle user-controlled wallets SDK (GitHub Packages, needs pwsdk.maven.* in local.properties); 1.0.1192 of 2026-10-28.
 circle-wallet-sdk = "1.0.1192"
 agp = "9.1.1"
@@ -47,6 +49,8 @@ desugar-jdk-libs = "2.1.5"
 ndk = "30.0.16248370"
 
 [libraries]
+play-app-update = { module = "com.google.android.play:app-update", version.ref = "play-app-update" }
+play-app-update-ktx = { module = "com.google.android.play:app-update-ktx", version.ref = "play-app-update" }
 kotlin-test = { module = "org.jetbrains.kotlin:kotlin-test", version.ref = "kotlin" }
 kotlin-testJunit = { module = "org.jetbrains.kotlin:kotlin-test-junit", version.ref = "kotlin" }
 junit = { module = "junit:junit", version.ref = "junit" }

@@ -17,6 +17,8 @@ name: Google Play internal testing
 #                                 already uploaded to Play for this app (default 1000)
 #   SHARE_HOST                    optional, the share-link host (the sandbox's when unset)
 #   PLAY_PUBLISH_ENABLED          set to true once the secrets above are in; until then the job is skipped
+#   PLAY_UPDATE_PRIORITY          in-app update priority for pushes to main (0-5, default 2: offered in the background);
+#                                 4 or 5 makes the app require the update before use. A manual run can set its own.
 #   PLAY_RELEASE_STATUS           completed (default) once the app has been released; draft while the app has never been
 #                                 published, since Play only accepts draft releases for a draft app through the API
 #
@@ -31,6 +33,10 @@ on:
       release_notes:
         description: "What's new (shown to internal testers)"
         required: false
+      update_priority:
+        description: "In-app update priority 0-5 (4 or 5 makes the app require this update before it can be used)"
+        required: false
+        default: "2"
 
 concurrency:
   group: play-internal
@@ -131,6 +137,7 @@ jobs:
           status: ${{ vars.PLAY_RELEASE_STATUS || 'completed' }}
           mappingFile: androidApp/build/outputs/mapping/release/mapping.txt
           whatsNewDirectory: whatsnew
+          inAppUpdatePriority: ${{ github.event.inputs.update_priority || vars.PLAY_UPDATE_PRIORITY || '2' }}
 
       - name: Keep the bundle and mapping
         if: always()

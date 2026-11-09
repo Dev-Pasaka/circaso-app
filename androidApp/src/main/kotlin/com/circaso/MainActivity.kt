@@ -18,6 +18,54 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
+    // Google Play In-App Updates (Pasaka, 2026-11-08): at launch, a newer Circaso on Play downloads in the background
+    // (flexible) and the app offers "Restart"; a release published with priority 4 or 5 asks for the update before
+    // the app can be used (immediate). Only builds installed from Play see updates; others get no answer and move on.
+    private val playUpdates by lazy { com.google.android.play.core.appupdate.AppUpdateManagerFactory.create(this) }
+    private val updateDownloaded = com.google.android.play.core.install.InstallStateUpdatedListener { state ->
+        if (state.installStatus() == com.google.android.play.core.install.model.InstallStatus.DOWNLOADED) {
+            com.circaso.core.platform.AppUpdates.downloaded { playUpdates.completeUpdate() }
+        }
+    }
+
+    private fun checkForUpdate() {
+        playUpdates.appUpdateInfo.addOnSuccessListener { info ->
+            val available = info.updateAvailability() == com.google.android.play.core.install.model.UpdateAvailability.UPDATE_AVAILABLE
+            val immediateType = com.google.android.play.core.install.model.AppUpdateType.IMMEDIATE
+            val flexibleType = com.google.android.play.core.install.model.AppUpdateType.FLEXIBLE
+            val type = when {
+                !available -> null
+                info.updatePriority() >= ImmediateUpdatePriority && info.isUpdateTypeAllowed(immediateType) -> immediateType
+                info.isUpdateTypeAllowed(flexibleType) -> flexibleType
+                else -> null
+            } ?: return@addOnSuccessListener
+            runCatching {
+                playUpdates.startUpdateFlowForResult(info, this, com.google.android.play.core.appupdate.AppUpdateOptions.defaultOptions(type), UpdateRequestCode)
+            }
+        }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        playUpdates.appUpdateInfo.addOnSuccessListener { info ->
+            // Downloaded while Circaso was in the background: offer the restart again.
+            if (info.installStatus() == com.google.android.play.core.install.model.InstallStatus.DOWNLOADED) {
+                com.circaso.core.platform.AppUpdates.downloaded { playUpdates.completeUpdate() }
+            }
+            // An immediate update the person left half way: Play requires it to be resumed.
+            if (info.updateAvailability() == com.google.android.play.core.install.model.UpdateAvailability.DEVELOPER_TRIGGERED_UPDATE_IN_PROGRESS) {
+                runCatching {
+                    playUpdates.startUpdateFlowForResult(info, this, com.google.android.play.core.appupdate.AppUpdateOptions.defaultOptions(com.google.android.play.core.install.model.AppUpdateType.IMMEDIATE), UpdateRequestCode)
+                }
+            }
+        }
+    }
+
+    override fun onDestroy() {
+        playUpdates.unregisterListener(updateDownloaded)
+        super.onDestroy()
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         // Hold the launch splash until the saved session and theme are read, but never longer than 1.5 s.
         val started = SystemClock.uptimeMillis()
@@ -54,6 +102,8 @@ class MainActivity : ComponentActivity() {
         // Photos, videos and files shared from another app's share sheet (not again when the activity is recreated).
         if (savedInstanceState == null) com.circaso.core.platform.AndroidShareIntake.handle(this, intent)
         debugUpload(intent)
+        playUpdates.registerListener(updateDownloaded)
+        if (savedInstanceState == null) checkForUpdate() // once per launch, not again when the activity is recreated
     }
 
     override fun onNewIntent(intent: android.content.Intent) {
@@ -152,6 +202,12 @@ class MainActivity : ComponentActivity() {
 }
 
 private const val MaxSplashMillis = 1_500L
+
+/** A release published with this in-app update priority or higher (0–5, set by CI) must be installed before use. */
+private const val ImmediateUpdatePriority = 4
+
+/** Request code for Play's update screen (its result needs no handling: a declined flexible update simply waits). */
+private const val UpdateRequestCode = 4_201
 
 @Preview
 @Composable
