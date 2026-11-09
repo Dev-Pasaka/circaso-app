@@ -1,0 +1,21 @@
+name: App checks
+
+# Quick checks on every pull request and push to main (seconds, no Gradle).
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  debug-gates:
+    name: No feature hidden behind debug builds
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      # Every debug-only check must be approved in scripts/debug-gates.txt (2026-11-09: group wallets were hidden in
+      # release builds by a debug-only default).
+      - run: python3 scripts/check_debug_gates.py

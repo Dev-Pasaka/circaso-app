@@ -1,0 +1,15 @@
+# Approved debug-only behaviour: path | exact code line | why it is a debug tool, not a feature.
+# Checked by scripts/check_debug_gates.py in CI. A user-facing feature must never depend on the build type.
+
+androidApp/src/main/kotlin/com/circaso/MainActivity.kt | if ((applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE) == 0) return | debug tool: `--es debugUpload` queues a dummy upload to test background uploads
+shared/src/androidMain/kotlin/com/circaso/core/platform/AndroidPlatform.kt | override val debugBuild: Boolean = (context.applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE) != 0 | definition of debugBuild on Android
+shared/src/androidMain/kotlin/com/circaso/di/AndroidKoin.kt | if (app.applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE != 0) { | debug tool: network diagnostics logged to logcat
+shared/src/commonMain/kotlin/com/circaso/core/navigation/AppNavigation.kt | LaunchedEffect(groupWalletsArg) { if (groupWalletsArg != null && client.debugBuild) prefs.setGroupWalletsOverride(groupWalletsArg) } | debug tool: -group-wallets=on|off overrides the flag for testing (the flag itself is on in every build)
+shared/src/commonMain/kotlin/com/circaso/core/navigation/AppNavigation.kt | com.circaso.designsystem.chrome.WindowOverlayLayer(enabled = launchValue("-window-overlay")?.takeIf { client.debugBuild } != "off") { | debug tool: -window-overlay=off compares overlays inside the list pane
+shared/src/commonMain/kotlin/com/circaso/core/navigation/AppNavigation.kt | val preview = remember { launchValue("-preview")?.takeIf { client.debugBuild } } | debug tool: -preview opens a screen with sample data
+shared/src/commonMain/kotlin/com/circaso/core/platform/Connectivity.kt | val debugBuild: Boolean get() = false | definition: debugBuild defaults to false
+shared/src/commonMain/kotlin/com/circaso/di/StatusModule.kt | enabled = get<com.circaso.core.platform.ClientInfo>().debugBuild, now = { com.circaso.core.sync.nowMillis() }, | debug tool: DebugUploadHandler (dummy uploads, never posted)
+shared/src/commonMain/kotlin/com/circaso/feature/assistant/presentation/VoiceViewModel.kt | if (client?.debugBuild != true) return | debug tool: Asha voice tuning and timing readouts
+shared/src/commonMain/kotlin/com/circaso/gallery/DebugFrame.kt | val debug = org.koin.compose.koinInject<com.circaso.core.platform.ClientInfo>().debugBuild | debug tool: -frame=WxH lays the app out at another window size
+shared/src/iosMain/kotlin/com/circaso/core/platform/IosPlatform.kt | override val debugBuild: Boolean = kotlin.native.Platform.isDebugBinary | definition of debugBuild on iOS
+shared/src/iosMain/kotlin/com/circaso/di/IosKoin.kt | if (Platform.isDebugBinary) com.circaso.core.common.Diagnostics.sink = { println("CircasoNet: $it") } | debug tool: network diagnostics printed to the Xcode console
