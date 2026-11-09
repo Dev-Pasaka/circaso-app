@@ -19,6 +19,8 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -109,6 +111,19 @@ class CallController(
     private val log: suspend (CallLogEntry) -> Unit = {},
     /** The call's photos from this phone's store (never the network, so a ring is never held up). */
     private val photos: suspend (chatId: String) -> CallPhotos = { CallPhotos() },
+    /**
+     * How long to wait for this phone's own connection, and for someone's `connected` (CL3b), before pulling them
+     * anyway: the SFU holds a pull of a publisher that isn't connected yet for ~9 s. 0 pulls at once (older servers).
+     */
+    private val pullGraceMillis: Long = 0,
+    /** How often a live or ringing call is read again (CL2), so a lost `call.ended` can't strand it. 0: never. */
+    private val pollMillis: Long = 0,
+    /** True while the realtime socket is up; each time it comes back the call is read again. */
+    private val socketUp: kotlinx.coroutines.flow.Flow<Boolean> = kotlinx.coroutines.flow.flowOf(false),
+    /** No packet from anyone for this long in an active call: it is dead, hang up. 0: never. */
+    private val stallMillis: Long = 0,
+    /** The time for [pullGraceMillis] and [stallMillis]; tests pass their virtual clock. */
+    private val clock: () -> Long = { nowMillis() },
 ) {
     private val _state = MutableStateFlow<CallUi?>(null)
     val state: StateFlow<CallUi?> = _state
@@ -130,6 +145,21 @@ class CallController(
     /** Set when [mediaGraceMillis] ran out while connecting: the engine's stats can't be trusted for this call. */
     private var graceOver = false
     private var clearJob: Job? = null
+
+    /**
+     * Bumped for each new call on this phone. A hang-up's clean-up runs after its CL7 answers, and a slow answer
+     * (6-12 s on 2026-11-09) used to land after the next call had begun, wiping it: the screen went while its
+     * peer connection played on, and that call's `call.ended` no longer matched anything. Clean-up now only resets the
+     * call it was for.
+     */
+    private var epoch = 0
+    /** When each person's current connection was first seen ("userId/connection"), for [pullGraceMillis]. */
+    private val firstSeen = mutableMapOf<String, Long>()
+    private var joinedAtMillis = 0L
+    private var reportedConnected: String? = null
+    private var connectedJob: Job? = null
+    private var deferredPull: Job? = null
+    private var reconcileJob: Job? = null
 
     val available get() = engine.available
 
@@ -185,9 +215,10 @@ class CallController(
         val c = call ?: return
         stopRinging(c.callId)
         _state.update { it?.copy(phase = CallPhase.Ended, endReason = "DECLINED") }
+        val mine = epoch
         scope.launch {
             (remote.decline(c.callId) as? AppResult.Success)?.value?.takeIf { it.state == "ENDED" }?.let { logEnded(it) }
-            finish()
+            finish(mine)
         }
     }
 
@@ -205,9 +236,10 @@ class CallController(
         val c = call
         _state.update { it?.copy(phase = CallPhase.Ended, endReason = it.endReason ?: "COMPLETED") }
         closeEngine()
+        val mine = epoch
         scope.launch {
             if (c != null) (remote.leave(c.callId) as? AppResult.Success)?.value?.takeIf { it.state == "ENDED" }?.let { logEnded(it) }
-            finish()
+            finish(mine)
         }
     }
 
@@ -264,16 +296,89 @@ class CallController(
                 if (quick != null) applyPhotos(token, c.chatId, quick)
                 publish()
                 if (quick == null) scope.launch { applyPhotos(token, c.chatId, lookup.await()) }
+                startReconcile()
             }
             "call.updated" -> data?.let { decode(it) }?.let { c -> if (c.callId == call?.callId) { call = c; publish(); pullNew() } }
-            "call.ended" -> data?.let { decode(it) }?.let { c ->
-                stopRinging(c.callId)
-                logEnded(c)
-                if (c.callId != call?.callId) return
-                call = c
-                closeEngine()
-                _state.update { it?.copy(phase = CallPhase.Ended, endReason = c.endReason) }
-                finish()
+            "call.ended" -> data?.let { decode(it) }?.let { c -> endedByServer(c) }
+            // Our ring stopped without us answering (the caller hung up, our 45 s ran out in a group call going on).
+            "call.ring_stopped" -> {
+                val callId = data?.get("callId")?.jsonPrimitive?.contentOrNull ?: return
+                stopRinging(callId)
+                if (callId != call?.callId || _state.value?.phase != CallPhase.Incoming) return
+                _state.update { it?.copy(phase = CallPhase.Ended, endReason = data["reason"]?.jsonPrimitive?.contentOrNull ?: "MISSED") }
+                finish(epoch)
+            }
+        }
+    }
+
+    /** The server says [c] is over (its frame, or a read of it): close everything for it, once. */
+    private suspend fun endedByServer(c: CallDto) {
+        stopRinging(c.callId)
+        if (c.callId != call?.callId) {
+            logEnded(c)
+            return
+        }
+        if (_state.value?.phase == CallPhase.Ended && call?.state == "ENDED") return
+        logEnded(c)
+        call = c
+        closeEngine()
+        _state.update { it?.copy(phase = CallPhase.Ended, endReason = c.endReason) }
+        finish(epoch)
+    }
+
+    /**
+     * Reads the call again (CL2) and acts on what the server says, so a `call.ended` lost with a dead socket can't
+     * leave this phone in a call nobody else is in (2026-11-09: the Redmi played a silent call for minutes). Runs
+     * every [pollMillis], whenever the socket comes back, and when media stops.
+     */
+    private suspend fun reconcile() {
+        val c = call ?: return
+        val s = _state.value ?: return
+        if (s.phase == CallPhase.Ended || s.callId != c.callId) return
+        val fresh = (remote.get(c.callId) as? AppResult.Success)?.value ?: return
+        if (fresh.callId != call?.callId || _state.value?.phase == CallPhase.Ended) return
+        if (fresh.state == "ENDED") return endedByServer(fresh)
+        val me = myUserId()
+        val mine = fresh.participants.firstOrNull { it.userId == me }
+        if (s.phase == CallPhase.Incoming && mine != null && mine.state != "INVITED") {
+            // our ring stopped (missed in a group call going on) or we answered elsewhere
+            stopRinging(fresh.callId)
+            _state.update { it?.copy(phase = CallPhase.Ended, endReason = if (mine.state == "JOINED") "COMPLETED" else mine.state) }
+            finish(epoch)
+            return
+        }
+        if (!s.group && sessionId != null) {
+            // a direct call: the other person hung up (the server ends it then; this covers an older server)
+            val other = fresh.participants.firstOrNull { it.userId != me }
+            if (other != null && other.joinedAt != null && other.state != "JOINED") return leave()
+        }
+        if (fresh != call) {
+            call = fresh
+            publish()
+            pullNew()
+        }
+    }
+
+    private fun startReconcile() {
+        if (pollMillis <= 0 || reconcileJob?.isActive == true) return
+        reconcileJob = scope.launch {
+            launch {
+                socketUp.distinctUntilChanged().drop(1).collect { up -> if (up) reconcile() }
+            }
+            var lastPackets: Long? = null
+            var quietSince = 0L
+            while (true) {
+                delay(pollMillis)
+                reconcile()
+                if (stallMillis <= 0 || _state.value?.phase != CallPhase.Active) { lastPackets = null; continue }
+                val packets = engine.receivedPackets() ?: continue
+                val now = clock()
+                if (packets != lastPackets) { lastPackets = packets; quietSince = now; continue }
+                if (now - quietSince >= stallMillis) {
+                    com.circaso.core.common.Diagnostics.note("calls: no packets for ${now - quietSince}ms, hanging up")
+                    _state.update { it?.copy(error = "The call dropped.") }
+                    leave()
+                }
             }
         }
     }
@@ -312,6 +417,7 @@ class CallController(
                 is AppResult.Success -> {
                     engine.acceptAnswer(r.value.answer)
                     sessionId = r.value.sessionId
+                    joinedAtMillis = clock()
                     call = r.value.call
                     val s = _state.value
                     engine.setMicrophone(s?.mic ?: true)
@@ -333,13 +439,31 @@ class CallController(
 
     private fun pullNew() { scope.launch { lock.withLock { pullNewLocked() } } }
 
+    /**
+     * Pull [p] now? Cloudflare's order is publish, wait for `connected`, then subscribe: a pull before both
+     * connections are up is held ~9 s by the SFU (CL4 took 8.8 s every time, 2026-11-09). So wait for this phone's
+     * connection and their `connected` (CL3b), each at most [pullGraceMillis] (an older app never says it).
+     */
+    private fun ready(p: com.circaso.feature.calls.data.ParticipantDto): Boolean {
+        if (pullGraceMillis <= 0) return true
+        val now = clock()
+        val mineUp = engine.connected.value == true || now - joinedAtMillis >= pullGraceMillis
+        val seen = firstSeen.getOrPut("${p.userId}/${p.connection}") { now }
+        val theirsUp = p.connected || now - seen >= pullGraceMillis
+        return mineUp && theirsUp
+    }
+
     /** CL4 for everyone who has joined and isn't pulled yet, then the SFU's offer answered (CL5). */
     private suspend fun pullNewLocked() {
         val c = call ?: return
         val session = sessionId ?: return
         val me = myUserId()
-        val fresh = c.participants.filter { p ->
+        val waiting = c.participants.filter { p ->
             p.userId != me && p.state == "JOINED" && p.tracks.isNotEmpty() && (p.userId !in pulled || pulled[p.userId] != p.connection)
+        }
+        val fresh = waiting.filter { ready(it) }
+        if (fresh.size < waiting.size && deferredPull?.isActive != true) {
+            deferredPull = scope.launch { delay(pullGraceMillis); pullNew() }
         }
         if (fresh.isEmpty()) return
         val r = remote.pull(c.callId, PullRequest(session, fresh.flatMap { p -> p.tracks.map { PullTrackRequest(p.userId, it.trackName) } }))
@@ -441,22 +565,27 @@ class CallController(
 
     private fun fail(error: AppError?, message: String? = null) {
         closeEngine()
+        reconcileJob?.cancel()
         _state.update { it?.copy(phase = CallPhase.Ended, error = message ?: error?.let { e -> ErrorMessages.forError(e) }, endReason = it.endReason ?: "FAILED") }
         finish()
     }
 
-    /** "Call ended" stays a moment, then the call screen goes. */
-    private fun finish() {
+    /** "Call ended" stays a moment, then the call screen goes, unless another call ([epoch]) has begun since. */
+    private fun finish(forEpoch: Int = epoch) {
+        if (forEpoch != epoch) return
         clearJob?.cancel()
         clearJob = scope.launch {
             delay(if (_state.value?.error != null) 3_000 else 1_500)
-            reset()
+            if (forEpoch == epoch) reset()
         }
     }
 
     /** A new call right after the last one ended: the last one's pending clean-up must not wipe this one. */
     private fun takeOver() {
+        epoch++
         if (clearJob?.isActive == true) { clearJob?.cancel(); reset() }
+        // the last call's engine, if a stale clean-up ever left it running, never plays under this one
+        reconcileJob?.cancel()
     }
 
     /**
@@ -465,6 +594,20 @@ class CallController(
      * If it can't within [reconnectGiveUpMillis] it hangs up, so nobody is left alone on a call.
      */
     private fun watch() {
+        startReconcile()
+        if (connectedJob?.isActive != true) {
+            connectedJob = scope.launch {
+                engine.connected.collect { up ->
+                    val c = call ?: return@collect
+                    val session = sessionId ?: return@collect
+                    if (up != true || reportedConnected == session) return@collect
+                    reportedConnected = session
+                    // CL3b: everyone may pull us now; and our own pulls waiting for this connection can go.
+                    remote.connected(c.callId, session)
+                    pullNew()
+                }
+            }
+        }
         val receivingFlow = engine.receivingMids
         if (receivingFlow != null && receivingJob?.isActive != true) {
             receivingJob = scope.launch { receivingFlow.collect { if (it.isNotEmpty()) publish() } }
@@ -513,6 +656,8 @@ class CallController(
                 is AppResult.Success -> {
                     engine.acceptAnswer(r.value.answer)
                     sessionId = r.value.sessionId
+                    joinedAtMillis = clock()
+                    reportedConnected = null
                     call = r.value.call
                     engine.setMicrophone(s?.mic ?: true)
                     engine.setSpeaker(s?.speaker ?: false)
@@ -531,6 +676,12 @@ class CallController(
     }
 
     private fun reset() {
+        reconcileJob?.cancel()
+        connectedJob?.cancel()
+        deferredPull?.cancel()
+        firstSeen.clear()
+        reportedConnected = null
+        joinedAtMillis = 0L
         watchJob?.cancel()
         reconnectJob?.cancel()
         receivingJob?.cancel()

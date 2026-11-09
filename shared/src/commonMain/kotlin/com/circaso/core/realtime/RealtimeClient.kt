@@ -89,7 +89,14 @@ class RealtimeClient(
         } finally {
             current = null
             _connected.value = false
-            runCatching { socket.close() }
+            // NonCancellable: this runs when the supervisor cancels the loop (the network flapped, sign-out), and a
+            // suspending close in a cancelled coroutine returns at once without sending anything. The socket then
+            // stayed open with nobody reading it, so its pings went unanswered: the server saw a second socket for
+            // the phone and timed the first out ~15-40 s later ("Ping timeout", 1011), and any frame sent to it in
+            // between (a call.ended) was lost (2026-11-09).
+            kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable) {
+                kotlinx.coroutines.withTimeoutOrNull(CloseMillis) { runCatching { socket.close() } }
+            }
         }
     }
 
@@ -148,4 +155,7 @@ class RealtimeClient(
 private class StaleSocket : Exception("no frame from the server")
 
 private const val IdleCheckMillis = 10_000L
+
+/** How long closing a socket may take before it is abandoned (a dead network never answers the close). */
+private const val CloseMillis = 2_000L
 private const val IdleLimitMillis = 70_000L

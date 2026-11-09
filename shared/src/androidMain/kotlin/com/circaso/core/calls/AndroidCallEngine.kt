@@ -174,6 +174,24 @@ class AndroidCallEngine(private val context: Context) : CallEngine {
         }
     }
 
+    override suspend fun receivedPackets(): Long? {
+        val connection = synchronized(guard) { pc } ?: return null
+        return suspendCancellableCoroutine { cont ->
+            val ok = runCatching {
+                synchronized(guard) {
+                    if (pc !== connection) throw CallEngineException("closed")
+                    connection.getStats { report ->
+                        val packets = report.statsMap.values
+                            .filter { it.type == "inbound-rtp" && it.members["kind"] == "audio" }
+                            .sumOf { (it.members["packetsReceived"] as? Number)?.toLong() ?: 0L }
+                        if (cont.isActive) cont.resume(packets)
+                    }
+                }
+            }.isSuccess
+            if (!ok && cont.isActive) cont.resume(null)
+        }
+    }
+
     override fun setMicrophone(on: Boolean) { audio?.setEnabled(on) }
 
     override suspend fun setCamera(on: Boolean): Boolean {

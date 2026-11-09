@@ -129,6 +129,19 @@ final class CallEngineImpl: NSObject, CallEngineProvider, RTCPeerConnectionDeleg
         }
     }
 
+    /// Audio packets received over every pulled track so far (-1 without a connection): the call controller hangs up a
+    /// call whose count stops rising, since nobody is sending any more.
+    func receivedPackets(completion: @escaping (KotlinLong) -> Void) {
+        guard let connection = pc else { completion(KotlinLong(value: -1)); return }
+        connection.statistics { report in
+            var total: Int64 = 0
+            for stat in report.statistics.values where stat.type == "inbound-rtp" && (stat.values["kind"] as? String) == "audio" {
+                total += (stat.values["packetsReceived"] as? NSNumber)?.int64Value ?? 0
+            }
+            DispatchQueue.main.async { completion(KotlinLong(value: total)) }
+        }
+    }
+
     func setMicrophone(on: Bool) { audio?.isEnabled = on }
 
     func setCamera(on: Bool, completion: @escaping (KotlinBoolean) -> Void) {

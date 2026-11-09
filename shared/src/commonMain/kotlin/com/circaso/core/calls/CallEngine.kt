@@ -46,6 +46,9 @@ interface CallEngine {
      */
     val receivingMids: StateFlow<Set<String>>? get() = null
 
+    /** Audio packets received so far over every pulled track; a number that stops rising means nobody is sending. Null: can't tell. */
+    suspend fun receivedPackets(): Long? = null
+
     fun setMicrophone(on: Boolean)
     /** Turns the camera on (asking for permission) or off; false when it couldn't be turned on. */
     suspend fun setCamera(on: Boolean): Boolean
