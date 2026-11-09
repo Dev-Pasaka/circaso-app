@@ -58,7 +58,7 @@ jobs:
 
       # The runner's disk is tight for a KMP app with libsignal; drop toolchains this job never uses.
       - name: Free disk space
-        run: sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/.ghcup /usr/local/share/boost /opt/hostedtoolcache/CodeQL
+        run: sudo rm -rf /usr/share/dotnet
 
       - uses: actions/setup-java@v4
         with:
@@ -115,8 +115,9 @@ jobs:
           CIRCASO_UPLOAD_KEYSTORE_PASSWORD: ${{ secrets.UPLOAD_KEYSTORE_PASSWORD }}
           CIRCASO_UPLOAD_KEY_ALIAS: ${{ secrets.UPLOAD_KEY_ALIAS }}
           CIRCASO_UPLOAD_KEY_PASSWORD: ${{ secrets.UPLOAD_KEY_PASSWORD }}
+        # Release lint (about 6 of 15 minutes) runs in the `lint` job beside this one instead of in the way of publishing.
         run: >-
-          ./gradlew :androidApp:bundleRelease --console=plain
+          ./gradlew :androidApp:bundleRelease -x lintVitalRelease --console=plain
           -Pcircaso.versionCode=${{ steps.v.outputs.code }}
           -Pcircaso.versionName=${{ steps.v.outputs.name }}
 
@@ -153,3 +154,42 @@ jobs:
       - name: Remove the key from the runner
         if: always()
         run: rm -f "$RUNNER_TEMP/upload.jks" androidApp/google-services.json local.properties
+
+  # Android's release lint (fatal checks across the app and its libraries), beside the publish job so it doesn't delay
+  # it. A red run here means the published build has a problem lint knows about: fix it in the next push.
+  lint:
+    name: Release lint
+    if: ${{ vars.PLAY_PUBLISH_ENABLED == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          cache-read-only: true
+      - name: Local settings
+        env:
+          GOOGLE_SERVICES_JSON_BASE64: ${{ secrets.GOOGLE_SERVICES_JSON_BASE64 }}
+          CIRCLE_PWSDK_USERNAME: ${{ secrets.CIRCLE_PWSDK_USERNAME || vars.CIRCLE_PWSDK_USERNAME }}
+          CIRCLE_PWSDK_TOKEN: ${{ secrets.CIRCLE_PWSDK_TOKEN }}
+        run: |
+          set -euo pipefail
+          if printf '%s' "$GOOGLE_SERVICES_JSON_BASE64" | head -c 1 | grep -q '{'; then
+            printf '%s' "$GOOGLE_SERVICES_JSON_BASE64" > androidApp/google-services.json
+          else
+            printf '%s' "$GOOGLE_SERVICES_JSON_BASE64" | tr -d ' \r\n' | base64 -d > androidApp/google-services.json
+          fi
+          {
+            echo "sdk.dir=$ANDROID_HOME"
+            echo "pwsdk.maven.username=$CIRCLE_PWSDK_USERNAME"
+            echo "pwsdk.maven.password=$CIRCLE_PWSDK_TOKEN"
+          } > local.properties
+      - name: Lint
+        run: ./gradlew :androidApp:lintVitalRelease --console=plain
+      - name: Remove local settings
+        if: always()
+        run: rm -f androidApp/google-services.json local.properties
