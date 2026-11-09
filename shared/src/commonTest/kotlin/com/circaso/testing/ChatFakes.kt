@@ -106,6 +106,8 @@ class FakeMessagesDao(private val chats: FakeChatsDao? = null) : MessagesDao {
     override suspend fun ownLiveShares() = rows.value.filter { it.outgoing && it.kind == MessageKind.Location && it.text?.contains("\"liveId\"") == true }
     override fun observeLiveShares(chatId: String) = rows.map { list -> list.filter { it.chatId == chatId && it.kind == MessageKind.Location && it.text?.contains("\"liveId\"") == true }.sortedBy { it.orderAt } }
     override suspend fun insert(message: MessageEntity): Long { val id = nextId++; rows.value = rows.value + message.copy(localId = id); return id }
+    override suspend fun insertIfAbsent(message: MessageEntity): Long =
+        if (rows.value.any { it.clientMessageId == message.clientMessageId }) -1 else insert(message)
     override suspend fun upsert(message: MessageEntity) { if (rows.value.any { it.localId == message.localId }) update(message.localId) { message } else insert(message) }
     override suspend fun setStatus(localId: Long, status: String, errorCode: String?) = update(localId) { it.copy(status = status, errorCode = errorCode) }
     override suspend fun advanceStatus(messageId: String, status: String, from: List<String>) { rows.value = rows.value.map { if (it.messageId == messageId && it.outgoing && it.status in from) it.copy(status = status) else it } }

@@ -403,7 +403,9 @@ class CallController(
         val end = c.endedAt?.let { runCatching { kotlin.time.Instant.parse(it).toEpochMilliseconds() }.getOrNull() }
         val created = runCatching { kotlin.time.Instant.parse(c.createdAt).toEpochMilliseconds() }.getOrNull() ?: nowMillis()
         val seconds = if (outcome == CallLogOutcome.Completed && start != null && end != null) ((end - start) / 1000).coerceAtLeast(0) else 0
-        log(CallLogEntry(c.chatId, c.callId, outgoing, c.kind == "VIDEO", outcome, seconds, c.startedBy, created))
+        // The history entry is a nicety: failing to write it must never take the call (or the app) down with it.
+        runCatching { log(CallLogEntry(c.chatId, c.callId, outgoing, c.kind == "VIDEO", outcome, seconds, c.startedBy, created)) }
+            .onFailure { if (it is kotlinx.coroutines.CancellationException) throw it }
     }
 
     private fun decode(o: JsonObject): CallDto? = runCatching { json.decodeFromJsonElement(CallDto.serializer(), o) }.getOrNull()

@@ -357,6 +357,14 @@ class CallControllerTest {
         assertTrue(logged.single().outgoing)
     }
 
+    @Test fun aHistoryWriteThatFailsStillEndsTheCall() = runTest(UnconfinedTestDispatcher()) {
+        val cc = CallController(remote, engine, myUserId = { "me" }, scope = backgroundScope, names = { "Mum" to false }, log = { throw IllegalStateException("UNIQUE constraint failed: message.clientMessageId") })
+        cc.start("chat1", video = false)
+        val ended = call("ENDED", person("me", "LEFT"), person("mum", "LEFT")).copy(endReason = "COMPLETED")
+        cc.onFrame("call.ended", frame("call.ended", ended))
+        assertEquals(CallPhase.Ended, cc.state.value?.phase)
+    }
+
     @Test fun endedFrameClosesTheEngine() = runTest(UnconfinedTestDispatcher()) {
         val cc = controller()
         cc.start("chat1", video = false)

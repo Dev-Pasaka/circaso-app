@@ -308,6 +308,10 @@ interface MessagesDao {
     @Insert
     suspend fun insert(message: MessageEntity): Long
 
+    /** Inserts unless a row with the same clientMessageId is already there (then -1): for rows two paths may write at once. */
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun insertIfAbsent(message: MessageEntity): Long
+
     @Upsert
     suspend fun upsert(message: MessageEntity)
 
