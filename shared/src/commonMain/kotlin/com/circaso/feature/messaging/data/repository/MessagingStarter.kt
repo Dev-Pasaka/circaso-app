@@ -1,26 +1,49 @@
 package com.circaso.feature.messaging.data.repository
 
-import com.circaso.core.realtime.RealtimeClient
 import com.circaso.feature.messaging.domain.ChatsRepository
 import com.circaso.feature.messaging.domain.MessagesRepository
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.flow.filter
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
 
 /**
- * Each time the socket connects (launch, reconnect), reload the chats and pull the inbox (guide, M13: "call it after
- * connecting the socket"). A push wake and a foreground return call `syncInbox` through the same repository.
+ * Each time the socket connects (launch, a fresh sign-in, reconnect), reload the chats and pull the inbox (guide, M13:
+ * "call it after connecting the socket"). A push wake and a foreground return call `syncInbox` through the same
+ * repository. The reload asks members for the key of each group this phone can't name (a new phone), and while the
+ * socket stays up that is tried again every [AskAgainMillis], so an ask that found no one (or went out before this
+ * phone's keys were on the server) is not the last.
  */
 class MessagingStarter(
-    private val realtime: RealtimeClient,
+    /** The realtime socket's state ([com.circaso.core.realtime.RealtimeClient.connected]). */
+    private val connected: Flow<Boolean>,
     private val chats: ChatsRepository,
     private val messages: MessagesRepository,
     private val scope: CoroutineScope,
     /** A live location share outlives the app: on launch, its tracker is started again if one is still running. */
     private val live: LiveLocations? = null,
+    private val askAgainMillis: Long = AskAgainMillis,
 ) {
     fun start() {
-        scope.launch { realtime.connected.filter { it }.collect { chats.refresh(); messages.syncInbox(); live?.flushStops() } }
+        scope.launch {
+            connected.distinctUntilChanged().collectLatest { connected ->
+                if (!connected) return@collectLatest
+                chats.refresh()
+                messages.syncInbox()
+                live?.flushStops()
+                while (true) {
+                    delay(askAgainMillis)
+                    chats.askForMissingGroupKeys()
+                }
+            }
+        }
         live?.let { scope.launch { it.refreshTracker() } }
+    }
+
+    companion object {
+        /** As often as a group may be asked ([GroupKeys.AskEveryMillis]): one more ask per waiting group, no more. */
+        const val AskAgainMillis = GroupKeys.AskEveryMillis
     }
 }

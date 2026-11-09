@@ -21,9 +21,32 @@ data class Chat(
     val peerId: String?,
     /** A private chat with a space's owner (SH2, "Private · via {space}"), separate from any ordinary chat with them. */
     val viaSpaceId: String? = null,
-    /** False for a group whose name this phone can't read (no key for it): [title] is then only the placeholder. */
+    /**
+     * False for a group whose name this phone can't read (no key for it, a new phone): [title] is then made from the
+     * members' names, never a name of its own, and [nameState] says whether the key is still on its way.
+     */
     val nameKnown: Boolean = true,
-)
+    val nameState: GroupNameState = GroupNameState.Known,
+    /**
+     * Whose phone the key is expected from, when that is one person (the group's only other member): their first
+     * name. Null means any member's.
+     */
+    val waitingFor: String? = null,
+    /**
+     * What the photo's initials are made from when it differs from [title]: a group shown by its members' names
+     * ("You and Amina" would give "YA") uses their first names ("Amina", "Amina Brian").
+     */
+    val initialsFrom: String? = null,
+) {
+    val avatarLabel: String get() = initialsFrom ?: title
+}
+
+/**
+ * A group's sealed name and photo on this phone (2026-11-09). A new phone has no key for them and asks the members:
+ * [Waiting] until one answers; [Unavailable] once every member asked said they have no key either (an admin can then
+ * name the group again, which gives it a new key).
+ */
+enum class GroupNameState { Known, Waiting, Unavailable }
 
 /** One row of the chat list (design C1): the chat, its newest message and how many are unread. */
 data class ChatSummary(val chat: Chat, val latest: Message?, val unread: Int)

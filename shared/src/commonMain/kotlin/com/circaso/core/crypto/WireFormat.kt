@@ -156,6 +156,11 @@ data class ChatPayload(
          * older phone that doesn't know it drops it quietly.
          */
         const val MetaKeyRequest = "metaKeyRequest"
+        /**
+         * The answer to a [MetaKeyRequest] from a member whose phone has no key for the group either (2026-11-09), so
+         * the asking phone stops waiting on them. [metaVersion] as asked. Never shown; an older phone drops it quietly.
+         */
+        const val MetaKeyNone = "metaKeyNone"
         /** A moment's body for a new phone of someone in my audience (moments-api.md, key request). Never shown in a chat. */
         const val MomentBody = "momentBody"
         const val Control = "control"

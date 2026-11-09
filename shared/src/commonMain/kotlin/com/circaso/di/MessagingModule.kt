@@ -82,7 +82,13 @@ val messagingModule = module {
             chats.deleteDeliveriesTo(it)
         })
     }
-    single { GroupKeys(get(), get(), get(), get(), get(), get(), get(named("ownUserId"))) }
+    single {
+        GroupKeys(
+            get(), get(), get(), get(), get(), get(), get(named("ownUserId")),
+            // A new phone asks for a group's key only once its own are on the server, or a member could seal for the old ones.
+            keysPublished = { get<KeysRepository>().maintain() is com.circaso.core.common.AppResult.Success },
+        )
+    }
     single {
         com.circaso.feature.messaging.data.repository.GroupPhotos(
             get(), get(named("plain")), get(), get(), get(),
@@ -117,7 +123,7 @@ val messagingModule = module {
     // Notifications (2026-11-06): pushes worded on the phone with privacy, and where a tap lands.
     single { com.circaso.core.notifications.PushNotices(get(), get(), get(), get(), get(), get(), get(), get()) }
     factory<com.circaso.core.notifications.NotificationLookups> { com.circaso.core.notifications.AppNotificationLookups(get(), get(), get()) }
-    single { MessagingStarter(get<RealtimeClient>(), get(), get(), get(), live = get()) }
+    single { MessagingStarter(get<RealtimeClient>().connected, get(), get(), get(), live = get()) }
 
     factory { ObserveChatsUseCase(get()) }
     factory { ObserveChatUseCase(get()) }
