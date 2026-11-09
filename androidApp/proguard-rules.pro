@@ -28,3 +28,7 @@
 # Readable crash reports in Play: keep line numbers (the mapping file CI uploads restores names).
 -keepattributes SourceFile,LineNumberTable
 -renamesourcefileattribute SourceFile
+
+# ONNX Runtime (Asha's voice detector): its native code builds Java objects (TensorInfo, OnnxTensor, …) by name through
+# JNI. R8 renamed them and voice mode crashed in convertToTensorInfo (GetMethodID). Keep the Java API whole.
+-keep class ai.onnxruntime.** { *; }
