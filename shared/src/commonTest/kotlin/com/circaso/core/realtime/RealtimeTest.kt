@@ -186,6 +186,18 @@ class RealtimeTest {
         assertEquals(listOf("profile", "contacts"), calls.log)
     }
 
+    @Test fun someoneElsesProfileChangeAlsoRefreshesTheirChats() = runTest {
+        val calls = Calls()
+        val d = RealtimeDispatcher(
+            frames = MutableSharedFlow(), scope = kotlinx.coroutines.CoroutineScope(UnconfinedTestDispatcher()),
+            onSessionRevoked = {}, refreshContacts = { calls.log += "contacts" }, refreshBlocks = {}, refreshOwnProfile = { calls.log += "profile" },
+            isOwnUser = { it == "me" }, onPeerProfile = { calls.log += "chats:$it" },
+        )
+        d.handle(f("users", "profile.updated", """{"userId":"amina","version":4}"""))
+        d.handle(f("users", "profile.updated", """{"userId":"me","version":5}"""))
+        assertEquals(listOf("contacts", "chats:amina", "profile"), calls.log)
+    }
+
     @Test fun resyncReloadsEverythingOverHttp() = runTest {
         val calls = Calls(); dispatcher(calls).handle(f("users", "resync"))
         assertEquals(listOf("contacts", "blocks", "profile"), calls.log)

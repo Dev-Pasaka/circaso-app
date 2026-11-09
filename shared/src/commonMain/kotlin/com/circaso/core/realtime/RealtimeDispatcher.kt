@@ -24,6 +24,11 @@ class RealtimeDispatcher(
     private val onStatusFrame: suspend (type: String, data: kotlinx.serialization.json.JsonObject?) -> Unit = { _, _ -> },
     /** `assistant` / `status` (2026-11-07): Asha is back from maintenance when `available` is true. */
     private val onAshaBack: suspend () -> Unit = {},
+    /**
+     * Someone else's profile changed: the chats they're in keep their own copy of the name and photo (the chat list
+     * reads those), refreshed here so a new photo shows in Chats as soon as it does in Moments, not after a restart.
+     */
+    private val onPeerProfile: suspend (userId: String) -> Unit = {},
 ) {
     fun start() {
         scope.launch { frames.collect { handle(it) } }
@@ -51,7 +56,11 @@ class RealtimeDispatcher(
             frame.module == "users" && frame.type in setOf("contact.joined", "connection.added") -> refreshContacts()
             frame.module == "users" && frame.type == "profile.updated" -> {
                 val userId = frame.data?.get("userId")?.jsonPrimitive?.content
-                if (userId != null && isOwnUser(userId)) refreshOwnProfile() else refreshContacts()
+                if (userId != null && isOwnUser(userId)) refreshOwnProfile()
+                else {
+                    refreshContacts()
+                    if (userId != null) onPeerProfile(userId)
+                }
             }
         }
     }
