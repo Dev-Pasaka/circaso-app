@@ -60,6 +60,9 @@ class FakeChatsDao : ChatsDao {
     override suspend fun insertMembers(members: List<ChatMemberEntity>) { this.members.value = this.members.value.filterNot { m -> members.any { it.chatId == m.chatId && it.userId == m.userId } } + members }
     override suspend fun deleteMembers(chatId: String) { members.value = members.value.filterNot { it.chatId == chatId } }
     override suspend fun deleteMember(chatId: String, userId: String) { members.value = members.value.filterNot { it.chatId == chatId && it.userId == userId } }
+    override suspend fun updateMemberProfile(userId: String, displayName: String, handle: String?, avatarUrl: String?) {
+        members.value = members.value.map { if (it.userId == userId) it.copy(displayName = displayName, handle = handle, avatarUrl = avatarUrl) else it }
+    }
     override suspend fun metaKey(chatId: String, metaVersion: Int) = metaKeys[chatId to metaVersion]
     override suspend fun latestMetaKey(chatId: String) = metaKeys.values.filter { it.chatId == chatId }.maxByOrNull { it.metaVersion }
     override suspend fun upsertMetaKey(key: GroupMetaKeyEntity) { metaKeys[key.chatId to key.metaVersion] = key }

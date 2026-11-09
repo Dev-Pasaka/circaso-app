@@ -53,6 +53,13 @@ val realtimeModule = module {
                 get<com.circaso.feature.status.domain.MomentsRepository>().onFrame(type, field("momentId"), field("posterId"), field("requesterId"))
             },
             onAshaBack = { get<com.circaso.feature.assistant.domain.AshaAvailability>().reportBack() },
+            onPeerProfile = { userId ->
+                val profile = get<com.circaso.feature.profile.domain.ProfileRepository>().publicProfile(userId)
+                if (profile is com.circaso.core.common.AppResult.Success) {
+                    val p = profile.value
+                    get<com.circaso.feature.messaging.data.local.ChatsDao>().updateMemberProfile(p.userId, p.displayName, p.handle, p.avatarUrl)
+                }
+            },
         )
     }
 }
