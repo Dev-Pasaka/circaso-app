@@ -187,20 +187,62 @@ class CallController(
         }
     }
 
-    /** A group's "Join call" banner. */
-    fun joinExisting(chatId: String) {
-        scope.launch {
-            val existing = (remote.forChat(chatId) as? AppResult.Success)?.value ?: return@launch
+    /**
+     * The chat's call bar (2026-11-09): straight into the call going on in [chatId], no second confirmation. Back to it
+     * when this phone is already on it (minimised). With no call on this phone the call screen opens at once,
+     * "Connecting…", from what the bar knows ([video], [title], [group]); the call's own data replaces it when CL2
+     * answers. A call on another chat is hung up only once CL2 says there is a call here to switch to (one call at a
+     * time), never for nothing. [onGone] runs when there's no call to join any more, so the bar can drop at once.
+     */
+    fun joinExisting(
+        chatId: String, video: Boolean = false, title: String = "", group: Boolean = true,
+        onGone: () -> Unit = {},
+        /** A switch from my other call that couldn't read this one: why, for the chat to say (my call goes on). */
+        onFailed: (String) -> Unit = {},
+    ) {
+        val now = _state.value
+        val busy = now != null && now.phase != CallPhase.Ended
+        if (busy && now.chatId == chatId) { minimise(false); return }
+        if (joiningBar) return // a second tap while the first is on its way
+        joiningBar = true
+        if (!busy) {
             takeOver()
-            labelOf = labels(chatId)
-            // Never a call without its screen: the call's own data stands in when the chat isn't on this phone yet.
-            val (t, g) = names(chatId) ?: ("Group call" to (existing.participants.size > 2))
-            _state.value = CallUi(existing.callId, chatId, t, existing.kind == "VIDEO", g, CallPhase.Connecting, camera = existing.kind == "VIDEO", speaker = true)
-            call = existing
-            scope.launch { loadPhotos(chatId) }
-            join(existing)
+            call = null // an End before CL2 answers hangs up nothing old
+            _state.value = CallUi(null, chatId, title, video, group, CallPhase.Connecting, camera = video, speaker = true)
+        }
+        val mine = epoch
+        scope.launch {
+            try {
+                val found = remote.forChat(chatId)
+                val existing = (found as? AppResult.Success)?.value?.takeIf { it.state != "ENDED" }
+                if (existing == null) {
+                    val gone = found is AppResult.Success || (found as AppResult.Failure).error.let { it is AppError.Api && it.code == "calls.not_found" }
+                    if (gone) onGone()
+                    if (busy || epoch != mine || _state.value?.phase != CallPhase.Connecting) {
+                        // my other call goes on; say why nothing changed
+                        if (!gone && busy) onFailed(ErrorMessages.forError((found as AppResult.Failure).error))
+                        return@launch
+                    }
+                    if (gone) { _state.update { it?.copy(phase = CallPhase.Ended, endReason = "COMPLETED") }; finish(mine) }
+                    else fail((found as AppResult.Failure).error)
+                    return@launch
+                }
+                // a ring took over meanwhile, or End was pressed on the "Connecting…" screen
+                if (busy) { leave(); takeOver() } else if (epoch != mine || _state.value?.phase != CallPhase.Connecting) return@launch
+                labelOf = labels(chatId)
+                // Never a call without its screen: the call's own data stands in when the chat isn't on this phone yet.
+                val (t, g) = names(chatId) ?: (title.ifBlank { "Group call" } to (group || existing.participants.size > 2))
+                _state.value = CallUi(existing.callId, chatId, t, existing.kind == "VIDEO", g, CallPhase.Connecting, camera = existing.kind == "VIDEO", speaker = true)
+                call = existing
+                scope.launch { loadPhotos(chatId) }
+                join(existing)
+            } finally {
+                joiningBar = false
+            }
         }
     }
+
+    private var joiningBar = false
 
     /** H1: Accept. */
     fun accept() {

@@ -246,6 +246,7 @@ fun ChatsContent(
             val ringed = peer != null && moments != null && peer in unseenPosters
             ChatRow(
                 summary, now, state.fiat, selected = summary.chat.chatId == selectedChatId, coinRates = state.coinRates, online = state.online,
+                call = state.calls[summary.chat.chatId],
                 onAvatar = if (ringed) ({ moments.actions.onOpenRing(peer!!) }) else null,
                 ringArcs = peer?.let { ringArcs[it] },
                 modifier = swap(),
@@ -273,6 +274,8 @@ private fun ChatRow(
     ringArcs: List<Boolean>? = null,
     /** Offline, a group still waiting for its name says it waits for a connection (as a waiting moment does). */
     online: Boolean = true,
+    /** A call going on in this chat: the second line says so, in place of the last message. */
+    call: com.circaso.feature.calls.LiveChatCall? = null,
     modifier: Modifier = Modifier,
     onClick: () -> Unit,
 ) {
@@ -319,6 +322,7 @@ private fun ChatRow(
             .background(androidx.compose.animation.animateColorAsState(if (selected) c.fill else androidx.compose.ui.graphics.Color.Transparent, label = "selected").value)
             .semantics { this.selected = selected },
         sub = preview,
+        subContent = call?.let { live -> { CallInProgressLine(live) } },
         leading = {
             if (!summary.chat.nameKnown && summary.chat.kind == com.circaso.feature.messaging.domain.ChatKind.Group) Box {
                 Avatar(summary.chat.avatarLabel, imageUrl = summary.chat.avatarUrl)
@@ -346,6 +350,22 @@ private fun ChatRow(
         },
         onClick = onClick,
     )
+}
+
+/**
+ * A chat's second line while a call goes on in it (2026-11-09; no frame): the call's icon and "Call in progress" in ink
+ * and semibold, so it stands out from last-message previews in secondary ink without a colour the palette doesn't
+ * have; the icon tells voice from video, and a group adds how many are on it (the bar's count). Tapping the row opens the chat as usual, where the bar joins.
+ */
+@Composable
+private fun CallInProgressLine(call: com.circaso.feature.calls.LiveChatCall) {
+    val c = CircasoTheme.colors
+    val t = CircasoTheme.typography
+    val words = "Call in progress" + if (call.joined.size > 1) " · ${call.joined.size} people" else ""
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        CircasoIconImage(if (call.video) CircasoIcon.Video else CircasoIcon.Phone, c.ink, Modifier.size(14.dp))
+        BasicText(words, style = t.subhead.copy(color = c.ink, fontWeight = FontWeight.SemiBold), maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
+    }
 }
 
 /**

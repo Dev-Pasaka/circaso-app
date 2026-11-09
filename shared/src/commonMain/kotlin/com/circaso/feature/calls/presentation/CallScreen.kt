@@ -161,6 +161,8 @@ fun BoxScope.CallOverlay(
     /** The contributions landing on a group call, held for the whole call by the caller (it outlives minimising). */
     celebrations: CallCelebrationsModel? = null,
     myUserId: String? = null,
+    /** False while the call's own chat is open: its call bar is the way back there. */
+    showPill: Boolean = true,
 ) {
     val still = CircasoTheme.reduceMotion
     // Back on a full-screen call minimises it (never declines or hangs up); the screens under it stay where they were.
@@ -174,7 +176,7 @@ fun BoxScope.CallOverlay(
     ) {
         if (call != null) CallSurface(call, actions, money, chama, fiat, celebrations, myUserId)
     }
-    AnimatedVisibility(call != null && call.minimised, Modifier.align(Alignment.TopCenter), enter = fadeIn(tween(CircasoMotion.BaseMs)), exit = fadeOut(tween(CircasoMotion.QuickMs))) {
+    AnimatedVisibility(call != null && call.minimised && showPill, Modifier.align(Alignment.TopCenter), enter = fadeIn(tween(CircasoMotion.BaseMs)), exit = fadeOut(tween(CircasoMotion.QuickMs))) {
         if (call != null) CallPill(call) { actions.onMinimise(false) }
     }
 }
@@ -1021,16 +1023,12 @@ private fun connectingTo(call: CallUi): String? {
     return name?.substringBefore(' ')?.takeIf { it.isNotBlank() }
 }
 
-/** "04:12", ticking once a second. */
+/** "04:12", ticking once a second (also the chat's call bar). */
 @Composable
-private fun elapsedText(since: Long?): String {
+internal fun elapsedText(since: Long?): String {
     var now by remember { mutableLongStateOf(nowMillis()) }
     LaunchedEffect(since) { while (since != null) { now = nowMillis(); delay(1_000) } }
-    val s = ((now - (since ?: now)) / 1000).coerceAtLeast(0)
-    val h = s / 3600
-    val m = (s % 3600) / 60
-    val sec = s % 60
-    return if (h > 0) "$h:${m.toString().padStart(2, '0')}:${sec.toString().padStart(2, '0')}" else "${m.toString().padStart(2, '0')}:${sec.toString().padStart(2, '0')}"
+    return com.circaso.feature.calls.callClock(now - (since ?: now))
 }
 
 /** "Your KES 1,000 is on its way to Holiday Fund": the money's colours, announced once. */

@@ -173,6 +173,7 @@ Media3 1.4.1, multiplatform-markdown-renderer 0.46.0.
 ### Calls
 - D-K1 Cloudflare Realtime (SFU + TURN), WebRTC on the phones. Labelled **"Secure call"**, never "end-to-end encrypted".
 - D-K2 One call at a time; voice can switch to video without renegotiating; group grid up to 8; contribute presets during a group call.
+- D-K3 (2026-11-09, no frame) **Call in progress in chats.** Everyone in a chat sees its call: the thread shows a bar (up to three faces, "Amina and 2 others", voice/video, running time, a Join or Return pill; one tap, no confirmation) and the chats list row's second line says "Call in progress" with the call's icon. Rules: a direct call ends when either person leaves; a group call goes on while anyone is in it. Monochrome (ink + semibold, a breathing dot), not green: the palette has no green role. A call I'm on from my other phone shows as "On your other phone" and can't be joined here (moving the session would make the other phone stall-hang-up and end a direct call). State: `feature/calls/ChatCalls.kt` from `call.updated`/`call.ended` frames, CL2c `GET /v1/calls/live` on every socket reconnect and every 45 s while one shows, CL2-by-chat when a chat opens.
 
 ### Asha (assistant)
 - D-AS1 `/asha` typed in any text field opens Asha, except secret fields (PIN, recovery words). (Open: any field or composer only?)

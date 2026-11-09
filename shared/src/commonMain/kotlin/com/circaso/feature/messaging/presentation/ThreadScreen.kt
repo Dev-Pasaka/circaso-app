@@ -130,9 +130,12 @@ fun ThreadScreen(
     onPayRequest: ((ChamaRequest) -> Unit)? = null,
     onCallSupport: (() -> Unit)? = null,
     onCall: ((video: Boolean) -> Unit)? = null,
-    /** A call in this chat that's on but minimised: "Ongoing call · Tap to return" (WhatsApp-style). */
-    ongoingCall: String? = null,
-    onReturnToCall: () -> Unit = {},
+    /** A call going on in this chat (2026-11-09): who's on it, its running time, one tap to join or return to it. */
+    callBar: com.circaso.feature.calls.presentation.ChatCallBar? = null,
+    onCallBar: () -> Unit = {},
+    /** Why the call bar's tap did nothing (a switch that couldn't read the call), shown once as a toast. */
+    callNotice: String? = null,
+    onCallNoticeShown: () -> Unit = {},
     onOpenLocation: (Message.Media) -> Unit = {},
     /**
      * Money starts and ends in the chat (C3, GW9a/GW9a2; Pasaka 2026-11-04): `#500` pays the other person, or in a group
@@ -174,9 +177,10 @@ fun ThreadScreen(
         onPay = onPay, onOpenTransfer = onOpenTransfer, onQuickReply = viewModel::onQuickReply,
         onOpenGoal = onOpenGoal, onContribute = onContribute, onPayRequest = onPayRequest, onDecide = viewModel::onDecide, onIntroSeen = viewModel::onIntroSeen,
         onSupportDone = viewModel::onSupportDone, onSupportVerdict = viewModel::onSupportVerdict, onCallSupport = onCallSupport, onCall = onCall,
-        ongoingCall = ongoingCall, onReturnToCall = onReturnToCall, onOpenLocation = onOpenLocation, quickPay = pay, focusLocalId = focusLocalId,
+        callBar = callBar, onCallBar = onCallBar, onOpenLocation = onOpenLocation, quickPay = pay, focusLocalId = focusLocalId,
         payout = paying, onPayoutClose = onPayoutClose, moneyPrompt = moneyPrompt, onMoneyPromptHandled = onMoneyPromptHandled,
-        notice = if (payoutBusy) "This payout is already on its way." else null, onNoticeShown = { payoutBusy = false },
+        notice = callNotice ?: if (payoutBusy) "This payout is already on its way." else null,
+        onNoticeShown = { if (callNotice != null) onCallNoticeShown() else payoutBusy = false },
         onLoadOlder = viewModel::onLoadOlder, onSavePeer = viewModel::onSavePeer, onOpenMoment = onOpenMoment, onReactTo = viewModel::onReactTo,
         media = viewModel.media?.let { m ->
             ThreadMediaActions(
@@ -221,8 +225,8 @@ fun ThreadContent(
     onCallSupport: (() -> Unit)? = null,
     /** Designs C2/D2's call buttons (H1–H4): a voice or video call with this chat. */
     onCall: ((video: Boolean) -> Unit)? = null,
-    ongoingCall: String? = null,
-    onReturnToCall: () -> Unit = {},
+    callBar: com.circaso.feature.calls.presentation.ChatCallBar? = null,
+    onCallBar: () -> Unit = {},
     /** Photos, location and voice notes (WhatsApp-style); null hides the attach and mic buttons. */
     media: ThreadMediaActions? = null,
     /** A location bubble was tapped: its map, with everyone sharing live in this chat. */
@@ -407,17 +411,17 @@ fun ThreadContent(
                     com.circaso.designsystem.components.CircasoButton("Save", onSavePeer, style = com.circaso.designsystem.components.ButtonStyle.Secondary, size = com.circaso.designsystem.components.ButtonSize.Small, busy = state.savingPeer)
                 }
             }
-            // A call in this chat that's on but minimised: one tap goes back to it.
-            AnimatedVisibility(ongoingCall != null, enter = fadeIn(tween(CircasoMotion.BaseMs)), exit = fadeOut(tween(CircasoMotion.QuickMs))) {
-                Row(
-                    Modifier.fillMaxWidth().background(c.money).pressable(role = androidx.compose.ui.semantics.Role.Button, onClick = onReturnToCall)
-                        .semantics { contentDescription = (ongoingCall ?: "Ongoing call") + ". Tap to return" }
-                        .padding(horizontal = CircasoSpacing.s4, vertical = CircasoSpacing.s2),
-                    horizontalArrangement = Arrangement.spacedBy(CircasoSpacing.s2), verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    CircasoIconImage(CircasoIcon.Phone, c.onMoney, Modifier.size(16.dp))
-                    BasicText("${ongoingCall ?: "Ongoing call"} · Tap to return", style = t.footnote.copy(color = c.onMoney, fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold))
-                }
+            // A call going on in this chat, whoever is on it: one tap joins it, or goes back to mine (2026-11-09).
+            // The last bar stays while it fades out, so its words don't blank as the call ends.
+            val lastBar = androidx.compose.runtime.remember(state.chat?.chatId) { arrayOfNulls<com.circaso.feature.calls.presentation.ChatCallBar>(1) }
+            if (callBar != null) lastBar[0] = callBar
+            val stillCallBar = CircasoTheme.reduceMotion
+            AnimatedVisibility(
+                callBar != null,
+                enter = if (stillCallBar) fadeIn(tween(CircasoMotion.BaseMs)) else fadeIn(tween(CircasoMotion.BaseMs)) + androidx.compose.animation.expandVertically(tween(CircasoMotion.BaseMs)),
+                exit = if (stillCallBar) fadeOut(tween(CircasoMotion.QuickMs)) else fadeOut(tween(CircasoMotion.QuickMs)) + androidx.compose.animation.shrinkVertically(tween(CircasoMotion.QuickMs)),
+            ) {
+                (callBar ?: lastBar[0])?.let { com.circaso.feature.calls.presentation.ChatCallBarView(it, onCallBar) }
             }
             // Sharing live location here: always visible, one tap to stop (WhatsApp shows the same bar).
             val stillBanner = CircasoTheme.reduceMotion

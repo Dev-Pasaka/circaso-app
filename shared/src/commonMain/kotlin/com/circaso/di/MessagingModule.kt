@@ -149,7 +149,7 @@ val messagingModule = module {
     factory { ObserveTypingUseCase(get()) }
     factory { MessagingSettingsUseCase(get()) }
 
-    viewModel { ChatsViewModel(get(), get(), get(), get(), get(), get(), get(), getOrNull()) }
+    viewModel { ChatsViewModel(get(), get(), get(), get(), get(), get(), get(), getOrNull(), getOrNull<com.circaso.feature.calls.ChatCalls>()?.calls) }
     viewModel {
         NewChatViewModel(
             get(), get(), get(), observeChats = get(), connect = get(), createShareLink = get(),

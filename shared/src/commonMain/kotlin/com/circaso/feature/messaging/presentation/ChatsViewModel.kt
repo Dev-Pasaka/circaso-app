@@ -45,6 +45,8 @@ data class ChatsUiState(
     val coinRates: Map<String, String> = emptyMap(),
     /** The chip under the search bar: every chat, the unread ones, groups, or the Moments list (as WhatsApp). */
     val filter: ChatFilter = ChatFilter.All,
+    /** The calls going on in my chats, by chat id: their rows say "Call in progress" (2026-11-09). */
+    val calls: Map<String, com.circaso.feature.calls.LiveChatCall> = emptyMap(),
 ) {
     val shown: List<ChatSummary> get() = chats
         .filter { s -> when (filter) { ChatFilter.All -> true; ChatFilter.Unread -> s.unread > 0; ChatFilter.Groups -> s.chat.kind == com.circaso.feature.messaging.domain.ChatKind.Group; ChatFilter.Moments -> true } }
@@ -60,6 +62,7 @@ class ChatsViewModel(
     private val preferences: com.circaso.core.datastore.AppPreferences,
     observeProfile: com.circaso.feature.profile.domain.ObserveProfileUseCase,
     observeWallet: com.circaso.feature.wallet.domain.ObserveWalletUseCase? = null,
+    liveCalls: kotlinx.coroutines.flow.Flow<Map<String, com.circaso.feature.calls.LiveChatCall>>? = null,
 ) : ViewModel() {
     private val _state = MutableStateFlow(ChatsUiState())
     val state: StateFlow<ChatsUiState> = _state.asStateFlow()
@@ -75,6 +78,7 @@ class ChatsViewModel(
     private companion object { const val MetAsha = "asha.met" }
 
     init {
+        liveCalls?.let { flow -> viewModelScope.launch { flow.collect { calls -> _state.update { it.copy(calls = calls) } } } }
         viewModelScope.launch { observeChats().collect { list -> _state.update { it.copy(chats = list, loaded = true) } } }
         viewModelScope.launch { connection.status.collect { s -> _state.update { it.copy(online = s == ConnectionStatus.Online) } } }
         viewModelScope.launch { outbox.waitingMessages.collect { n -> _state.update { it.copy(waitingToSend = n) } } }

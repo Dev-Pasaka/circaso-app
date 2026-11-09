@@ -44,6 +44,8 @@ fun ListRow(
     titleEnd: (@Composable () -> Unit)? = null,
     /** The content's side inset; a list whose rows are already inset (Chats' rounded rows) passes less. */
     horizontalPadding: androidx.compose.ui.unit.Dp = CircasoSpacing.s4,
+    /** Drawn in place of [sub] when set: a second line that needs more than text (a chat's call going on). */
+    subContent: (@Composable () -> Unit)? = null,
 ) {
     val c = CircasoTheme.colors
     val t = CircasoTheme.typography
@@ -63,7 +65,8 @@ fun ListRow(
                 BasicText(title, Modifier.weight(1f, fill = false), style = t.body.copy(color = if (destructive) c.critical else c.ink), maxLines = 1, overflow = TextOverflow.Ellipsis)
                 titleEnd()
             }
-            if (sub != null) BasicText(sub, style = t.subhead.copy(color = c.inkSecondary), maxLines = 2, overflow = TextOverflow.Ellipsis)
+            if (subContent != null) subContent()
+            else if (sub != null) BasicText(sub, style = t.subhead.copy(color = c.inkSecondary), maxLines = 2, overflow = TextOverflow.Ellipsis)
         }
         if (meta != null) BasicText(meta, style = t.footnote.copy(color = c.inkTertiary))
         trailing?.invoke()

@@ -534,7 +534,7 @@ fun PreviewScreens(name: String) {
             }
             com.circaso.feature.wallet.presentation.ActivityContent(state, {}, {}, {}, {})
         }
-        else -> if (!GroupWalletPreview(name) && !ChatMoneyPreview(name) && !MomentsChatsPreview(name) && !AshaPreview(name)) BasicText("Unknown preview: $name")
+        else -> if (!GroupWalletPreview(name) && !ChatCallPreview(name) && !ChatMoneyPreview(name) && !MomentsChatsPreview(name) && !AshaPreview(name)) BasicText("Unknown preview: $name")
     }
 }
 

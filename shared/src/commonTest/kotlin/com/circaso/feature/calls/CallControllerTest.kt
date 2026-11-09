@@ -50,7 +50,11 @@ private class FakeRemote : CallsRemote {
     var pullOffer: String? = "sfu-offer"
     override suspend fun start(chatId: String, video: Boolean, key: String): AppResult<CallDto> { calls += "start"; return startResult ?: AppResult.Success(current) }
     override suspend fun get(callId: String) = AppResult.Success(current).also { calls += "get" }
-    override suspend fun forChat(chatId: String) = AppResult.Success(current).also { calls += "forChat" }
+    /** CL2 by chat's answer; null answers [current]. [forChatGate] holds it until completed. */
+    var forChatResult: AppResult<CallDto>? = null
+    var forChatGate: kotlinx.coroutines.CompletableDeferred<Unit>? = null
+    override suspend fun forChat(chatId: String): AppResult<CallDto> { calls += "forChat"; forChatGate?.await(); return forChatResult ?: AppResult.Success(current) }
+    override suspend fun live(): AppResult<List<CallDto>> = AppResult.Success(listOf(current)).also { calls += "live" }
     override suspend fun join(callId: String, request: JoinCallRequest): AppResult<JoinCallResponse> {
         calls += "join:" + request.tracks.joinToString { it.trackName }
         current = current.copy(participants = current.participants.map { if (it.userId == "me") person("me", "JOINED") else it })
@@ -589,5 +593,69 @@ class CallControllerTest {
         assertTrue("leave" in remote.calls, "hung up 20 s after the last packet")
         assertEquals(CallPhase.Ended, cc.state.value!!.phase)
         assertTrue("close" in engine.events)
+    }
+
+    @Test fun theCallBarNeverHangsUpMyOtherCallForACallThatIsGone() = runTest(UnconfinedTestDispatcher()) {
+        val cc = controller()
+        cc.start("chat1", video = false)
+        advanceUntilIdle()
+        cc.minimise(true)
+        remote.forChatResult = AppResult.Failure(AppError.Api("calls.not_found", 404, null, null, emptyMap()))
+        var gone = false
+        cc.joinExisting("g2") { gone = true }
+        advanceUntilIdle()
+        assertTrue(gone)
+        assertTrue("leave" !in remote.calls, "my call goes on")
+        assertEquals("chat1", cc.state.value!!.chatId)
+        assertTrue(cc.state.value!!.phase != CallPhase.Ended)
+
+        // offline: same, and it says why
+        remote.forChatResult = AppResult.Failure(AppError.Network)
+        var why: String? = null
+        cc.joinExisting("g2", onFailed = { why = it })
+        advanceUntilIdle()
+        assertTrue("leave" !in remote.calls)
+        assertTrue(why != null, "the chat says why")
+        assertNull(cc.state.value!!.error, "not on the minimised call, where nobody sees it")
+    }
+
+    @Test fun theCallBarOpensTheCallScreenAtOnceAndASecondTapJoinsNothingMore() = runTest(UnconfinedTestDispatcher()) {
+        val cc = controller()
+        remote.current = call("ACTIVE", person("mum", "JOINED"), person("me", "LEFT"))
+        remote.forChatGate = kotlinx.coroutines.CompletableDeferred()
+        cc.joinExisting("chat1", video = false, title = "Mum", group = false)
+        val opened = cc.state.value!!
+        assertEquals(CallPhase.Connecting, opened.phase, "before CL2 answers")
+        assertEquals("Mum", opened.title)
+        cc.joinExisting("chat1") // a second tap on the bar, while the first is on its way
+        remote.forChatGate!!.complete(Unit)
+        advanceUntilIdle()
+        assertEquals(1, remote.calls.count { it == "forChat" })
+        assertEquals(1, remote.calls.count { it.startsWith("join:") })
+        assertEquals("c1", cc.state.value!!.callId)
+    }
+
+    @Test fun theCallBarSwitchesFromMyOtherCallOnlyOnceTheNewOneIsThere() = runTest(UnconfinedTestDispatcher()) {
+        val cc = controller()
+        cc.start("chat0", video = false)
+        advanceUntilIdle()
+        cc.minimise(true)
+        remote.current = call("ACTIVE", person("mum", "JOINED"), person("me", "LEFT")).copy(callId = "c2", chatId = "g2")
+        cc.joinExisting("g2")
+        advanceUntilIdle()
+        assertTrue("leave" in remote.calls)
+        assertEquals("c2", cc.state.value!!.callId)
+        assertEquals("g2", cc.state.value!!.chatId)
+    }
+
+    @Test fun ACallGoneByTheTimeTheBarIsTappedSaysSoAndCloses() = runTest(UnconfinedTestDispatcher()) {
+        val cc = controller()
+        remote.forChatResult = AppResult.Failure(AppError.Api("calls.not_found", 404, null, null, emptyMap()))
+        cc.joinExisting("chat1", title = "Mum")
+        advanceUntilIdle()
+        assertTrue(remote.calls.none { it.startsWith("join:") })
+        assertEquals(CallPhase.Ended, cc.state.value!!.phase)
+        advanceTimeBy(5_000)
+        assertNull(cc.state.value, "\"Call ended\" showed, then the screen went")
     }
 }

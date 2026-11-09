@@ -47,7 +47,10 @@ val realtimeModule = module {
                 get<com.circaso.feature.chama.data.repository.GroupMoneyLive>().onChamaFrame(type, data)
                 get<com.circaso.feature.chama.data.repository.ContributionFeed>().onFrame(type, data)
             },
-            onCallsFrame = { type, data -> get<com.circaso.feature.calls.CallController>().onFrame(type, data) },
+            onCallsFrame = { type, data ->
+                get<com.circaso.feature.calls.CallController>().onFrame(type, data)
+                get<com.circaso.feature.calls.ChatCalls>().onFrame(type, data)
+            },
             onStatusFrame = { type, data ->
                 val field = { k: String -> (data?.get(k) as? kotlinx.serialization.json.JsonPrimitive)?.content }
                 get<com.circaso.feature.status.domain.MomentsRepository>().onFrame(type, field("momentId"), field("posterId"), field("requesterId"))

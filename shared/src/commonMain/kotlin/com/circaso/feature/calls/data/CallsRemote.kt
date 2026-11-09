@@ -29,6 +29,8 @@ import kotlinx.serialization.json.JsonObject
     val startedAt: String? = null, val endedAt: String? = null, val endReason: String? = null,
     val participants: List<ParticipantDto> = emptyList(), val iceServers: List<IceServerDto> = emptyList(),
 )
+/** CL2c: the calls going on in my chats, `iceServers` empty in each. */
+@Serializable data class LiveCallsResponse(val calls: List<CallDto> = emptyList())
 @Serializable data class StartCallRequest(val chatId: String, val video: Boolean)
 @Serializable data class LocalTrackDto(val mid: String, val trackName: String, val kind: String)
 @Serializable data class JoinCallRequest(val offer: String, val tracks: List<LocalTrackDto>)
@@ -46,6 +48,8 @@ interface CallsRemote {
     suspend fun start(chatId: String, video: Boolean, key: String): AppResult<CallDto>
     suspend fun get(callId: String): AppResult<CallDto>
     suspend fun forChat(chatId: String): AppResult<CallDto>
+    /** CL2c: every call ringing or active in a chat I was rung for (backend PR #81). */
+    suspend fun live(): AppResult<List<CallDto>>
     suspend fun join(callId: String, request: JoinCallRequest): AppResult<JoinCallResponse>
     /** CL3b: this phone's peer connection under [sessionId] is up, so the others may pull it. */
     suspend fun connected(callId: String, sessionId: String): AppResult<JsonObject>
@@ -64,6 +68,11 @@ class KtorCallsRemote(private val api: CircasoApi) : CallsRemote {
     }
     override suspend fun get(callId: String) = api.call<CallDto> { method = HttpMethod.Get; url("/v1/calls/$callId") }
     override suspend fun forChat(chatId: String) = api.call<CallDto> { method = HttpMethod.Get; url("/v1/chats/$chatId/call") }
+    override suspend fun live(): AppResult<List<CallDto>> =
+        when (val r = api.call<LiveCallsResponse> { method = HttpMethod.Get; url("/v1/calls/live") }) {
+            is AppResult.Success -> AppResult.Success(r.value.calls)
+            is AppResult.Failure -> r
+        }
     override suspend fun join(callId: String, request: JoinCallRequest) = api.call<JoinCallResponse> {
         method = HttpMethod.Post; url("/v1/calls/$callId/join"); idempotencyKey(newIdempotencyKey()); contentType(ContentType.Application.Json); setBody(request)
     }

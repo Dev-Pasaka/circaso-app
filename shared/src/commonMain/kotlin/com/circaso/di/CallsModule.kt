@@ -55,4 +55,13 @@ val callsModule = module {
             stallMillis = 20_000,
         )
     }
+    // Every call going on in my chats (2026-11-09): the chats list's "Call in progress" and the thread's call bar.
+    single {
+        val auth = get<com.circaso.core.session.AuthManager>()
+        com.circaso.feature.calls.ChatCalls(
+            get(), myUserId = { auth.userId }, scope = get(),
+            socketUp = get<com.circaso.core.realtime.RealtimeClient>().connected,
+            myCall = get<CallController>().state,
+        ).also { it.start() }
+    }
 }

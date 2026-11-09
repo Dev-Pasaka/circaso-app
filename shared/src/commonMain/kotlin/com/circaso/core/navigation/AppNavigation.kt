@@ -203,6 +203,8 @@ fun AppNavigation(forceUpdate: Boolean, home: @Composable () -> Unit) {
         }
     }
     val calls = koinInject<com.circaso.feature.calls.CallController>()
+    // Every call going on in my chats (2026-11-09): the thread's call bar and the chats list's "Call in progress".
+    val chatCalls = koinInject<com.circaso.feature.calls.ChatCalls>()
     // A Pay tapped on a chat's profile starts the payment in that chat's composer (money starts in the chat).
     val moneyPrompts = androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateMapOf<String, Long>() }
     // Typing /asha in any text field opens Asha, but only with a full session (she needs the server) and never twice.
@@ -456,6 +458,13 @@ fun AppNavigation(forceUpdate: Boolean, home: @Composable () -> Unit) {
                 val groupMoney = thread.groupMoney
                 val intoGroup = groupMoney?.walletActive == true
                 val callNow by calls.state.collectAsState()
+                val liveCalls by chatCalls.calls.collectAsState()
+                // The chat's own call, read as it opens: its bar is right even if a frame was lost with the socket.
+                androidx.compose.runtime.LaunchedEffect(route.chatId) { chatCalls.refreshChat(route.chatId) }
+                // A Switch reads this chat's call before hanging up mine: the pill spins meanwhile, and a failure says why.
+                var switching by androidx.compose.runtime.remember(route.chatId) { androidx.compose.runtime.mutableStateOf(false) }
+                var callNotice by androidx.compose.runtime.remember(route.chatId) { androidx.compose.runtime.mutableStateOf<String?>(null) }
+                androidx.compose.runtime.LaunchedEffect(callNow?.chatId, callNow?.phase) { switching = false }
                 var payingRequest by androidx.compose.runtime.remember(route.chatId) { androidx.compose.runtime.mutableStateOf<ChamaRequest?>(null) }
                 ThreadScreen(
                     threadViewModel,
@@ -485,8 +494,22 @@ fun AppNavigation(forceUpdate: Boolean, home: @Composable () -> Unit) {
                     moneyPrompt = moneyPrompts[route.chatId],
                     onMoneyPromptHandled = { moneyPrompts.remove(route.chatId) },
                     onCall = if (calls.available) ({ video -> calls.start(route.chatId, video) }) else null,
-                    ongoingCall = callNow?.takeIf { it.chatId == route.chatId && it.minimised && it.phase != com.circaso.feature.calls.CallPhase.Ended }?.let { if (it.video || it.camera) "Ongoing video call" else "Ongoing voice call" },
-                    onReturnToCall = { calls.minimise(false) },
+                    callBar = com.circaso.feature.calls.presentation.chatCallBar(route.chatId, liveCalls[route.chatId], callNow, auth.userId, online = thread.online, canCall = calls.available) { id, name ->
+                        val m = thread.chat?.members?.firstOrNull { it.userId == id }
+                        com.circaso.feature.calls.presentation.CallBarFace(m?.displayName?.takeIf { it.isNotBlank() } ?: name, m?.avatarUrl)
+                    }?.let { if (switching) it.copy(busy = true) else it },
+                    callNotice = callNotice, onCallNoticeShown = { callNotice = null },
+                    onCallBar = {
+                        if (calls.available) {
+                            switching = callNow.let { it != null && it.phase != com.circaso.feature.calls.CallPhase.Ended && it.chatId != route.chatId }
+                            calls.joinExisting(
+                                route.chatId, video = liveCalls[route.chatId]?.video == true, title = thread.chat?.title.orEmpty(),
+                                group = thread.chat?.kind == com.circaso.feature.messaging.domain.ChatKind.Group,
+                                onGone = { switching = false; chatCalls.recheck(route.chatId) },
+                                onFailed = { why -> switching = false; callNotice = why },
+                            )
+                        }
+                    },
                     focusLocalId = route.focusLocalId,
                     onOpenLocation = { m -> backStack.add(LocationMapRoute(route.chatId, m.localId)) },
                     onComposeMedia = { start -> backStack.add(ChatMediaRoute(route.chatId, start.name)) },
@@ -777,6 +800,8 @@ private fun androidx.compose.foundation.layout.BoxScope.CallLayer(backStack: Mut
         fiat = fiat,
         celebrations = celebrations,
         myUserId = me?.userId,
+        // In the call's own chat the thread's call bar returns to it (with its faces and clock): one control, not two.
+        showPill = (backStack.lastOrNull() as? ChatRoute)?.chatId != call?.chatId,
     )
 }
 
