@@ -144,6 +144,12 @@ final class CallKitVoip: NSObject, PKPushRegistryDelegate, CXProviderDelegate, C
 
     func provider(_ provider: CXProvider, perform action: CXEndCallAction) {
         if let callId = callId(for: action.callUUID) {
+            #if targetEnvironment(simulator)
+            // The simulator has no system call screen, so iOS ends every reported incoming call about a second later
+            // ("there wont be a UI to host the call"). Nobody pressed Decline: the app's own ring screen (H1) stays up
+            // and is where the call is answered or declined (2026-11-09, it auto-declined every call to the simulator).
+            if !answered.contains(callId) { forget(callId); action.fulfill(); return }
+            #endif
             IosCallKitBridge.shared.end(callId: callId)
             forget(callId)
         }
