@@ -2215,6 +2215,8 @@ Every email carries an idempotency key, `List-Unsubscribe` headers and a `catego
 - **One phone per account;** a new phone signs the old one out.
 - **Support** is a chat with free in-app audio calls; calls are labelled "Encrypted call", not end-to-end, because they run through Circaso's servers.
 - **Cash-out** is "coming soon" in-app; users go via Binance or Coinbase meanwhile. Circaso-to-Circaso sends are free; external wallet sends have fees.
+- **`#amount` in the composer (Pasaka, 2026-11-09):** `#` followed by a digit is money wherever it is typed, straight after a word too ("lunch#500"); a link's anchor (`site.com/page#12`) stays text. While typed it reads as money in the person's unit ("KES 500", `#` hidden); once something follows it, it becomes C3's money chip in place, reading the amount ("KES 500", not the frame's "#500"), and the rest of the text stays as typed.
+- **Money during a call (Pasaka, 2026-11-09):** the money button on H2/H3 and H4's contribute open a sheet over the call with the call chat's composer and money card (the same `#500 for lunch` flow as the chat). It replaces H5's preset form and leaving the call for Pay; the group sheet keeps H5's head (goal, "Everyone on the call sees it land", progress). H1's "Send money instead" declines and opens the chat with `#` ready.
 
 ### Open
 

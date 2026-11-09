@@ -25,18 +25,37 @@ class QuickPayTypingTest {
         assertEquals("5", typingAmount("#5 @usdc for lunch"), "the chip turned back into text keeps its preview")
         assertEquals("5", typingAmount("pay #5"), "anywhere in the message, not only at the start")
         assertEquals("12.5", typingAmount("for lunch #12.5 @eth thanks"))
-        assertNull(typingAmount("room#5"), "only as its own word")
+        assertEquals("12.5", typingAmount("a #12.5 @eth"))
+        assertEquals("5", typingAmount("room#5"), "no space before it needed (2026-11-09)")
+        assertEquals("500", typingAmount("lunch#500"))
+        assertEquals("50", typingAmount("pay#50 for lunch"))
+        assertEquals("500", typingAmount("#500"))
         assertNull(typingAmount("#5x"), "not part of a longer word")
+        assertNull(typingAmount("#12.5kg"))
+    }
+
+    @Test fun aLinksAnchorIsNeverMoney() {
+        assertNull(typingAmount("see https://circaso.com/help#12"))
+        assertNull(typingAmount("circaso.com#12"))
+        assertNull(typingAmount("www.example.org/#3 "))
+        assertNull(typingAmount("docs/page#2"))
+        assertNull(typingAmount("&#123;"), "an HTML entity")
+        assertNull(amountShortcut("https://circaso.com/help#12 "))
+        assertEquals("5", typingAmount("https://circaso.com/help#12 and #5"), "the link stays text, the amount after it counts")
     }
 
     @Test fun theAmountCompletesWhereverItIsTyped() {
         assertEquals("500" to "", amountShortcut("#500 "))
         assertEquals("500" to "lunch", amountShortcut("lunch #500 "), "the words before it stay as the note")
+        assertEquals("500" to "lunch", amountShortcut("lunch#500 "), "straight after a word too")
         assertEquals("500" to "lunch @eurc", amountShortcut("lunch @eurc #500 "), "a coin picked before the amount stays")
         assertNull(amountShortcut("lunch #500"), "still being typed")
+        assertNull(amountShortcut("#500"))
         assertNull(amountShortcut("#0 "), "zero isn't a payment")
-        assertNull(amountShortcut("room#500 "))
         assertEquals("lunch @eurc thanks", afterTypedAmount("lunch #500 @eurc thanks"))
+        assertEquals("lunch", afterTypedAmount("lunch#500 "))
+        assertEquals("a @eth", afterTypedAmount("a #12.5 @eth"))
+        assertEquals("eth" to "a", splitAssetTag(afterTypedAmount("a #12.5 @eth")))
         assertEquals("eurc" to "lunch thanks", splitAssetTag(afterTypedAmount("lunch #500 @eurc thanks")))
     }
 

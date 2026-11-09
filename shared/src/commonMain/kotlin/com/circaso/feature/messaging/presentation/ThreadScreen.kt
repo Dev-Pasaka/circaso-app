@@ -152,10 +152,7 @@ fun ThreadScreen(
     onComposeMedia: (ChatComposeStart) -> Unit = {},
 ) {
     val state by viewModel.state.collectAsState()
-    val pay = quickPay?.let { vm ->
-        val payState by vm.state.collectAsState()
-        QuickPay(payState, vm::onAmount, vm::onNote, vm::onPay, vm::onQuickReset, vm::onErrorShown, vm::onAssetTag, vm::onChoosing, vm::onPayFrom, vm::onRetryExact, vm::onRetryQuote, vm::onUseMax, vm::onRetryPrice)
-    }
+    val pay = rememberQuickPay(quickPay)
     // Opening a request's Pay again: its card starts over only if its last payment didn't go (the approval still stands).
     // If that payment is on its way or confirmed, it isn't paid twice: say so and put the card away.
     val threadState by viewModel.state.collectAsState()
@@ -165,10 +162,7 @@ fun ThreadScreen(
         val last = done.result?.transferId?.let { threadState.paymentStates[it] }
         if (done.result == null || last?.notSent == true) payout.onQuickReset() else { payoutBusy = true; onPayoutClose() }
     }
-    val paying = payout?.let { vm ->
-        val payState by vm.state.collectAsState()
-        QuickPay(payState, vm::onAmount, vm::onNote, vm::onPay, vm::onQuickReset, vm::onErrorShown, vm::onAssetTag, vm::onChoosing, vm::onPayFrom, vm::onRetryExact, vm::onRetryQuote, vm::onUseMax, vm::onRetryPrice)
-    }
+    val paying = rememberQuickPay(payout)
     ThreadContent(
         state, onBack, onInfo, onAsha, viewModel::onDraft, viewModel::onSend, viewModel::onSelect, viewModel::onRetry, viewModel::onDiscard, viewModel::onDeleteForEveryone, viewModel::onMessageShown,
         onPay = onPay, onOpenTransfer = onOpenTransfer, onQuickReply = viewModel::onQuickReply,
@@ -250,10 +244,8 @@ fun ThreadContent(
 ) {
     val c = CircasoTheme.colors
     var toastPayError by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf<String?>(null) }
-    // Design C3: "#500 " becomes a money chip; what follows is the note. Null when there is no chip.
-    var payChip by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf<String?>(null) }
-    val chipHaptics = androidx.compose.ui.platform.LocalHapticFeedback.current
-    fun clearPay() { payChip = null; onDraft(""); quickPay?.onReset?.invoke() }
+    // Design C3: a typed "#500" stays in the draft (ChatComposer draws it as money); a retried card's exact amount is a chip.
+    val composerMoney = androidx.compose.runtime.remember { ChatComposerMoney() }
     // Navigation hands the chat a quick pay only where `#` means money (a direct chat, a group taking contributions).
     val payable = quickPay != null && !state.isSupport
     val composerFocus = androidx.compose.runtime.remember { androidx.compose.ui.focus.FocusRequester() }
@@ -263,7 +255,7 @@ fun ThreadContent(
     fun startMoney() {
         if (!payable) return
         // Something typed already stays: the money can wait for it to be sent or cleared.
-        if (state.draft.isBlank()) { payChip = null; quickPay?.onReset?.invoke(); onDraft("#") }
+        if (state.draft.isBlank()) { composerMoney.payChip = null; quickPay?.onReset?.invoke(); onDraft("#") }
         focusComposer()
     }
     LaunchedEffect(moneyPrompt) { if (moneyPrompt != null) { startMoney(); onMoneyPromptHandled() } }
@@ -274,42 +266,19 @@ fun ThreadContent(
         val rest = listOfNotNull(m.asset.lowercase().takeIf { it != "usdc" }?.let { "@$it" }, com.circaso.feature.wallet.presentation.cardNoteTyped(m.note).takeIf { it.isNotEmpty() }).joinToString(" ")
         q.onReset()
         // Exactly the coin amount it was, so no rounding or rate move changes what is sent.
-        payChip = "#${MinorUnits.toDisplay(m.amountMinor, decimals)} ${m.asset}"; onDraft(rest)
+        composerMoney.payChip = "#${MinorUnits.toDisplay(m.amountMinor, decimals)} ${m.asset}"; onDraft(rest)
         q.onRetryExact(m.amountMinor, m.asset, m.note)
         focusComposer()
     }
-    val typingAmount = if (payChip == null && payable) typingAmount(state.draft) else null
     // The wallet's coin prices, so a card in EURC or ETH reads in the person's money like USDC.
     val coinRates = androidx.compose.runtime.remember(quickPay?.state?.wallet) { com.circaso.feature.wallet.domain.coinUnitRates(quickPay?.state?.wallet) }
-    LaunchedEffect(typingAmount) {
-        if (typingAmount != null) quickPay?.onAmount?.invoke(typingAmount) else if (payChip == null) quickPay?.onReset?.invoke()
-    }
-    // Editing the amount turns the chip back into text ("#500 @usdc lunch"): the preview stays, with its coin and note.
-    LaunchedEffect(state.draft, typingAmount) {
-        if (typingAmount != null) {
-            val (tag, note) = splitAssetTag(afterTypedAmount(state.draft))
-            quickPay?.onAssetTag?.invoke(tag)
-            quickPay?.onNote?.invoke(note)
-        }
-    }
-    val paying = (payChip != null || typingAmount != null) && payout == null
     // The room above the composer: the money card never grows past it (large text, small phone, keyboard up).
     // It changes on every frame the keyboard slides, so only the card reads it (inside its own lambda): read here, it
     // would recompose the whole conversation each frame and the keyboard would come up in jerks.
     val threadHeightPx = androidx.compose.runtime.remember { androidx.compose.runtime.mutableIntStateOf(0) }
     val density = androidx.compose.ui.platform.LocalDensity.current
     fun cardMax() = threadHeightPx.intValue.let { h -> if (h > 0) with(density) { h.toDp() } - CircasoSpacing.s2 else androidx.compose.ui.unit.Dp.Unspecified }
-    val cardMotion = if (CircasoTheme.reduceMotion) Modifier else Modifier.animateContentSize(tween(CircasoMotion.BaseMs))
-    // "@" after the amount: the coins this wallet holds, the most valuable first, narrowing as the person types.
-    // Anywhere in the message, before or after the amount (Pasaka, 2026-11-07), in any chat money can go to.
-    val coinQuery = if (payout == null && (payChip != null || (payable && quickPay != null))) coinQuery(state.draft) else null
-    val coinChoices = coinQuery?.let { q -> heldCoins(quickPay?.state?.wallet).filter { it.symbol.startsWith(q, ignoreCase = true) }.take(4) }.orEmpty()
-    // Sent (the SDK came back and the card is in the chat): the composer is ready for the next message.
-    LaunchedEffect(quickPay?.state?.step) { if (quickPay?.state?.step == com.circaso.feature.wallet.presentation.PayStep.Done) clearPay() }
-    // GW9c from a chat: nothing moved, so there is no card here; say where the request went.
-    LaunchedEffect(quickPay?.state?.requested) { quickPay?.state?.requested?.let { toastPayError = "Asked the admins of ${quickPay.state.walletName}. The request is in the group chat." } }
     LaunchedEffect(notice) { notice?.let { toastPayError = it; onNoticeShown() } }
-    LaunchedEffect(quickPay?.state?.error) { quickPay?.state?.error?.let { e -> quickPay.onErrorShown(); toastPayError = e } }
     // The payout is signed (its card is in the chat, the request turns Paid when confirmed), or requested: put it away.
     LaunchedEffect(payout?.state?.step) { if (payout?.state?.step == com.circaso.feature.wallet.presentation.PayStep.Done) onPayoutClose() }
     LaunchedEffect(payout?.state?.error) { payout?.state?.error?.let { e -> payout.onErrorShown(); toastPayError = e } }
@@ -708,108 +677,13 @@ fun ThreadContent(
                 }
             }
             }
-            ComposerBar(
-                value = state.draft,
-                onValueChange = { text ->
-                    val stripped = textWithoutAshaCommand(text)
-                    val amount = if (payChip == null) amountShortcut(text) else null
-                    when {
-                        payChip != null -> {
-                            onDraft(text)
-                            val (tag, note) = splitAssetTag(text)
-                            quickPay?.onAssetTag?.invoke(tag)
-                            quickPay?.onNote?.invoke(note)
-                        }
-                        stripped != null && onAsha != null -> { onDraft(stripped); onAsha() }
-                        amount != null && payable && quickPay != null -> {
-                            chipHaptics.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.TextHandleMove)
-                            // The words around the amount stay in the composer: the note, and any @coin already picked.
-                            val (amountText, rest) = amount
-                            val (tag, note) = splitAssetTag(rest)
-                            payChip = "#$amountText"; onDraft(rest)
-                            quickPay.onAssetTag(tag); quickPay.onAmount(amountText); quickPay.onNote(note)
-                        }
-                        amount != null && onPay != null && !state.isGroup && !state.isSupport -> { onDraft(amount.second); onPay(amount.first) }
-                        amount != null && onContribute != null && state.canContribute -> { onDraft(amount.second); onContribute(amount.first) }
-                        else -> onDraft(text)
-                    }
-                },
-                placeholder = if ((chama != null || state.groupMoney != null) && state.canContribute) "Message, or #amount to add" else if (!state.isGroup && !state.isSupport && onPay != null) "Message, or #amount to send" else "Message",
-                onAttach = if (media != null) ({ attaching = true }) else null,
-                focusRequester = composerFocus,
-                sendLabel = if (paying) quickPay?.state?.let { q -> payLabel(q) + (q.payee?.displayName?.takeIf { !q.toGroup && q.failure == null && q.step != com.circaso.feature.wallet.presentation.PayStep.Signing }?.let { " to $it" } ?: "") } ?: "Send" else "Send",
-                showSend = paying || media == null || state.draft.isNotBlank(),
-                trailing = if (payChip == null && media != null && state.draft.isBlank()) ({ VoiceButton(state.recording, media.onVoiceStart, media.onVoiceEnd) }) else null,
-                canSend = if (paying) quickPay?.state?.canPay == true else state.canSend,
-                // From the tap until Circle's PIN (or Face ID) is up, and while it sends: the arrow spins, so the
-                // wait reads as work, not a frozen screen (Pasaka, 2026-11-08).
-                sendBusy = paying && quickPay?.state?.step.let { it == com.circaso.feature.wallet.presentation.PayStep.Signing || it == com.circaso.feature.wallet.presentation.PayStep.Sending },
-                // The composer's arrow is the card's Pay: straight to the PIN, nothing in between.
-                onSend = if (paying) ({ quickPay?.onPay?.invoke(); Unit }) else onSend,
-                chip = payChip,
-                onChipEdit = {
-                    // A retried card's chip reads its coin amount ("#3.875968 USDC"); edit it in the person's currency.
-                    val back = payChip.orEmpty().let { chip -> if (' ' in chip) quickPay?.state?.fiatText?.substringAfter(' ')?.replace(",", "")?.removeSuffix(".00")?.let { "#$it" } ?: chip.substringBefore(' ') else chip }
-                    payChip = null; quickPay?.onReset?.invoke(); onDraft(back + if (state.draft.isNotEmpty()) " " + state.draft else "")
-                },
-                floating = {
-                    AnimatedVisibility(
-                        coinChoices.isNotEmpty(),
-                        enter = if (CircasoTheme.reduceMotion) fadeIn(tween(CircasoMotion.QuickMs)) else fadeIn(tween(CircasoMotion.QuickMs)) + androidx.compose.animation.expandVertically(tween(CircasoMotion.QuickMs)),
-                        exit = if (CircasoTheme.reduceMotion) fadeOut(tween(CircasoMotion.QuickMs)) else fadeOut(tween(CircasoMotion.QuickMs)) + androidx.compose.animation.shrinkVertically(tween(CircasoMotion.QuickMs)),
-                    ) {
-                        CoinSuggestions(coinChoices) { coin ->
-                            chipHaptics.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.TextHandleMove)
-                            val text = state.draft.replace(Regex("""@[A-Za-z]*$"""), "@${coin.symbol.lowercase()} ")
-                            onDraft(text)
-                            val (tag, note) = splitAssetTag(text)
-                            quickPay?.onAssetTag?.invoke(tag)
-                            quickPay?.onNote?.invoke(note)
-                        }
-                    }
-                    // The chat's money card (C3 grown into the whole review): floating over the thread, Pay opens the PIN.
-                    AnimatedVisibility(
-                        paying && quickPay != null,
-                        enter = if (CircasoTheme.reduceMotion) fadeIn(tween(CircasoMotion.QuickMs)) else fadeIn(tween(CircasoMotion.QuickMs)) + androidx.compose.animation.slideInVertically(tween(CircasoMotion.QuickMs)) { it / 2 },
-                        exit = fadeOut(tween(CircasoMotion.QuickMs / 2)),
-                    ) { quickPay?.let { q -> ChatMoneyCard(q.state, q.onPay, { q.onChoosing(true) }, cardMotion, maxHeight = cardMax(), onRetryQuote = q.onRetryQuote, onUseMax = q.onUseMax, onRetryPrice = q.onRetryPrice) } }
-                    // An approved request's Pay (D5/GW9): the same card, the amount and payee locked by the approval.
-                    AnimatedVisibility(
-                        payout != null,
-                        enter = if (CircasoTheme.reduceMotion) fadeIn(tween(CircasoMotion.QuickMs)) else fadeIn(tween(CircasoMotion.QuickMs)) + androidx.compose.animation.slideInVertically(tween(CircasoMotion.QuickMs)) { it / 2 },
-                        exit = fadeOut(tween(CircasoMotion.QuickMs / 2)),
-                    ) { payout?.let { q -> ChatMoneyCard(q.state, q.onPay, { q.onChoosing(true) }, cardMotion, onClose = onPayoutClose, maxHeight = cardMax(), onRetryQuote = q.onRetryQuote, onUseMax = q.onUseMax, onRetryPrice = q.onRetryPrice) } }
-                },
-                above = {
-                    // Support never takes money (so nobody pretending to be Circaso can ask for it): say so the moment
-                    // someone types an amount here, instead of quietly sending it as text.
-                    AnimatedVisibility(
-                        state.isSupport && Regex("""(?:^|\s)#\d""").containsMatchIn(state.draft),
-                        enter = fadeIn(tween(CircasoMotion.QuickMs)), exit = fadeOut(tween(CircasoMotion.QuickMs)),
-                    ) {
-                        BasicText(
-                            "Circaso support never asks for money, so payments are off in this chat.",
-                            style = t.footnote.copy(color = c.inkSecondary),
-                            modifier = Modifier.padding(start = CircasoSpacing.s4, end = CircasoSpacing.s4, top = CircasoSpacing.s2),
-                        )
-                    }
-                    // Grows in and out rather than jumping the thread; the last start time stays through the exit.
-                    var stripSince by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(0L) }
-                    state.recordingSince?.let { stripSince = it }
-                    val still = CircasoTheme.reduceMotion
-                    AnimatedVisibility(
-                        state.recording,
-                        enter = if (still) fadeIn(tween(CircasoMotion.BaseMs)) else fadeIn(tween(CircasoMotion.BaseMs)) + androidx.compose.animation.expandVertically(tween(CircasoMotion.BaseMs)),
-                        exit = if (still) fadeOut(tween(CircasoMotion.QuickMs)) else fadeOut(tween(CircasoMotion.QuickMs)) + androidx.compose.animation.shrinkVertically(tween(CircasoMotion.QuickMs)),
-                    ) { RecordingStrip(stripSince) }
-                    if (!state.online) {
-                        BasicText(
-                            "You're offline. Messages send when you reconnect.",
-                            style = t.footnote.copy(color = c.inkSecondary),
-                            modifier = Modifier.padding(start = CircasoSpacing.s4, end = CircasoSpacing.s4, top = CircasoSpacing.s2),
-                        )
-                    }
-                },
+            ChatComposer(
+                state, onDraft, onSend, quickPay, composerMoney, composerFocus,
+                onToast = { text, _ -> toastPayError = text },
+                onAsha = onAsha, onPay = onPay, onContribute = onContribute,
+                media = media, onAttach = if (media != null) ({ attaching = true }) else null,
+                payout = payout, onPayoutClose = onPayoutClose,
+                cardMaxHeight = ::cardMax,
             )
         }
     }
@@ -865,13 +739,14 @@ internal fun groupPayoutCard(m: Message.Payment, money: com.circaso.feature.cham
 }
 
 /**
- * Design C3: `#500` followed by a space opens the money card with 500 filled in, wherever it is typed in the message
- * ("lunch #500 " too). The amount, and the rest of the message (the note and any `@coin`), or null.
+ * Design C3: `#500` followed by a space is a finished amount, wherever it is typed ("lunch #500 ", "lunch#500 " too).
+ * The amount, and the rest of the message (the note and any `@coin`), or null. Used where the chat can't take money in
+ * place (the Pay screen opens instead); a chat that can keeps the amount in the text and draws it as a chip.
  */
 internal fun amountShortcut(text: String): Pair<String, String>? {
-    val m = Regex("""(?:^|(?<=\s))#(\d+(?:\.\d{1,2})?)\s$""").find(text) ?: return null
-    val amount = m.groupValues[1].takeIf { it.any { c -> c != '0' && c != '.' } } ?: return null
-    return amount to text.removeRange(m.range).replace(Regex("""\s+"""), " ").trim()
+    val token = amountTokens(text).lastOrNull { it.end == text.length - 1 && text[it.end].isWhitespace() } ?: return null
+    val amount = token.amount.trimEnd('.').takeIf { it.any { c -> c in '1'..'9' } } ?: return null
+    return amount to text.removeRange(token.start, token.end).replace(Regex("""\s+"""), " ").trim()
 }
 
 /** A payment card in the thread (designs C3–C7): the money colour for money received, `fill` for money sent. */
@@ -1190,16 +1065,43 @@ class QuickPay(
     val onRetryPrice: () -> Unit = {},
 )
 
-/** `#amount` anywhere in the message, as its own word: "#5", "lunch #12.5 @eth" (Pasaka, 2026-11-07: not only at the start). */
-private val AmountToken = Regex("""(?:^|(?<=\s))#(\d+(?:\.\d{0,2})?)(?=\s|$)""")
+/** One `#amount` in the text: [start] is the `#`, [end] just after the last digit (or a trailing "."). */
+internal data class AmountToken(val start: Int, val end: Int, val amount: String)
 
-/** The amount while it is still being typed: "#5", "#12.", "for lunch #12.5" (no space after it needed). */
+/** `#` then digits, with up to two decimals ("#5", "#12.", "#12.50"). Where it may stand is checked in [amountTokens]. */
+private val AmountShape = Regex("""#(\d+(?:\.\d{0,2})?)""")
+
+/** A web address's host ("site.com", "a.co.ke"): a `#` after one is a page anchor. */
+private val HostShape = Regex("""[A-Za-z0-9-]\.[A-Za-z]{2,}""")
+
+/**
+ * Every `#amount` that means money, in order. A `#` followed by a digit is money wherever it is typed, straight after a
+ * word too ("lunch#500", "pay#50"): new people don't put a space before it (Pasaka, 2026-11-09; before, only at the
+ * start or after a space, 2026-11-07). It isn't money as part of a longer word ("#5x", "#12.5kg"), inside a link
+ * ("site.com/page#12", "https://x.io/#3", "www.a.b#1") or an HTML entity ("&#123;"): those stay plain text.
+ */
+internal fun amountTokens(text: String): Sequence<AmountToken> = AmountShape.findAll(text).mapNotNull { m ->
+    val start = m.range.first
+    val end = m.range.last + 1
+    val next = text.getOrNull(end)
+    if (next != null && (next.isLetterOrDigit() || next == '_')) return@mapNotNull null
+    if (text.getOrNull(start - 1) == '&') return@mapNotNull null
+    // The word the `#` is glued to, back to the last space: a link's part keeps its `#` as an anchor.
+    val word = text.substring(0, start).takeLastWhile { !it.isWhitespace() }
+    if ("://" in word || '/' in word || word.startsWith("www.", ignoreCase = true) || HostShape.containsMatchIn(word)) return@mapNotNull null
+    AmountToken(start, end, m.groupValues[1])
+}
+
+/** The first amount in the text: the one a payment is made from (a second `#20` stays in the note as typed). */
+internal fun amountToken(text: String): AmountToken? = amountTokens(text).firstOrNull()
+
+/** The amount while it is still being typed: "#5", "#12.", "for lunch #12.5", "lunch#5" (no space around it needed). */
 internal fun typingAmount(draft: String): String? =
-    AmountToken.find(draft)?.groupValues?.get(1)?.trimEnd('.')?.takeIf { it.isNotEmpty() && it.any { c -> c != '0' && c != '.' } }
+    amountToken(draft)?.amount?.trimEnd('.')?.takeIf { it.isNotEmpty() && it.any { c -> c != '0' && c != '.' } }
 
 /** The message without its amount ("lunch #500 @usdc thanks" → "lunch @usdc thanks"): the coin and the note. */
 internal fun afterTypedAmount(draft: String): String =
-    AmountToken.find(draft)?.let { draft.removeRange(it.range) }.orEmpty().replace(Regex("""\s+"""), " ").trim()
+    amountToken(draft)?.let { draft.removeRange(it.start, it.end) }.orEmpty().replace(Regex("""\s+"""), " ").trim()
 
 /** The coin being typed after "@" at the end of the note ("for lunch @us" → "us", "@" → ""); null when none is. */
 internal fun coinQuery(draft: String): String? = Regex("""(?:^|\s)@([A-Za-z]*)$""").find(draft)?.groupValues?.get(1)
@@ -1238,7 +1140,7 @@ internal fun heldCoins(wallet: com.circaso.feature.wallet.domain.Wallet?): List<
 
 /** The "@" picker over the composer: up to four held coins as chips; they settle in and out as the list narrows. */
 @Composable
-private fun CoinSuggestions(coins: List<HeldCoin>, onPick: (HeldCoin) -> Unit) {
+internal fun CoinSuggestions(coins: List<HeldCoin>, onPick: (HeldCoin) -> Unit) {
     val c = CircasoTheme.colors
     val t = CircasoTheme.typography
     androidx.compose.foundation.lazy.LazyRow(
@@ -1287,7 +1189,7 @@ internal val PlayDiscSize = 52.dp
 
 /** While a voice note records: a pulsing dot, the running time, and how to send or drop it. */
 @Composable
-private fun RecordingStrip(since: Long) {
+internal fun RecordingStrip(since: Long) {
     val c = CircasoTheme.colors
     val t = CircasoTheme.typography
     var seconds by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(0L) }
@@ -1315,7 +1217,7 @@ private fun RecordingStrip(since: Long) {
  * double-tap toggles recording instead (holding isn't available there).
  */
 @Composable
-private fun VoiceButton(recording: Boolean, onStart: () -> Unit, onEnd: (send: Boolean) -> Unit) {
+internal fun VoiceButton(recording: Boolean, onStart: () -> Unit, onEnd: (send: Boolean) -> Unit) {
     val c = CircasoTheme.colors
     val start by androidx.compose.runtime.rememberUpdatedState(onStart)
     val end by androidx.compose.runtime.rememberUpdatedState(onEnd)
