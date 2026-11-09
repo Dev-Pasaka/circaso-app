@@ -46,6 +46,13 @@ val callsModule = module {
                 )
             },
             photos = { chatId -> callPhotos(chats.chat(chatId).first(), get(), get()) },
+            // 2026-11-09: pull someone once both connections are up (the SFU held earlier pulls ~9 s); re-read the
+            // call every 5 s and on every socket reconnect, so a lost call.ended can't strand a call; hang up a call
+            // that has received no audio for 20 s.
+            pullGraceMillis = 3_000,
+            pollMillis = 5_000,
+            socketUp = get<com.circaso.core.realtime.RealtimeClient>().connected,
+            stallMillis = 20_000,
         )
     }
 }

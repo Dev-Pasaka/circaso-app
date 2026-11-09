@@ -4,6 +4,7 @@ import io.ktor.client.HttpClient
 import io.ktor.client.plugins.websocket.webSocketSession
 import io.ktor.websocket.Frame
 import io.ktor.websocket.close
+import kotlinx.coroutines.cancel
 import io.ktor.websocket.readText
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.filterIsInstance
@@ -40,7 +41,10 @@ class KtorSocketFactory(private val client: HttpClient) : SocketFactory {
         return object : Socket {
             override suspend fun send(text: String) = session.send(Frame.Text(text))
             override val incoming: Flow<String> = session.incoming.receiveAsFlow().filterIsInstance<Frame.Text>().map { it.readText() }
-            override suspend fun close() = session.close()
+            // The close frame, then the connection itself, so nothing is left open behind a socket given up.
+            override suspend fun close() {
+                try { session.close() } finally { session.cancel() }
+            }
         }
     }
 }

@@ -39,6 +39,8 @@ interface CallEngineProvider {
     fun setConnectionListener(listener: (Int) -> Unit)
     /** Kotlin sets this to hear which pulled mids have had packets (see [CallEngine.receivingMids]). */
     fun setReceivingListener(listener: (List<String>) -> Unit)
+    /** [completion]: audio packets received over every pulled track so far, or -1 when there is no connection. */
+    fun receivedPackets(completion: (Long) -> Unit)
 }
 
 object CallEngineBridge {
@@ -91,6 +93,11 @@ class IosCallEngine : CallEngine {
     }
     override fun flipCamera() { CallEngineBridge.provider?.flipCamera() }
     override fun setSpeaker(on: Boolean) { CallEngineBridge.provider?.setSpeaker(on) }
+    override suspend fun receivedPackets(): Long? {
+        val p = CallEngineBridge.provider ?: return null
+        return suspendCancellableCoroutine { cont -> p.receivedPackets { n -> if (cont.isActive) cont.resume(n.takeIf { it >= 0 }) } }
+    }
+
     override fun close() { CallEngineBridge.provider?.close(); _mids.value = emptySet(); _connected.value = null; _receiving.value = emptySet() }
 }
 

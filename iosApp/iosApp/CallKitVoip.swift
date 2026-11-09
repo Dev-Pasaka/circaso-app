@@ -53,6 +53,10 @@ final class CallKitVoip: NSObject, PKPushRegistryDelegate, CXProviderDelegate, C
 
     func pushRegistry(_ registry: PKPushRegistry, didReceiveIncomingPushWith payload: PKPushPayload, for type: PKPushType, completion: @escaping () -> Void) {
         let data = payload.dictionaryPayload
+        if (data["kind"] as? String) == "call.ended" {
+            ringEnded(data, completion: completion)
+            return
+        }
         let callId = data["callId"] as? String ?? UUID().uuidString
         let name = (data["callerName"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? "Circaso"
         let video = (data["callKind"] as? String) == "VIDEO"
@@ -82,6 +86,40 @@ final class CallKitVoip: NSObject, PKPushRegistryDelegate, CXProviderDelegate, C
                 // Already ringing (the same call reported twice) or Do Not Disturb: nothing more to do.
                 if (error as? CXErrorCodeIncomingCallError)?.code != .callUUIDAlreadyExists { self.forget(callId) }
             }
+            completion()
+        }
+    }
+
+    /// The server's "ended" VoIP push (2026-11-09): the ring for `callId` stopped without this phone answering (the
+    /// caller hung up, the call ended, the ring ran out). End that CallKit call. With none showing (the ring push never
+    /// came, or it already ended here), PushKit still requires a reported call for every VoIP push, so one is reported
+    /// and ended at once, before anything rings.
+    private func ringEnded(_ data: [AnyHashable: Any], completion: @escaping () -> Void) {
+        let callId = data["callId"] as? String ?? ""
+        let reason: CXCallEndedReason
+        switch data["reason"] as? String {
+        case "MISSED": reason = .unanswered
+        case "DECLINED": reason = .declinedElsewhere
+        default: reason = .remoteEnded
+        }
+        if let uuid = uuids[callId], !answered.contains(callId) {
+            provider.reportCall(with: uuid, endedAt: nil, reason: reason)
+            IosCallKitBridge.shared.ringStopped(callId: callId)
+            forget(callId)
+            completion()
+            return
+        }
+        if uuids[callId] != nil {
+            // answered here already: the call screen follows the server's call.ended, not this push
+            completion()
+            return
+        }
+        let uuid = UUID()
+        let update = CXCallUpdate()
+        update.remoteHandle = CXHandle(type: .generic, value: "Circaso")
+        update.localizedCallerName = "Circaso"
+        provider.reportNewIncomingCall(with: uuid, update: update) { _ in
+            self.provider.reportCall(with: uuid, endedAt: nil, reason: reason)
             completion()
         }
     }

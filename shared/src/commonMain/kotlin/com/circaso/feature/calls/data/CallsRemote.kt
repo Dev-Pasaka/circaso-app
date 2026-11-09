@@ -21,6 +21,8 @@ import kotlinx.serialization.json.JsonObject
     val tracks: List<CallTrackDto> = emptyList(), val joinedAt: String? = null,
     /** Changes on every (re)join: pull this person again when it does. */
     val connection: String? = null,
+    /** Their connection to the SFU is up under [connection] (CL3b): pull them now. Absent from older servers. */
+    val connected: Boolean = false,
 )
 @Serializable data class CallDto(
     val callId: String, val chatId: String, val kind: String, val state: String, val startedBy: String, val createdAt: String,
@@ -38,12 +40,15 @@ import kotlinx.serialization.json.JsonObject
 @Serializable data class RenegotiateRequest(val sessionId: String, val answer: String)
 @Serializable data class MediaRequest(val audio: Boolean, val video: Boolean)
 @Serializable data class RingRequest(val userIds: List<String> = emptyList())
+@Serializable data class ConnectedRequest(val sessionId: String)
 
 interface CallsRemote {
     suspend fun start(chatId: String, video: Boolean, key: String): AppResult<CallDto>
     suspend fun get(callId: String): AppResult<CallDto>
     suspend fun forChat(chatId: String): AppResult<CallDto>
     suspend fun join(callId: String, request: JoinCallRequest): AppResult<JoinCallResponse>
+    /** CL3b: this phone's peer connection under [sessionId] is up, so the others may pull it. */
+    suspend fun connected(callId: String, sessionId: String): AppResult<JsonObject>
     suspend fun pull(callId: String, request: PullRequest): AppResult<PullResponse>
     suspend fun renegotiate(callId: String, request: RenegotiateRequest): AppResult<JsonObject>
     suspend fun decline(callId: String): AppResult<CallDto>
@@ -61,6 +66,9 @@ class KtorCallsRemote(private val api: CircasoApi) : CallsRemote {
     override suspend fun forChat(chatId: String) = api.call<CallDto> { method = HttpMethod.Get; url("/v1/chats/$chatId/call") }
     override suspend fun join(callId: String, request: JoinCallRequest) = api.call<JoinCallResponse> {
         method = HttpMethod.Post; url("/v1/calls/$callId/join"); idempotencyKey(newIdempotencyKey()); contentType(ContentType.Application.Json); setBody(request)
+    }
+    override suspend fun connected(callId: String, sessionId: String) = api.call<JsonObject> {
+        method = HttpMethod.Post; url("/v1/calls/$callId/connected"); idempotencyKey(newIdempotencyKey()); contentType(ContentType.Application.Json); setBody(ConnectedRequest(sessionId))
     }
     override suspend fun pull(callId: String, request: PullRequest) = api.call<PullResponse> {
         method = HttpMethod.Post; url("/v1/calls/$callId/pull"); idempotencyKey(newIdempotencyKey()); contentType(ContentType.Application.Json); setBody(request)

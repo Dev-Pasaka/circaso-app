@@ -60,6 +60,22 @@ object IosCallKitBridge {
         }
     }
 
+    /**
+     * The server's "ended" VoIP push stopped CallKit's ring for [callId] (Swift already ended the system's call): stop
+     * the app's ringing state too, without declining (there is nothing left to decline).
+     */
+    fun ringStopped(callId: String) {
+        scope.launch {
+            controller.onFrame(
+                "call.ring_stopped",
+                buildJsonObject {
+                    put("callId", JsonPrimitive(callId))
+                    put("reason", JsonPrimitive("CANCELLED"))
+                },
+            )
+        }
+    }
+
     /** Decline or hang up on the system's call screen. */
     fun end(callId: String) {
         scope.launch {
