@@ -4,6 +4,23 @@ import com.circaso.core.common.AppError
 
 data class AskedFrom(val chatId: String, val chatName: String?)
 
+/**
+ * What a question carries besides its words (2026-11-09): the screen the person asked from when they summoned Asha's
+ * bubble ("Wallet › Send"), and a picture of that screen when they chose to show it to her.
+ */
+data class AskExtras(val screen: String? = null, val image: AshaImage? = null) {
+    companion object { val None = AskExtras() }
+}
+
+/** A picture for one question: a JPEG of the app's own screen, at most [MaxSide] px on its longest side. */
+class AshaImage(val bytes: ByteArray, val width: Int, val height: Int, val mediaType: String = "image/jpeg") {
+    companion object {
+        const val MaxSide = 1280
+        /** Above this the picture is not sent (the server refuses it too). */
+        const val MaxBytes = 1_500_000
+    }
+}
+
 /** What Asha read to answer (shown as a note under the reply). */
 data class ReadNote(val chatIds: List<String>, val chatNames: List<String>, val messageCount: Int)
 

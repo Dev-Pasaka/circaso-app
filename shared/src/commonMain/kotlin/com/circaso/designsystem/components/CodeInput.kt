@@ -45,6 +45,8 @@ fun CodeInput(
     autoFocus: Boolean = true,
 ) {
     val c = CircasoTheme.colors
+    // A one-time code on screen: never shown to Asha.
+    SecretOnScreen()
     val focus = remember { FocusRequester() }
     LaunchedEffect(autoFocus) { if (autoFocus) runCatching { focus.requestFocus() } }
     BasicTextField(

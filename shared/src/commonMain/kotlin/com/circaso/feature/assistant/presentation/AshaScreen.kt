@@ -144,21 +144,7 @@ fun AshaContent(
         },
     ) {
         Column(Modifier.fillMaxSize()) {
-            val shown: List<Bubble> = buildList {
-                state.messages.forEach { add(Bubble("m:${it.messageId}", it.text, it.isFromUser, speakable = !it.isFromUser)) }
-                // The question in flight and its answer keep the keys "q" and "a" whether asking, waiting or asking
-                // again, so a dropped line never adds a second bubble.
-                val waiting = state.waiting
-                if (waiting != null) {
-                    add(Bubble("q", waiting.question, true, waiting = true))
-                    if (waiting.partial.isNotEmpty()) add(Bubble("a", waiting.partial, false, thinking = true, cutOff = true))
-                } else {
-                    state.pendingQuestion?.let { add(Bubble("q", it, true)) }
-                    if (state.streaming.isNotEmpty() || state.sending) {
-                        add(Bubble("a", state.status ?: state.streaming.ifEmpty { state.carried.ifEmpty { "…" } }, false, thinking = state.streaming.isEmpty()))
-                    }
-                }
-            }
+            val shown = bubblesOf(state)
             // Each conversation opens at its newest line, following, whatever was scrolled in the last one.
             val list = androidx.compose.runtime.key(state.shownConversation) { androidx.compose.foundation.lazy.rememberLazyListState() }
             val scope = androidx.compose.runtime.rememberCoroutineScope()
@@ -224,7 +210,24 @@ fun AshaContent(
     }
 }
 
-private data class Bubble(
+/** What the thread shows: the history, then the question in flight (or waiting) and its answer so far. */
+internal fun bubblesOf(state: AshaUiState): List<Bubble> = buildList {
+    state.messages.forEach { add(Bubble("m:${it.messageId}", it.text, it.isFromUser, speakable = !it.isFromUser)) }
+    // The question in flight and its answer keep the keys "q" and "a" whether asking, waiting or asking
+    // again, so a dropped line never adds a second bubble.
+    val waiting = state.waiting
+    if (waiting != null) {
+        add(Bubble("q", waiting.question, true, waiting = true, withScreen = waiting.extras.image != null))
+        if (waiting.partial.isNotEmpty()) add(Bubble("a", waiting.partial, false, thinking = true, cutOff = true))
+    } else {
+        state.pendingQuestion?.let { add(Bubble("q", it, true, withScreen = state.pendingWithScreen)) }
+        if (state.streaming.isNotEmpty() || state.sending) {
+            add(Bubble("a", state.status ?: state.streaming.ifEmpty { state.carried.ifEmpty { "…" } }, false, thinking = state.streaming.isEmpty()))
+        }
+    }
+}
+
+internal data class Bubble(
     val key: String,
     val text: String,
     val mine: Boolean,
@@ -234,6 +237,8 @@ private data class Bubble(
     val waiting: Boolean = false,
     /** The part of an answer that arrived before the line dropped: quiet, and labelled so it never reads as complete. */
     val cutOff: Boolean = false,
+    /** The question went with a picture of the screen (Asha's bubble). */
+    val withScreen: Boolean = false,
 )
 
 /**
@@ -251,7 +256,7 @@ private data class Bubble(
  * When she is back it turns into "Asha is back" with a check that springs in once, then folds away like "Back online".
  */
 @Composable
-private fun ConnectionLine(online: Boolean, backOnline: Boolean, waiting: Boolean, maintenance: String? = null, ashaBack: Boolean = false) {
+internal fun ConnectionLine(online: Boolean, backOnline: Boolean, waiting: Boolean, maintenance: String? = null, ashaBack: Boolean = false) {
     val c = CircasoTheme.colors
     val t = CircasoTheme.typography
     val still = CircasoTheme.reduceMotion
@@ -342,7 +347,7 @@ private fun EmptyAsha(modifier: Modifier, online: Boolean, onSuggestion: (String
 }
 
 @Composable
-private fun BubbleView(b: Bubble, speaking: Boolean, canSpeak: Boolean, onSpeak: (String) -> Unit) {
+internal fun BubbleView(b: Bubble, speaking: Boolean, canSpeak: Boolean, onSpeak: (String) -> Unit) {
     val c = CircasoTheme.colors
     Row(Modifier.fillMaxWidth(), horizontalArrangement = if (b.mine) Arrangement.End else Arrangement.Start, verticalAlignment = Alignment.Bottom) {
         MessageColumn(b.mine, Modifier.weight(1f, fill = false)) {
@@ -355,6 +360,7 @@ private fun BubbleView(b: Bubble, speaking: Boolean, canSpeak: Boolean, onSpeak:
                 ) { AshaAnswer(b.text) }
             }
             if (speaking) BubbleMeta("Reading aloud", icon = CircasoIcon.Speaker)
+            if (b.withScreen) BubbleMeta("With your screen", icon = CircasoIcon.Screen)
             if (b.waiting) BubbleMeta("Waiting to send", icon = CircasoIcon.Clock)
             if (b.cutOff) BubbleMeta("Cut off. Asha answers again when you're back online.")
         }

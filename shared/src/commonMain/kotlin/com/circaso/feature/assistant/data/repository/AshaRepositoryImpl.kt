@@ -110,9 +110,17 @@ class AshaRepositoryImpl(
         }
     }
 
-    override fun ask(text: String, askedFrom: AskedFrom?, chatReading: Boolean): Flow<AshaEvent> = flow {
+    override fun ask(text: String, askedFrom: AskedFrom?, chatReading: Boolean): Flow<AshaEvent> = ask(text, askedFrom, chatReading, com.circaso.feature.assistant.domain.AskExtras.None)
+
+    @OptIn(kotlin.io.encoding.ExperimentalEncodingApi::class)
+    override fun ask(text: String, askedFrom: AskedFrom?, chatReading: Boolean, extras: com.circaso.feature.assistant.domain.AskExtras): Flow<AshaEvent> = flow {
         val conversation = _current.value ?: _conversations.value.firstOrNull()?.id
-        val request = SendMessageRequest(text, askedFrom?.let { AskedFromDto(it.chatId, it.chatName) }, chatReading, currency(), conversation)
+        val image = extras.image?.takeIf { it.bytes.size <= com.circaso.feature.assistant.domain.AshaImage.MaxBytes }
+            ?.let { com.circaso.feature.assistant.data.remote.ImageDto(it.mediaType, kotlin.io.encoding.Base64.encode(it.bytes)) }
+        val request = SendMessageRequest(
+            text, askedFrom?.let { AskedFromDto(it.chatId, it.chatName) }, chatReading, currency(), conversation,
+            screen = extras.screen?.take(MaxScreenChars), image = image,
+        )
         remote.stream(request).collect { item ->
             when (item) {
                 is AppResult.Failure -> emit(AshaEvent.Failed(item.error))
@@ -174,6 +182,7 @@ class AshaRepositoryImpl(
 
     private companion object {
         const val PageSize = 50
+        const val MaxScreenChars = 80
         const val MaxVoiceSeconds = 60
         const val MaxVoiceBytes = 3 * 1024 * 1024
     }

@@ -283,7 +283,7 @@ internal fun SearchField(value: String, onValueChange: (String) -> Unit, placeho
         CircasoIconImage(CircasoIcon.Search, c.inkSecondary, Modifier.size(18.dp))
         Box(Modifier.weight(1f), contentAlignment = Alignment.CenterStart) {
             BasicTextField(
-                value = value, onValueChange = onValueChange, singleLine = true,
+                value = value, onValueChange = com.circaso.designsystem.components.ashaAware(value, onValueChange), singleLine = true,
                 textStyle = t.body.copy(color = c.ink), cursorBrush = SolidColor(c.ink),
                 keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Words, autoCorrectEnabled = false, imeAction = ImeAction.Search),
                 modifier = Modifier.fillMaxWidth().then(if (focus != null) Modifier.focusRequester(focus) else Modifier).semantics { contentDescription = placeholder },

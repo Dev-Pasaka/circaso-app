@@ -471,7 +471,7 @@ private fun CaptionField(value: String, onChange: (String) -> Unit, enabled: Boo
     val t = CircasoTheme.typography
     Box(Modifier.fillMaxWidth().padding(horizontal = CircasoSpacing.s4).clip(CircasoShapes.lg).background(c.glass).padding(horizontal = 16.dp, vertical = 12.dp)) {
         if (value.isEmpty()) BasicText("Add a caption", style = t.body.copy(color = c.inkSecondary))
-        BasicTextField(value, onChange, enabled = enabled, textStyle = t.body.copy(color = c.ink), cursorBrush = SolidColor(c.ink), modifier = Modifier.fillMaxWidth().semantics { contentDescription = "Caption" })
+        BasicTextField(value, com.circaso.designsystem.components.ashaAware(value, onChange), enabled = enabled, textStyle = t.body.copy(color = c.ink), cursorBrush = SolidColor(c.ink), modifier = Modifier.fillMaxWidth().semantics { contentDescription = "Caption" })
     }
 }
 

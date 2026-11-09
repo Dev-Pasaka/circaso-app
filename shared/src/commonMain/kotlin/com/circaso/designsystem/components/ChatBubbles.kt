@@ -297,9 +297,20 @@ fun ComposerBar(
                                 else pillAlpha.animateTo(1f, androidx.compose.animation.core.tween(com.circaso.designsystem.theme.CircasoMotion.QuickMs))
                             }
                             val pillColor = c.moneySurface
+                            val ashaLauncher = LocalAshaLauncher.current
                             BasicTextField(
                                 value = field,
-                                onValueChange = { next ->
+                                onValueChange = onValueChange@{ next ->
+                                    // `/asha` summons Asha's bubble from any composer (AshaLauncher.kt); the command is
+                                    // taken out and the cursor stays where it was typed.
+                                    val asha = ashaLauncher
+                                    val hit = if (asha != null) ashaCommandTyped(field.text, next.text, next.selection.end) else null
+                                    if (asha != null && hit != null) {
+                                        field = TextFieldValue(hit.text, TextRange(hit.cursor))
+                                        if (hit.text != value) onValueChange(hit.text)
+                                        asha.open()
+                                        return@onValueChange
+                                    }
                                     var kept = next
                                     if (amount != null) {
                                         val before = amount(field.text)
@@ -376,7 +387,7 @@ fun SearchPill(value: String, onValueChange: (String) -> Unit, placeholder: Stri
     ) {
         CircasoIconImage(CircasoIcon.Search, c.inkSecondary, Modifier.size(18.dp))
         Box(Modifier.weight(1f), contentAlignment = Alignment.CenterStart) {
-            BasicTextField(value = value, onValueChange = onValueChange, singleLine = true, textStyle = t.body.copy(color = c.ink), cursorBrush = SolidColor(c.ink), modifier = Modifier.fillMaxWidth())
+            BasicTextField(value = value, onValueChange = ashaAware(value, onValueChange), singleLine = true, textStyle = t.body.copy(color = c.ink), cursorBrush = SolidColor(c.ink), modifier = Modifier.fillMaxWidth())
             if (value.isEmpty()) BasicText(placeholder, style = t.body.copy(color = c.inkSecondary))
         }
     }

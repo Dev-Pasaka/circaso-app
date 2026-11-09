@@ -36,7 +36,6 @@ import com.circaso.designsystem.chrome.CircasoSheet
 import com.circaso.designsystem.chrome.SheetHead
 import com.circaso.designsystem.components.ComposerAmount
 import com.circaso.designsystem.components.ComposerBar
-import com.circaso.designsystem.components.textWithoutAshaCommand
 import com.circaso.designsystem.theme.CircasoMotion
 import com.circaso.designsystem.theme.CircasoSpacing
 import com.circaso.designsystem.theme.CircasoTheme
@@ -147,7 +146,6 @@ internal fun ChatComposer(
     ComposerBar(
         value = state.draft,
         onValueChange = { text ->
-            val stripped = textWithoutAshaCommand(text)
             // A chat that takes money keeps the amount in the text (drawn as money, then a pill); one that can't hands a
             // finished amount to Pay.
             val amount = if (payChip == null && !payable) amountShortcut(text) else null
@@ -158,7 +156,6 @@ internal fun ChatComposer(
                     quickPay?.onAssetTag?.invoke(tag)
                     quickPay?.onNote?.invoke(note)
                 }
-                stripped != null && onAsha != null -> { onDraft(stripped); onAsha() }
                 amount != null && onPay != null && !state.isGroup && !state.isSupport -> { onDraft(amount.second); onPay(amount.first) }
                 amount != null && onContribute != null && state.canContribute -> { onDraft(amount.second); onContribute(amount.first) }
                 else -> onDraft(text)

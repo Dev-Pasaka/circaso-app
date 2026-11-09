@@ -12,6 +12,8 @@ import com.circaso.core.platform.MaxVoiceSeconds
 import com.circaso.core.platform.RecordingStart
 import com.circaso.core.sync.ConnectionState
 import com.circaso.feature.assistant.domain.AskAshaUseCase
+import com.circaso.feature.assistant.domain.AskExtras
+import com.circaso.feature.assistant.domain.AshaImage
 import com.circaso.feature.assistant.domain.AshaAvailability
 import com.circaso.feature.assistant.domain.AshaEvent
 import com.circaso.feature.assistant.domain.AvailabilityWatch
@@ -51,6 +53,8 @@ data class WaitingQuestion(
     val knownIds: Set<String> = emptySet(),
     /** Automatic asks so far; after [AshaViewModel.MaxAsks] it goes back to the draft as before. */
     val tries: Int = 1,
+    /** The screen and picture it was asked with, asked again with it. */
+    val extras: AskExtras = AskExtras.None,
 )
 
 data class AshaUiState(
@@ -93,6 +97,12 @@ data class AshaUiState(
     val toldWhenBack: Boolean = false,
     /** She just came back: the line says "Asha is back" for a moment, then goes. */
     val ashaBack: Boolean = false,
+    /** Asha's bubble: the screen she was summoned on ("Wallet › Send"), sent with each question as light context. */
+    val screen: String? = null,
+    /** A picture of the screen waiting to go with the next question (the person saw its thumbnail first). */
+    val attachment: AshaImage? = null,
+    /** The question in flight carries a picture of the screen. */
+    val pendingWithScreen: Boolean = false,
 ) {
     /** The open conversation's id: the one chosen, else the latest. */
     val shownConversation: String? get() = currentConversation ?: conversations.firstOrNull()?.id
@@ -100,7 +110,7 @@ data class AshaUiState(
     /** The open conversation's title, for the header; "New chat" until it has one. */
     val conversationTitle: String? get() = (currentConversation?.let { id -> conversations.firstOrNull { it.id == id } } ?: conversations.firstOrNull())?.title
     val sending get() = pendingQuestion != null
-    val canSend get() = online && !maintenance && !sending && waiting == null && voice == VoiceState.Idle && draft.isNotBlank()
+    val canSend get() = online && !maintenance && !sending && waiting == null && voice == VoiceState.Idle && (draft.isNotBlank() || attachment != null)
     /** Voice needs the server for both directions, so it is offered only online, and not while Asha is down. */
     val canUseVoice get() = online && !maintenance && !sending && voice != VoiceState.Transcribing
     /** Asking (typing, chips, voice) is possible: online, and Asha isn't down for maintenance. */
@@ -305,22 +315,32 @@ class AshaViewModel(
     fun onSend() {
         val s = state.value
         if (!s.canSend) return
-        val question = s.draft.trim()
-        local.update { it.copy(draft = "") }
-        askNow(question, carried = "", tries = 1)
+        val question = s.draft.trim().ifEmpty { ScreenOnlyQuestion }
+        val extras = AskExtras(screen = s.screen, image = s.attachment)
+        local.update { it.copy(draft = "", attachment = null) }
+        askNow(question, carried = "", tries = 1, extras = extras)
     }
+
+    /** Asha's bubble was summoned on [label] ("Wallet › Send"); null when the screen has no name worth sending. */
+    fun onScreen(label: String?) = local.update { it.copy(screen = label) }
+
+    /** A picture of the screen to go with the next question, or null to take it off. */
+    fun onAttachment(image: AshaImage?) = local.update { it.copy(attachment = image, error = null) }
+
+    /** Something the bubble itself says went wrong (a screen that can't be shown); cleared by the next draft. */
+    fun onNotice(text: String) = local.update { it.copy(error = text) }
 
     /**
      * Asks [question] and streams the answer. A failure caused only by the connection keeps the question in its bubble
      * as waiting ([WaitingQuestion]); any other failure gives it back to the draft with the error, as before.
      */
-    private fun askNow(question: String, carried: String, tries: Int) {
+    private fun askNow(question: String, carried: String, tries: Int, extras: AskExtras = AskExtras.None) {
         val knownIds = state.value.messages.mapTo(HashSet()) { it.messageId }
-        local.update { it.copy(pendingQuestion = question, streaming = "", carried = carried, status = null, error = null, waiting = null) }
+        local.update { it.copy(pendingQuestion = question, pendingWithScreen = extras.image != null, streaming = "", carried = carried, status = null, error = null, waiting = null) }
         job = viewModelScope.launch {
             var failed: AppError? = null
             var done = false
-            ask(question).collect { event ->
+            ask(question, extras = extras).collect { event ->
                 when (event) {
                     is AshaEvent.Delta -> local.update { it.copy(streaming = it.streaming + event.text, carried = "", status = null) }
                     is AshaEvent.UsingTool -> local.update { it.copy(status = "Reading your chats…") }
@@ -340,7 +360,7 @@ class AshaViewModel(
                 local.update {
                     it.copy(
                         pendingQuestion = null, streaming = "", status = null, carried = "", error = null,
-                        maintenance = true, toldWhenBack = true,
+                        maintenance = true, toldWhenBack = true, attachment = extras.image ?: it.attachment, pendingWithScreen = false,
                         draft = listOf(question, it.draft.trim()).filter(String::isNotEmpty).joinToString(" "),
                     )
                 }
@@ -349,8 +369,8 @@ class AshaViewModel(
             if (error != null && isConnectionDrop(error) && tries < MaxAsks) {
                 local.update {
                     it.copy(
-                        pendingQuestion = null, streaming = "", status = null, carried = "",
-                        waiting = WaitingQuestion(question, partial = it.streaming.ifEmpty { it.carried }, knownIds = knownIds, tries = tries),
+                        pendingQuestion = null, pendingWithScreen = false, streaming = "", status = null, carried = "",
+                        waiting = WaitingQuestion(question, partial = it.streaming.ifEmpty { it.carried }, knownIds = knownIds, tries = tries, extras = extras),
                     )
                 }
                 awaitConnection()
@@ -360,7 +380,10 @@ class AshaViewModel(
                 it.copy(
                     pendingQuestion = null, streaming = "", status = null, carried = "",
                     // Nothing was answered: give the question back so it is not lost.
-                    draft = if (error != null) question else it.draft,
+                    draft = if (error != null) question.takeIf { q -> q != ScreenOnlyQuestion || extras.image == null }.orEmpty() else it.draft,
+                    // The picture goes back too, so asking again needs no new capture.
+                    attachment = if (error != null) extras.image ?: it.attachment else it.attachment,
+                    pendingWithScreen = false,
                     error = error?.let { e -> message(e) },
                 )
             }
@@ -395,7 +418,7 @@ class AshaViewModel(
         val answered = observeHistory().first().any { it.isFromUser && it.messageId !in w.knownIds && it.text.trim() == w.question }
         if (local.value.waiting != w) return
         if (answered) { local.update { it.copy(waiting = null) }; return }
-        askNow(w.question, carried = w.partial, tries = w.tries + 1)
+        askNow(w.question, carried = w.partial, tries = w.tries + 1, extras = w.extras)
     }
 
     /** Tap to start recording, tap again to stop. The words land in the draft so the person can read them before sending. */
@@ -490,6 +513,8 @@ class AshaViewModel(
         const val MaxAsks = 3
         /** How long "Asha is back" shows once she is back (as "Back online" does). */
         const val AshaBackMillis = 3_000L
+        /** What a picture of the screen asks when the person sends it without words. */
+        const val ScreenOnlyQuestion = "Here's my screen. Can you help me with it?"
     }
 
     @OptIn(DelicateCoroutinesApi::class)

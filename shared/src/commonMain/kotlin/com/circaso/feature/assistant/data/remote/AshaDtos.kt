@@ -19,7 +19,21 @@ data class ChatMessageDto(
 
 @Serializable data class ChatResponse(val messages: List<ChatMessageDto>, val nextCursor: String? = null)
 /** [currency]: the person's display currency (You → Currency), so Asha answers in it. */
-@Serializable data class SendMessageRequest(val text: String, val askedFrom: AskedFromDto? = null, val chatReading: Boolean? = null, val currency: String? = null, val conversationId: String? = null)
+@Serializable
+data class SendMessageRequest(
+    val text: String,
+    val askedFrom: AskedFromDto? = null,
+    val chatReading: Boolean? = null,
+    val currency: String? = null,
+    val conversationId: String? = null,
+    /** Where the person summoned Asha's bubble ("Wallet › Send"), as light context for this one question. */
+    val screen: String? = null,
+    /** A picture of the app's screen for this one question; the server reads it and does not keep it. */
+    val image: ImageDto? = null,
+)
+
+/** [data] is the picture's bytes in base64; [mediaType] is `image/jpeg` or `image/png`. */
+@Serializable data class ImageDto(val mediaType: String, val data: String)
 @Serializable data class SnippetDto(val chatId: String, val chatName: String? = null, val sender: String, val at: String, val text: String)
 @Serializable data class ToolResultsRequest(val callId: String, val snippets: List<SnippetDto>? = null)
 @Serializable data class TranscriptResponse(val text: String, val seconds: Int)

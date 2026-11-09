@@ -69,6 +69,12 @@ private class ScriptedAsha : AshaRepository {
         asked += text
         (scripts.removeFirstOrNull() ?: emptyList()).forEach { emit(it) }
     }
+    /** What each question from the bubble carried (the screen and its picture). */
+    val extras = mutableListOf<com.circaso.feature.assistant.domain.AskExtras>()
+    override fun ask(text: String, askedFrom: AskedFrom?, chatReading: Boolean, extras: com.circaso.feature.assistant.domain.AskExtras): Flow<AshaEvent> {
+        this.extras += extras
+        return ask(text, askedFrom, chatReading)
+    }
     override suspend fun submitToolResults(turnId: String, callId: String, snippets: List<Snippet>): AppResult<Unit> = AppResult.Success(Unit)
     override suspend fun deleteMessage(messageId: String) = Unit
     override suspend fun deleteAll() = Unit
@@ -206,6 +212,40 @@ class AshaReconnectTest {
         assertTrue(asha.refreshes > refreshes, "the history and recents reload quietly")
         advanceTimeBy(AshaViewModel.BackOnlineMillis + 1)
         assertFalse(vm.state.value.backOnline, "and goes away")
+    }
+
+    private val picture = com.circaso.feature.assistant.domain.AshaImage(byteArrayOf(-1, -40, -1), 9, 16)
+
+    @Test fun fromTheBubbleEachQuestionCarriesTheScreenAndAPictureOnlyOnce() = runTest(dispatcher) {
+        asha.scripts += listOf(done)
+        asha.scripts += listOf(done)
+        val vm = vm(); keep(vm.state)
+        vm.onScreen("Wallet › Send")
+        vm.onAttachment(picture)
+        assertTrue(vm.state.value.canSend, "a picture alone can be sent")
+        vm.onDraft("Why is Pay grey?"); vm.onSend()
+        assertEquals("Wallet › Send", asha.extras.single().screen)
+        assertTrue(asha.extras.single().image === picture)
+        assertNull(vm.state.value.attachment, "the picture went with that question")
+        vm.onDraft("Thanks"); vm.onSend()
+        assertEquals("Wallet › Send", asha.extras[1].screen, "the screen goes with every question")
+        assertNull(asha.extras[1].image, "the picture went only once")
+    }
+
+    @Test fun aPictureWithoutWordsAsksAboutTheScreen() = runTest(dispatcher) {
+        asha.scripts += listOf(done)
+        val vm = vm(); keep(vm.state)
+        vm.onAttachment(picture); vm.onSend()
+        assertEquals(listOf(AshaViewModel.ScreenOnlyQuestion), asha.asked)
+    }
+
+    @Test fun aRefusedQuestionGivesThePictureBackWithoutFillingTheDraft() = runTest(dispatcher) {
+        asha.scripts += listOf(AshaEvent.Failed(AppError.Api("assistant.quota_exceeded", 429, "r", 3600, emptyMap())))
+        val vm = vm(); keep(vm.state)
+        vm.onAttachment(picture); vm.onSend()
+        assertTrue(vm.state.value.attachment === picture, "the picture waits to be sent again")
+        assertEquals("", vm.state.value.draft)
+        assertFalse(vm.state.value.pendingWithScreen)
     }
 
     @Test fun backOnlineIsNotShownWhenTheConnectionNeverWent() = runTest(dispatcher) {

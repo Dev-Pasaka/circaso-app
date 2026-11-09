@@ -417,7 +417,7 @@ private fun GroupNameField(value: String, onValue: (String) -> Unit, enabled: Bo
     Row(Modifier.fillMaxWidth().heightIn(min = 52.dp).padding(horizontal = CircasoSpacing.s4, vertical = CircasoSpacing.s3), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(CircasoSpacing.s2)) {
         Box(Modifier.weight(1f), contentAlignment = Alignment.CenterStart) {
             BasicTextField(
-                value = value, onValueChange = onValue, singleLine = true, enabled = enabled,
+                value = value, onValueChange = com.circaso.designsystem.components.ashaAware(value, onValue), singleLine = true, enabled = enabled,
                 keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Words),
                 textStyle = t.body.copy(color = c.ink), cursorBrush = SolidColor(c.ink),
                 modifier = Modifier.fillMaxWidth().semantics { contentDescription = "Group name" },

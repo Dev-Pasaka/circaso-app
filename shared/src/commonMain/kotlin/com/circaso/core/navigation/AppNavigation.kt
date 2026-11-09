@@ -46,6 +46,8 @@ import com.circaso.feature.account.presentation.SecurityLogScreen
 import com.circaso.feature.account.presentation.SecurityScreen
 import com.circaso.core.platform.LiveMicrophone
 import com.circaso.feature.assistant.presentation.AshaScreen
+import com.circaso.feature.assistant.presentation.capturable
+import com.circaso.feature.assistant.presentation.AshaBubbleLayer
 import com.circaso.feature.assistant.presentation.VoiceScreen
 import com.circaso.feature.wallet.presentation.ActivityScreen
 import com.circaso.feature.wallet.presentation.HoldBanner
@@ -206,8 +208,13 @@ fun AppNavigation(forceUpdate: Boolean, home: @Composable () -> Unit) {
     val calls = koinInject<com.circaso.feature.calls.CallController>()
     // A Pay tapped on a chat's profile starts the payment in that chat's composer (money starts in the chat).
     val moneyPrompts = androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateMapOf<String, Long>() }
-    // Typing /asha in any text field opens Asha, but only with a full session (she needs the server) and never twice.
-    val asha = if (state == AuthState.Active) AshaLauncher { if (backStack.lastOrNull() != AshaRoute) backStack.add(AshaRoute) } else null
+    // Typing /asha in any text field summons Asha's floating bubble over the screen (2026-11-09), only with a full
+    // session (she needs the server). The bubble lives here, above every screen and under calls.
+    val ashaBubble = remember { com.circaso.feature.assistant.presentation.AshaBubbleState() }
+    val asha = if (state == AuthState.Active) AshaLauncher { ashaBubble.summon() } else null
+    // Secret inputs on screen (PIN pads, codes, passwords): the screen is never shown to Asha while one is.
+    val secretsOnScreen = remember { com.circaso.designsystem.components.SecretsOnScreen() }
+    val screenCapture = com.circaso.feature.assistant.presentation.rememberScreenCapture()
     val announcements: SyncAnnouncements = koinInject()
     val toast = rememberToastState()
     // Every share is a link (decision 2026-11-06): one layer over the whole app makes them and opens the share sheet.
@@ -243,6 +250,7 @@ fun AppNavigation(forceUpdate: Boolean, home: @Composable () -> Unit) {
     }
     CompositionLocalProvider(
         LocalAshaLauncher provides asha,
+        com.circaso.designsystem.components.LocalSecretsOnScreen provides secretsOnScreen,
         com.circaso.feature.share.presentation.LocalShareLinks provides (if (state == AuthState.Active) shareLauncher else null),
         com.circaso.feature.share.presentation.LocalShareLinksStatus provides shareStatus,
     ) {
@@ -257,6 +265,8 @@ fun AppNavigation(forceUpdate: Boolean, home: @Composable () -> Unit) {
     val popping = remember(backStack.size) { (backStack.size < lastDepth[0]).also { lastDepth[0] = backStack.size } }
     // Sheets and photo viewers draw over the whole window, not inside the pane that opened them (WindowOverlay.kt);
     // only over the screens: the share sheet, toasts and calls below stay above them.
+    // "Show Asha my screen" pictures the screens and their sheets (this box), never the bubble, a call or a toast.
+    Box(Modifier.capturable(screenCapture)) {
     com.circaso.designsystem.chrome.WindowOverlayLayer(enabled = launchValue("-window-overlay")?.takeIf { client.debugBuild } != "off") {
     // A tab change that shortens the stack isn't a back: the screen it shows must not start dimmed.
     CompositionLocalProvider(LocalNavPopping provides (popping && !swapPending), LocalNavCut provides swapPending) {
@@ -440,12 +450,15 @@ fun AppNavigation(forceUpdate: Boolean, home: @Composable () -> Unit) {
             entry<AshaRoute> {
                 // The mic opens the live conversation where the phone can encode Opus; elsewhere it records a clip (A3).
                 val live = koinInject<LiveMicrophone>().supported
+                // In Asha's own chat, `/asha` is just words to her.
+                CompositionLocalProvider(LocalAshaLauncher provides null) {
                 AshaScreen(
                     koinViewModel(), onBack = ::pop,
                     onVoice = if (live) ({ if (backStack.lastOrNull() != VoiceRoute) backStack.add(VoiceRoute) }) else null,
                     // Asha's settings live in her menu (asha-next.md part A), pushed on top of her chat.
                     onVoiceSettings = { if (backStack.lastOrNull() != AshaVoiceRoute) backStack.add(AshaVoiceRoute) },
                 )
+                }
             }
             entry<VoiceRoute>(metadata = Panes.FullScreen) { VoiceScreen(koinViewModel(), onBack = ::pop) }
             entry<ChatRoute> { route ->
@@ -641,11 +654,32 @@ fun AppNavigation(forceUpdate: Boolean, home: @Composable () -> Unit) {
     )
     }
     }
+    }
     if (state == AuthState.Active) {
         val scope = androidx.compose.runtime.rememberCoroutineScope()
         ShareLinkLayer(shareLinks) { text: String -> scope.launch { toast.show(text) } }
     }
     ToastHost(toast, Modifier.align(Alignment.TopCenter).statusBarsPadding().padding(top = 56.dp))
+    // Asha's bubble (2026-11-09): over every screen, under calls. Made on the first summon, then kept for the session.
+    var ashaBubbleMade by remember { androidx.compose.runtime.mutableStateOf(false) }
+    if (ashaBubble.open && !ashaBubbleMade) androidx.compose.runtime.SideEffect { ashaBubbleMade = true }
+    if (state != AuthState.Active && ashaBubble.open) androidx.compose.runtime.SideEffect { ashaBubble.close() }
+    if (ashaBubbleMade && state == AuthState.Active) {
+        val bubbleViewModel = koinViewModel<com.circaso.feature.assistant.presentation.AshaViewModel>(key = "asha-bubble")
+        val top = backStack.lastOrNull()
+        val callNow by calls.state.collectAsState()
+        val liveVoice = koinInject<LiveMicrophone>().supported
+        AshaBubbleLayer(
+            ashaBubble, bubbleViewModel, screenName(top, homeTab),
+            // Asha's own screens are her already; a full-screen call owns the screen and the microphone.
+            hidden = top == AshaRoute || top == VoiceRoute || top == AshaVoiceRoute || callNow?.let { !it.minimised } == true,
+            actions = com.circaso.feature.assistant.presentation.AshaBubbleActions(
+                onVoice = if (liveVoice) ({ if (backStack.lastOrNull() != VoiceRoute) backStack.add(VoiceRoute) }) else null,
+                onOpenFull = { ashaBubble.close(); if (backStack.lastOrNull() != AshaRoute) backStack.add(AshaRoute) },
+                capture = { screenCapture.take() },
+            ),
+        )
+    }
     // Calls (designs H1–H5) live above every screen: one can ring anywhere, and it keeps going while money is sent from it.
     if (state == AuthState.Active) CallLayer(backStack) { id ->
         // The chat's own Pay: `#` in its composer once it opens (ThreadScreen's money prompt).

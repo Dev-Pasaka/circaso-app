@@ -196,7 +196,7 @@ private fun TextEditor(state: MomentComposerUiState, vm: MomentComposerViewModel
     Box(Modifier.fillMaxSize().background(brush = swatch.brush).padding(horizontal = 28.dp), contentAlignment = Alignment.Center) {
         val style = t.title1.copy(color = swatch.ink, textAlign = TextAlign.Center, fontWeight = weight, fontFamily = family ?: t.title1.fontFamily, fontSize = 32.sp, lineHeight = 39.sp)
         if (state.text.isEmpty()) BasicText("Type a moment", style = style.copy(color = swatch.ink.copy(alpha = 0.55f)))
-        BasicTextField(state.text, vm::onText, textStyle = style, cursorBrush = SolidColor(swatch.ink), modifier = Modifier.fillMaxWidth().semantics { contentDescription = "Moment text" })
+        BasicTextField(state.text, com.circaso.designsystem.components.ashaAware(state.text, vm::onText), textStyle = style, cursorBrush = SolidColor(swatch.ink), modifier = Modifier.fillMaxWidth().semantics { contentDescription = "Moment text" })
     }
 }
 

@@ -178,6 +178,31 @@ class AshaRepositoryTest {
         assertEquals(true, request.chatReading)
     }
 
+    @Test fun fromTheBubbleTheScreenAndItsPictureGoWithTheQuestion() = runSuspending {
+        remote.events = listOf(ok("done", DoneJson))
+        val jpeg = byteArrayOf(-1, -40, -1, 1, 2)
+        repo.ask("what is this?", null, chatReading = true, com.circaso.feature.assistant.domain.AskExtras("Wallet › Send", com.circaso.feature.assistant.domain.AshaImage(jpeg, 10, 20))).toList()
+        val request = remote.streamRequests.single()
+        assertEquals("Wallet › Send", request.screen)
+        assertEquals("image/jpeg", request.image?.mediaType)
+        @OptIn(kotlin.io.encoding.ExperimentalEncodingApi::class)
+        assertTrue(kotlin.io.encoding.Base64.decode(request.image!!.data).contentEquals(jpeg))
+    }
+
+    @Test fun aPlainQuestionSendsNoScreenOrPicture() = runSuspending {
+        remote.events = listOf(ok("done", DoneJson))
+        repo.ask("hi", null, chatReading = true).toList()
+        assertNull(remote.streamRequests.single().screen)
+        assertNull(remote.streamRequests.single().image)
+    }
+
+    @Test fun aPictureOverTheLimitIsNotSent() = runSuspending {
+        remote.events = listOf(ok("done", DoneJson))
+        val big = com.circaso.feature.assistant.domain.AshaImage(ByteArray(com.circaso.feature.assistant.domain.AshaImage.MaxBytes + 1), 1, 1)
+        repo.ask("hi", null, true, com.circaso.feature.assistant.domain.AskExtras(image = big)).toList()
+        assertNull(remote.streamRequests.single().image)
+    }
+
     @Test fun theOldMascotFramesAreIgnoredAndToolStatusStillShows() = runSuspending {
         remote.events = listOf(
             ok("mascot", """{"scene":"beach","mood":"happy","activity":"thinking"}"""),

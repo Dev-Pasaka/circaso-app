@@ -50,7 +50,10 @@ fun CircasoTextField(
 ) {
     val c = CircasoTheme.colors
     val t = CircasoTheme.typography
-    val asha = LocalAshaLauncher.current
+    // `/asha` summons Asha from any field that is not a secret one; the command text is not kept (AshaLauncher.kt).
+    val onChange = ashaAware(value, onValueChange, secret)
+    // A password-like field on screen: the screen can't be shown to Asha while it is.
+    SecretOnScreen(secret)
     var focused by remember { mutableStateOf(false) }
     val outline = when {
         error != null -> c.critical
@@ -61,14 +64,7 @@ fun CircasoTextField(
         BasicText(label, Modifier.padding(horizontal = CircasoSpacing.s1), style = t.footnote.copy(color = c.inkSecondary))
         BasicTextField(
             value = value,
-            onValueChange = { next ->
-                // `/asha` opens the assistant from any field that is not a secret one; the command text is not kept.
-                val rest = if (!secret && asha != null) textWithoutAshaCommand(next) else null
-                if (rest != null) {
-                    onValueChange(rest)
-                    asha?.open()
-                } else onValueChange(next)
-            },
+            onValueChange = onChange,
             enabled = enabled,
             singleLine = singleLine,
             textStyle = t.body.copy(color = if (enabled) c.ink else c.inkTertiary),
