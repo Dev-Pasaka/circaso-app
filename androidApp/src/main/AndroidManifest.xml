@@ -36,6 +36,9 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CAMERA" />
+    <!-- Screen sharing on a call carries on when Circaso is left: the call's service gains the mediaProjection type
+         only while a share is on, after the person agreed to Android's own prompt. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
     <!-- Live location keeps updating while Circaso is in the background, with an ongoing notification (Stop sharing). -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
     <!-- Uploads (photos, videos, voice notes, moments) carry on after Circaso is left: a dataSync foreground service. -->
@@ -117,7 +120,7 @@
         <service
             android:name="com.circaso.core.calls.CallService"
             android:exported="false"
-            android:foregroundServiceType="microphone|camera" />
+            android:foregroundServiceType="microphone|camera|mediaProjection" />
         <!-- Google Maps for live location; from local.properties `maps.android.key` (restricted to this app). -->
         <meta-data
             android:name="com.google.android.geo.API_KEY"

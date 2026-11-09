@@ -15,4 +15,10 @@ object CircasoSpring {
 
     /** A size settling after the screen turned (the call self-view). */
     fun <T> resize(): SpringSpec<T> = spring(dampingRatio = Spring.DampingRatioNoBouncy, stiffness = 420f)
+
+    /**
+     * [reflow]'s motion driven as a 0..1 progress (a call tile moving and resizing at once): the same spring, settling
+     * to within a thousandth so the last pixels of a long move glide in instead of snapping.
+     */
+    fun progress(): SpringSpec<Float> = spring(dampingRatio = Spring.DampingRatioNoBouncy, stiffness = 420f, visibilityThreshold = 0.001f)
 }

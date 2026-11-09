@@ -55,9 +55,27 @@ interface CallEngine {
     fun flipCamera()
     fun setSpeaker(on: Boolean)
 
+    /**
+     * Whether this phone can share its screen on a call (Pasaka, 2026-11-09): Android always; iOS only once the
+     * ReplayKit broadcast extension is in the app, so the button never shows for something that can't work.
+     */
+    val canShareScreen: Boolean get() = false
+
+    /**
+     * Shares the screen on the call's one video track instead of the camera (asking the system first), or stops and
+     * gives the track back to the camera or its black keep-alive. Nothing is renegotiated. False when it didn't start
+     * (the person said no, or the system refused).
+     */
+    suspend fun setScreenShare(on: Boolean): Boolean = !on
+
+    /** True while the screen is going out; turns false by itself when the system stops it (its own Stop, a lock). */
+    val screenSharing: StateFlow<Boolean> get() = NotSharing
+
     /** Ends everything: tracks, camera, connection, audio route. Safe to call twice. */
     fun close()
 }
+
+private val NotSharing: StateFlow<Boolean> = kotlinx.coroutines.flow.MutableStateFlow(false)
 
 object NoCallEngine : CallEngine {
     override val available = false
@@ -79,6 +97,10 @@ sealed interface VideoSource {
     data class Remote(val mid: String) : VideoSource
 }
 
-/** A live video tile (the platform's renderer). [mirror] for the front camera; [fill] crops instead of letterboxing. */
+/**
+ * A live video tile (the platform's renderer). [mirror] for the front camera; [fill] crops instead of letterboxing (a
+ * shared screen is never cropped). It composes like any other view (clipped, moved, scaled), so a tile can swap
+ * places or grow on the call's own motion without its picture being torn down.
+ */
 @Composable
 expect fun CallVideo(source: VideoSource, modifier: Modifier = Modifier, mirror: Boolean = false, fill: Boolean = true)

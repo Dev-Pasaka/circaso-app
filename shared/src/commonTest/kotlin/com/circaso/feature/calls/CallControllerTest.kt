@@ -81,7 +81,7 @@ private class FakeRemote : CallsRemote {
         current = current.copy(participants = current.participants.map { if (it.state == "MISSED") it.copy(state = "INVITED") else it })
         return AppResult.Success(current)
     }
-    override suspend fun media(callId: String, audio: Boolean, video: Boolean): AppResult<JsonObject> { calls += "media:$audio/$video"; return AppResult.Success(JsonObject(emptyMap())) }
+    override suspend fun media(callId: String, audio: Boolean, video: Boolean, screen: Boolean): AppResult<JsonObject> { calls += "media:$audio/$video" + if (screen) "/screen" else ""; return AppResult.Success(JsonObject(emptyMap())) }
 }
 
 private class FakeEngine : CallEngine {
@@ -109,6 +109,18 @@ private class FakeEngine : CallEngine {
     override fun close() { events += "close" }
     var packets: Long? = null
     override suspend fun receivedPackets(): Long? = packets
+    var screenSupported = true
+    override val canShareScreen get() = screenSupported
+    /** What the system's consent says; false is the person saying no. */
+    var screenConsent = true
+    val sharing = MutableStateFlow(false)
+    override val screenSharing: StateFlow<Boolean> = sharing
+    override suspend fun setScreenShare(on: Boolean): Boolean {
+        events += "screen:$on"
+        if (on && !screenConsent) return false
+        sharing.value = on
+        return true
+    }
 }
 
 @OptIn(ExperimentalCoroutinesApi::class)
@@ -259,6 +271,71 @@ class CallControllerTest {
         assertTrue("camera:true" in engine.events)
         // The first is the real state sent on joining (camera off in a voice call), then mute, then camera on.
         assertEquals(listOf("media:true/false", "media:false/false", "media:false/true"), remote.calls.filter { it.startsWith("media") })
+    }
+
+    @Test fun sharingTheScreenTellsEveryoneItsAScreenAndStopGivesTheCameraBack() = runTest(UnconfinedTestDispatcher()) {
+        val cc = controller()
+        cc.start("chat1", video = false)
+        advanceUntilIdle()
+        cc.toggleScreenShare()
+        advanceUntilIdle()
+        assertTrue(cc.state.value!!.screen)
+        assertTrue("screen:true" in engine.events)
+        cc.toggleScreenShare()
+        advanceUntilIdle()
+        assertEquals(false, cc.state.value!!.screen)
+        // The video track counts as on while it carries the screen, and goes back to the camera's real state after.
+        assertEquals(listOf("media:true/false", "media:true/true/screen", "media:true/false"), remote.calls.filter { it.startsWith("media") })
+    }
+
+    @Test fun sayingNoToTheSystemsPromptChangesNothing() = runTest(UnconfinedTestDispatcher()) {
+        val cc = controller()
+        cc.start("chat1", video = false)
+        advanceUntilIdle()
+        engine.screenConsent = false
+        cc.toggleScreenShare()
+        advanceUntilIdle()
+        assertEquals(false, cc.state.value!!.screen)
+        assertNull(cc.state.value!!.error)
+        assertEquals(listOf("media:true/false"), remote.calls.filter { it.startsWith("media") })
+    }
+
+    @Test fun theSystemStoppingTheShareStopsItOnTheCall() = runTest(UnconfinedTestDispatcher()) {
+        val cc = controller()
+        cc.start("chat1", video = false)
+        advanceUntilIdle()
+        cc.toggleCamera()
+        cc.toggleScreenShare()
+        advanceUntilIdle()
+        engine.sharing.value = false // the status bar's Stop, or the screen locked
+        advanceUntilIdle()
+        assertEquals(false, cc.state.value!!.screen)
+        assertEquals("media:true/true", remote.calls.last { it.startsWith("media") }, "the camera that was on stays on")
+    }
+
+    @Test fun aPhoneThatCantShareItsScreenNeverTries() = runTest(UnconfinedTestDispatcher()) {
+        val cc = controller()
+        engine.screenSupported = false
+        cc.start("chat1", video = false)
+        advanceUntilIdle()
+        assertEquals(false, cc.canShareScreen)
+        cc.toggleScreenShare()
+        advanceUntilIdle()
+        assertTrue(engine.events.none { it.startsWith("screen") })
+    }
+
+    @Test fun someoneSharingTheirScreenIsMarkedOnTheirTile() = runTest(UnconfinedTestDispatcher()) {
+        val cc = controller()
+        cc.start("chat1", video = false)
+        advanceUntilIdle()
+        remote.current = call("ACTIVE", person("me", "JOINED"), person("mum", "JOINED").copy(video = true, screen = true))
+        cc.onFrame("call.updated", frame("call.updated", remote.current))
+        advanceUntilIdle()
+        assertTrue(cc.state.value!!.people.first { it.userId == "mum" }.screen)
+        // An older server never says it: a plain video.
+        remote.current = call("ACTIVE", person("me", "JOINED"), person("mum", "JOINED").copy(video = true))
+        cc.onFrame("call.updated", frame("call.updated", remote.current))
+        assertEquals(false, cc.state.value!!.people.first { it.userId == "mum" }.screen)
     }
 
     @Test fun frameUpdatesDontLoseTheIceServers() = runTest(UnconfinedTestDispatcher()) {
