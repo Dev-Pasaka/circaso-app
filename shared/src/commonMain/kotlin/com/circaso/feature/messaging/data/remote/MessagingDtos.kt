@@ -109,6 +109,11 @@ data class SendChatMessageRequest(
     val recipients: List<RecipientDto>? = null,
     val mediaIds: List<String>? = null,
     val pushable: Boolean = false,
+    /**
+     * A `SENDER_KEY` whose copies ask for the group's metadata key (2026-11-09): offline members get a silent
+     * `chat.meta_key_requested` push so their phone answers. An older server ignores it.
+     */
+    val keyRequest: Boolean = false,
 )
 
 @Serializable data class SentMessageResponse(val messageId: String, val sentAt: String)

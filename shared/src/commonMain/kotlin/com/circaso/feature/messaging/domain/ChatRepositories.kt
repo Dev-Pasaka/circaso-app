@@ -36,6 +36,12 @@ interface ChatsRepository {
 
     /** The safety number between me and [userId], once we have each other's identity keys. */
     suspend fun securityCode(userId: String): SecurityCode?
+
+    /**
+     * Asks the members of each group this phone can't name (no metadata key: a new phone) for its key, once this
+     * phone's own keys are on the server; at most once every 10 minutes a group. Best effort, from Room only.
+     */
+    suspend fun askForMissingGroupKeys() {}
 }
 
 /**

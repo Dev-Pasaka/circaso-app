@@ -103,6 +103,8 @@ data class ThreadUiState(
             typing.size > 1 -> "${typing.size} people are typing…"
             !online -> "Waiting for network"
             isSupport -> "Verified Circaso team"
+            // A group this phone can't name yet (a new phone): its name and photo are on their way from a member's phone.
+            isGroup && chat?.nameKnown == false -> "${chat.members.size} members · " + com.circaso.feature.messaging.presentation.groupNameLine(chat, online)!!.replaceFirstChar { it.lowercase() }
             isGroup -> "${chat?.members?.size ?: 0} members"
             presence?.online == true -> "Online"
             presence?.lastSeenAt != null -> lastSeenText(presence.lastSeenAt)

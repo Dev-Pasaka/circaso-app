@@ -51,6 +51,20 @@ class CircasoMessagingService : FirebaseMessagingService() {
             }
             return
         }
+        // A member's new phone can't read a group's name and photo (silent, 2026-11-09): pulling the inbox answers it.
+        if (message.data["kind"] == com.circaso.feature.messaging.data.repository.GroupKeyRequestPush.Kind) {
+            runCatching {
+                val koin = KoinPlatform.getKoin()
+                runBlocking {
+                    com.circaso.feature.messaging.data.repository.GroupKeyRequestPush.handle(
+                        message.data,
+                        sync = { koin.get<com.circaso.feature.messaging.domain.MessagesRepository>().syncInbox() },
+                        windowMillis = SyncWindowMillis,
+                    )
+                }
+            }
+            return
+        }
         runCatching {
             val koin = KoinPlatform.getKoin()
             val notices = koin.get<PushNotices>()

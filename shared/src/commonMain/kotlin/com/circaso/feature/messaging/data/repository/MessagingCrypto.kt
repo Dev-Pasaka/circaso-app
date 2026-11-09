@@ -20,6 +20,10 @@ import com.circaso.feature.messaging.data.remote.MessagingWire
 import com.circaso.feature.messaging.data.remote.RecipientDto
 import com.circaso.feature.messaging.data.remote.SendChatMessageRequest
 import com.circaso.feature.messaging.domain.KeysRepository
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.Serializable
@@ -193,6 +197,13 @@ class GroupKeys(
     private val json: Json,
     private val ownUserId: suspend () -> String?,
     private val now: () -> Long = ::nowMillis,
+    /**
+     * Makes sure this phone's own encryption keys are on the server (publishing them if not) before members are asked
+     * for a group's key. A member answers over the 1:1 session, sealed for whatever bundle the server has; right after
+     * a sign-in on a new phone that may still be the old phone's, which this one could never open (2026-11-09: the
+     * first ask on Pasaka's new phone left 0.8 s before its keys did).
+     */
+    private val keysPublished: suspend () -> Boolean = { true },
 ) {
     private val lock = Mutex()
 
@@ -290,10 +301,19 @@ class GroupKeys(
 
     // ---- a lost metadata key: ask the members, who hand it back over the 1:1 session
 
-    private class Ask(val first: Long, var last: Long)
+    /** [reached]: the members whose copy the server took; [noKey]: those who answered that they have none either. */
+    private class Ask(val first: Long, var last: Long, val reached: MutableSet<String> = mutableSetOf(), val noKey: MutableSet<String> = mutableSetOf())
     private val asks = mutableMapOf<String, Ask>()
     private val answered = mutableMapOf<String, Long>()
     private val askLock = Mutex()
+
+    private val _unavailable = MutableStateFlow<Set<String>>(emptySet())
+
+    /**
+     * Groups whose key no member this phone asked has either: every one answered with [ChatPayload.MetaKeyNone]. Their
+     * name stays unknown here until an admin names the group again (a new key). Groups not in it are still waiting.
+     */
+    val unavailable: StateFlow<Set<String>> = _unavailable.asStateFlow()
 
     /** When this phone first asked for [chatId]'s key (this run), or null if it hasn't reached anyone yet. */
     suspend fun askedSince(chatId: String): Long? = askLock.withLock { asks[chatId]?.first }
@@ -301,27 +321,32 @@ class GroupKeys(
     /**
      * Asks the other members of [chatId] for the metadata key, as Moments' new phone asks posters for theirs: one
      * `SENDER_KEY` message with a 1:1 copy for each ([members] pairs a user id with whether they are an admin; admins
-     * are asked first, at most [AskAtMost] people). At most once every [AskEveryMillis] per group. Online-only: a
-     * network failure is returned and not counted as an ask.
+     * are asked first, at most [AskAtMost] people), marked as a key request so the server wakes an offline member's
+     * phone with a silent push. At most once every [AskEveryMillis] per group, and only once this phone's own keys are
+     * on the server ([keysPublished]; until then a [AppError.Network] failure, so the caller tries again later).
+     * Online-only: a failure is returned and not counted as an ask.
      */
     suspend fun askForMetaKey(chatId: String, members: List<Pair<String, Boolean>>, metaVersion: Int): AppResult<Unit> = askLock.withLock {
         val me = ownUserId() ?: return@withLock AppResult.Failure(AppError.Unexpected(null))
         val t = now()
         asks[chatId]?.let { if (t - it.last < AskEveryMillis) return@withLock AppResult.Success(Unit) }
+        if (!keysPublished()) return@withLock AppResult.Failure(AppError.Network)
         val others = members.filter { it.first != me }.sortedByDescending { it.second }.map { it.first }.take(AskAtMost)
         val plaintext = ChatPayload.encode(ChatPayload(type = ChatPayload.MetaKeyRequest, metaVersion = metaVersion))
-        when (val sent = sendOneToOne(chatId, others, plaintext)) {
+        val reached = when (val sent = sendOneToOne(chatId, others, plaintext, keyRequest = true)) {
             is AppResult.Failure -> return@withLock sent
-            is AppResult.Success -> Unit
+            is AppResult.Success -> sent.value
         }
         // Asked (or there is no one who could answer): the wait before an admin may give the group a new key starts now.
-        asks[chatId]?.let { it.last = t } ?: run { asks[chatId] = Ask(t, t) }
+        val ask = asks[chatId]?.also { it.last = t } ?: Ask(t, t).also { asks[chatId] = it }
+        ask.reached += reached
         AppResult.Success(Unit)
     }
 
     /**
-     * [requesterId] has no key for [chatId]'s name and asked me. Answered with my newest key, 1:1, when they are still
-     * a member and I hold one; at most once a minute per person and group. Nothing is answered to me or a stranger.
+     * [requesterId] has no key for [chatId]'s name and asked me. Answered 1:1 with my newest key when they are still a
+     * member and I hold one, or with [ChatPayload.MetaKeyNone] when I hold none (my phone is new too), so their phone
+     * stops waiting on mine; at most once a minute per person and group. Nothing is answered to me or a stranger.
      */
     suspend fun answerMetaKeyRequest(chatId: String, requesterId: String) = askLock.withLock {
         val me = ownUserId() ?: return@withLock
@@ -329,12 +354,23 @@ class GroupKeys(
         val chat = chats.chat(chatId) ?: return@withLock
         if (chat.left || chat.kind != MessagingWire.Group) return@withLock
         if (chats.members(chatId).none { it.userId == requesterId }) return@withLock
-        val row = chats.latestMetaKey(chatId) ?: return@withLock
         val t = now()
         val seen = "$chatId:$requesterId"
         answered[seen]?.let { if (t - it < AnswerEveryMillis) return@withLock }
-        val plaintext = ChatPayload.encode(metaKeyPayload(chatId, row))
-        if (sendOneToOne(chatId, listOf(requesterId), plaintext) is AppResult.Success) answered[seen] = t
+        val row = chats.latestMetaKey(chatId)
+        val payload = if (row != null) metaKeyPayload(chatId, row) else ChatPayload(type = ChatPayload.MetaKeyNone, metaVersion = chat.metaVersion)
+        if (sendOneToOne(chatId, listOf(requesterId), ChatPayload.encode(payload)) is AppResult.Success) answered[seen] = t
+    }
+
+    /**
+     * [senderId] answered my ask for [chatId]'s key: their phone has none either. Once every member the ask reached
+     * has said so, the group is [unavailable]. An answer to an ask this run never made is ignored.
+     */
+    suspend fun onNoKey(chatId: String, senderId: String) = askLock.withLock {
+        val ask = asks[chatId] ?: return@withLock
+        if (senderId !in ask.reached) return@withLock
+        ask.noKey += senderId
+        if (ask.noKey.containsAll(ask.reached)) _unavailable.update { it + chatId }
     }
 
     /**
@@ -345,7 +381,10 @@ class GroupKeys(
     suspend fun distributeMetaKey(chatId: String, memberIds: List<String>): AppResult<Unit> {
         val me = ownUserId() ?: return AppResult.Failure(AppError.Unexpected(null))
         val row = chats.latestMetaKey(chatId) ?: return AppResult.Failure(AppError.Unexpected(null))
-        return sendOneToOne(chatId, memberIds.filter { it != me }, ChatPayload.encode(metaKeyPayload(chatId, row)))
+        return when (val sent = sendOneToOne(chatId, memberIds.filter { it != me }, ChatPayload.encode(metaKeyPayload(chatId, row)))) {
+            is AppResult.Success -> AppResult.Success(Unit)
+            is AppResult.Failure -> sent
+        }
     }
 
     private suspend fun metaKeyPayload(chatId: String, row: GroupMetaKeyEntity) = ChatPayload(
@@ -356,9 +395,10 @@ class GroupKeys(
 
     /**
      * [plaintext] to each of [userIds] over their 1:1 session, as one `SENDER_KEY` message (the kind the server lets
-     * go to some members of a group). Someone without keys is skipped; a network failure stops it.
+     * go to some members of a group); [keyRequest] when it asks for the group's key. Someone without keys is skipped;
+     * a network failure stops it. The members it reached.
      */
-    private suspend fun sendOneToOne(chatId: String, userIds: List<String>, plaintext: ByteArray): AppResult<Unit> {
+    private suspend fun sendOneToOne(chatId: String, userIds: List<String>, plaintext: ByteArray, keyRequest: Boolean = false): AppResult<List<String>> {
         val recipients = mutableListOf<RecipientDto>()
         for (member in userIds) {
             when (val sealed = sessions.seal(member, plaintext)) {
@@ -366,11 +406,11 @@ class GroupKeys(
                 is AppResult.Failure -> if (sealed.error is AppError.Network) return sealed
             }
         }
-        if (recipients.isEmpty()) return AppResult.Success(Unit)
+        if (recipients.isEmpty()) return AppResult.Success(emptyList())
         @OptIn(ExperimentalUuidApi::class)
-        val request = SendChatMessageRequest(clientMessageId = Uuid.random().toString(), kind = MessagingWire.KindSenderKey, recipients = recipients, pushable = false)
+        val request = SendChatMessageRequest(clientMessageId = Uuid.random().toString(), kind = MessagingWire.KindSenderKey, recipients = recipients, pushable = false, keyRequest = keyRequest)
         return when (val sent = remote.send(chatId, request, request.clientMessageId)) {
-            is AppResult.Success -> AppResult.Success(Unit)
+            is AppResult.Success -> AppResult.Success(recipients.map { it.userId })
             is AppResult.Failure -> sent
         }
     }
@@ -466,6 +506,8 @@ class GroupKeys(
             val sealed = chat?.sealedMeta
             if (sealed != null && chat.metaVersion == metaVersion && !opens(key, sealed)) return@withLock
             rememberMetaKey(chatId, metaVersion, key)
+            // A key came after all (an admin named the group again, or a member who had it answered late).
+            _unavailable.update { it - chatId }
         }
     }
 

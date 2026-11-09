@@ -171,8 +171,8 @@ class GroupMetaKeyRecoveryTest {
         aGroupWithoutItsKey()
         phone.chats.refresh()
         assertNull(phone.chatsDao.latestMetaKey("g1"))
-        assertEquals("Group", phone.chats.chat("g1").first()!!.title)
-        assertEquals(false, phone.chats.chat("g1").first()!!.nameKnown, "\"Group\" is a placeholder: the name sheet must not offer it")
+        assertEquals("You and Amina", phone.chats.chat("g1").first()!!.title, "titled by who is in it, never a made-up name")
+        assertEquals(false, phone.chats.chat("g1").first()!!.nameKnown, "the title is a placeholder: the name sheet must not offer it")
         assertEquals(1, phone.chatsDao.pendingMetaKeys().size, "kept for the group it did make")
     }
 
@@ -341,7 +341,7 @@ class GroupMetaKeyRecoveryTest {
  * The fake crypto, with AES-GCM that only opens under the key it was sealed with and keys that differ each time
  * (the shared fake ignores the key and always makes the same one, which can't show a wrong key being refused).
  */
-private class KeyedCrypto(private val inner: FakeSignalCrypto = FakeSignalCrypto()) : SignalCrypto by inner {
+internal class KeyedCrypto(private val inner: FakeSignalCrypto = FakeSignalCrypto()) : SignalCrypto by inner {
     private var next = 0
     override fun randomBytes(count: Int) = ByteArray(count) { next.toByte() }.also { next++ }
     override fun aesGcmSeal(key: ByteArray, plaintext: ByteArray, associatedData: ByteArray) = key.copyOf(4) + plaintext.reversedArray()
@@ -351,7 +351,7 @@ private class KeyedCrypto(private val inner: FakeSignalCrypto = FakeSignalCrypto
     }
 }
 
-private class FakeGroupAttachments : AttachmentsRemote {
+internal class FakeGroupAttachments : AttachmentsRemote {
     val created = mutableListOf<String>()
     override suspend fun create(chatId: String, sizeBytes: Long, kind: String): AppResult<NewAttachmentResponse> {
         created += chatId
@@ -361,7 +361,7 @@ private class FakeGroupAttachments : AttachmentsRemote {
     override suspend fun download(attachmentId: String) = AppResult.Success(AttachmentDownloadResponse("https://r2/x", sizeBytes = null))
 }
 
-private class KeyTestFiles : MediaFiles {
+internal class KeyTestFiles : MediaFiles {
     private val map = mutableMapOf<String, ByteArray>()
     override suspend fun read(name: String) = map[name]
     override suspend fun write(name: String, bytes: ByteArray) { map[name] = bytes }

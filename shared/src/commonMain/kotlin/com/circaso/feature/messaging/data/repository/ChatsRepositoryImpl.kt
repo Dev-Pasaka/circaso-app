@@ -25,6 +25,7 @@ import com.circaso.feature.messaging.domain.ChatsRepository
 import com.circaso.feature.messaging.domain.GroupCreated
 import com.circaso.feature.messaging.domain.GroupDraft
 import com.circaso.feature.messaging.domain.GroupKeyErrors
+import com.circaso.feature.messaging.domain.GroupNameState
 import com.circaso.feature.messaging.domain.MemberRole
 import com.circaso.feature.messaging.domain.SecurityCode
 import kotlinx.coroutines.flow.Flow
@@ -46,9 +47,13 @@ class ChatsRepositoryImpl(
     /** Group photos (null in tests that don't need them: groups then show initials). */
     private val photos: GroupPhotos? = null,
 ) : ChatsRepository {
-    /** The chat rows, again whenever a group photo lands on this phone (the list swaps the thumbnail for it). */
+    /**
+     * The chat rows, again whenever a group photo lands on this phone (the list swaps the thumbnail for it) and when a
+     * group's key turns out to be on no member's phone ([GroupKeys.unavailable]: its row stops saying "waiting").
+     */
     private fun chatRows(): Flow<List<ChatEntity>> =
-        if (photos == null) dao.observeChats() else combine(dao.observeChats(), photos.changes) { rows, _ -> rows }
+        if (photos == null) combine(dao.observeChats(), groupKeys.unavailable) { rows, _ -> rows }
+        else combine(dao.observeChats(), photos.changes, groupKeys.unavailable) { rows, _, _ -> rows }
 
     override val chats: Flow<List<ChatSummary>> =
         combine(chatRows(), dao.observeAllMembers(), messages.observeLatestPerChat(), messages.observeUnread(), ownUserIdFlow()) { chats, members, latest, unread, me ->
@@ -58,7 +63,7 @@ class ChatsRepositoryImpl(
             chats.map { chat ->
                 val chatMembers = byChat[chat.chatId].orEmpty()
                 ChatSummary(
-                    chat = chat.toDomain(chatMembers, me, groupPhoto(chat)),
+                    chat = chat.toDomain(chatMembers, me, groupPhoto(chat), keyUnavailable = chat.chatId in groupKeys.unavailable.value),
                     latest = latestByChat[chat.chatId]?.toDomain(chatMembers, me),
                     unread = unreadByChat[chat.chatId] ?: 0,
                 )
@@ -68,8 +73,8 @@ class ChatsRepositoryImpl(
     private fun ownUserIdFlow(): Flow<String?> = kotlinx.coroutines.flow.flow { emit(ownUserId()) }
 
     override fun chat(chatId: String): Flow<Chat?> =
-        combine(dao.observeChat(chatId), dao.observeMembers(chatId), ownUserIdFlow(), photos?.changes ?: kotlinx.coroutines.flow.flowOf(0)) { chat, members, me, _ ->
-            chat?.toDomain(members, me, groupPhoto(chat))
+        combine(dao.observeChat(chatId), dao.observeMembers(chatId), ownUserIdFlow(), photos?.changes ?: kotlinx.coroutines.flow.flowOf(0), groupKeys.unavailable) { chat, members, me, _, unavailable ->
+            chat?.toDomain(members, me, groupPhoto(chat), keyUnavailable = chat.chatId in unavailable)
         }
 
     /**
@@ -165,13 +170,14 @@ class ChatsRepositoryImpl(
 
     /**
      * True when an admin may give [chatId] a new metadata key: this phone has asked the members and none has answered
-     * for [RekeyAfterMillis]. A member who still holds the old key loses nothing they can't read again: the new key
-     * reaches them right after.
+     * for [RekeyAfterMillis], or every one asked said they have no key either. A member who still holds the old key
+     * loses nothing they can't read again: the new key reaches them right after.
      */
     private suspend fun mayRekey(chatId: String): Boolean {
         val me = ownUserId() ?: return false
         val myRole = dao.members(chatId).firstOrNull { it.userId == me }?.role
         if (myRole != MessagingWire.Owner && myRole != MessagingWire.Admin) return false
+        if (chatId in groupKeys.unavailable.value) return true
         val asked = groupKeys.askedSince(chatId) ?: return false
         return now() - asked >= RekeyAfterMillis
     }
@@ -204,9 +210,14 @@ class ChatsRepositoryImpl(
         return patched
     }
 
+    override suspend fun askForMissingGroupKeys() =
+        askForMissingKeys(dao.chats().filter { it.kind == MessagingWire.Group && !it.left }.map { it.chatId })
+
     /**
      * Asks the members for the key of each group stored without one (best effort, rate-limited per group), except where
-     * I joined in the last [KeyGraceMillis]: the key is on its way with the members' sender keys.
+     * I joined in the last [KeyGraceMillis]: the key is on its way with the members' sender keys. A failure (offline,
+     * or this phone's keys not on the server yet) stops the round; the next one (each connection, and every
+     * [com.circaso.feature.messaging.data.repository.MessagingStarter.AskAgainMillis] while connected) tries again.
      */
     private suspend fun askForMissingKeys(chatIds: Collection<String>) {
         if (chatIds.isEmpty()) return
@@ -392,13 +403,14 @@ class ChatsRepositoryImpl(
     private fun MemberRole.wire() = when (this) { MemberRole.Owner -> MessagingWire.Owner; MemberRole.Admin -> MessagingWire.Admin; MemberRole.Member -> MessagingWire.Member }
 }
 
-internal fun ChatEntity.toDomain(members: List<ChatMemberEntity>, me: String?, groupPhoto: String? = null): Chat {
+internal fun ChatEntity.toDomain(members: List<ChatMemberEntity>, me: String?, groupPhoto: String? = null, keyUnavailable: Boolean = false): Chat {
     val others = members.filter { it.userId != me }
     val direct = kind == MessagingWire.Direct
+    val nameKnown = direct || name != null
     return Chat(
         chatId = chatId,
         kind = if (direct) ChatKind.Direct else ChatKind.Group,
-        title = if (direct) others.firstOrNull()?.displayName ?: "Chat" else name ?: "Group",
+        title = if (direct) others.firstOrNull()?.displayName ?: "Chat" else name ?: unnamedGroupTitle(others.map { it.displayName }),
         avatarUrl = if (direct) others.firstOrNull()?.avatarUrl else groupPhoto,
         members = members.map { ChatMember(it.userId, it.displayName, it.handle, it.avatarUrl, it.role.toRole(), it.joinedAt) },
         membersCanAdd = membersCanAdd,
@@ -407,8 +419,25 @@ internal fun ChatEntity.toDomain(members: List<ChatMemberEntity>, me: String?, g
         myRole = members.firstOrNull { it.userId == me }?.role?.toRole() ?: MemberRole.Member,
         peerId = if (direct) others.firstOrNull()?.userId else null,
         viaSpaceId = viaSpaceId,
-        nameKnown = direct || name != null,
+        nameKnown = nameKnown,
+        nameState = when { nameKnown -> GroupNameState.Known; keyUnavailable -> GroupNameState.Unavailable; else -> GroupNameState.Waiting },
+        waitingFor = if (nameKnown) null else others.singleOrNull()?.displayName?.trim()?.substringBefore(' ')?.takeIf { it.isNotEmpty() },
     )
+}
+
+/**
+ * A group whose name this phone can't read yet (no key: a new phone) is titled by who is in it, as WhatsApp does an
+ * unnamed group, so it is recognisable and never shown under a made-up name (it was "Group" for every one, 2026-11-09).
+ * The list row and the thread say the real name is on its way.
+ */
+internal fun unnamedGroupTitle(others: List<String>): String {
+    val names = others.map { it.trim().substringBefore(' ') }.filter { it.isNotEmpty() }
+    return when (names.size) {
+        0 -> "Group"
+        1 -> "You and ${names[0]}"
+        2 -> "${names[0]} and ${names[1]}"
+        else -> "${names[0]}, ${names[1]} and ${names.size - 2} more"
+    }
 }
 
 internal fun String.toRole() = when (this) { MessagingWire.Owner -> MemberRole.Owner; MessagingWire.Admin -> MemberRole.Admin; else -> MemberRole.Member }
