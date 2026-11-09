@@ -49,3 +49,16 @@
 # ONNX Runtime (Asha's voice detector): its native code builds Java objects (TensorInfo, OnnxTensor, …) by name through
 # JNI. R8 renamed them and voice mode crashed in convertToTensorInfo (GetMethodID). Keep the Java API whole.
 -keep class ai.onnxruntime.** { *; }
+
+# Circle's wallet SDK (the PIN and signing screens). Its own rules cover only its JSON models; at runtime it also uses
+# Retrofit interfaces, a WebView JavaScript bridge and generic type information, and the release build failed to open the
+# PIN (payments said "Not sent. Nothing was taken" after the server had prepared them). Keep the SDK, Circaso's wrapper
+# around it, and what Retrofit/Moshi/WebView read by reflection.
+-keep class circle.programmablewallet.** { *; }
+-keep interface circle.programmablewallet.** { *; }
+-keep class com.circaso.circlewallet.** { *; }
+-keepattributes Signature, InnerClasses, EnclosingMethod, *Annotation*, Exceptions
+-keepclassmembers class * { @android.webkit.JavascriptInterface <methods>; }
+-keep,allowobfuscation,allowshrinking interface retrofit2.Call
+-keep,allowobfuscation,allowshrinking class retrofit2.Response
+-keep,allowobfuscation,allowshrinking class kotlin.coroutines.Continuation
