@@ -25,12 +25,15 @@ class MessagingStarter(
     /** A live location share outlives the app: on launch, its tracker is started again if one is still running. */
     private val live: LiveLocations? = null,
     private val askAgainMillis: Long = AskAgainMillis,
+    /** My group invites (2026-11-09), reloaded with the chats: one may have come while the socket was down. */
+    private val invites: com.circaso.feature.messaging.domain.GroupInvitesRepository? = null,
 ) {
     fun start() {
         scope.launch {
             connected.distinctUntilChanged().collectLatest { connected ->
                 if (!connected) return@collectLatest
                 chats.refresh()
+                invites?.refresh()
                 messages.syncInbox()
                 live?.flushStops()
                 while (true) {

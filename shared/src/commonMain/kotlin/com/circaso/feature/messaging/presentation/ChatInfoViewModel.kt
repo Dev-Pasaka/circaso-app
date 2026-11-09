@@ -82,7 +82,13 @@ data class ChatInfoUiState(
     val namingForPhoto: Boolean = false,
     /** With [namingForPhoto]: the change waiting for the name removes the photo rather than setting one. */
     val removingPhoto: Boolean = false,
+    /** People invited and not yet answered (group invites, 2026-11-09), oldest first: group info's "Invited". */
+    val invited: List<com.circaso.feature.messaging.domain.PendingInvite> = emptyList(),
+    /** The invite whose Cancel Invite confirm is open. */
+    val cancelling: com.circaso.feature.messaging.domain.PendingInvite? = null,
 ) {
+    /** An admin, or whoever sent it, may take an invite back. */
+    fun mayCancel(invite: com.circaso.feature.messaging.domain.PendingInvite) = amAdmin || invite.invitedBy.userId == myUserId
     /** A group whose name this phone can't read: the name sheet starts empty and says why. */
     val nameUnknown get() = isGroup && chat?.nameKnown == false
     /** Admins change the group's photo (M8); it needs a connection, like every change to the group. */
@@ -105,8 +111,10 @@ data class ChatInfoUiState(
     val amOwner get() = chat?.myRole == MemberRole.Owner
     val canAdd get() = online && !busy && (amAdmin || chat?.membersCanAdd == true)
     val canChange get() = online && !busy
-    /** People in my contacts who are not in the group yet. */
-    val addable get() = contacts.filter { c -> chat?.members?.none { it.userId == c.person.userId } == true }
+    /** People in my contacts who are not in the group yet, and not already invited. */
+    val addable get() = contacts.filter { c ->
+        chat?.members?.none { it.userId == c.person.userId } == true && invited.none { it.person.userId == c.person.userId }
+    }
 }
 
 class ChatInfoViewModel(
@@ -130,6 +138,8 @@ class ChatInfoViewModel(
     private val setGroupPhoto: com.circaso.feature.messaging.domain.SetGroupPhotoUseCase? = null,
     private val encoder: com.circaso.core.platform.GroupPhotoEncoder = com.circaso.core.platform.NoGroupPhotoEncoder,
     sources: com.circaso.feature.profile.presentation.PhotoSources? = null,
+    /** Group invites (2026-11-09): the Invited list and Cancel Invite; null in previews. */
+    private val invites: com.circaso.feature.messaging.domain.GroupInvitesRepository? = null,
 ) : ViewModel() {
     private val _state = MutableStateFlow(
         ChatInfoUiState(myUserId = myUserId, photosAvailable = setGroupPhoto != null && sources != null && encoder !== com.circaso.core.platform.NoGroupPhotoEncoder),
@@ -213,6 +223,44 @@ class ChatInfoViewModel(
             }
         }
         viewModelScope.launch { connection.status.collect { s -> _state.update { it.copy(online = s == ConnectionStatus.Online) } } }
+        invites?.let { repo ->
+            viewModelScope.launch {
+                // Only a group has invites; loaded once it is known to be one, then again whenever the server says so.
+                val chat = observeChat(chatId).first { it != null }
+                if (chat?.kind != ChatKind.Group) return@launch
+                loadInvited()
+                repo.changed.collect { changed -> if (changed == chatId) loadInvited() }
+            }
+        }
+    }
+
+    /** The Invited list from the server (M26). Offline it keeps what it showed; nothing is made up. */
+    private suspend fun loadInvited() {
+        val repo = invites ?: return
+        val r = repo.pending(chatId)
+        if (r is AppResult.Success) _state.update { it.copy(invited = r.value) }
+    }
+
+    fun onCancelInvite(invite: com.circaso.feature.messaging.domain.PendingInvite?) = _state.update { it.copy(cancelling = invite) }
+
+    /** Cancel Invite (M27): online-only; the row goes once the server took it back. */
+    fun onCancelInviteConfirm() {
+        val invite = _state.value.cancelling ?: return
+        val repo = invites ?: return
+        // The sheet closes whatever happens, so it can never sit there doing nothing.
+        if (!_state.value.canChange) { _state.update { it.copy(cancelling = null, message = "Cancelling an invite needs a connection.") }; return }
+        _state.update { it.copy(cancelling = null, busy = true, message = null) }
+        viewModelScope.launch {
+            val r = repo.cancel(chatId, invite.person.userId)
+            val gone = r is AppResult.Success || ((r as? AppResult.Failure)?.error as? com.circaso.core.common.AppError.Api)?.code == "messaging.invite_not_found"
+            _state.update {
+                it.copy(
+                    busy = false,
+                    invited = if (gone) it.invited.filterNot { p -> p.inviteId == invite.inviteId } else it.invited,
+                    message = if (r is AppResult.Failure && !gone) withRef(r.error) else "Invite cancelled.",
+                )
+            }
+        }
     }
 
     fun onSelect(member: ChatMember?) = _state.update { it.copy(selected = member) }
@@ -317,9 +365,10 @@ class ChatInfoViewModel(
             val r = addMembers(chatId, ids)
             val note = when (r) {
                 is AppResult.Failure -> ErrorMessages.forError(r.error)
-                is AppResult.Success -> if (r.value.notAdded.isNotEmpty()) "${r.value.notAdded.size} ${if (r.value.notAdded.size == 1) "person" else "people"} couldn't be added." else null
+                is AppResult.Success -> addedNote(r.value.invited.size, r.value.notAdded.size)
             }
             _state.update { it.copy(busy = false, message = note, toAdd = emptySet()) }
+            if (r is AppResult.Success) loadInvited()
         }
     }
 
@@ -327,4 +376,15 @@ class ChatInfoViewModel(
 
     /** The error's words, with its reference for support. */
     private fun withRef(error: com.circaso.core.common.AppError) = ErrorMessages.forError(error) + (ErrorMessages.reference(error)?.let { " Ref $it" } ?: "")
+}
+
+/**
+ * What an add says (group invites, 2026-11-09): people are invited and join when they accept; anyone who couldn't be
+ * reached is counted, with no reason (guide, M9). Null when there's nothing to say.
+ */
+internal fun addedNote(invited: Int, notAdded: Int): String? {
+    fun people(n: Int) = if (n == 1) "1 person" else "$n people"
+    val sent = if (invited > 0) "Invited ${people(invited)}. They'll join when they accept." else null
+    val missed = if (notAdded > 0) "${people(notAdded)} couldn't be invited." else null
+    return listOfNotNull(sent, missed).joinToString(" ").ifEmpty { null }
 }

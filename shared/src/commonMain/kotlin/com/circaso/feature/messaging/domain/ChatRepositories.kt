@@ -45,6 +45,32 @@ interface ChatsRepository {
 }
 
 /**
+ * Group invites (2026-11-09): adding someone to a group invites them, and they join when they accept. My invites are
+ * kept on this phone so they show offline; answering them, and a group's Invited list, need the server.
+ */
+interface GroupInvitesRepository {
+    /** My open invites, newest first. */
+    val invites: Flow<List<GroupInvite>>
+
+    /** A group's Invited list changed on the server (`invites.changed`): group info reloads it if open. */
+    val changed: Flow<String>
+
+    suspend fun refresh(): AppResult<Unit>
+
+    /** Joins the group (M24); its chat is stored and returned, the invite leaves the list. */
+    suspend fun accept(inviteId: String): AppResult<Chat>
+
+    /** Declines (M25): the invite leaves the list and nobody is told. */
+    suspend fun decline(inviteId: String): AppResult<Unit>
+
+    /** The group's open invites (M26), for group info. */
+    suspend fun pending(chatId: String): AppResult<List<PendingInvite>>
+
+    /** Takes back an open invite (M27): an admin, or whoever sent it. */
+    suspend fun cancel(chatId: String, userId: String): AppResult<Unit>
+}
+
+/**
  * Error codes made on the phone (not the server's) for a group whose metadata key this phone doesn't have; worded in
  * [com.circaso.core.common.ErrorMessages] like any other code.
  */

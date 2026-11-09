@@ -19,6 +19,9 @@ sealed interface NotificationEvent {
 
     data class AddedToGroup(val groupName: String?) : NotificationEvent
 
+    /** An invite to a group (2026-11-09): "Amina invited you to Book club". Either name may be unknown. */
+    data class GroupInvite(val inviterName: String?, val groupName: String?) : NotificationEvent
+
     /**
      * Money to me: a payment card in a chat or the wallet's own `payment.received`. [groupName] is set when the card
      * sits in a group chat (a payout from the group wallet), so the title names the group and the text the sender.
@@ -61,6 +64,8 @@ object NotificationText {
     const val PrivateMessage = "New message"
     const val PrivateIncomingCall = "Incoming call"
     const val PrivateMissedCall = "Missed call"
+    const val PrivateGroupInvite = "You have a new group invite"
+    const val GroupInviteTitle = "Group invite"
 
     /**
      * The words for [event]. With [private] on, nothing that names a person, a group, an amount or what was said:
@@ -96,6 +101,12 @@ object NotificationText {
 
             is NotificationEvent.AddedToGroup -> if (private) NotificationContent(AppName, "You were added to a group")
             else NotificationContent(event.groupName ?: "New group", "You were added to a group")
+
+            is NotificationEvent.GroupInvite -> if (private) NotificationContent(AppName, PrivateGroupInvite)
+            else NotificationContent(
+                GroupInviteTitle,
+                "${event.inviterName ?: "Someone"} invited you to ${event.groupName ?: "a group"}",
+            )
 
             is NotificationEvent.MoneyReceived -> if (private) NotificationContent(AppName, PrivateMoney) else {
                 val sum = amount(event.amount)

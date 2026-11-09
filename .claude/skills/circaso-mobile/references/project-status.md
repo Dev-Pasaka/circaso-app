@@ -152,6 +152,12 @@ Media3 1.4.1, multiplatform-markdown-renderer 0.46.0.
 - D-C6 Live location WhatsApp-style (15 min / 1 h / 8 h), keeps updating in the background (Android foreground service
   with Stop; iOS background location), updates travel encrypted; full-screen map with profile-photo pins.
 - D-C7 Maps styled monochrome from theme tokens. **The Static Maps key never ships in the app**: previews come from the backend proxy `GET /v1/maps/static`.
+- D-C8 Group invites (Pasaka, 2026-11-09; backend PR #83, app branch `feat/group-invites`): adding someone to a group
+  invites them; they accept or decline from a card at the top of Chats (All/Groups), with a preview sheet. The inviter's
+  phone seals the group's metadata key 1:1 for each invitee (`inviteKeys`) so the card shows the real name and photo;
+  names stay end-to-end encrypted. Accept opens the chat; everyone sees "X joined". Decline is silent. Group info lists
+  "Invited · N"; admins or the inviter cancel. Invites expire after 30 days and are cached on the phone for offline view
+  (answering is online-only). No canvas frame: built from the glass `InviteCard`, `CircasoSheet`, `ListRow`.
 
 ### Sharing (2026-11-06)
 - D-S1 **Every share is a short link, never plain text** (Pasaka, 2026-11-06). Receipt, group statement, wallet

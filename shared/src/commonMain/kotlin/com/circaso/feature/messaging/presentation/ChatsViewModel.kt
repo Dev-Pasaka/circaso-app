@@ -13,6 +13,8 @@ import com.circaso.feature.contacts.domain.ObserveContactsUseCase
 import com.circaso.feature.messaging.domain.ChatSummary
 import com.circaso.feature.messaging.domain.CreateGroupUseCase
 import com.circaso.feature.messaging.domain.GroupDraft
+import com.circaso.feature.messaging.domain.GroupInvite
+import com.circaso.feature.messaging.domain.GroupInvitesRepository
 import com.circaso.feature.messaging.domain.ObserveChatsUseCase
 import com.circaso.feature.messaging.domain.OpenDirectChatUseCase
 import com.circaso.feature.messaging.domain.RefreshChatsUseCase
@@ -45,7 +47,25 @@ data class ChatsUiState(
     val coinRates: Map<String, String> = emptyMap(),
     /** The chip under the search bar: every chat, the unread ones, groups, or the Moments list (as WhatsApp). */
     val filter: ChatFilter = ChatFilter.All,
+    /** Group invites waiting for my answer (2026-11-09), newest first: cards at the top of the list. */
+    val invites: List<GroupInvite> = emptyList(),
+    /** The invites being answered right now (their buttons spin; the others stay usable). */
+    val answering: Set<String> = emptySet(),
+    /** The invite whose preview sheet is open. */
+    val previewing: GroupInvite? = null,
+    /** An answer that failed, said on its card: the invite's id and the words. */
+    val inviteError: Pair<String, String>? = null,
+    /** A group just joined: the screen opens its chat once, then clears it. */
+    val joinedChatId: String? = null,
+    /**
+     * A one-off line for an answer whose card has gone (declined, or no longer open), shown as a toast so the card
+     * leaving is never silent.
+     */
+    val notice: String? = null,
 ) {
+    /** Invites show on All and Groups, above the chats, while nothing is being searched. */
+    val showInvites: Boolean get() = invites.isNotEmpty() && query.isBlank() && (filter == ChatFilter.All || filter == ChatFilter.Groups)
+
     val shown: List<ChatSummary> get() = chats
         .filter { s -> when (filter) { ChatFilter.All -> true; ChatFilter.Unread -> s.unread > 0; ChatFilter.Groups -> s.chat.kind == com.circaso.feature.messaging.domain.ChatKind.Group; ChatFilter.Moments -> true } }
         .let { list -> if (query.isBlank()) list else list.filter { it.chat.title.contains(query.trim(), ignoreCase = true) } }
@@ -60,6 +80,8 @@ class ChatsViewModel(
     private val preferences: com.circaso.core.datastore.AppPreferences,
     observeProfile: com.circaso.feature.profile.domain.ObserveProfileUseCase,
     observeWallet: com.circaso.feature.wallet.domain.ObserveWalletUseCase? = null,
+    /** Group invites (2026-11-09); null in previews and tests that don't need them. */
+    private val invites: GroupInvitesRepository? = null,
 ) : ViewModel() {
     private val _state = MutableStateFlow(ChatsUiState())
     val state: StateFlow<ChatsUiState> = _state.asStateFlow()
@@ -85,5 +107,80 @@ class ChatsViewModel(
     fun onQuery(text: String) = _state.update { it.copy(query = text) }
     fun onFilter(filter: ChatFilter) = _state.update { it.copy(filter = filter) }
 
-    fun refresh() { viewModelScope.launch { val r = refreshChats(); if (r is AppResult.Failure) _state.update { it.copy(error = ErrorMessages.forError(r.error)) } } }
+    fun refresh() {
+        viewModelScope.launch { val r = refreshChats(); if (r is AppResult.Failure) _state.update { it.copy(error = ErrorMessages.forError(r.error)) } }
+        invites?.let { repo -> viewModelScope.launch { repo.refresh() } }
+    }
+
+    // ---- group invites (2026-11-09): accept or decline, online only; nothing is queued or shown as done early
+
+    init {
+        invites?.let { repo ->
+            viewModelScope.launch {
+                repo.invites.collect { list ->
+                    _state.update { s ->
+                        // A preview whose invite went (cancelled, answered on another screen) closes with it.
+                        val preview = s.previewing?.let { p -> list.firstOrNull { it.inviteId == p.inviteId } }
+                        s.copy(invites = list, previewing = preview)
+                    }
+                }
+            }
+            viewModelScope.launch { repo.refresh() }
+        }
+    }
+
+    fun onPreview(invite: GroupInvite?) = _state.update { it.copy(previewing = invite) }
+
+    /** The invite cards' and preview's answers. */
+    val inviteActions = InviteActions(onAccept = ::onAccept, onDecline = ::onDecline, onPreview = { onPreview(it) })
+
+    fun onAccept(inviteId: String) = answer(inviteId, accept = true)
+
+    fun onDecline(inviteId: String) = answer(inviteId, accept = false)
+
+    private fun answer(inviteId: String, accept: Boolean) {
+        val repo = invites ?: return
+        val s = _state.value
+        if (!s.online || inviteId in s.answering) return
+        _state.update { it.copy(answering = it.answering + inviteId, inviteError = it.inviteError?.takeIf { e -> e.first != inviteId }) }
+        viewModelScope.launch {
+            val failure: com.circaso.core.common.AppError?
+            var joined: String? = null
+            if (accept) {
+                when (val r = repo.accept(inviteId)) {
+                    is AppResult.Success -> { failure = null; joined = r.value.chatId }
+                    is AppResult.Failure -> failure = r.error
+                }
+            } else {
+                failure = (repo.decline(inviteId) as? AppResult.Failure)?.error
+            }
+            // An invite no longer open has already left the list: its card can't carry the error, so a toast does.
+            val gone = (failure as? com.circaso.core.common.AppError.Api)?.code == "messaging.invite_not_found"
+            _state.update {
+                it.copy(
+                    answering = it.answering - inviteId,
+                    inviteError = failure?.takeIf { !gone }?.let { e -> inviteId to inviteErrorText(e) },
+                    previewing = if (failure == null || gone) null else it.previewing,
+                    joinedChatId = joined ?: it.joinedChatId,
+                    notice = when {
+                        gone -> inviteErrorText(failure!!)
+                        failure == null && !accept -> "Invite declined."
+                        else -> it.notice
+                    },
+                )
+            }
+        }
+    }
+
+    /** The joined group's chat was opened, or the screen left before it could be (it never opens later, out of context). */
+    fun onJoinedOpened() = _state.update { it.copy(joinedChatId = null) }
+
+    fun onNoticeShown() = _state.update { it.copy(notice = null) }
+}
+
+/** An invite answer's failure in the person's words; a full group says so plainly. */
+internal fun inviteErrorText(error: com.circaso.core.common.AppError): String = when ((error as? com.circaso.core.common.AppError.Api)?.code) {
+    "messaging.group_full" -> "This group is full. Ask an admin to make room, then try again."
+    "messaging.invite_not_found" -> "This invite is no longer open."
+    else -> ErrorMessages.forError(error) + (ErrorMessages.reference(error)?.let { " Ref $it" } ?: "")
 }

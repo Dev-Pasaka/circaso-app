@@ -27,6 +27,9 @@ sealed interface NotificationDestination {
     data object Profile : NotificationDestination
     data object NeedsAttention : NotificationDestination
 
+    /** My group invites (2026-11-09): the Chats list, where they wait at the top to be answered. */
+    data object Invites : NotificationDestination
+
     /** The notifications inbox (F4): where anything without a better home can be read. */
     data object Inbox : NotificationDestination
 
@@ -48,6 +51,7 @@ sealed interface NotificationDestination {
                 Wallet -> put("to", "wallet")
                 Profile -> put("to", "profile")
                 NeedsAttention -> put("to", "needsAttention")
+                Invites -> put("to", "invites")
                 Inbox -> put("to", "inbox")
             }
         }
@@ -70,6 +74,7 @@ sealed interface NotificationDestination {
                 "wallet" -> Wallet
                 "profile" -> Profile
                 "needsAttention" -> NeedsAttention
+                "invites" -> Invites
                 else -> Inbox
             }
         }
@@ -84,6 +89,8 @@ sealed interface NotificationDestination {
             val chatId = get("chatId")
             return when {
                 kind == "call.ringing" -> null
+                // Before the chat: an invitee isn't in the group, so its chat has nothing to open yet.
+                kind == "chat.invite" -> Invites
                 kind == "payment.received" || kind == "transfer.updated" -> Payment(chatId, get("transferId"), get("transactionId"))
                 kind == "call.missed" || kind == "call.ended" -> MissedCall(chatId, get("callId"))
                 kind?.startsWith("chama.") == true -> chatId?.let { Chat(it) } ?: Wallet

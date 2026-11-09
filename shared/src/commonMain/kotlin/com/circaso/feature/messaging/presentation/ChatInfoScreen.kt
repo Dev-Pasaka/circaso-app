@@ -134,6 +134,19 @@ fun ChatInfoScreen(
                     CircasoButton("Cancel", { viewModel.onSelect(null) }, style = ButtonStyle.Plain, size = ButtonSize.Large, block = true)
                 }
             }
+            // The last one is kept while the sheet slides away, so its title never empties on the way out.
+            var lastCancelling by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(state.cancelling) }
+            state.cancelling?.let { lastCancelling = it }
+            ConfirmSheet(
+                visible = state.cancelling != null,
+                title = lastCancelling?.let { "Cancel ${it.person.displayName}'s invite?" } ?: "",
+                message = "They won't be able to join with it. You can invite them again later.",
+                confirmLabel = "Cancel Invite",
+                destructive = true,
+                cancelLabel = "Keep Invite",
+                onConfirm = viewModel::onCancelInviteConfirm,
+                onDismiss = { viewModel.onCancelInvite(null) },
+            )
             val action = state.pending
             ConfirmSheet(
                 visible = action != null,
@@ -193,7 +206,9 @@ fun ChatInfoScreen(
             }
             CircasoSheet(visible = state.adding, onDismiss = { viewModel.onAdding(false) }, label = "Add members") {
                 BasicText("Add members", style = t.title2.copy(color = c.ink))
-                if (state.addable.isEmpty()) BasicText("Everyone from your contacts is already here.", style = t.body.copy(color = c.inkSecondary))
+                // People are invited, not put in (2026-11-09): said before they're chosen, so nobody expects them in at once.
+                BasicText("Each person gets an invite and joins when they accept.", style = t.subhead.copy(color = c.inkSecondary))
+                if (state.addable.isEmpty()) BasicText("Everyone from your contacts is already here or invited.", style = t.body.copy(color = c.inkSecondary))
                 state.addable.take(30).forEach { contact ->
                     ListRow(
                         contact.person.displayName, sub = contact.person.handle?.let { "@$it" },
@@ -202,7 +217,7 @@ fun ChatInfoScreen(
                         onClick = { viewModel.onToggleAdd(contact.person.userId) },
                     )
                 }
-                CircasoButton("Add ${state.toAdd.size.takeIf { it > 0 }?.let { "($it)" } ?: ""}".trim(), viewModel::onAddConfirm, size = ButtonSize.Large, block = true, enabled = state.canAdd && state.toAdd.isNotEmpty())
+                CircasoButton("Invite ${state.toAdd.size.takeIf { it > 0 }?.let { "($it)" } ?: ""}".trim(), viewModel::onAddConfirm, size = ButtonSize.Large, block = true, enabled = state.canAdd && state.toAdd.isNotEmpty())
                 CircasoButton("Cancel", { viewModel.onAdding(false) }, style = ButtonStyle.Plain, size = ButtonSize.Large, block = true)
             }
         },
@@ -281,6 +296,21 @@ fun ChatInfoScreen(
                         onClick = if (state.amAdmin && member.role != MemberRole.Owner) ({ viewModel.onSelect(member) }) else null,
                     )
                     RowDivider(Modifier.padding(start = 76.dp))
+                }
+                // Group invites (2026-11-09): people asked and not yet answered. Not members: no role, not counted.
+                if (state.invited.isNotEmpty()) {
+                    item(key = "invited-header") { SectionHeader("Invited · ${state.invited.size}", Modifier.padding(top = CircasoSpacing.s4)) }
+                    items(state.invited, key = { "invited:" + it.inviteId }) { invite ->
+                        val mine = invite.invitedBy.userId == state.myUserId
+                        ListRow(
+                            title = invite.person.displayName,
+                            sub = if (mine) "Invited by you" else "Invited by ${invite.invitedBy.displayName}",
+                            leading = { Avatar(invite.person.displayName, imageUrl = invite.person.avatarUrl) },
+                            // Online-only like every change here: offline the row rests and the banner says why.
+                            onClick = if (state.mayCancel(invite) && state.canChange) ({ viewModel.onCancelInvite(invite) }) else null,
+                        )
+                        RowDivider(Modifier.padding(start = 76.dp))
+                    }
                 }
                 item {
                     Row(Modifier.fillMaxWidth().padding(CircasoSpacing.s4)) {
