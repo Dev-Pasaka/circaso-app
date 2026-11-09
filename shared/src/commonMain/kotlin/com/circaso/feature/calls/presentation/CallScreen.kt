@@ -152,7 +152,16 @@ class CallActions(
  */
 @OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class)
 @Composable
-fun BoxScope.CallOverlay(call: CallUi?, actions: CallActions, money: String?, chama: Chama?, fiat: FiatValue?) {
+fun BoxScope.CallOverlay(
+    call: CallUi?,
+    actions: CallActions,
+    money: String?,
+    chama: Chama?,
+    fiat: FiatValue?,
+    /** The contributions landing on a group call, held for the whole call by the caller (it outlives minimising). */
+    celebrations: CallCelebrationsModel? = null,
+    myUserId: String? = null,
+) {
     val still = CircasoTheme.reduceMotion
     // Back on a full-screen call minimises it (never declines or hangs up); the screens under it stay where they were.
     androidx.compose.ui.backhandler.BackHandler(enabled = call != null && !call.minimised && call.phase != CallPhase.Incoming) { actions.onMinimise(true) }
@@ -163,7 +172,7 @@ fun BoxScope.CallOverlay(call: CallUi?, actions: CallActions, money: String?, ch
         enter = if (still) fadeIn(tween(CircasoMotion.QuickMs)) else fadeIn(tween(CircasoMotion.BaseMs)) + slideInVertically(tween(CircasoMotion.BaseMs)) { it / 6 },
         exit = if (still) fadeOut(tween(CircasoMotion.QuickMs)) else fadeOut(tween(CircasoMotion.QuickMs)) + slideOutVertically(tween(CircasoMotion.QuickMs)) { it / 6 },
     ) {
-        if (call != null) CallSurface(call, actions, money, chama, fiat)
+        if (call != null) CallSurface(call, actions, money, chama, fiat, celebrations, myUserId)
     }
     AnimatedVisibility(call != null && call.minimised, Modifier.align(Alignment.TopCenter), enter = fadeIn(tween(CircasoMotion.BaseMs)), exit = fadeOut(tween(CircasoMotion.QuickMs))) {
         if (call != null) CallPill(call) { actions.onMinimise(false) }
@@ -171,7 +180,15 @@ fun BoxScope.CallOverlay(call: CallUi?, actions: CallActions, money: String?, ch
 }
 
 @Composable
-private fun CallSurface(call: CallUi, actions: CallActions, money: String?, chama: Chama?, fiat: FiatValue?) {
+private fun CallSurface(
+    call: CallUi,
+    actions: CallActions,
+    money: String?,
+    chama: Chama?,
+    fiat: FiatValue?,
+    celebrations: CallCelebrationsModel?,
+    myUserId: String?,
+) {
     var contributing by remember { mutableStateOf(false) }
     // After the PIN: "Your KES 1,000 is on its way to Holiday Fund" on the call for a few seconds, then the goal moves.
     var landed by remember { mutableStateOf<String?>(null) }
@@ -211,7 +228,13 @@ private fun CallSurface(call: CallUi, actions: CallActions, money: String?, cham
             Box(Modifier.fillMaxSize()) {
                 when (l) {
                     0 -> Incoming(call, actions)
-                    1 -> GroupCall(call, actions, chama, fiat, landed, onContribute = if (contribution != null) ({ contribution.open(); contributing = true }) else null)
+                    1 -> GroupCall(
+                        call, actions, chama, fiat, landed,
+                        onContribute = if (contribution != null) ({ contribution.open(); contributing = true }) else null,
+                        celebrations = celebrations?.state ?: CelebrationState(),
+                        onLanded = { id -> celebrations?.landed(id) },
+                        onFinished = { id -> celebrations?.finished(id) },
+                    )
                     2 -> VideoCall(call, actions, money)
                     else -> VoiceCall(call, actions, money)
                 }
@@ -223,6 +246,12 @@ private fun CallSurface(call: CallUi, actions: CallActions, money: String?, cham
             // Signed: the sheet closes, the call says it's on its way, and PayViewModel is ready for the next one.
             LaunchedEffect(payState.step) {
                 if (payState.step == com.circaso.feature.wallet.presentation.PayStep.Done && contributing) {
+                    // Mine shows as on its way at once on my phone; it lands, here as on every phone, when it confirms.
+                    payState.result?.let { r ->
+                        val dollar = com.circaso.feature.wallet.domain.MinorUnits.isDollar(r.amount.asset)
+                        val mine = com.circaso.feature.chama.domain.GroupContribution(call.chatId, r.transferId, myUserId, null, r.amount.asset, r.amount.amount, if (dollar) r.amount.amountMinor else null, confirmed = false)
+                        celebrations?.receive(celebrationOf(mine, call.people, myUserId, payState.wallet?.fiat ?: fiat, call.myPhotoUrl), confirmed = false, visible = true)
+                    }
                     landed = amountWords(choice, payState.wallet?.fiat)?.let { "Your $it is on its way to ${chama.goal.name}" } ?: "On its way to ${chama.goal.name}"
                     landings++
                     contributing = false
@@ -372,10 +401,24 @@ private fun BoxScope.VideoCall(call: CallUi, actions: CallActions, money: String
 
 /** Design H4: everyone in a grid, the goal live under them. */
 @Composable
-private fun GroupCall(call: CallUi, actions: CallActions, chama: Chama?, fiat: FiatValue?, landed: String?, onContribute: (() -> Unit)?) {
+private fun GroupCall(
+    call: CallUi,
+    actions: CallActions,
+    chama: Chama?,
+    fiat: FiatValue?,
+    landed: String?,
+    onContribute: (() -> Unit)?,
+    celebrations: CelebrationState = CelebrationState(),
+    onLanded: (String) -> Unit = {},
+    onFinished: (String) -> Unit = {},
+) {
     val t = CircasoTheme.typography
     // Only people who are really heard count as on the call.
     val onCall = call.people.count { it.live } + 1
+    // Where a contribution rises from (low in the tiles, clear of "on its way") and where its coin settles (the goal's
+    // raised amount), measured from the live layout so a phone on its side or a tablet's split view aims true.
+    val anchors = remember { CelebrationAnchors() }
+    Box(Modifier.fillMaxSize().onPlaced { anchors.root = it }) {
     Column(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing).padding(horizontal = CircasoSpacing.s4, vertical = CircasoSpacing.s4), verticalArrangement = Arrangement.spacedBy(CircasoSpacing.s3)) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             RoundIcon(CircasoIcon.Minimise, "Minimise call") { actions.onMinimise(true) }
@@ -397,7 +440,7 @@ private fun GroupCall(call: CallUi, actions: CallActions, chama: Chama?, fiat: F
         // tiles so they keep their height.
         val beside = com.circaso.designsystem.adaptive.LocalWindowLayout.current.short && chama != null
         Row(Modifier.weight(1f).fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(CircasoSpacing.s3)) {
-            Box(Modifier.weight(1f).fillMaxHeight(), contentAlignment = Alignment.BottomCenter) {
+            Box(Modifier.weight(1f).fillMaxHeight().onPlaced { anchors.tiles = it }, contentAlignment = Alignment.BottomCenter) {
                 // Someone who just left is still drawn while their tile fades out.
             val lastSeen = remember { mutableMapOf<String, CallPerson>() }
             androidx.compose.runtime.SideEffect { tiles.forEach { lastSeen[it.userId] = it } }
@@ -418,9 +461,9 @@ private fun GroupCall(call: CallUi, actions: CallActions, chama: Chama?, fiat: F
                 }
             }
             // `beside` already means a goal; the check again lets the compiler know it isn't null.
-            if (beside && chama != null) Box(Modifier.width(GoalBesideWidth).fillMaxHeight(), contentAlignment = Alignment.BottomCenter) { LiveGoal(chama, fiat) }
+            if (beside && chama != null) Box(Modifier.width(GoalBesideWidth).fillMaxHeight(), contentAlignment = Alignment.BottomCenter) { LiveGoal(chama, fiat, celebrations, onRaisedPlaced = { anchors.goal = it }) }
         }
-        if (!beside && chama != null) Box(Modifier.readableWidth()) { LiveGoal(chama, fiat) }
+        if (!beside && chama != null) Box(Modifier.readableWidth()) { LiveGoal(chama, fiat, celebrations, onRaisedPlaced = { anchors.goal = it }) }
         // The controls stay a hand's width apart on a tablet instead of spreading across the window.
         Row(Modifier.readableWidth(ControlsWidth), horizontalArrangement = Arrangement.SpaceEvenly) {
             ControlButton(if (call.mic) CircasoIcon.Mic else CircasoIcon.MicOff, null, if (call.mic) "Mute" else "Unmute", actions.onMute, on = !call.mic)
@@ -437,6 +480,12 @@ private fun GroupCall(call: CallUi, actions: CallActions, chama: Chama?, fiat: F
                 ControlButton(CircasoIcon.Speaker, null, "Speaker", actions.onSpeaker, on = call.speaker)
             }
             ControlButton(CircasoIcon.Phone, null, "Leave call", actions.onEnd, tint = Tint.End)
+        }
+    }
+        // Above the tiles, the goal and the controls; it takes no touches. On the H4 panel's dark money colours.
+        val highContrast = com.circaso.designsystem.platform.rememberIsHighContrast()
+        androidx.compose.runtime.CompositionLocalProvider(com.circaso.designsystem.theme.LocalCircasoColors provides com.circaso.designsystem.theme.circasoColors(dark = true, highContrast = highContrast)) {
+            CelebrationLayer(celebrations, anchors, onLanded, onFinished)
         }
     }
 }
@@ -638,19 +687,106 @@ private val GoalBesideWidth = 280.dp
 
 /** H4's goal card: "LIVE · contributions land as they happen", moving as the frames arrive. */
 @Composable
-private fun LiveGoal(chama: Chama, fiat: FiatValue?) {
+private fun LiveGoal(chama: Chama, fiat: FiatValue?, celebrations: CelebrationState = CelebrationState(), onRaisedPlaced: (androidx.compose.ui.layout.LayoutCoordinates) -> Unit = {}) {
     val t = CircasoTheme.typography
     val c = CircasoTheme.colors
+    val still = CircasoTheme.reduceMotion
+    // Each coin that settles in gives the panel one soft pulse and a light tap (2026-11-09); no pulse under Reduce Motion.
+    val pulse = remember { androidx.compose.animation.core.Animatable(0f) }
+    val haptics = androidx.compose.ui.platform.LocalHapticFeedback.current
+    val seenLandings = remember { intArrayOf(celebrations.landings) }
+    LaunchedEffect(celebrations.landings) {
+        if (celebrations.landings <= seenLandings[0]) return@LaunchedEffect
+        seenLandings[0] = celebrations.landings
+        haptics.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.TextHandleMove)
+        if (still) return@LaunchedEffect
+        pulse.animateTo(1f, tween(CircasoMotion.QuickMs))
+        pulse.animateTo(0f, androidx.compose.animation.core.spring(dampingRatio = 0.6f, stiffness = androidx.compose.animation.core.Spring.StiffnessMediumLow))
+    }
+    // The raised amount counts up to the new total once the coin is in (held while one is in the air, so number, coin
+    // and pulse arrive together); a reload with nothing flying counts up at once. Reduce Motion: it just changes.
+    val target = chama.contributedMinor.toLongOrNull() ?: 0L
+    val raised = remember { androidx.compose.animation.core.Animatable(target.toFloat()) }
+    val flying = celebrations.shown.isNotEmpty()
+    LaunchedEffect(target, flying, still) {
+        if (flying) return@LaunchedEffect
+        if (still || raised.value > target) raised.snapTo(target.toFloat()) else raised.animateTo(target.toFloat(), tween(CircasoMotion.BaseMs))
+    }
+    val raisedMinor = if (raised.isRunning || flying) raised.value.toLong() else target
     Column(
-        Modifier.fillMaxWidth().clip(CircasoShapes.lg).background(CallColors.Panel).padding(CircasoSpacing.s4),
-        verticalArrangement = Arrangement.spacedBy(CircasoSpacing.s2),
+        Modifier.fillMaxWidth()
+            .graphicsLayer { val s = 1f + PulseScale * pulse.value; scaleX = s; scaleY = s }
+            .clip(CircasoShapes.lg).background(CallColors.Panel).padding(CircasoSpacing.s4),
+        verticalArrangement = Arrangement.spacedBy(CircasoSpacing.s3),
     ) {
         Row(horizontalArrangement = Arrangement.spacedBy(CircasoSpacing.s2), verticalAlignment = Alignment.CenterVertically) {
             BasicText("LIVE", style = t.caption1.copy(color = Color.White, fontWeight = FontWeight.Bold), modifier = Modifier.clip(CircasoShapes.pill).background(c.critical).padding(horizontal = 6.dp, vertical = 2.dp))
             BasicText("Contributions land as they happen", style = t.footnote.copy(color = CallColors.InkSoft))
         }
         // The goal component, on the call's dark panel.
-        CompositionWhite { GoalProgress(amountText(chama.contributedMinor, fiat), amountNumber(chama.goal.targetMinor, fiat), chama.progress, meta = com.circaso.feature.chama.presentation.goalMeta(chama), label = "${chama.goal.name} progress") }
+        CompositionWhite {
+            GoalProgress(
+                amountText(raisedMinor.toString(), fiat), amountNumber(chama.goal.targetMinor, fiat), chama.progress,
+                meta = com.circaso.feature.chama.presentation.goalMeta(chama), label = "${chama.goal.name} progress",
+                raisedModifier = Modifier.onPlaced(onRaisedPlaced),
+            )
+        }
+        // H4: the latest contributions under the goal ("Juma +KES 2,500 · Wanjiru +1,000"), newest first, after any still
+        // on their way. It opens the first time one arrives rather than pushing the tiles up in one frame.
+        val pills = celebrations.pending.map { it to true } + celebrations.recent.map { it to false }
+        androidx.compose.animation.AnimatedVisibility(
+            pills.isNotEmpty(),
+            enter = if (still) fadeIn(tween(CircasoMotion.QuickMs)) else fadeIn(tween(CircasoMotion.BaseMs)) + androidx.compose.animation.expandVertically(tween(CircasoMotion.BaseMs)),
+            exit = fadeOut(tween(CircasoMotion.QuickMs)) + if (still) androidx.compose.animation.ExitTransition.None else androidx.compose.animation.shrinkVertically(tween(CircasoMotion.QuickMs)),
+        ) {
+            val last = remember { arrayOf<List<Pair<Celebration, Boolean>>>(emptyList()) }
+            RecentContributions(pills.ifEmpty { last[0] }.also { last[0] = it }.take(CelebrationState.MaxRecent))
+        }
+    }
+}
+
+/** The goal panel's pulse at its peak; a panel as wide as a tablet's reading width needs no more. */
+private const val PulseScale = 0.02f
+
+/**
+ * H4's row of `.ti-pill`s: the newest at full strength, the one before it softer; each slides in as it arrives. One
+ * still on its way says so and stays dim until the chain confirms it.
+ */
+@Composable
+private fun RecentContributions(pills: List<Pair<Celebration, Boolean>>) {
+    val t = CircasoTheme.typography
+    val still = CircasoTheme.reduceMotion
+    val highContrast = com.circaso.designsystem.platform.rememberIsHighContrast()
+    androidx.compose.runtime.CompositionLocalProvider(com.circaso.designsystem.theme.LocalCircasoColors provides com.circaso.designsystem.theme.circasoColors(dark = true, highContrast = highContrast)) {
+        val c = CircasoTheme.colors
+        Row(
+            Modifier.fillMaxWidth().clip(CircasoShapes.pill).semantics { liveRegion = androidx.compose.ui.semantics.LiveRegionMode.Polite },
+            horizontalArrangement = Arrangement.spacedBy(CircasoSpacing.s2),
+        ) {
+            pills.forEachIndexed { i, (r, pending) ->
+                androidx.compose.runtime.key(r.id) {
+                    val appear = remember { androidx.compose.animation.core.Animatable(if (still) 1f else 0f) }
+                    LaunchedEffect(Unit) { appear.animateTo(1f, tween(CircasoMotion.BaseMs)) }
+                    val strength by androidx.compose.animation.core.animateFloatAsState(
+                        when { pending -> 0.6f; i == 0 -> 1f; else -> 0.75f }, tween(CircasoMotion.BaseMs), label = "recent",
+                    )
+                    Row(
+                        Modifier
+                            .graphicsLayer { alpha = appear.value * strength; translationX = (1f - appear.value) * -CircasoSpacing.s4.toPx() }
+                            .clip(CircasoShapes.pill)
+                            .background(moneyPillBrush(c.moneyCardSheen, c.moneyCard))
+                            .semantics(mergeDescendants = true) { contentDescription = if (pending) "${r.spoken}, on its way" else r.spoken }
+                            .padding(start = CircasoSpacing.s2, end = CircasoSpacing.s3, top = CircasoSpacing.s2, bottom = CircasoSpacing.s2),
+                        horizontalArrangement = Arrangement.spacedBy(CircasoSpacing.s2),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Avatar(r.who, size = PillAvatar, imageUrl = r.photoUrl)
+                        BasicText(r.text, Modifier.weight(1f, fill = false), style = t.footnote.copy(color = c.onMoney, fontWeight = FontWeight.SemiBold), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        if (pending) CircasoIconImage(CircasoIcon.Clock, c.onMoney, Modifier.size(14.dp))
+                    }
+                }
+            }
+        }
     }
 }
 

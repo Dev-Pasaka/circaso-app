@@ -28,6 +28,7 @@ val chamaModule = module {
     }
     single { ChamaRepositoryImpl(get(), get(), get(), links = get<com.circaso.core.datastore.AppPreferences>(), scope = get(), groupWallets = { get<com.circaso.core.flags.GroupWalletsFlag>().isOn }) }
     single<ChamaRepository> { get<ChamaRepositoryImpl>() }
+    single { com.circaso.feature.chama.data.repository.ContributionFeed() } // contributions landing live (a group call)
     factory { ObserveChamaUseCase(get()) }
     factory { RefreshChamaUseCase(get()) }
     factory { SetGoalUseCase(get()) }

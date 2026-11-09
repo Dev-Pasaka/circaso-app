@@ -36,6 +36,8 @@ class RealtimeDispatcher(
                 "messaging" -> reloadMessaging()
                 "wallet" -> reloadWallet()
                 "status" -> onStatusFrame("resync", null)
+                // The phone's chama number can't be trusted (2026-11-09): the screens showing a group's money reload it.
+                "chama" -> onChamaFrame("resync", null)
                 "spaces" -> Unit // Spaces is archived (2026-11-05): an old server's frames are ignored
                 else -> { refreshContacts(); refreshBlocks(); refreshOwnProfile() }
             }

@@ -45,6 +45,7 @@ val realtimeModule = module {
             onChamaFrame = { type, data ->
                 get<com.circaso.feature.chama.domain.ChamaRepository>().onFrame(type, data)
                 get<com.circaso.feature.chama.data.repository.GroupMoneyLive>().onChamaFrame(type, data)
+                get<com.circaso.feature.chama.data.repository.ContributionFeed>().onFrame(type, data)
             },
             onCallsFrame = { type, data -> get<com.circaso.feature.calls.CallController>().onFrame(type, data) },
             onStatusFrame = { type, data ->

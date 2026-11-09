@@ -679,10 +679,47 @@ private fun androidx.compose.foundation.layout.BoxScope.CallLayer(backStack: Mut
     val treasurerChama by remember(chatId) { if (chatId != null) chamas.chama(chatId) else kotlinx.coroutines.flow.flowOf(null) }.collectAsState(null)
     val groupMoney by remember(chatId, groupWalletsOn) { if (chatId != null && groupWalletsOn) chamas.money(chatId) else kotlinx.coroutines.flow.flowOf(null) }.collectAsState(null)
     val chama = if (groupWalletsOn) groupMoney?.asChama() else treasurerChama
+    // A group call's money is reloaded when the call opens, each time the live socket comes back and on a `chama`
+    // resync (2026-11-09): a `money.updated` missed while the socket was down then heals in seconds, not never.
+    val feed = koinInject<com.circaso.feature.chama.data.repository.ContributionFeed>()
+    val realtime = koinInject<com.circaso.core.realtime.RealtimeClient>()
+    val isGroupCall = call?.group == true
+    LaunchedEffect(chatId, isGroupCall, groupWalletsOn) {
+        if (chatId == null || !isGroupCall) return@LaunchedEffect
+        val reload = suspend { if (groupWalletsOn) chamas.refreshMoney(chatId) else chamas.refresh(chatId) }
+        kotlinx.coroutines.flow.merge(
+            realtime.connected.let { c -> kotlinx.coroutines.flow.flow { c.collect { if (it) emit(Unit) } } },
+            feed.resyncs,
+        ).collect { reload() }
+    }
+    val profiles = koinInject<com.circaso.feature.profile.domain.ObserveProfileUseCase>()
+    val me by remember(profiles) { profiles() }.collectAsState(null)
     val wallet by koinInject<com.circaso.feature.wallet.domain.WalletRepository>().wallet.collectAsState(null)
     val messages = koinInject<com.circaso.feature.messaging.domain.MessagesRepository>()
     val thread by remember(chatId) { if (chatId != null) messages.thread(chatId) else kotlinx.coroutines.flow.flowOf(emptyList()) }.collectAsState(emptyList())
     val fiat = wallet?.fiat
+    // Contributions landing on a group call (2026-11-09), held for the whole call so minimising keeps them: "on its way"
+    // from `contribution.submitted`, the landing from the confirmed `money.updated`. Read with the latest people, rate
+    // and my own id each time, never the ones the call started with.
+    val celebrations = remember(call?.callId, chatId) { com.circaso.feature.calls.presentation.CallCelebrationsModel() }
+    val latestCall by androidx.compose.runtime.rememberUpdatedState(call)
+    val latestFiat by androidx.compose.runtime.rememberUpdatedState(wallet?.fiat)
+    val latestMe by androidx.compose.runtime.rememberUpdatedState(me)
+    LaunchedEffect(celebrations, isGroupCall) {
+        if (!isGroupCall) return@LaunchedEffect
+        feed.contributions.collect { g ->
+            val now = latestCall ?: return@collect
+            if (g.chatId != now.chatId) return@collect
+            val c = com.circaso.feature.calls.presentation.celebrationOf(g, now.people, latestMe?.userId, latestFiat, now.myPhotoUrl)
+            celebrations.receive(c, g.confirmed, visible = !now.minimised)
+        }
+    }
+    // One still "on its way" after a couple of minutes never confirmed (or its frame was lost; the reload has the truth).
+    celebrations.state.pending.forEach { p ->
+        androidx.compose.runtime.key(p.id) {
+            LaunchedEffect(p.id) { kotlinx.coroutines.delay(com.circaso.feature.calls.presentation.CelebrationState.PendingMillis); celebrations.expire(p.id) }
+        }
+    }
     // H2/H3: the newest money said in this chat sits under the name ("You sent KES 500 · for lunch").
     // Only money sent during this call, and only once its card has gone: never last month's payment, never a failed one.
     val since = call?.activeSince
@@ -738,6 +775,8 @@ private fun androidx.compose.foundation.layout.BoxScope.CallLayer(backStack: Mut
         money = money,
         chama = chama,
         fiat = fiat,
+        celebrations = celebrations,
+        myUserId = me?.userId,
     )
 }
 
