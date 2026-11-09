@@ -115,9 +115,11 @@ jobs:
           CIRCASO_UPLOAD_KEYSTORE_PASSWORD: ${{ secrets.UPLOAD_KEYSTORE_PASSWORD }}
           CIRCASO_UPLOAD_KEY_ALIAS: ${{ secrets.UPLOAD_KEY_ALIAS }}
           CIRCASO_UPLOAD_KEY_PASSWORD: ${{ secrets.UPLOAD_KEY_PASSWORD }}
-        # Release lint (about 6 of 15 minutes) runs in the `lint` job beside this one instead of in the way of publishing.
+        # Release lint runs in the `lint` job beside this one. R8 is most of this step (about 6 of 7 minutes on 4 GB), and
+        # it is memory-bound: the runner has 16 GB, so Gradle (where R8 runs) gets 10 GB and the parallel collector.
         run: >-
           ./gradlew :androidApp:bundleRelease -x lintVitalRelease --console=plain
+          "-Dorg.gradle.jvmargs=-Xmx10g -XX:+UseParallelGC -Dfile.encoding=UTF-8"
           -Pcircaso.versionCode=${{ steps.v.outputs.code }}
           -Pcircaso.versionName=${{ steps.v.outputs.name }}
 
