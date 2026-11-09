@@ -751,6 +751,7 @@ private fun androidx.compose.foundation.layout.BoxScope.CallLayer(backStack: Mut
             onFlip = controller::flipCamera,
             onMinimise = controller::minimise,
             onAddPeople = controller::ringOthers,
+            onShareScreen = if (controller.canShareScreen) controller::toggleScreenShare else null,
             onMessage = { val id = chatId; controller.decline(); if (id != null) backStack.add(ChatRoute(id)) },
             // H1's "Send money instead": decline, then the chat with `#` in its composer (money starts in the chat).
             onSendMoneyInstead = if (directMoney && c != null) ({ controller.decline(); onMoneyInChat(c.chatId) }) else null,
@@ -758,7 +759,9 @@ private fun androidx.compose.foundation.layout.BoxScope.CallLayer(backStack: Mut
             // (Pasaka, 2026-11-09). A group's goes into its wallet (GW9a2) or to the treasurer (D3), as its chat does.
             moneySheet = if (c != null && (directMoney || groupMoneyOn)) ({ open, onClose, onPaid ->
                 CallMoneySheet(open, c.chatId, callMoney.getOrPut(c.chatId) { CallMoneyHolder() }, if (c.group) "Contribute to ${chama?.goal?.name ?: c.title}" else "Send to ${peer?.name?.substringBefore(' ') ?: c.title}",
-                    if (c.group) "Everyone on the call sees it land" else "It goes in your chat with ${peer?.name?.substringBefore(' ') ?: c.title}", onClose, onPaid)
+                    // While this phone shares its screen, everyone on the call sees this sheet too: say so first.
+                    if (c.screen) "You're sharing your screen. Everyone on the call can see this."
+                    else if (c.group) "Everyone on the call sees it land" else "It goes in your chat with ${peer?.name?.substringBefore(' ') ?: c.title}", onClose, onPaid)
             }) else null,
         ),
         money = money,

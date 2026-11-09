@@ -23,6 +23,8 @@ import kotlinx.serialization.json.JsonObject
     val connection: String? = null,
     /** Their connection to the SFU is up under [connection] (CL3b): pull them now. Absent from older servers. */
     val connected: Boolean = false,
+    /** Their video is their screen, not their camera (CL8): fitted, never cropped. Absent from older servers. */
+    val screen: Boolean = false,
 )
 @Serializable data class CallDto(
     val callId: String, val chatId: String, val kind: String, val state: String, val startedBy: String, val createdAt: String,
@@ -38,7 +40,7 @@ import kotlinx.serialization.json.JsonObject
 @Serializable data class PulledTrackDto(val userId: String, val trackName: String, val mid: String? = null)
 @Serializable data class PullResponse(val offer: String? = null, val requiresRenegotiation: Boolean = false, val tracks: List<PulledTrackDto> = emptyList())
 @Serializable data class RenegotiateRequest(val sessionId: String, val answer: String)
-@Serializable data class MediaRequest(val audio: Boolean, val video: Boolean)
+@Serializable data class MediaRequest(val audio: Boolean, val video: Boolean, val screen: Boolean = false)
 @Serializable data class RingRequest(val userIds: List<String> = emptyList())
 @Serializable data class ConnectedRequest(val sessionId: String)
 
@@ -53,7 +55,8 @@ interface CallsRemote {
     suspend fun renegotiate(callId: String, request: RenegotiateRequest): AppResult<JsonObject>
     suspend fun decline(callId: String): AppResult<CallDto>
     suspend fun leave(callId: String): AppResult<CallDto>
-    suspend fun media(callId: String, audio: Boolean, video: Boolean): AppResult<JsonObject>
+    /** CL8. [screen]: the video track carries the screen (an older server ignores it; its viewers see a camera). */
+    suspend fun media(callId: String, audio: Boolean, video: Boolean, screen: Boolean = false): AppResult<JsonObject>
     /** CL9: ring members who aren't on a group call again; empty is everyone not on it. */
     suspend fun ring(callId: String, userIds: List<String>): AppResult<CallDto>
 }
@@ -81,7 +84,7 @@ class KtorCallsRemote(private val api: CircasoApi) : CallsRemote {
     override suspend fun ring(callId: String, userIds: List<String>) = api.call<CallDto> {
         method = HttpMethod.Post; url("/v1/calls/$callId/ring"); idempotencyKey(newIdempotencyKey()); contentType(ContentType.Application.Json); setBody(RingRequest(userIds))
     }
-    override suspend fun media(callId: String, audio: Boolean, video: Boolean) = api.call<JsonObject> {
-        method = HttpMethod.Post; url("/v1/calls/$callId/media"); idempotencyKey(newIdempotencyKey()); contentType(ContentType.Application.Json); setBody(MediaRequest(audio, video))
+    override suspend fun media(callId: String, audio: Boolean, video: Boolean, screen: Boolean) = api.call<JsonObject> {
+        method = HttpMethod.Post; url("/v1/calls/$callId/media"); idempotencyKey(newIdempotencyKey()); contentType(ContentType.Application.Json); setBody(MediaRequest(audio, video, screen))
     }
 }

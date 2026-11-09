@@ -28,6 +28,8 @@ fun Modifier.pressable(
     pressedScale: Float = 0.97f,
     /** A long press (reactions on a card, WhatsApp-style); null keeps plain clicks. */
     onLongClick: (() -> Unit)? = null,
+    /** What a tap does, for screen readers ("Show Amina big"); null reads the default. */
+    onClickLabel: String? = null,
     onClick: () -> Unit,
 ): Modifier = composed {
     val style = LocalPlatformStyle.current
@@ -44,9 +46,9 @@ fun Modifier.pressable(
                 scaleY = s
                 alpha = 1f - 0.15f * p
             }
-            .combinedClickable(interactionSource = source, indication = null, enabled = enabled, role = role, onLongClick = onLongClick, onClick = onClick)
+            .combinedClickable(interactionSource = source, indication = null, enabled = enabled, onClickLabel = onClickLabel, role = role, onLongClick = onLongClick, onClick = onClick)
     } else {
-        this.combinedClickable(interactionSource = source, indication = ripple(), enabled = enabled, role = role, onLongClick = onLongClick, onClick = onClick)
+        this.combinedClickable(interactionSource = source, indication = ripple(), enabled = enabled, onClickLabel = onClickLabel, role = role, onLongClick = onLongClick, onClick = onClick)
     }
 }
 

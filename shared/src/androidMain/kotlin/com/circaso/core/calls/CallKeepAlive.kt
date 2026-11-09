@@ -11,7 +11,9 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
 import android.os.Build
+import android.os.Handler
 import android.os.IBinder
+import android.os.Looper
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
@@ -20,9 +22,12 @@ import com.circaso.feature.calls.CallController
 import com.circaso.feature.calls.CallPhase
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 
 /**
  * Keeps a call going when the person leaves Circaso (Pasaka, 2026-10-30): while a call is connecting or on, a
@@ -48,6 +53,9 @@ class CallKeepAlive(private val context: Context, private val controller: CallCo
  * time, and a stop that lands before it does counts as not reaching it (Redmi, 2026-11-09: the app closed on every
  * call). So it's started once per call and every later change goes to the running service; a stop that arrives
  * while a start is still on its way waits for it; and every start reaches the foreground before anything else.
+ *
+ * Screen sharing (2026-11-09) adds the mediaProjection type to the running service, never a second start: Android 14+
+ * wants it in place before the projection is made, and only after the person agreed to the system's prompt.
  */
 class CallService : Service() {
     data class Spec(val title: String, val camera: Boolean, val videoCall: Boolean)
@@ -90,7 +98,7 @@ class CallService : Service() {
         val notification: Notification = NotificationCompat.Builder(this, ChannelId)
             .setSmallIcon(com.circaso.shared.R.drawable.ic_stat_circaso)
             .setContentTitle(if (spec.videoCall) "Video call · $title" else "Call · $title")
-            .setContentText("Call in progress. Tap to return.")
+            .setContentText(if (projecting) "Sharing your screen. Tap to return." else "Call in progress. Tap to return.")
             .setCategory(NotificationCompat.CATEGORY_CALL)
             .setOngoing(true)
             .setContentIntent(tap)
@@ -100,12 +108,20 @@ class CallService : Service() {
         // is tried only while it's on and allowed, and the microphone alone is the fallback.
         val mic = ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
         val withCamera = spec.camera && ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED
-        val attempts = if (withCamera) listOf(mic or ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA, mic) else listOf(mic)
+        val plain = if (withCamera) listOf(mic or ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA, mic) else listOf(mic)
+        // A share asks for mediaProjection on top; if Android refuses it the call itself still stays in the foreground.
+        val projection = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION else 0
+        val attempts = if (projecting && projection != 0) plain.map { it or projection } + plain else plain
         for (types in attempts) {
             val ok = runCatching { ServiceCompat.startForeground(this, NotificationId, notification, if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) types else 0) }
                 .onFailure { Log.w(Tag, "startForeground refused types=$types", it) }
                 .isSuccess
-            if (ok) { shown = spec; return true }
+            if (ok) {
+                shown = spec
+                // Before Android 11 the manifest's types all apply, mediaProjection among them.
+                projectionShown = projecting && (Build.VERSION.SDK_INT < Build.VERSION_CODES.R || types and projection != 0)
+                return true
+            }
         }
         return false
     }
@@ -115,12 +131,16 @@ class CallService : Service() {
         stopSelf()
         if (running === this) running = null
         shown = null
+        projecting = false
+        projectionShown = false
     }
 
     companion object {
         const val ChannelId = "ongoing_call"
         const val NotificationId = 4401
         private const val Tag = "CallService"
+        /** How long a share waits for the call's service to be in the foreground before giving up. */
+        private const val ProjectionWaitMillis = 5_000L
 
         // Main thread only (CallKeepAlive collects there and Android calls the service there).
         private var running: CallService? = null
@@ -129,6 +149,40 @@ class CallService : Service() {
         /** What the call wants shown now; null once it has ended. */
         private var wanted: Spec? = null
         private var shown: Spec? = null
+        /** A screen share wants the mediaProjection type; [projectionShown]: the running service has it. */
+        private var projecting = false
+        private var projectionShown = false
+        private val main = Handler(Looper.getMainLooper())
+
+        /**
+         * Gives the running call service the mediaProjection type, after the person agreed to share their screen and
+         * before the projection is made (Android 14+ refuses the projection otherwise). Waits briefly for a start
+         * still on its way; never starts a service of its own. False when Android wouldn't, so the share doesn't start.
+         */
+        suspend fun startProjection(): Boolean = withContext(Dispatchers.Main) {
+            projecting = true
+            val service = withTimeoutOrNull(ProjectionWaitMillis) {
+                while (running == null || pending > 0) delay(50)
+                running
+            }
+            val spec = wanted ?: shown
+            if (service == null || spec == null) { projecting = false; return@withContext false }
+            val ok = service.present(spec) && projectionShown
+            if (!ok) {
+                projecting = false
+                running?.let { s -> if (pending == 0) (wanted ?: shown)?.let(s::present) }
+            }
+            ok
+        }
+
+        /** The share is over: the service drops the mediaProjection type and goes on as the call's. Any thread. */
+        fun stopProjection() {
+            if (Looper.myLooper() != Looper.getMainLooper()) { main.post { stopProjection() }; return }
+            if (!projecting) return
+            projecting = false
+            val service = running ?: return
+            if (pending == 0) (wanted ?: shown)?.let(service::present)
+        }
 
         fun show(context: Context, spec: Spec) {
             wanted = spec

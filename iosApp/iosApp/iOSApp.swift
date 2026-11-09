@@ -13,7 +13,10 @@ struct iOSApp: App {
         LiveAudioBridge.shared.api = LiveAudioImpl() // live voice with Asha; see IosLiveAudio.kt
         VadBridge.shared.api = VadImpl() // Silero VAD for talking over Asha; see IosVadEngine.kt
         LocationBridge.shared.provider = LocationImpl() // "Share location" in chats; see Media.kt
-        CallEngineBridge.shared.provider = CallEngineImpl() // WebRTC calls through Cloudflare Realtime; see CallEngine.kt
+        let calls = CallEngineImpl()
+        CallEngineBridge.shared.provider = calls // WebRTC calls through Cloudflare Realtime; see CallEngine.kt
+        // Screen sharing through the ReplayKit broadcast extension; hidden until that target is in the app (ScreenShareImpl).
+        ScreenShareBridge.shared.provider = ScreenShareImpl(engine: calls)
         CallKitVoip.install() // calls ring with Circaso closed: PushKit VoIP pushes and CallKit; see IosCallKit.kt
         QrScannerBridge.shared.provider = QrScannerImpl() // VisionKit QR scanning (design E4/E5); see Qr.kt
         MomentCameraBridge.shared.provider = MomentCameraImpl() // AVFoundation camera for Moments (M1); see MomentCamera.kt

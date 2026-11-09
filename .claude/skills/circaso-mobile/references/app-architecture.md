@@ -397,6 +397,18 @@ in `wallet_activity`), so live means reloading those copies when money moves:
 - Background ringing: Android shows its own high-priority call notification from the data push (`AndroidCallNotifier`, channel "Calls"); tapping opens the answer screen. iOS rings only in the app until CallKit + PushKit (VoIP push) are added; the backend logged that as an open question.
 - Backend env for the sandbox: `INTEGRATIONS_CALLS_PROVIDER=cloudflare`, `CLOUDFLARE_REALTIME_APP_ID`, `CLOUDFLARE_REALTIME_APP_TOKEN`, optional `CLOUDFLARE_TURN_KEY_ID` / `CLOUDFLARE_TURN_KEY_TOKEN`.
 - Not built: H2's "Add people" (no add-to-call route), H6 business live (business groups deferred).
+- **Swap and spotlight (2026-11-09, local to each phone):** H3's small picture taps to swap with the big one and drags
+  to any corner (`DuoStage`); a group tile taps into a spotlight with the others in a strip (under it upright, beside it
+  when wider than tall; `FittedTiles(spotlight=)`), tap again for the grid. Tiles move as transforms only
+  (`CallStage.TileMotion`, FLIP), so video surfaces are never rebuilt; Android draws call video on a TextureView
+  (`CallTextureView`) so it can be clipped, layered and scaled. Pure rules in `CallStage.kt`, tests `CallStageTest`.
+- **Screen sharing (2026-11-09):** `CallEngine.setScreenShare` swaps what feeds the one video track (no
+  renegotiation); CL8 carries `screen` (backend PR #84) so viewers fit it and label it. Android: consent
+  (`ScreenCaptureBridge`) → `CallService.startProjection()` adds the mediaProjection type to the running service →
+  `ScreenCapturerAndroid` at ~720p/15 fps; the system's Stop flows back through `screenSharing`. iOS: ReplayKit
+  broadcast extension sources in `iosApp/CircasoBroadcast` (not yet a target; its Xcode steps are in its
+  SampleHandler.swift) and `ScreenShareImpl.swift`; Share screen stays hidden on iOS until the extension is embedded.
+  Play Console needs the media projection foreground-service declaration before a production release.
 
 ## Circle social login removed (2026-10-29)
 

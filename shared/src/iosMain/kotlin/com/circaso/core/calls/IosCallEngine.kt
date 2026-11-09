@@ -47,6 +47,28 @@ object CallEngineBridge {
     var provider: CallEngineProvider? = null
 }
 
+/**
+ * Screen sharing on iOS (2026-11-09): a ReplayKit Broadcast Upload Extension captures the whole screen, also after the
+ * person leaves Circaso, and hands its frames to the app, which feeds them into the call's video track
+ * (`ScreenShareImpl.swift`, `iosApp/CircasoBroadcast`). Kept apart from [CallEngineProvider] so the call engine's
+ * Swift side needs nothing new. Until the extension is a target in the Xcode project [available] is false and the
+ * Share screen button isn't shown.
+ */
+interface ScreenShareProvider {
+    /** The broadcast extension is in the app and the App Group is there: sharing can work. */
+    val available: Boolean
+    /** Shows the system's broadcast picker; [completion] says whether the broadcast started (false: dismissed, failed). */
+    fun start(completion: (Boolean) -> Unit)
+    /** Ends the broadcast (the extension is asked to finish) and gives the track back to the camera or keep-alive. */
+    fun stop()
+    /** Kotlin sets this to hear the broadcast end on its own (the red status bar's Stop, Control Center). */
+    fun setStoppedListener(listener: () -> Unit)
+}
+
+object ScreenShareBridge {
+    var provider: ScreenShareProvider? = null
+}
+
 @Serializable private data class WireIce(val urls: List<String>, val username: String? = null, val credential: String? = null)
 @Serializable private data class WireTrack(val mid: String, val trackName: String, val kind: String)
 @Serializable private data class WireOffer(val sdp: String, val tracks: List<WireTrack>)
@@ -93,12 +115,29 @@ class IosCallEngine : CallEngine {
     }
     override fun flipCamera() { CallEngineBridge.provider?.flipCamera() }
     override fun setSpeaker(on: Boolean) { CallEngineBridge.provider?.setSpeaker(on) }
+    private val _sharing = MutableStateFlow(false)
+    override val screenSharing: StateFlow<Boolean> = _sharing
+    override val canShareScreen: Boolean get() = ScreenShareBridge.provider?.available == true
+
+    override suspend fun setScreenShare(on: Boolean): Boolean {
+        val share = ScreenShareBridge.provider ?: return !on
+        if (!on) { share.stop(); _sharing.value = false; return true }
+        if (!share.available) return false
+        share.setStoppedListener { _sharing.value = false }
+        val started = suspendCancellableCoroutine<Boolean> { cont -> share.start { ok -> if (cont.isActive) cont.resume(ok) } }
+        _sharing.value = started
+        return started
+    }
+
     override suspend fun receivedPackets(): Long? {
         val p = CallEngineBridge.provider ?: return null
         return suspendCancellableCoroutine { cont -> p.receivedPackets { n -> if (cont.isActive) cont.resume(n.takeIf { it >= 0 }) } }
     }
 
-    override fun close() { CallEngineBridge.provider?.close(); _mids.value = emptySet(); _connected.value = null; _receiving.value = emptySet() }
+    override fun close() {
+        if (_sharing.value) { ScreenShareBridge.provider?.stop(); _sharing.value = false }
+        CallEngineBridge.provider?.close(); _mids.value = emptySet(); _connected.value = null; _receiving.value = emptySet()
+    }
 }
 
 @OptIn(kotlinx.cinterop.ExperimentalForeignApi::class)
