@@ -117,7 +117,10 @@ class ChatsRepositoryImpl(
         // On disk before the request leaves: if the answer is lost, the group still turns up in the list and opens.
         val key = groupKeys.keyForCreate(idempotencyKey)
         val sealed = groupKeys.sealMetaWithin(key, draft.name, null) ?: return AppResult.Failure(groupInvalid())
-        val request = CreateGroupRequest(sealedMeta = sealed, memberIds = draft.memberIds)
+        // The people asked for are invited (2026-11-09): each gets the key sealed 1:1 so their invite shows the name.
+        // A new group's name is sealed as version 1, the version the server gives it.
+        val inviteKeys = groupKeys.sealInviteKeys(key, CreatedMetaVersion, draft.memberIds).takeIf { it.isNotEmpty() }
+        val request = CreateGroupRequest(sealedMeta = sealed, memberIds = draft.memberIds, inviteKeys = inviteKeys)
         return when (val result = remote.createGroup(request, idempotencyKey)) {
             is AppResult.Failure -> result
             is AppResult.Success -> {
@@ -125,7 +128,7 @@ class ChatsRepositoryImpl(
                 groupKeys.createdWith(idempotencyKey, dto.chatId, dto.metaVersion, key)
                 val chat = store(dto)
                 groupKeys.ensureDistributed(dto.chatId, chat.members.map { it.userId }) // best effort now; the first send makes sure
-                AppResult.Success(GroupCreated(chat, dto.notAdded.orEmpty()))
+                AppResult.Success(GroupCreated(chat, dto.notAdded.orEmpty(), dto.invited.orEmpty()))
             }
         }
     }
@@ -273,15 +276,24 @@ class ChatsRepositoryImpl(
         return remote.updateGroup(chatId, request((reloaded as AppResult.Success).value.version))
     }
 
-    override suspend fun addMembers(chatId: String, userIds: List<String>): AppResult<GroupCreated> =
-        when (val result = remote.addMembers(chatId, AddMembersRequest(userIds))) {
+    /**
+     * M9 invites the people (2026-11-09): they join when they accept, and their phones get my sender key then, on
+     * `member.added`. The group's current key is sealed for each so the invite shows its name; a phone without the key
+     * (lost, being asked for) invites without it, and the invite says "A group".
+     */
+    override suspend fun addMembers(chatId: String, userIds: List<String>): AppResult<GroupCreated> {
+        val inviteKeys = groupKeys.latestMetaKeyVersioned(chatId)
+            ?.let { (version, key) -> groupKeys.sealInviteKeys(key, version, userIds) }
+            ?.takeIf { it.isNotEmpty() }
+        return when (val result = remote.addMembers(chatId, AddMembersRequest(userIds, inviteKeys))) {
             is AppResult.Failure -> result
             is AppResult.Success -> {
                 val chat = store(result.value)
                 groupKeys.ensureDistributed(chatId, chat.members.map { it.userId })
-                AppResult.Success(GroupCreated(chat, result.value.notAdded.orEmpty()))
+                AppResult.Success(GroupCreated(chat, result.value.notAdded.orEmpty(), result.value.invited.orEmpty()))
             }
         }
+    }
 
     override suspend fun removeMember(chatId: String, userId: String): AppResult<Unit> =
         when (val result = remote.removeMember(chatId, userId)) {
@@ -311,11 +323,25 @@ class ChatsRepositoryImpl(
 
     // ---- what the realtime frames ask for (guide, section 8)
 
-    /** `member.added`: newcomers need my sender key and the group key; if I am the newcomer, I need the chat. */
-    suspend fun onMemberAdded(chatId: String, userIds: List<String>) {
+    /**
+     * `member.added`: newcomers need my sender key and the group key; if I am the newcomer, I need the chat. [joined]
+     * (group invites, 2026-11-09): the one person accepted an invite, and the chat says so ("Amina joined", or "You
+     * joined" on their own phone), in the thread where it happened.
+     */
+    suspend fun onMemberAdded(chatId: String, userIds: List<String>, joined: Boolean = false) {
         val me = ownUserId()
-        if (me in userIds || dao.chat(chatId) == null) { refreshChat(chatId); return }
+        if (me in userIds || dao.chat(chatId) == null) {
+            refreshChat(chatId)
+            if (joined && me in userIds) insertSystemRow(messages, chatId, me!!, "You joined", now())
+            return
+        }
         refreshChat(chatId)
+        if (joined) {
+            for (userId in userIds) {
+                val name = dao.members(chatId).firstOrNull { it.userId == userId }?.displayName ?: "Someone"
+                insertSystemRow(messages, chatId, userId, "$name joined", now())
+            }
+        }
         groupKeys.ensureDistributed(chatId, userIds)
     }
 
@@ -398,6 +424,8 @@ class ChatsRepositoryImpl(
         const val RekeyAfterMillis = 60_000L
         /** Someone who joined this recently is sent the key with the members' sender keys: no need to ask yet. */
         const val KeyGraceMillis = 10L * 60 * 1000
+        /** The metadata version the server gives a new group's first seal (M5). */
+        const val CreatedMetaVersion = 1
     }
 
     private fun MemberRole.wire() = when (this) { MemberRole.Owner -> MessagingWire.Owner; MemberRole.Admin -> MessagingWire.Admin; MemberRole.Member -> MessagingWire.Member }

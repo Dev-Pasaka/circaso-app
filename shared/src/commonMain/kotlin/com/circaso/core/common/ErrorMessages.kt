@@ -137,6 +137,7 @@ object ErrorMessages {
         "messaging.not_admin" to "Only admins can do that.",
         "messaging.not_a_group" to "That only works in a group.",
         "messaging.group_full" to "This group is full.",
+        "messaging.invite_not_found" to "This invite is no longer open.",
         "messaging.group_invalid" to "Those group details can't be saved. Check them and try again.",
         "messaging.avatar_invalid" to "Couldn't use that photo. Try another one.",
         // made on this phone: it has no key for the group's name and photo

@@ -55,6 +55,25 @@ class KtorChatsRemote(private val api: CircasoApi) : ChatsRemote {
     }
 }
 
+/** Group invites (M23–M27): adding someone to a group invites them; they join when they accept. */
+interface InvitesRemote {
+    suspend fun mine(): AppResult<InvitesResponse>
+    suspend fun accept(inviteId: String): AppResult<ChatDto>
+    suspend fun decline(inviteId: String): AppResult<InviteDeclinedResponse>
+    suspend fun ofChat(chatId: String): AppResult<ChatInvitesResponse>
+    suspend fun cancel(chatId: String, userId: String): AppResult<InviteCancelledResponse>
+}
+
+class KtorInvitesRemote(private val api: CircasoApi) : InvitesRemote {
+    override suspend fun mine() = api.call<InvitesResponse> { method = HttpMethod.Get; url("/v1/chats/invites") }
+    override suspend fun accept(inviteId: String) = api.call<ChatDto> { method = HttpMethod.Post; url("/v1/chats/invites/$inviteId/accept") }
+    override suspend fun decline(inviteId: String) = api.call<InviteDeclinedResponse> { method = HttpMethod.Post; url("/v1/chats/invites/$inviteId/decline") }
+    override suspend fun ofChat(chatId: String) = api.call<ChatInvitesResponse> { method = HttpMethod.Get; url("/v1/chats/$chatId/invites") }
+    override suspend fun cancel(chatId: String, userId: String) = api.call<InviteCancelledResponse> {
+        method = HttpMethod.Delete; url("/v1/chats/$chatId/invites/$userId")
+    }
+}
+
 class KtorMessagesRemote(private val api: CircasoApi) : MessagesRemote {
     override suspend fun send(chatId: String, request: SendChatMessageRequest, idempotencyKey: String) = api.call<SentMessageResponse> {
         method = HttpMethod.Post; url("/v1/chats/$chatId/messages"); idempotencyKey(idempotencyKey); contentType(ContentType.Application.Json); setBody(request)

@@ -732,6 +732,8 @@ class MessagingFrameHandler(
     private val messagesDao: MessagesDao,
     private val sessions: SessionCipher,
     private val now: () -> Long = ::nowMillis,
+    /** Group invites (2026-11-09); null in tests that don't need them. */
+    private val invites: GroupInvitesRepositoryImpl? = null,
 ) {
     suspend fun handle(type: String, data: JsonObject?) {
         val d = data ?: return
@@ -761,7 +763,15 @@ class MessagingFrameHandler(
                     insertSystemRow(messagesDao, chat.chatId, userId, "${member.displayName}'s security code changed", now())
                 }
             }
-            "member.added" -> chats.onMemberAdded(d.str("chatId") ?: return, (d["userIds"] as? kotlinx.serialization.json.JsonArray).orEmpty().mapNotNull { (it as? kotlinx.serialization.json.JsonPrimitive)?.content })
+            "member.added" -> chats.onMemberAdded(
+                d.str("chatId") ?: return,
+                (d["userIds"] as? kotlinx.serialization.json.JsonArray).orEmpty().mapNotNull { (it as? kotlinx.serialization.json.JsonPrimitive)?.content },
+                joined = (d["joined"] as? kotlinx.serialization.json.JsonPrimitive)?.content == "true",
+            )
+            // Group invites (backend PR #83): mine came or went; a group's Invited list changed.
+            "invite.received" -> invites?.onInviteReceived()
+            "invite.removed" -> invites?.onInviteRemoved(d.str("inviteId") ?: return)
+            "invites.changed" -> invites?.onInvitesChanged(d.str("chatId") ?: return)
             "member.removed" -> chats.onMemberRemoved(d.str("chatId") ?: return, d.str("userId") ?: return, d.str("byUserId"))
             "chat.updated" -> chats.onChatUpdated(
                 d.str("chatId") ?: return, d.int("version") ?: return,

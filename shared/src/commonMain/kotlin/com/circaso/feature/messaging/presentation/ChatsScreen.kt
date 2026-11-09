@@ -78,9 +78,16 @@ fun ChatsTab(
         if (onMoments) momentsVm?.refresh()
         onPauseOrDispose { }
     }
+    // A group just joined from its invite opens at once, as the answer's natural next step.
+    androidx.compose.runtime.LaunchedEffect(state.joinedChatId) {
+        state.joinedChatId?.let { onOpen(it); viewModel.onJoinedOpened() }
+    }
+    // Left Chats before the answer came: the join stands, but the chat never opens later out of context.
+    androidx.compose.runtime.DisposableEffect(Unit) { onDispose { viewModel.onJoinedOpened() } }
     ChatsContent(
         state, bottomPadding, viewModel::onQuery, onAsha, onOpen, onNewChat = onNewChat, onFilter = viewModel::onFilter, selectedChatId = selectedChatId,
         moments = if (momentsState != null && moments != null) MomentsSlot(momentsState, moments.actions) else null,
+        invites = viewModel.inviteActions,
     )
 }
 
@@ -95,6 +102,18 @@ class MomentsSlot(val state: com.circaso.feature.status.presentation.MomentsUiSt
 fun androidx.compose.foundation.layout.BoxScope.ChatsOverlay(viewModel: ChatsViewModel, onAsha: () -> Unit, onVoice: () -> Unit = onAsha) {
     val state by viewModel.state.collectAsState()
     MeetAshaSheet(visible = state.meetAsha && state.loaded, firstName = state.firstName, onTry = onAsha, onVoice = onVoice, onDismiss = viewModel::onMeetAshaDone)
+    // A declined invite, or one no longer open, leaves the list: said here so the card's leaving is never silent.
+    val toast = com.circaso.designsystem.chrome.rememberToastState()
+    androidx.compose.runtime.LaunchedEffect(state.notice) { state.notice?.let { toast.show(it); viewModel.onNoticeShown() } }
+    com.circaso.designsystem.chrome.ToastHost(toast, Modifier.align(Alignment.TopCenter).padding(top = CircasoSpacing.s2))
+    val preview = state.previewing
+    InvitePreviewSheet(
+        preview, viewModel.inviteActions, state.online,
+        answering = preview != null && preview.inviteId in state.answering,
+        error = state.inviteError?.takeIf { it.first == preview?.inviteId }?.second,
+        now = nowMillis(),
+        onDismiss = { viewModel.onPreview(null) },
+    )
 }
 
 /**
@@ -132,6 +151,8 @@ fun ChatsContent(
     state: ChatsUiState, bottomPadding: PaddingValues, onQuery: (String) -> Unit, onAsha: () -> Unit, onOpen: (String) -> Unit, onNewChat: (() -> Unit)? = null,
     onFilter: (ChatFilter) -> Unit = {}, selectedChatId: String? = null,
     moments: MomentsSlot? = null,
+    /** Group invites' answers (2026-11-09); null hides the cards (previews). */
+    invites: InviteActions? = null,
 ) {
     val c = CircasoTheme.colors
     val t = CircasoTheme.typography
@@ -210,6 +231,18 @@ fun ChatsContent(
         if (showMoments) {
             momentsList(moments.state, state.query, mutedOpen, { mutedOpen = !mutedOpen }, moments.actions, now, rowModifier = swap)
         }
+        // Group invites (2026-11-09): above everything else, since each is waiting on me.
+        if (!showMoments && invites != null && state.showInvites) {
+            items(state.invites, key = { "invite:" + it.inviteId }, contentType = { "invite" }) { invite ->
+                InviteCardRow(
+                    invite, invites, state.online,
+                    answering = invite.inviteId in state.answering,
+                    error = state.inviteError?.takeIf { it.first == invite.inviteId }?.second,
+                    now = now,
+                    modifier = swap(),
+                )
+            }
+        }
         if (state.query.isBlank() && state.filter == ChatFilter.All) {
             // The design's first row (C1): Asha, always there, above the chats.
             item(key = "asha", contentType = "asha") {
@@ -221,7 +254,7 @@ fun ChatsContent(
                 )
             }
         }
-        if (!showMoments && state.loaded && state.shown.isEmpty()) {
+        if (!showMoments && state.loaded && state.shown.isEmpty() && !(invites != null && state.showInvites)) {
             item(key = "chats-empty", contentType = "empty") {
                 Column(swap().fillMaxWidth().padding(horizontal = 32.dp, vertical = 48.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(CircasoSpacing.s2)) {
                     BasicText(

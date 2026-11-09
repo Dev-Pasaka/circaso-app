@@ -156,8 +156,33 @@ class GroupDraft(val name: String, val memberIds: List<String>)
 /** How a call ended, as the chat shows it. */
 enum class CallOutcome { Completed, Missed, Declined, Cancelled, NoAnswer, Failed }
 
-/** Who could not be added to a group; the server gives no reason and the app shows none (guide, M5). */
-class GroupCreated(val chat: Chat, val notAdded: List<String>)
+/**
+ * Who could not be added to a group; the server gives no reason and the app shows none (guide, M5). [invited]: the
+ * people who now have an invite and join when they accept (group invites, 2026-11-09).
+ */
+class GroupCreated(val chat: Chat, val notAdded: List<String>, val invited: List<String> = emptyList())
+
+/** Someone, as an invite names them: who invited me, or who is invited. */
+data class InvitePerson(val userId: String, val displayName: String, val avatarUrl: String?)
+
+/**
+ * An invite to a group waiting for my answer (group invites, 2026-11-09). [groupName] and [groupPhoto] open with the
+ * key the inviter's phone sealed for me; null when it couldn't (an older app sent none), and the card says "A group".
+ * Never the group's members or messages: I'm not in it yet.
+ */
+data class GroupInvite(
+    val inviteId: String,
+    val chatId: String,
+    val groupName: String?,
+    val groupPhoto: String?,
+    val memberCount: Int,
+    val invitedBy: InvitePerson,
+    val createdAt: Long?,
+    val expiresAt: Long?,
+)
+
+/** An open invite in group info's "Invited" list: who, and who invited them. */
+data class PendingInvite(val inviteId: String, val person: InvitePerson, val invitedBy: InvitePerson)
 
 /** What a payment card carries into the chat; the wallet already knows the transfer. */
 data class PaymentCard(val transferId: String, val amountMinor: String, val asset: String, val blockchain: String, val note: String?)

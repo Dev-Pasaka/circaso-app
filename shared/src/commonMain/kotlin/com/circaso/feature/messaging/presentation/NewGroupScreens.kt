@@ -368,7 +368,8 @@ private fun DetailsStep(state: NewGroupUiState, actions: NewGroupActions, paddin
             Column(Modifier.padding(horizontal = CircasoSpacing.s4, vertical = CircasoSpacing.s2), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 ListGroup { GroupNameField(state.name, actions.onName, enabled = !state.creating && !state.photoFailed) }
                 BasicText(
-                    "The name and photo are end-to-end encrypted. Only the group's members can see them.",
+                    // Group invites (2026-11-09): the people chosen are asked, and join when they accept.
+                    "The name and photo are end-to-end encrypted: only members and the people you invite can see them. Each person gets an invite and joins when they accept.",
                     Modifier.padding(horizontal = CircasoSpacing.s4), style = t.footnote.copy(color = c.inkSecondary),
                 )
             }
