@@ -175,14 +175,16 @@ class MessagesRepositoryImpl(
         val key = "call-$callId"
         if (dao.byClientMessageId(key) != null) return
         val details = buildJsonObject { put("video", video); put("outcome", outcome.name); put("seconds", durationSeconds) }
-        dao.insert(
+        // A call's end can be heard twice at once (the hang-up's answer, call.ended, the 5 s re-read): the second write
+        // is dropped by the unique key instead of failing (it closed the app at every hang-up, Redmi 2026-11-09).
+        val inserted = dao.insertIfAbsent(
             MessageEntity(
                 clientMessageId = key, messageId = null, chatId = chatId, senderId = callerId, outgoing = outgoing,
                 kind = MessageKind.Call, text = details.toString(), replyTo = null, status = MessageStatus.Received, errorCode = null,
                 cachedRequest = null, sentAt = null, orderAt = at, createdAt = at,
             ),
         )
-        chats.touch(chatId, at)
+        if (inserted != -1L) chats.touch(chatId, at)
     }
 
     override suspend fun retry(localId: Long) {
