@@ -26,6 +26,24 @@ final class CallEngineImpl: NSObject, CallEngineProvider, RTCPeerConnectionDeleg
     /// Pulled mids whose packets have arrived; see `CallEngine.receivingMids`.
     private var receiving: Set<String> = []
     private var statsTimer: Timer?
+    /// Feeds the video track while the camera is off; see `keepVideoAlive`.
+    private var keepAliveTimer: Timer?
+    private lazy var keepAliveCapturer = RTCVideoCapturer()
+    private static let blackFrame: RTCCVPixelBuffer? = {
+        var buffer: CVPixelBuffer?
+        let attrs = [kCVPixelBufferIOSurfacePropertiesKey: [:]] as CFDictionary
+        guard CVPixelBufferCreate(kCFAllocatorDefault, 160, 90, kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange, attrs, &buffer) == kCVReturnSuccess,
+              let buffer else { return nil }
+        CVPixelBufferLockBaseAddress(buffer, [])
+        // Video-range black: luma 16, chroma 128.
+        for (plane, value) in [(0, UInt8(16)), (1, UInt8(128))] {
+            if let base = CVPixelBufferGetBaseAddressOfPlane(buffer, plane) {
+                memset(base, Int32(value), CVPixelBufferGetBytesPerRowOfPlane(buffer, plane) * CVPixelBufferGetHeightOfPlane(buffer, plane))
+            }
+        }
+        CVPixelBufferUnlockBaseAddress(buffer, [])
+        return RTCCVPixelBuffer(pixelBuffer: buffer)
+    }()
     private let constraints = RTCMediaConstraints(mandatoryConstraints: nil, optionalConstraints: nil)
 
     func start(iceServersJson: String, video: Bool, userId: String, completion: @escaping (String?, String?) -> Void) {
@@ -59,6 +77,7 @@ final class CallEngineImpl: NSObject, CallEngineProvider, RTCPeerConnectionDeleg
         cam.isEnabled = false
         localVideo = cam
         let videoT = connection.addTransceiver(with: cam, init: sendOnly)
+        keepVideoAlive(true)
         if video { setCamera(on: true) { _ in } }
         connection.offer(for: constraints) { sdp, error in
             guard let sdp else { completion(nil, error?.localizedDescription ?? "offer"); return }
@@ -150,6 +169,7 @@ final class CallEngineImpl: NSObject, CallEngineProvider, RTCPeerConnectionDeleg
             localVideo?.isEnabled = false
             capturer?.stopCapture()
             capturer = nil
+            keepVideoAlive(true)
             completion(true)
             return
         }
@@ -158,6 +178,7 @@ final class CallEngineImpl: NSObject, CallEngineProvider, RTCPeerConnectionDeleg
         AVCaptureDevice.requestAccess(for: .video) { granted in
             DispatchQueue.main.async {
                 guard granted else { completion(false); return }
+                self.keepVideoAlive(false) // the camera takes over the track from here
                 self.cameraOn = true
                 self.localVideo?.isEnabled = true
                 let cap = RTCCameraVideoCapturer(delegate: source)
@@ -187,6 +208,7 @@ final class CallEngineImpl: NSObject, CallEngineProvider, RTCPeerConnectionDeleg
     func setSpeaker(on: Bool) { configureAudio(speaker: on) }
 
     func close() {
+        keepVideoAlive(false)
         capturer?.stopCapture()
         capturer = nil
         cameraOn = false
@@ -207,6 +229,24 @@ final class CallEngineImpl: NSObject, CallEngineProvider, RTCPeerConnectionDeleg
             session.lockForConfiguration()
             try? session.setActive(false)
             session.unlockForConfiguration()
+        }
+    }
+
+    /// While the camera is off, the video track gets a tiny black frame twice a second. Cloudflare's SFU needs media on
+    /// a track: a pull of one with none fails after about 8.5 s (`empty_track_error`), and a track with no packets for
+    /// 30 s is deleted. Without this, a camera turned on mid-call was never seen by the other side, and every pull
+    /// waited 8.5 s for the silent video (2026-11-09). Receivers show the photo while `video` is false, never these.
+    private func keepVideoAlive(_ on: Bool) {
+        // A Timer only fires on a thread with a run loop: the main one.
+        guard Thread.isMainThread else { DispatchQueue.main.async { self.keepVideoAlive(on) }; return }
+        keepAliveTimer?.invalidate()
+        keepAliveTimer = nil
+        guard on, let source = videoSource, let black = Self.blackFrame else { return }
+        let capturer = keepAliveCapturer
+        keepAliveTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] timer in
+            guard let self, self.videoSource === source, !self.cameraOn else { timer.invalidate(); return }
+            let frame = RTCVideoFrame(buffer: black, rotation: ._0, timeStampNs: Int64(CACurrentMediaTime() * 1_000_000_000))
+            source.capturer(capturer, didCapture: frame)
         }
     }
 

@@ -57,9 +57,13 @@ private class FakeRemote : CallsRemote {
         if (current.participants.count { it.state == "JOINED" } >= 2) current = current.copy(state = "ACTIVE")
         return AppResult.Success(JoinCallResponse("s-me", "sfu-answer", current))
     }
+    /** Track names the SFU turns down once (no mid, as Cloudflare's `empty_track_error` for a video with no media). */
+    val refuseOnce = mutableSetOf<String>()
     override suspend fun pull(callId: String, request: PullRequest): AppResult<PullResponse> {
         calls += "pull:" + request.tracks.joinToString { it.userId + "/" + it.trackName }
-        return AppResult.Success(PullResponse(pullOffer, pullOffer != null, request.tracks.mapIndexed { i, t -> PulledTrackDto(t.userId, t.trackName, "${i + 2}") }))
+        return AppResult.Success(PullResponse(pullOffer, pullOffer != null, request.tracks.mapIndexed { i, t ->
+            PulledTrackDto(t.userId, t.trackName, if (refuseOnce.remove(t.trackName)) null else "${i + 2}")
+        }))
     }
     override suspend fun renegotiate(callId: String, request: RenegotiateRequest): AppResult<JsonObject> { calls += "renegotiate:${request.answer}"; return AppResult.Success(JsonObject(emptyMap())) }
     override suspend fun decline(callId: String) = AppResult.Success(current).also { calls += "decline" }
@@ -144,6 +148,24 @@ class CallControllerTest {
         cc.onFrame("call.updated", frame("call.updated", remote.current))
         advanceUntilIdle()
         assertEquals(1, remote.calls.count { it.startsWith("pull") })
+    }
+
+    @Test fun aTrackTheSfuTurnsDownIsAskedForAgainAndTheirVideoShows() = runTest(UnconfinedTestDispatcher()) {
+        // 2026-11-09: Mum's camera was off, so Cloudflare refused her video; turning it on later showed nothing.
+        remote.refuseOnce += "video-mum"
+        val cc = controller()
+        cc.start("chat1", video = false)
+        advanceUntilIdle()
+        remote.current = call("ACTIVE", person("me", "JOINED"), person("mum", "JOINED").copy(video = true))
+        cc.onFrame("call.updated", frame("call.updated", remote.current))
+        advanceUntilIdle()
+        // Only the video is asked for again, never the audio that already plays.
+        assertEquals(listOf("pull:mum/audio-mum, mum/video-mum", "pull:mum/video-mum"), remote.calls.filter { it.startsWith("pull") })
+        assertEquals("2", cc.state.value!!.people.single().videoMid)
+        // Done: later updates don't pull again.
+        cc.onFrame("call.updated", frame("call.updated", remote.current))
+        advanceUntilIdle()
+        assertEquals(2, remote.calls.count { it.startsWith("pull") })
     }
 
     @Test fun joinedIsOnlyConnectingUntilTheirMediaArrivesThenTheTimerStarts() = runTest(UnconfinedTestDispatcher()) {
