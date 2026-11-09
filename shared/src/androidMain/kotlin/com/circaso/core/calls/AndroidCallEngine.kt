@@ -34,6 +34,7 @@ import org.webrtc.DefaultVideoDecoderFactory
 import org.webrtc.DefaultVideoEncoderFactory
 import org.webrtc.EglBase
 import org.webrtc.IceCandidate
+import org.webrtc.JavaI420Buffer
 import org.webrtc.MediaConstraints
 import org.webrtc.MediaStream
 import org.webrtc.PeerConnection
@@ -45,6 +46,7 @@ import org.webrtc.SdpObserver
 import org.webrtc.SessionDescription
 import org.webrtc.SurfaceTextureHelper
 import org.webrtc.SurfaceViewRenderer
+import org.webrtc.VideoFrame
 import org.webrtc.VideoSource as RtcVideoSource
 import org.webrtc.VideoTrack
 import org.webrtc.audio.JavaAudioDeviceModule
@@ -74,6 +76,8 @@ class AndroidCallEngine(private val context: Context) : CallEngine {
     private var capturer: CameraVideoCapturer? = null
     private var surfaceHelper: SurfaceTextureHelper? = null
     private var cameraOn = false
+    /** Feeds the video track while the camera is off; see [keepVideoAlive]. */
+    private var keepAlive: Job? = null
     private val remote = mutableMapOf<String, VideoTrack>()
     private val _remoteMids = MutableStateFlow<Set<String>>(emptySet())
     override val remoteVideoMids: StateFlow<Set<String>> = _remoteMids
@@ -110,6 +114,7 @@ class AndroidCallEngine(private val context: Context) : CallEngine {
         localVideo = cam
         val videoT = connection.addTransceiver(cam, RtpTransceiver.RtpTransceiverInit(RtpTransceiver.RtpTransceiverDirection.SEND_ONLY))
         if (video) cameraSwitch(granted(Manifest.permission.CAMERA))
+        if (!cameraOn) keepVideoAlive(true)
 
         val offer = sdp { o -> live(connection) { connection.createOffer(o, MediaConstraints()) } }
         set { o -> live(connection) { connection.setLocalDescription(o, offer) } }
@@ -207,6 +212,7 @@ class AndroidCallEngine(private val context: Context) : CallEngine {
             val source = videoSource ?: return
             val enumerator = Camera2Enumerator(context)
             val name = enumerator.deviceNames.firstOrNull(enumerator::isFrontFacing) ?: enumerator.deviceNames.firstOrNull() ?: return
+            keepVideoAlive(false) // the camera takes over the track from here
             val cap = enumerator.createCapturer(name, null)
             val helper = SurfaceTextureHelper.create("camera", egl.eglBaseContext)
             cap.initialize(helper, context, source.capturerObserver)
@@ -223,6 +229,42 @@ class AndroidCallEngine(private val context: Context) : CallEngine {
             surfaceHelper = null
         }
         cameraOn = on
+        if (!on) keepVideoAlive(true)
+    }
+
+    /**
+     * While the camera is off, the video track gets a tiny black frame twice a second. Cloudflare's SFU needs media on
+     * a track: a pull of one with none fails after about 8.5 s (`empty_track_error`), and a track with no packets for
+     * 30 s is deleted. Without this, a camera turned on mid-call was never seen by the other side, and every pull
+     * waited 8.5 s for the silent video (2026-11-09). Receivers show the photo while `video` is false, never these.
+     */
+    private fun keepVideoAlive(on: Boolean) {
+        keepAlive?.cancel()
+        keepAlive = null
+        if (!on) return
+        val source = videoSource ?: return
+        keepAlive = statsScope.launch {
+            var started = false
+            while (isActive) {
+                synchronized(guard) {
+                    if (videoSource !== source || cameraOn) return@launch
+                    if (!started) { source.capturerObserver.onCapturerStarted(true); started = true }
+                    val buffer = JavaI420Buffer.allocate(KeepAliveWidth, KeepAliveHeight)
+                    fill(buffer.dataY, 16)
+                    fill(buffer.dataU, 128)
+                    fill(buffer.dataV, 128)
+                    val frame = VideoFrame(buffer, 0, System.nanoTime())
+                    source.capturerObserver.onFrameCaptured(frame)
+                    frame.release()
+                }
+                delay(KeepAliveFrameMillis)
+            }
+        }
+    }
+
+    private fun fill(plane: java.nio.ByteBuffer, value: Int) {
+        val v = value.toByte()
+        for (i in 0 until plane.capacity()) plane.put(i, v)
     }
 
     override fun flipCamera() { capturer?.switchCamera(null) }
@@ -234,6 +276,7 @@ class AndroidCallEngine(private val context: Context) : CallEngine {
 
     override fun close() = synchronized(guard) {
         cameraSwitch(false)
+        keepVideoAlive(false)
         remote.clear()
         _remoteMids.value = emptySet()
         _connected.value = null
@@ -348,3 +391,8 @@ actual fun CallVideo(source: VideoSource, modifier: Modifier, mirror: Boolean, f
     }
     DisposableEffect(Unit) { onDispose { renderer.forEach { it.release() }; renderer.clear() } }
 }
+
+/** The black keep-alive frame and how often it is sent while the camera is off (see AndroidCallEngine.keepVideoAlive). */
+private const val KeepAliveWidth = 160
+private const val KeepAliveHeight = 90
+private const val KeepAliveFrameMillis = 500L

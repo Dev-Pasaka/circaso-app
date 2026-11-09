@@ -134,7 +134,7 @@ class CallController(
     /** From CL1/CL2/CL3 only: frames carry no ICE servers, so TURN credentials never sit in the frame log. */
     private var ice: List<IceServerSpec> = emptyList()
     private var sessionId: String? = null
-    /** Whose tracks are pulled, by their connection tag: a new tag (they rejoined) means pull them again. */
+    /** Each pulled track ("userId/trackName") by its owner's connection tag: a new tag (they rejoined) means pull it again. */
     private val pulled = mutableMapOf<String, String?>()
     private var watchJob: Job? = null
     private val midOf = mutableMapOf<String, String>()
@@ -458,15 +458,19 @@ class CallController(
         val c = call ?: return
         val session = sessionId ?: return
         val me = myUserId()
+        // Each track counts on its own: the SFU can turn down one (a video with no media yet, `empty_track_error`)
+        // while the audio beside it is fine. Only what came back with a mid is done; the rest is asked for again.
+        fun missing(p: com.circaso.feature.calls.data.ParticipantDto) = p.tracks.filter { "${p.userId}/${it.trackName}".let { k -> k !in pulled || pulled[k] != p.connection } }
         val waiting = c.participants.filter { p ->
-            p.userId != me && p.state == "JOINED" && p.tracks.isNotEmpty() && (p.userId !in pulled || pulled[p.userId] != p.connection)
+            p.userId != me && p.state == "JOINED" && p.tracks.isNotEmpty() && missing(p).isNotEmpty()
         }
         val fresh = waiting.filter { ready(it) }
         if (fresh.size < waiting.size && deferredPull?.isActive != true) {
             deferredPull = scope.launch { delay(pullGraceMillis); pullNew() }
         }
         if (fresh.isEmpty()) return
-        val r = remote.pull(c.callId, PullRequest(session, fresh.flatMap { p -> p.tracks.map { PullTrackRequest(p.userId, it.trackName) } }))
+        val asked = fresh.flatMap { p -> missing(p).map { PullTrackRequest(p.userId, it.trackName) } }
+        val r = remote.pull(c.callId, PullRequest(session, asked))
         val pull = (r as? AppResult.Success)?.value ?: return
         pull.tracks.forEach { t ->
             if (t.trackName.startsWith("video") && t.mid != null) midOf[t.userId] = t.mid
@@ -478,9 +482,19 @@ class CallController(
             val answer = runCatching { engine.answerOffer(offer) }.getOrNull() ?: return
             remote.renegotiate(c.callId, RenegotiateRequest(session, answer))
         }
-        fresh.forEach { pulled[it.userId] = it.connection }
+        val connectionOf = fresh.associate { it.userId to it.connection }
+        pull.tracks.filter { it.mid != null }.forEach { t -> pulled["${t.userId}/${t.trackName}"] = connectionOf[t.userId] }
+        // A track the SFU turned down is tried again shortly, not left out for the rest of the call.
+        val refused = asked.count { a -> pull.tracks.none { it.userId == a.userId && it.trackName == a.trackName && it.mid != null } }
+        if (refused > 0 && pullRetries < MaxPullRetries) {
+            pullRetries++
+            if (deferredPull?.isActive != true) deferredPull = scope.launch { delay(pullGraceMillis); pullNew() }
+        }
         publish()
     }
+
+    /** Re-pulls of tracks the SFU turned down, this call; bounded so a track that never comes back isn't asked for forever. */
+    private var pullRetries = 0
 
     /** userId → "@handle" for the call's chat, loaded once per call. */
     private var labelOf: Map<String, String> = emptyMap()
@@ -663,6 +677,7 @@ class CallController(
                     engine.setSpeaker(s?.speaker ?: false)
                     remote.media(c.callId, s?.mic ?: true, s?.camera ?: false)
                     pulled.clear()
+                    pullRetries = 0
                     midOf.clear()
                     mediaMids.clear()
                 }
@@ -695,12 +710,16 @@ class CallController(
         photoToken = Any()
         sessionId = null
         pulled.clear()
+        pullRetries = 0
         midOf.clear()
         _state.value = null
     }
 }
 
 /** How long the call waits on this phone's store for photos before it goes on without them. */
+/** How many times a call asks the SFU again for tracks it turned down. */
+private const val MaxPullRetries = 5
+
 private const val PhotoLookupMillis = 500L
 
 /** How long an incoming call waits for its photo so the first frame has it; after this it rings with initials. */
