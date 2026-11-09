@@ -194,7 +194,7 @@ fun EditProfileContent(
                         BasicText("@", style = t.body.copy(color = c.inkSecondary))
                         Box(Modifier.weight(1f).padding(start = 2.dp), contentAlignment = Alignment.CenterStart) {
                             androidx.compose.foundation.text.BasicTextField(
-                                value = state.handle, onValueChange = onHandle, singleLine = true, enabled = state.handleLockedUntil == null,
+                                value = state.handle, onValueChange = com.circaso.designsystem.components.ashaAware(state.handle, onHandle), singleLine = true, enabled = state.handleLockedUntil == null,
                                 keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(autoCorrectEnabled = false, capitalization = androidx.compose.ui.text.input.KeyboardCapitalization.None, keyboardType = androidx.compose.ui.text.input.KeyboardType.Ascii),
                                 textStyle = t.body.copy(color = c.ink), cursorBrush = androidx.compose.ui.graphics.SolidColor(c.ink), modifier = Modifier.fillMaxWidth(),
                             )
@@ -244,7 +244,7 @@ private fun InlineField(label: String, value: String, onValue: (String) -> Unit,
         BasicText(label, style = t.body.copy(color = c.ink), modifier = Modifier.widthIn(min = 84.dp).padding(end = CircasoSpacing.s2))
         Box(Modifier.weight(1f), contentAlignment = Alignment.CenterStart) {
             androidx.compose.foundation.text.BasicTextField(
-                value = value, onValueChange = onValue, singleLine = singleLine, maxLines = if (singleLine) 1 else 4,
+                value = value, onValueChange = com.circaso.designsystem.components.ashaAware(value, onValue), singleLine = singleLine, maxLines = if (singleLine) 1 else 4,
                 keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(capitalization = if (capitalize) androidx.compose.ui.text.input.KeyboardCapitalization.Words else androidx.compose.ui.text.input.KeyboardCapitalization.Sentences),
                 textStyle = t.body.copy(color = c.ink), cursorBrush = androidx.compose.ui.graphics.SolidColor(c.ink), modifier = Modifier.fillMaxWidth(),
             )

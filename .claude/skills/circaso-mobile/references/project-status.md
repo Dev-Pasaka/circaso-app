@@ -188,7 +188,19 @@ Media3 1.4.1, multiplatform-markdown-renderer 0.46.0.
   typed past, it is an in-place pill. The draft keeps the `#500` text (ComposerAmount draws it).
 
 ### Asha (assistant)
-- D-AS1 `/asha` typed in any text field opens Asha, except secret fields (PIN, recovery words). (Open: any field or composer only?)
+- D-AS1 `/asha` typed as its own word in **any** text field summons Asha's **floating bubble** over the current screen
+  (Pasaka, 2026-11-09; answers the open question: every field, not only composers). Secret fields never fire it
+  (`CircasoTextField(secret = true)`, PIN pads, code inputs). One hook: `ashaAware` / `ashaAwareValue` in
+  `designsystem/components/AshaLauncher.kt` and `ComposerBar`; a new field must wrap its `onValueChange` with it.
+  The bubble (`feature/assistant/presentation/AshaBubble.kt`, wired in `AppNavigation`) is above every screen and
+  sheet and under calls: expanded is a floating panel (conversation, field, voice mode, Show Asha my screen, minimise,
+  close); minimised is a 56 dp Asha mark that drags and springs to the nearest side. It **continues the latest
+  conversation** (the one Asha's screen shows): no empty conversation per summon, and the screen's name
+  (`screenName()`, "Wallet › Send") goes with each question instead. Back minimises; close ends it; it hides while
+  Asha's own screens or a full-screen call are up. **Show Asha my screen** pictures the app's own screens (Compose
+  graphics layer, never the bubble, a call or a toast), refuses while a secret input is composed
+  (`SecretOnScreen`), shows a thumbnail first and sends a JPEG of at most 1280 px with the next question only; the
+  server reads it and never stores it.
 - D-AS2 Rich answers: markdown, native charts, statements with Share as PDF, pencil diagrams, live "what I'm doing" status.
 - D-AS3 Live voice over its own WebSocket (Opus up, mulaw down, barge-in); clips only for Android < 10 and Swahili.
   Voice by Kimi; selectable voices with samples; separate conversations (new, past, delete).

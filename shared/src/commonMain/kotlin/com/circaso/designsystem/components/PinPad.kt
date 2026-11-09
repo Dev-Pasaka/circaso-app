@@ -23,6 +23,8 @@ import com.circaso.designsystem.theme.CircasoTheme
 @Composable
 fun PinDots(filled: Int, modifier: Modifier = Modifier, length: Int = 6, error: Boolean = false) {
     val c = CircasoTheme.colors
+    // A PIN on screen: never shown to Asha.
+    SecretOnScreen()
     Row(
         modifier.semantics { contentDescription = "$filled of $length digits entered" },
         horizontalArrangement = Arrangement.spacedBy(CircasoSpacing.s4),
@@ -45,6 +47,7 @@ fun PinKeypad(
     modifier: Modifier = Modifier,
     bottomStart: (@Composable () -> Unit)? = null,
 ) {
+    SecretOnScreen()
     Column(modifier, verticalArrangement = Arrangement.spacedBy(CircasoSpacing.s3), horizontalAlignment = Alignment.CenterHorizontally) {
         listOf(listOf(1, 2, 3), listOf(4, 5, 6), listOf(7, 8, 9)).forEach { row ->
             Row(horizontalArrangement = Arrangement.spacedBy(CircasoSpacing.s6)) {

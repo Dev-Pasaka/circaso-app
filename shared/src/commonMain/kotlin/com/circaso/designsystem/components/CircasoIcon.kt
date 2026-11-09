@@ -22,6 +22,8 @@ enum class CircasoIcon { Back, Close, Check, Delete, Backspace, Offline, Clock, 
     Globe, Ticket, Flag, Link, Shield, Bell, Ban, UserMinus, UserPlus, Reply, Mail, Qr, Pencil, Gear, Mute,
     // Chat documents (2026-11-07): a page with its corner folded.
     Document,
+    // Asha's bubble (2026-11-09): "Show Asha my screen", a phone with a sparkle of light in its corner.
+    Screen,
     // Calls (2026-11-09): sharing the screen, a display with an arrow rising out of it.
     ScreenShare }
 
@@ -41,6 +43,7 @@ private val SvgIcons = mapOf(
     CircasoIcon.Qr to "M4 4h6v6H4zM14 4h6v6h-6zM4 14h6v6H4zM14 14h2v2h-2zM18 18h2v2h-2zM14 18h2v2h-2zM18 14h2v2h-2z",
     CircasoIcon.Pencil to "M12 20h8M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z",
     CircasoIcon.Gear to "M12 9a3 3 0 1 0 0 6a3 3 0 0 0 0-6zM12 2.8v2.4M12 18.8v2.4M2.8 12h2.4M18.8 12h2.4M5.5 5.5l1.7 1.7M16.8 16.8l1.7 1.7M5.5 18.5l1.7-1.7M16.8 7.2l1.7-1.7",
+    CircasoIcon.Screen to "M7.5 3.5h9a1.5 1.5 0 0 1 1.5 1.5v14a1.5 1.5 0 0 1-1.5 1.5h-9A1.5 1.5 0 0 1 6 19V5a1.5 1.5 0 0 1 1.5-1.5zM10.5 17.5h3M12 7l.7 1.6 1.6.7-1.6.7-.7 1.6-.7-1.6-1.6-.7 1.6-.7z",
     CircasoIcon.Document to "M6 3.5h8l4.5 4.5v12.5H6zM13.5 3.5V8.5h5M9 13h6M9 16.5h6",
     CircasoIcon.ScreenShare to "M4 5h16a1.5 1.5 0 0 1 1.5 1.5v9a1.5 1.5 0 0 1-1.5 1.5H4a1.5 1.5 0 0 1-1.5-1.5v-9A1.5 1.5 0 0 1 4 5zM8.5 20.5h7M12 14V8.5M9.5 11l2.5-2.5l2.5 2.5",
     CircasoIcon.Mute to "M4 4l16 16M9 5.5A3 3 0 0 1 15 6.5v4M15 14a3 3 0 0 1-6-2.5V9M5.5 11a6.5 6.5 0 0 0 10.4 5.2M18.5 11c0 .8-.1 1.5-.4 2.2M12 17.5v3",

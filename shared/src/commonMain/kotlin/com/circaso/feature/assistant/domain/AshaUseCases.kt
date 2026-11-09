@@ -18,8 +18,9 @@ class GetAshaUsageUseCase(private val repository: AshaRepository) { suspend oper
  * and the reply carries on in the same stream.
  */
 class AskAshaUseCase(private val repository: AshaRepository, private val tools: DeviceToolRunner) {
-    operator fun invoke(text: String, askedFrom: AskedFrom? = null, chatReading: Boolean = false): Flow<AshaEvent> = flow {
-        repository.ask(text, askedFrom, chatReading).collect { event ->
+    operator fun invoke(text: String, askedFrom: AskedFrom? = null, chatReading: Boolean = false, extras: AskExtras = AskExtras.None): Flow<AshaEvent> = flow {
+        val events = if (extras == AskExtras.None) repository.ask(text, askedFrom, chatReading) else repository.ask(text, askedFrom, chatReading, extras)
+        events.collect { event ->
             when (event) {
                 is AshaEvent.ToolRequest -> {
                     emit(AshaEvent.UsingTool(event.name))

@@ -372,7 +372,7 @@ private fun ViewerBody(state: MomentViewerUiState, vm: MomentViewerActions, onCl
                     ) {
                         if (state.reply.isEmpty()) BasicText("Reply to ${ring.name.substringBefore(' ')}", style = t.body.copy(color = c.inkSecondary))
                         BasicTextField(
-                            state.reply, vm.onReply, singleLine = true, textStyle = t.body.copy(color = c.ink), cursorBrush = SolidColor(c.ink),
+                            state.reply, com.circaso.designsystem.components.ashaAware(state.reply, vm.onReply), singleLine = true, textStyle = t.body.copy(color = c.ink), cursorBrush = SolidColor(c.ink),
                             modifier = Modifier.fillMaxWidth().semantics { contentDescription = "Reply to ${ring.name}" }
                                 .onFocusChanged { vm.onReplyFocus(it.isFocused) },
                         )

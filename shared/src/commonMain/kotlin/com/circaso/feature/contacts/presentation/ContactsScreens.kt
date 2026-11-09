@@ -309,7 +309,7 @@ private fun androidx.compose.foundation.layout.BoxScope.ContactsSheets(state: Co
             BasicText("@", style = t.body.copy(color = c.inkSecondary))
             Box(Modifier.weight(1f).padding(start = 2.dp), contentAlignment = Alignment.CenterStart) {
                 BasicTextField(
-                    value = state.connectInput.removePrefix("@"), onValueChange = actions.onConnectInput, singleLine = true,
+                    value = state.connectInput.removePrefix("@"), onValueChange = com.circaso.designsystem.components.ashaAware(state.connectInput.removePrefix("@"), actions.onConnectInput), singleLine = true,
                     keyboardOptions = KeyboardOptions(autoCorrectEnabled = false, capitalization = KeyboardCapitalization.None, keyboardType = KeyboardType.Ascii, imeAction = ImeAction.Done),
                     keyboardActions = KeyboardActions(onDone = { if (state.connectReady && state.online) actions.onConnect() }),
                     textStyle = t.body.copy(color = c.ink), cursorBrush = SolidColor(c.ink),

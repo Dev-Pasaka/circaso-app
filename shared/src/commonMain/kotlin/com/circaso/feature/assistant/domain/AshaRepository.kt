@@ -16,6 +16,9 @@ interface AshaRepository {
     /** Asks Asha. The reply arrives as events on the returned flow; cancelling the flow stops listening. */
     fun ask(text: String, askedFrom: AskedFrom?, chatReading: Boolean): Flow<AshaEvent>
 
+    /** [ask] with the screen it was asked from and a picture of it (Asha's bubble); without them it is plain [ask]. */
+    fun ask(text: String, askedFrom: AskedFrom?, chatReading: Boolean, extras: AskExtras): Flow<AshaEvent> = ask(text, askedFrom, chatReading)
+
     /** The phone's answer to a [AshaEvent.ToolRequest]; the reply then continues on the same event stream. */
     suspend fun submitToolResults(turnId: String, callId: String, snippets: List<Snippet>): AppResult<Unit>
 

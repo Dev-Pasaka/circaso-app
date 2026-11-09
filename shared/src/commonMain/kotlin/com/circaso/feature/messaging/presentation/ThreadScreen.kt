@@ -106,7 +106,6 @@ import com.circaso.feature.wallet.domain.MinorUnits
 import com.circaso.feature.wallet.presentation.PayFromSheetContent
 import com.circaso.designsystem.components.SystemLine
 import com.circaso.designsystem.components.ThreadHeader
-import com.circaso.designsystem.components.textWithoutAshaCommand
 import com.circaso.designsystem.theme.CircasoSizes
 import com.circaso.designsystem.theme.CircasoSpacing
 import com.circaso.designsystem.theme.CircasoTheme
