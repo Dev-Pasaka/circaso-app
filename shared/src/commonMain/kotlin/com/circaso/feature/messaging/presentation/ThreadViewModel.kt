@@ -147,6 +147,11 @@ class ThreadViewModel(
     /** The money cards' payment states (Sending → Sent once confirmed); absent in previews and older tests. */
     private val payments: ThreadPayments? = null,
     private val checkEveryMillis: Long = PaymentCheckEveryMillis,
+    /**
+     * False for a composer with no conversation in view (a call's money sheet, 2026-11-09): nothing is marked read, the
+     * chat's notifications are left alone, and no presence or "typing…" goes out, since nobody is looking at the thread.
+     */
+    private val onScreen: Boolean = true,
 ) : ViewModel() {
     private val _state = MutableStateFlow(ThreadUiState())
 
@@ -218,8 +223,10 @@ class ThreadViewModel(
     private val window = MutableStateFlow(ThreadPage)
 
     init {
-        notifications.activeChatId = chatId
-        notifications.clear(chatId)
+        if (onScreen) {
+            notifications.activeChatId = chatId
+            notifications.clear(chatId)
+        }
         viewModelScope.launch {
             observeChat(chatId).collect { chat ->
                 _state.update { it.copy(chat = chat) }
@@ -238,14 +245,14 @@ class ThreadViewModel(
             @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
             window.flatMapLatest { limit -> observeThread(chatId, limit) }.collect { list ->
                 _state.update { it.copy(messages = list) }
-                markRead(chatId) // the thread is on screen: everything in it has been seen
+                if (onScreen) markRead(chatId) // the thread is on screen: everything in it has been seen
             }
         }
         viewModelScope.launch { observeTyping(chatId).collect { names -> _state.update { it.copy(typing = names) } } }
         // Presence of the person on the other side, kept fresh while the chat is open.
         messagesRepository?.let { repo ->
             viewModelScope.launch { repo.presence(chatId).collect { p -> _state.update { it.copy(presence = p) } } }
-            viewModelScope.launch {
+            if (onScreen) viewModelScope.launch {
                 while (true) { repo.watchPresence(chatId); kotlinx.coroutines.delay(com.circaso.feature.messaging.domain.PresenceWatchEveryMillis) }
             }
         }
@@ -289,6 +296,7 @@ class ThreadViewModel(
         _state.update { it.copy(draft = text) }
         if (text.isEmpty()) { stopTyping(); return }
         val now = nowMillis()
+        if (!onScreen) return
         if (now - typingSentAt > TypingEveryMillis) { typingSentAt = now; viewModelScope.launch { setTyping(chatId, true) } }
         typingStop?.cancel()
         typingStop = viewModelScope.launch { delay(TypingStopAfterMillis); stopTyping() }
@@ -450,7 +458,7 @@ class ThreadViewModel(
 
     override fun onCleared() {
         stopTyping()
-        if (notifications.activeChatId == chatId) notifications.activeChatId = null
+        if (onScreen && notifications.activeChatId == chatId) notifications.activeChatId = null
     }
 
     private companion object {

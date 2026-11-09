@@ -75,6 +75,7 @@ import com.circaso.feature.messaging.presentation.NewChatScreen
 import com.circaso.feature.messaging.presentation.NewGroupScreen
 import com.circaso.feature.messaging.presentation.ThreadScreen
 import com.circaso.feature.messaging.presentation.ThreadViewModel
+import com.circaso.feature.messaging.presentation.ChatMoneySheet
 import com.circaso.feature.home.presentation.YouActions
 import com.circaso.feature.home.presentation.YouScreen
 import com.circaso.gallery.PreviewScreens
@@ -490,24 +491,7 @@ fun AppNavigation(forceUpdate: Boolean, home: @Composable () -> Unit) {
                     focusLocalId = route.focusLocalId,
                     onOpenLocation = { m -> backStack.add(LocationMapRoute(route.chatId, m.localId)) },
                     onComposeMedia = { start -> backStack.add(ChatMediaRoute(route.chatId, start.name)) },
-                    // C3: `#500` pays without leaving the chat; the chat's money card is the review. One per chat, reset after each payment.
-                    quickPay = when {
-                        peer != null -> koinViewModel<com.circaso.feature.wallet.presentation.PayViewModel>(
-                            key = "quickpay-${route.chatId}",
-                            parameters = { parametersOf(PayIntent(userId = peer, chatId = route.chatId, displayName = thread.chat?.title, inChat = true)) },
-                        )
-                        // GW9a2: `#1000` in a group with a wallet is a contribution into it.
-                        intoGroup -> koinViewModel<com.circaso.feature.wallet.presentation.PayViewModel>(
-                            key = "quickpay-group-${route.chatId}",
-                            parameters = { parametersOf(PayIntent(chatId = route.chatId, displayName = thread.chat?.title, groupId = route.chatId, goalName = goal?.name, inChat = true)) },
-                        )
-                        // D3, treasurer model (a server without group wallets): `#1000` is a contribution to the treasurer.
-                        goal != null && groupMoney == null && thread.canContribute -> koinViewModel<com.circaso.feature.wallet.presentation.PayViewModel>(
-                            key = "quickpay-chama-${route.chatId}",
-                            parameters = { parametersOf(PayIntent(userId = goal.treasurerUserId, chatId = route.chatId, displayName = thread.memberName(goal.treasurerUserId), goalName = goal.name, inChat = true)) },
-                        )
-                        else -> null
-                    },
+                    quickPay = chatQuickPay(route.chatId, thread),
                     onCallSupport = if (calls.available) ({ calls.start(route.chatId, false) }) else null,
                 )
             }
@@ -663,13 +647,17 @@ fun AppNavigation(forceUpdate: Boolean, home: @Composable () -> Unit) {
     }
     ToastHost(toast, Modifier.align(Alignment.TopCenter).statusBarsPadding().padding(top = 56.dp))
     // Calls (designs H1–H5) live above every screen: one can ring anywhere, and it keeps going while money is sent from it.
-    if (state == AuthState.Active) CallLayer(backStack)
+    if (state == AuthState.Active) CallLayer(backStack) { id ->
+        // The chat's own Pay: `#` in its composer once it opens (ThreadScreen's money prompt).
+        moneyPrompts[id] = com.circaso.core.sync.nowMillis()
+        if (backStack.lastOrNull().let { it !is ChatRoute || it.chatId != id }) backStack.add(ChatRoute(id))
+    }
     }
     }
 }
 
 @Composable
-private fun androidx.compose.foundation.layout.BoxScope.CallLayer(backStack: MutableList<NavKey>) {
+private fun androidx.compose.foundation.layout.BoxScope.CallLayer(backStack: MutableList<NavKey>, onMoneyInChat: (chatId: String) -> Unit) {
     val controller = koinInject<com.circaso.feature.calls.CallController>()
     val call by controller.state.collectAsState()
     val chatId = call?.chatId
@@ -733,6 +721,24 @@ private fun androidx.compose.foundation.layout.BoxScope.CallLayer(backStack: Mut
     }
     val c = call
     val peer = c?.people?.singleOrNull()
+    // Money from a call goes where the chat's `#` would: the other person (never Circaso support, which takes none), or
+    // a group that takes contributions (its active wallet, or a goal whose treasurer isn't me).
+    val directMoney = c != null && !c.group && peer != null && peer.userId != com.circaso.feature.support.Support.UserId
+    val groupMoneyOn = c != null && c.group && (if (groupWalletsOn) groupMoney?.walletActive == true else chama?.goal != null && treasurerChama?.isTreasurer != true)
+    // The money sheet's view models, one set per call. They outlive the sheet and the call screen (minimised, hung up)
+    // while a payment is being signed or sent, so a payment started on the call always finishes and its card always
+    // reaches the chat; once a call is over and nothing is in flight, they are let go.
+    val callMoney = remember { mutableMapOf<String, CallMoneyHolder>() }
+    // Held under the call's chat (a call has one from its first ring, before the server gives it an id); a new call
+    // in the same chat gets a fresh set, since the last one's is let go when it ends.
+    val callIdNow = c?.chatId?.takeIf { c.phase != com.circaso.feature.calls.CallPhase.Ended }
+    LaunchedEffect(callIdNow) {
+        while (callMoney.keys.any { it != callIdNow }) {
+            callMoney.entries.filter { (id, h) -> id != callIdNow && !h.inFlight() }.forEach { (id, h) -> h.store.clear(); callMoney.remove(id) }
+            kotlinx.coroutines.delay(CallMoneyCheckMillis)
+        }
+    }
+    androidx.compose.runtime.DisposableEffect(Unit) { onDispose { callMoney.values.forEach { it.store.clear() }; callMoney.clear() } }
     CallOverlay(
         call = call,
         actions = com.circaso.feature.calls.presentation.CallActions(
@@ -746,31 +752,14 @@ private fun androidx.compose.foundation.layout.BoxScope.CallLayer(backStack: Mut
             onMinimise = controller::minimise,
             onAddPeople = controller::ringOthers,
             onMessage = { val id = chatId; controller.decline(); if (id != null) backStack.add(ChatRoute(id)) },
-            // H1's "Send money instead" declines the call first; mid-call (H2/H3) the call stays on, minimised.
-            onSendMoney = if (c != null && !c.group && peer != null) ({
-                if (c.phase == com.circaso.feature.calls.CallPhase.Incoming) controller.decline() else controller.minimise(true)
-                backStack.add(PayRoute(userId = peer.userId, chatId = c.chatId, displayName = peer.name))
+            // H1's "Send money instead": decline, then the chat with `#` in its composer (money starts in the chat).
+            onSendMoneyInstead = if (directMoney && c != null) ({ controller.decline(); onMoneyInChat(c.chatId) }) else null,
+            // H2/H3/H4: the call chat's composer on a sheet over the call, the same `#500` flow as the chat
+            // (Pasaka, 2026-11-09). A group's goes into its wallet (GW9a2) or to the treasurer (D3), as its chat does.
+            moneySheet = if (c != null && (directMoney || groupMoneyOn)) ({ open, onClose, onPaid ->
+                CallMoneySheet(open, c.chatId, callMoney.getOrPut(c.chatId) { CallMoneyHolder() }, if (c.group) "Contribute to ${chama?.goal?.name ?: c.title}" else "Send to ${peer?.name?.substringBefore(' ') ?: c.title}",
+                    if (c.group) "Everyone on the call sees it land" else "It goes in your chat with ${peer?.name?.substringBefore(' ') ?: c.title}", onClose, onPaid)
             }) else null,
-            // H5: the call's own contribution, signed from its sheet (straight to the PIN). The same PayViewModel the
-            // chat's `#1000` card drives, always into this call's group: its wallet (GW9a2), or the treasurer (D3).
-            contribute = when {
-                groupWalletsOn -> groupMoney?.takeIf { it.walletActive }?.let { m ->
-                    @Composable {
-                        koinViewModel<com.circaso.feature.wallet.presentation.PayViewModel>(
-                            key = "call-contribute-group-${m.chatId}",
-                            parameters = { parametersOf(PayIntent(chatId = m.chatId, displayName = c?.title, groupId = m.chatId, goalName = m.goal?.name, inChat = true)) },
-                        )
-                    }
-                }
-                else -> chama?.goal?.takeIf { !(treasurerChama?.isTreasurer ?: false) }?.let { g ->
-                    @Composable {
-                        koinViewModel<com.circaso.feature.wallet.presentation.PayViewModel>(
-                            key = "call-contribute-chama-${g.chatId}",
-                            parameters = { parametersOf(PayIntent(userId = g.treasurerUserId, chatId = g.chatId, displayName = c?.people?.firstOrNull { it.userId == g.treasurerUserId }?.name, goalName = g.name, inChat = true)) },
-                        )
-                    }
-                }
-            },
         ),
         money = money,
         chama = chama,
@@ -778,6 +767,79 @@ private fun androidx.compose.foundation.layout.BoxScope.CallLayer(backStack: Mut
         celebrations = celebrations,
         myUserId = me?.userId,
     )
+}
+
+/**
+ * C3: the chat's in-line payment, so `#500` pays without leaving the chat and the chat's money card is the review. One
+ * per chat in the store it is made in, reset after each payment. The thread and a call's money sheet both use it.
+ */
+@Composable
+private fun chatQuickPay(chatId: String, thread: com.circaso.feature.messaging.presentation.ThreadUiState): com.circaso.feature.wallet.presentation.PayViewModel? {
+    val peer = thread.chat?.peerId
+    val goal = thread.chama?.goal
+    val groupMoney = thread.groupMoney
+    return when {
+        peer != null -> koinViewModel<com.circaso.feature.wallet.presentation.PayViewModel>(
+            key = "quickpay-$chatId",
+            parameters = { parametersOf(PayIntent(userId = peer, chatId = chatId, displayName = thread.chat?.title, inChat = true)) },
+        )
+        // GW9a2: `#1000` in a group with a wallet is a contribution into it.
+        groupMoney?.walletActive == true -> koinViewModel<com.circaso.feature.wallet.presentation.PayViewModel>(
+            key = "quickpay-group-$chatId",
+            parameters = { parametersOf(PayIntent(chatId = chatId, displayName = thread.chat?.title, groupId = chatId, goalName = goal?.name, inChat = true)) },
+        )
+        // D3, treasurer model (a server without group wallets): `#1000` is a contribution to the treasurer.
+        goal != null && groupMoney == null && thread.canContribute -> koinViewModel<com.circaso.feature.wallet.presentation.PayViewModel>(
+            key = "quickpay-chama-$chatId",
+            parameters = { parametersOf(PayIntent(userId = goal.treasurerUserId, chatId = chatId, displayName = thread.memberName(goal.treasurerUserId), goalName = goal.name, inChat = true)) },
+        )
+        else -> null
+    }
+}
+
+/** One call's money: the store its sheet's view models live in, and the payment it drives (to know when one is in flight). */
+private class CallMoneyHolder : androidx.lifecycle.ViewModelStoreOwner {
+    override val viewModelStore = androidx.lifecycle.ViewModelStore()
+    val store get() = viewModelStore
+    var pay: com.circaso.feature.wallet.presentation.PayViewModel? = null
+    /** Being signed (Circle's PIN is up) or sent: letting go now would cut the payment off halfway. */
+    fun inFlight(): Boolean = pay?.state?.value?.step.let {
+        it == com.circaso.feature.wallet.presentation.PayStep.Signing || it == com.circaso.feature.wallet.presentation.PayStep.Sending
+    }
+}
+
+/** How often an ended call's money is checked for a payment still in flight before it is let go. */
+private const val CallMoneyCheckMillis = 1_000L
+
+/**
+ * The call's money sheet (2026-11-09): the call chat's composer and money, from view models of the call's own
+ * ([holder]). They are made when the sheet first opens, and the thread is one with no conversation on screen (nothing
+ * marked read, no notifications cleared, no presence or "typing…"); a payment started here never mixes with the chat
+ * screen's own.
+ */
+@Composable
+private fun androidx.compose.foundation.layout.BoxScope.CallMoneySheet(
+    open: Boolean,
+    chatId: String,
+    holder: CallMoneyHolder,
+    title: String,
+    subtitle: String,
+    onClose: () -> Unit,
+    onPaid: (com.circaso.feature.wallet.presentation.PayUiState) -> Unit,
+) {
+    var started by remember(holder) { androidx.compose.runtime.mutableStateOf(false) }
+    if (open && !started) started = true
+    if (!started) return
+    // Shown a frame after it is first composed, so the sheet slides in (and the scrim fades) like every other sheet.
+    var shown by remember(holder) { androidx.compose.runtime.mutableStateOf(false) }
+    LaunchedEffect(open) { shown = open }
+    CompositionLocalProvider(androidx.lifecycle.viewmodel.compose.LocalViewModelStoreOwner provides holder) {
+        val thread = koinViewModel<ThreadViewModel>(key = "call-money-$chatId", parameters = { parametersOf(chatId, false) })
+        val threadState by thread.state.collectAsState()
+        val pay = chatQuickPay(chatId, threadState)
+        androidx.compose.runtime.SideEffect { holder.pay = pay }
+        ChatMoneySheet(shown, thread, pay, title, subtitle, onClose, onPaid)
+    }
 }
 
 /** The treasurer paying an approved request (design D5): a member, or an outside address with its name. */

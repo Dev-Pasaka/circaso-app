@@ -172,7 +172,14 @@ Media3 1.4.1, multiplatform-markdown-renderer 0.46.0.
 
 ### Calls
 - D-K1 Cloudflare Realtime (SFU + TURN), WebRTC on the phones. Labelled **"Secure call"**, never "end-to-end encrypted".
-- D-K2 One call at a time; voice can switch to video without renegotiating; group grid up to 8; contribute presets during a group call.
+- D-K2 One call at a time; voice can switch to video without renegotiating; group grid up to 8.
+- D-K3 Money during a call (2026-11-09): a sheet over the call with the call chat's composer (`ChatMoneySheet`), in 1:1
+  and group calls; H5's preset form and the leave-the-call Pay route are gone. The sheet's view models belong to the
+  call and outlive it while a payment is being signed or sent.
+
+### Chats (composer, 2026-11-09)
+- D-C8 `#amount` needs no space before it ("lunch#500"); links' anchors stay text. Typed, it reads as money ("KES 500");
+  typed past, it is an in-place pill. The draft keeps the `#500` text (ComposerAmount draws it).
 
 ### Asha (assistant)
 - D-AS1 `/asha` typed in any text field opens Asha, except secret fields (PIN, recovery words). (Open: any field or composer only?)

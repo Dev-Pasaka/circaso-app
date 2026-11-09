@@ -171,12 +171,12 @@ fun Modifier.sheetGroupEdge(shape: androidx.compose.ui.graphics.Shape): Modifier
 
 /** The design's `.cx-sheet-head`: the sheet's title with a Close on the right. */
 @Composable
-fun SheetHead(title: String, onClose: () -> Unit, modifier: Modifier = Modifier) {
+fun SheetHead(title: String, onClose: () -> Unit, modifier: Modifier = Modifier, closeEnabled: Boolean = true) {
     val c = CircasoTheme.colors
     val t = CircasoTheme.typography
     androidx.compose.foundation.layout.Row(modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
         androidx.compose.foundation.text.BasicText(title, style = t.title2.copy(color = c.ink), modifier = Modifier.weight(1f).semantics { heading() })
-        com.circaso.designsystem.components.CircasoIconButton(com.circaso.designsystem.components.CircasoIcon.Close, "Close", onClose)
+        com.circaso.designsystem.components.CircasoIconButton(com.circaso.designsystem.components.CircasoIcon.Close, "Close", onClose, enabled = closeEnabled)
     }
 }
 

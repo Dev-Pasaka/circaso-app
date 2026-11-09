@@ -41,6 +41,7 @@ import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.layout.layout
 import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
@@ -217,6 +218,16 @@ fun ComposerBar(
     sendLabel: String = "Send",
     /** The arrow is working (a payment on its way to the PIN, or sending): a spinner, and taps are ignored. */
     sendBusy: Boolean = false,
+    /**
+     * The amount in the typed text to draw as money (`#500` → "KES 500", a pill once typed past), or null for none.
+     * Asked again on every change; see [ComposerAmount].
+     */
+    amount: ((String) -> ComposerAmount?)? = null,
+    /**
+     * Inside a sheet (the call's money sheet): no glass bar or screen-edge insets (the sheet has its own), and
+     * [floating] sits in the column above the bar instead of over a conversation.
+     */
+    embedded: Boolean = false,
 ) {
     val c = CircasoTheme.colors
     val t = CircasoTheme.typography
@@ -225,17 +236,18 @@ fun ComposerBar(
     Column(modifier.fillMaxWidth()) {
         if (floating != null) {
             Column(
-                Modifier.fillMaxWidth().layout { measurable, constraints ->
+                if (embedded) Modifier.fillMaxWidth() else Modifier.fillMaxWidth().layout { measurable, constraints ->
                     val placeable = measurable.measure(constraints)
                     layout(placeable.width, 0) { placeable.place(0, -placeable.height) }
                 },
                 content = floating,
             )
         }
-        Column(Modifier.fillMaxWidth().glass(RoundedCornerShape(0.dp), edge = false).padding(bottom = maxOf(navInset, 16.dp)).imePadding()) {
+        Column(if (embedded) Modifier.fillMaxWidth() else Modifier.fillMaxWidth().glass(RoundedCornerShape(0.dp), edge = false).padding(bottom = maxOf(navInset, 16.dp)).imePadding()) {
             above?.invoke(this)
+            val side = if (embedded) 0.dp else CircasoSpacing.s4
             Row(
-                Modifier.fillMaxWidth().padding(start = CircasoSpacing.s4, end = CircasoSpacing.s4, top = CircasoSpacing.s2, bottom = CircasoSpacing.s1),
+                Modifier.fillMaxWidth().padding(start = side, end = side, top = CircasoSpacing.s2, bottom = CircasoSpacing.s1),
                 horizontalArrangement = Arrangement.spacedBy(CircasoSpacing.s2),
                 verticalAlignment = Alignment.Bottom,
             ) {
@@ -265,10 +277,69 @@ fun ComposerBar(
                             // turned back into text, a cleared draft) the cursor goes to the end, ready to keep typing.
                             var field by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(TextFieldValue(value, TextRange(value.length))) }
                             if (field.text != value) field = TextFieldValue(value, TextRange(value.length))
+                            // The typed amount drawn as money, and as a pill once typed past (C3, 2026-11-09).
+                            val typedAmount = amount?.invoke(field.text)?.takeIf { it.start >= 0 && it.end <= field.text.length && it.start < it.end }
+                            val display = typedAmount?.let { AmountDisplay(field.text, it, field.selection) }
+                            val moneyStyle = androidx.compose.ui.text.SpanStyle(color = c.money, fontWeight = t.amountSmall.fontWeight, fontFamily = t.amountSmall.fontFamily, fontFeatureSettings = "tnum")
+                            // Built again only when the amount, its unit or the cursor changes, not on every price tick.
+                            val transformation = androidx.compose.runtime.remember(amount != null, typedAmount, field.selection, moneyStyle) {
+                                if (amount != null) amountTransformation(amount, field.selection, moneyStyle) else androidx.compose.ui.text.input.VisualTransformation.None
+                            }
+                            var textLayout by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf<androidx.compose.ui.text.TextLayoutResult?>(null) }
+                            val haptics = androidx.compose.ui.platform.LocalHapticFeedback.current
+                            // The pill fades in as it forms rather than appearing in one frame; at once under reduce motion.
+                            val isPill = display?.pill != null
+                            val pillAlpha = androidx.compose.runtime.remember { androidx.compose.animation.core.Animatable(if (isPill) 1f else 0f) }
+                            val reduce = CircasoTheme.reduceMotion
+                            androidx.compose.runtime.LaunchedEffect(isPill) {
+                                if (!isPill) pillAlpha.snapTo(0f)
+                                else if (reduce) pillAlpha.snapTo(1f)
+                                else pillAlpha.animateTo(1f, androidx.compose.animation.core.tween(com.circaso.designsystem.theme.CircasoMotion.QuickMs))
+                            }
+                            val pillColor = c.moneySurface
                             BasicTextField(
-                                value = field, onValueChange = { field = it; if (it.text != value) onValueChange(it.text) }, enabled = enabled, maxLines = 5,
+                                value = field,
+                                onValueChange = { next ->
+                                    var kept = next
+                                    if (amount != null) {
+                                        val before = amount(field.text)
+                                        val after = if (next.text == field.text) before else amount(next.text)
+                                        ComposerAmountKeys.backspaceIntoPill(field.text, next.text, next.selection, before, after)?.let { (text, cursor) -> kept = TextFieldValue(text, cursor) }
+                                        (if (kept.text == next.text) after else before)?.let { kept = kept.copy(selection = it.settle(kept.selection)) }
+                                        // A light tick when typing settles the amount into its pill (as the chip did), never
+                                        // for a cursor that merely moves away from it.
+                                        val wasPill = before?.let { AmountDisplay(field.text, it, field.selection).chip } == true
+                                        val nowPill = after?.takeIf { kept.text == next.text }?.let { AmountDisplay(kept.text, it, kept.selection).chip } == true
+                                        if (nowPill && !wasPill && kept.text.length > field.text.length) haptics.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.TextHandleMove)
+                                    }
+                                    field = kept
+                                    if (kept.text != value) onValueChange(kept.text)
+                                },
+                                enabled = enabled, maxLines = 5,
                                 textStyle = t.body.copy(color = c.ink), cursorBrush = SolidColor(c.ink),
-                                modifier = Modifier.fillMaxWidth().then(if (focusRequester != null) Modifier.focusRequester(focusRequester) else Modifier).onPreviewKeyEvent { e ->
+                                visualTransformation = transformation,
+                                onTextLayout = { textLayout = it },
+                                modifier = Modifier.fillMaxWidth().then(if (focusRequester != null) Modifier.focusRequester(focusRequester) else Modifier)
+                                    .drawBehind {
+                                        // C3's `.cx-chip-money` behind the amount: 10 dp sides around its label, 2 dp above and
+                                        // below its text line (26 on a 22 line). Only while the field shows all its lines (past
+                                        // five it scrolls, and the amount stays plain money colour then).
+                                        val r = textLayout ?: return@drawBehind
+                                        val p = display?.pill ?: return@drawBehind
+                                        if (r.layoutInput.text.text != display.shown || r.lineCount > 5 || p.last >= display.shown.length) return@drawBehind
+                                        val line = r.getLineForOffset(p.first)
+                                        if (r.getLineForOffset(p.last) != line) return@drawBehind
+                                        val first = r.getBoundingBox(p.first)
+                                        val last = r.getBoundingBox(p.last)
+                                        val side = PillSide.toPx()
+                                        val left = minOf(first.left, last.left) - side
+                                        val right = maxOf(first.right, last.right) + side
+                                        val top = r.getLineTop(line) - PillGrow.toPx()
+                                        val height = r.getLineBottom(line) + PillGrow.toPx() - top
+                                        drawRoundRect(pillColor, androidx.compose.ui.geometry.Offset(left, top), androidx.compose.ui.geometry.Size(right - left, height), androidx.compose.ui.geometry.CornerRadius(height / 2), alpha = pillAlpha.value)
+                                    }
+
+                                    .onPreviewKeyEvent { e ->
                                     (chip != null && value.isEmpty() && e.key == androidx.compose.ui.input.key.Key.Backspace && e.type == androidx.compose.ui.input.key.KeyEventType.KeyDown)
                                         .also { if (it) onChipEdit() }
                                 },
@@ -287,6 +358,10 @@ fun ComposerBar(
 }
 
 private val ComposerFieldMin = 48.dp
+
+/** C3's `.cx-chip-money` in the field: `padding: 0 10px`, and 26 tall on the 22 body line (2 above and below). */
+private val PillSide = 10.dp
+private val PillGrow = 2.dp
 private val ComposerFieldShape = RoundedCornerShape(24.dp)
 
 /** The 36 dp search pill on list screens (`fill`, icon, 17 pt placeholder). Tapping it focuses a real field below it. */
