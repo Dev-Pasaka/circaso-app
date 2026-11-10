@@ -17,6 +17,9 @@ name: TestFlight
 #                                 as .p12: `base64 -i dev.p12 | tr -d '\n' | gh secret set IOS_DEV_CERT_P12_BASE64`
 #   IOS_DEV_CERT_PASSWORD         the .p12's password
 #   MAPS_IOS_KEY                  maps.ios.key (restricted to com.circaso.app)
+#   GOOGLE_SERVICE_INFO_PLIST_BASE64  GoogleService-Info.plist from the Firebase console (project circaso-app, bundle
+#                                 com.circaso.app), base64: message notifications. Without it the build has no push
+#                                 (calls still ring through PushKit)
 #   CIRCLE_PWSDK_TOKEN            shared with play-internal.yml (pwsdk.maven.password); its user, CIRCLE_PWSDK_USERNAME,
 #                                 is a variable
 # Variables (same page, Variables tab):
@@ -102,6 +105,7 @@ jobs:
           IOS_DEV_CERT_P12_BASE64: ${{ secrets.IOS_DEV_CERT_P12_BASE64 }}
           IOS_DEV_CERT_PASSWORD: ${{ secrets.IOS_DEV_CERT_PASSWORD }}
           MAPS_IOS_KEY: ${{ secrets.MAPS_IOS_KEY }}
+          GOOGLE_SERVICE_INFO_PLIST_BASE64: ${{ secrets.GOOGLE_SERVICE_INFO_PLIST_BASE64 }}
           CIRCLE_PWSDK_USERNAME: ${{ secrets.CIRCLE_PWSDK_USERNAME || vars.CIRCLE_PWSDK_USERNAME }}
           CIRCLE_PWSDK_TOKEN: ${{ secrets.CIRCLE_PWSDK_TOKEN }}
           SHARE_HOST: ${{ vars.SHARE_HOST }}
@@ -140,6 +144,15 @@ jobs:
           rm -f "$cert"
           security find-identity -v -p codesigning "$KEYCHAIN" | grep -q "Apple Development" \
             || { echo "::error::The .p12 has no Apple Development identity with its private key"; exit 1; }
+
+          # Firebase's config for message notifications (not in git, like Android's google-services.json).
+          if [ -n "$GOOGLE_SERVICE_INFO_PLIST_BASE64" ]; then
+            printf '%s' "$GOOGLE_SERVICE_INFO_PLIST_BASE64" | tr -d ' \r\n' | base64 -D > iosApp/iosApp/GoogleService-Info.plist
+            plutil -lint iosApp/iosApp/GoogleService-Info.plist > /dev/null \
+              || { echo "::error::GOOGLE_SERVICE_INFO_PLIST_BASE64 isn't a valid plist"; exit 1; }
+          else
+            echo "::warning::GOOGLE_SERVICE_INFO_PLIST_BASE64 is not set: this build has no message notifications"
+          fi
 
           {
             echo "maps.ios.key=$MAPS_IOS_KEY"
@@ -214,4 +227,4 @@ jobs:
         if: always()
         run: |
           security delete-keychain "$KEYCHAIN" 2>/dev/null || true
-          rm -f "$RUNNER_TEMP"/AuthKey_*.p8 "$RUNNER_TEMP/dev.p12" local.properties
+          rm -f "$RUNNER_TEMP"/AuthKey_*.p8 "$RUNNER_TEMP/dev.p12" local.properties iosApp/iosApp/GoogleService-Info.plist
