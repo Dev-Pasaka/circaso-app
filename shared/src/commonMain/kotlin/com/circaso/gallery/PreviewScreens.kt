@@ -492,7 +492,10 @@ fun PreviewScreens(name: String) {
         "call-connecting" -> CallPreview(com.circaso.feature.calls.CallUi("c1", "2", "Mum", false, false, com.circaso.feature.calls.CallPhase.Connecting, people = listOf(com.circaso.feature.calls.CallPerson("2", "Mum", true, true, false, false, null, live = false, photoUrl = PreviewPhotos.Mum)), handle = "@mum", photoUrl = PreviewPhotos.Mum), null)
         "call-voice" -> CallPreview(com.circaso.feature.calls.CallUi("c1", "2", "Mum", false, false, com.circaso.feature.calls.CallPhase.Active, people = listOf(com.circaso.feature.calls.CallPerson("2", "Mum", true, true, false, false, null, photoUrl = PreviewPhotos.Mum)), activeSince = now - 252_000, handle = "@mum", photoUrl = PreviewPhotos.Mum), "You sent KES 500 · for lunch")
         "call-video", "call-video-more" -> CallPreview(com.circaso.feature.calls.CallUi("c1", "2", "Mum", true, false, com.circaso.feature.calls.CallPhase.Active, camera = true, speaker = true, people = listOf(com.circaso.feature.calls.CallPerson("2", "Mum", true, true, true, false, null)), activeSince = now - 768_000), "Mum sent you KES 2,000 · for lunch", more = name == "call-video-more")
-        // The More sheet on a voice call: share screen (Android), speaker, minimise; no flip with the camera off.
+        // Money to me on a 1:1 call (2026-11-10): "Mum sent you KES 2,000" splashes and settles into the money line.
+        "call-voice-received" -> CallPreview(com.circaso.feature.calls.CallUi("c1", "2", "Mum", false, false, com.circaso.feature.calls.CallPhase.Active, people = listOf(com.circaso.feature.calls.CallPerson("2", "Mum", true, true, false, false, null, photoUrl = PreviewPhotos.Mum)), activeSince = now - 252_000, handle = "@mum", photoUrl = PreviewPhotos.Mum), "Mum sent you KES 2,000 · for lunch", received = true)
+        "call-video-received" -> CallPreview(com.circaso.feature.calls.CallUi("c1", "2", "Mum", true, false, com.circaso.feature.calls.CallPhase.Active, camera = true, people = listOf(com.circaso.feature.calls.CallPerson("2", "Mum", true, true, true, false, null)), activeSince = now - 768_000), "Mum sent you KES 2,000 · for lunch", received = true)
+        // The More sheet on a voice call: share screen (Android), speaker, minimise, Ask Asha; no flip with the camera off.
         "call-voice-more" -> CallPreview(com.circaso.feature.calls.CallUi("c1", "2", "Mum", false, false, com.circaso.feature.calls.CallPhase.Active, people = listOf(com.circaso.feature.calls.CallPerson("2", "Mum", true, true, false, false, null, photoUrl = PreviewPhotos.Mum)), activeSince = now - 252_000, handle = "@mum", photoUrl = PreviewPhotos.Mum), null, more = true)
         "call-ended" -> CallPreview(com.circaso.feature.calls.CallUi("c1", "2", "Mum", false, false, com.circaso.feature.calls.CallPhase.Ended, endReason = "MISSED"), null)
         "call-failed" -> CallPreview(com.circaso.feature.calls.CallUi("c1", "2", "Mum", false, false, com.circaso.feature.calls.CallPhase.Ended, endReason = "FAILED", error = "Calls aren't available right now. Try again in a moment."), null)
@@ -596,6 +599,8 @@ private fun CallPreview(
     preset: List<com.circaso.feature.chama.domain.GroupContribution> = emptyList(),
     /** The More sheet open over the call. */
     more: Boolean = false,
+    /** Money to me on a 1:1 call: Mum's KES 2,000 lands a moment after the screen opens, then again every few seconds. */
+    received: Boolean = false,
 ) {
     androidx.compose.foundation.layout.Box(androidx.compose.ui.Modifier.fillMaxSize()) {
         val celebrations = androidx.compose.runtime.remember { com.circaso.feature.calls.presentation.CallCelebrationsModel() }
@@ -604,8 +609,21 @@ private fun CallPreview(
             preset.forEach { celebrations.receive(com.circaso.feature.calls.presentation.celebrationOf(it, call.people, "me", fiat), it.confirmed, visible = false) }
             contributions.collect { celebrations.receive(com.circaso.feature.calls.presentation.celebrationOf(it, call.people, "me", fiat), it.confirmed, visible = !call.minimised) }
         }
+        if (received) androidx.compose.runtime.LaunchedEffect(Unit) {
+            var n = 0
+            while (true) {
+                kotlinx.coroutines.delay(if (n == 0) 700L else 4_500L)
+                val p = com.circaso.feature.messaging.domain.Message.Payment(
+                    localId = n.toLong(), chatId = call.chatId, orderAt = nowMillis(), sentAt = null, messageId = "m$n", senderId = "2", senderName = "Mum",
+                    outgoing = false, transferId = "received-$n", amountMinor = "15503876", asset = "USDC", blockchain = "BASE-SEPOLIA", note = "for lunch",
+                    state = com.circaso.feature.messaging.domain.DeliveryState.Delivered, errorCode = null,
+                )
+                celebrations.receive(com.circaso.feature.calls.presentation.receivedCelebration(p, call.people, fiat), confirmed = true, visible = true)
+                n++
+            }
+        }
         // A money sheet that draws nothing, so the bar shows its money button as on a real call; share screen as on Android.
-        val actions = com.circaso.feature.calls.presentation.CallActions({}, {}, {}, {}, {}, {}, {}, {}, {}, {}, moneySheet = { _, _, _ -> }, onShareScreen = {})
+        val actions = com.circaso.feature.calls.presentation.CallActions({}, {}, {}, {}, {}, {}, {}, {}, {}, {}, moneySheet = { _, _, _ -> }, onShareScreen = {}, onAskAsha = {})
         CallOverlay(call, actions, money, chama, fiat, celebrations, myUserId = "me", moreAtStart = more)
     }
 }

@@ -476,6 +476,12 @@ class AshaViewModel(
         viewModelScope.launch { recorder.cancel() }
     }
 
+    /** A call took the microphone and the speaker: a question being recorded is dropped and a reply being read stops. */
+    fun onVoiceOff() {
+        onCancelRecording()
+        if (local.value.speakingText != null) stopSpeaking()
+    }
+
     /** Reads a reply aloud; tapping the same reply again stops it. */
     fun onSpeak(text: String) {
         val wasSpeaking = local.value.speakingText == text

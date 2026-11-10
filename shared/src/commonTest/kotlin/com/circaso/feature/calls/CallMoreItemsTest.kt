@@ -23,6 +23,14 @@ class CallMoreItemsTest {
         assertEquals(listOf(CallMoreItem.ShareScreen, CallMoreItem.Speaker, CallMoreItem.Minimise), callMoreItems(call, canShareScreen = true))
     }
 
+    @Test fun askAshaIsLastWhereSheCanBeSummonedButNeverWhileItRingsIn() {
+        val call = CallUi("c1", "2", "Mum", false, false, CallPhase.Active, people = listOf(mum))
+        assertEquals(listOf(CallMoreItem.Speaker, CallMoreItem.Minimise, CallMoreItem.AskAsha), callMoreItems(call, canShareScreen = false, canAskAsha = true))
+        assertEquals(false, CallMoreItem.AskAsha in callMoreItems(call, canShareScreen = false, canAskAsha = false), "no full session")
+        assertEquals(false, CallMoreItem.AskAsha in callMoreItems(call.copy(phase = CallPhase.Incoming), canShareScreen = false, canAskAsha = true))
+        assertEquals(true, CallMoreItem.AskAsha in callMoreItems(call.copy(group = true, video = true), canShareScreen = false, canAskAsha = true))
+    }
+
     @Test fun addPeopleOnlyOnALiveGroupCallWithSomeoneToRing() {
         val juma = CallPerson("6", "Juma Kariuki", false, true, false, false, null)
         val live = CallUi("c2", "g1", "Holiday Fund", false, true, CallPhase.Active, people = listOf(mum, juma))

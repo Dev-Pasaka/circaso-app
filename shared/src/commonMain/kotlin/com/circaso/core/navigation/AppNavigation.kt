@@ -3,6 +3,8 @@ package com.circaso.core.navigation
 import com.circaso.feature.share.presentation.ShareLinkLayer
 import androidx.compose.foundation.layout.Box
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.launch
 import androidx.compose.foundation.layout.padding
@@ -209,7 +211,7 @@ fun AppNavigation(forceUpdate: Boolean, home: @Composable () -> Unit) {
     // A Pay tapped on a chat's profile starts the payment in that chat's composer (money starts in the chat).
     val moneyPrompts = androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateMapOf<String, Long>() }
     // Typing /asha in any text field summons Asha's floating bubble over the screen (2026-11-09), only with a full
-    // session (she needs the server). The bubble lives here, above every screen and under calls.
+    // session (she needs the server). The bubble lives here, above every screen and, since 2026-11-10, above calls.
     val ashaBubble = remember { com.circaso.feature.assistant.presentation.AshaBubbleState() }
     val asha = if (state == AuthState.Active) AshaLauncher { ashaBubble.summon() } else null
     // Secret inputs on screen (PIN pads, codes, passwords): the screen is never shown to Asha while one is.
@@ -660,7 +662,15 @@ fun AppNavigation(forceUpdate: Boolean, home: @Composable () -> Unit) {
         ShareLinkLayer(shareLinks) { text: String -> scope.launch { toast.show(text) } }
     }
     ToastHost(toast, Modifier.align(Alignment.TopCenter).statusBarsPadding().padding(top = 56.dp))
-    // Asha's bubble (2026-11-09): over every screen, under calls. Made on the first summon, then kept for the session.
+    // Calls (designs H1–H5) live above every screen: one can ring anywhere, and it keeps going while money is sent from it.
+    if (state == AuthState.Active) CallLayer(backStack, onAskAsha = asha?.let { { ashaBubble.summon() } }) { id ->
+        // The chat's own Pay: `#` in its composer once it opens (ThreadScreen's money prompt).
+        moneyPrompts[id] = com.circaso.core.sync.nowMillis()
+        if (backStack.lastOrNull().let { it !is ChatRoute || it.chatId != id }) backStack.add(ChatRoute(id))
+    }
+    // Asha's bubble (2026-11-09): over every screen and, since 2026-11-10, over calls too (1:1 and group, voice and
+    // video), so `/asha` in the call's money sheet or the More sheet's Ask Asha opens her there. Under system dialogs
+    // and Circle's PIN, which are windows of their own. Made on the first summon, then kept for the session.
     var ashaBubbleMade by remember { androidx.compose.runtime.mutableStateOf(false) }
     if (ashaBubble.open && !ashaBubbleMade) androidx.compose.runtime.SideEffect { ashaBubbleMade = true }
     if (state != AuthState.Active && ashaBubble.open) androidx.compose.runtime.SideEffect { ashaBubble.close() }
@@ -669,29 +679,32 @@ fun AppNavigation(forceUpdate: Boolean, home: @Composable () -> Unit) {
         val top = backStack.lastOrNull()
         val callNow by calls.state.collectAsState()
         val liveVoice = koinInject<LiveMicrophone>().supported
+        val callState = com.circaso.feature.calls.presentation.ashaCallState(callNow)
+        // On a call she is asked about the call ("On this call"), not the screen hidden under it.
+        val onCallScreen = callState == com.circaso.feature.assistant.presentation.AshaCallState.OnScreen || callState == com.circaso.feature.assistant.presentation.AshaCallState.Ringing
+        // Over the black call, in its dark colours in every theme, as the call's own sheets are (high contrast kept).
+        val highContrast = com.circaso.designsystem.platform.rememberIsHighContrast()
+        val colors = if (onCallScreen) com.circaso.designsystem.theme.circasoColors(dark = true, highContrast = highContrast) else com.circaso.designsystem.theme.LocalCircasoColors.current
+        CompositionLocalProvider(com.circaso.designsystem.theme.LocalCircasoColors provides colors) {
         AshaBubbleLayer(
-            ashaBubble, bubbleViewModel, screenName(top, homeTab),
-            // Asha's own screens are her already; a full-screen call owns the screen and the microphone.
-            hidden = top == AshaRoute || top == VoiceRoute || top == AshaVoiceRoute || callNow?.let { !it.minimised } == true,
+            ashaBubble, bubbleViewModel, if (onCallScreen) "this call" else screenName(top, homeTab),
+            // Asha's own screens are her already (unless a call covers them); a call keeps its microphone and its
+            // controls, and other people's faces stay out of her pictures.
+            mode = com.circaso.feature.assistant.presentation.ashaBubbleMode(ashaOnTop = top == AshaRoute || top == VoiceRoute || top == AshaVoiceRoute, call = callState),
             actions = com.circaso.feature.assistant.presentation.AshaBubbleActions(
                 onVoice = if (liveVoice) ({ if (backStack.lastOrNull() != VoiceRoute) backStack.add(VoiceRoute) }) else null,
                 onOpenFull = { ashaBubble.close(); if (backStack.lastOrNull() != AshaRoute) backStack.add(AshaRoute) },
                 capture = { screenCapture.take() },
             ),
         )
-    }
-    // Calls (designs H1–H5) live above every screen: one can ring anywhere, and it keeps going while money is sent from it.
-    if (state == AuthState.Active) CallLayer(backStack) { id ->
-        // The chat's own Pay: `#` in its composer once it opens (ThreadScreen's money prompt).
-        moneyPrompts[id] = com.circaso.core.sync.nowMillis()
-        if (backStack.lastOrNull().let { it !is ChatRoute || it.chatId != id }) backStack.add(ChatRoute(id))
+        }
     }
     }
     }
 }
 
 @Composable
-private fun androidx.compose.foundation.layout.BoxScope.CallLayer(backStack: MutableList<NavKey>, onMoneyInChat: (chatId: String) -> Unit) {
+private fun androidx.compose.foundation.layout.BoxScope.CallLayer(backStack: MutableList<NavKey>, onAskAsha: (() -> Unit)?, onMoneyInChat: (chatId: String) -> Unit) {
     val controller = koinInject<com.circaso.feature.calls.CallController>()
     val call by controller.state.collectAsState()
     val chatId = call?.chatId
@@ -716,7 +729,8 @@ private fun androidx.compose.foundation.layout.BoxScope.CallLayer(backStack: Mut
     }
     val profiles = koinInject<com.circaso.feature.profile.domain.ObserveProfileUseCase>()
     val me by remember(profiles) { profiles() }.collectAsState(null)
-    val wallet by koinInject<com.circaso.feature.wallet.domain.WalletRepository>().wallet.collectAsState(null)
+    val wallets = koinInject<com.circaso.feature.wallet.domain.WalletRepository>()
+    val wallet by wallets.wallet.collectAsState(null)
     val messages = koinInject<com.circaso.feature.messaging.domain.MessagesRepository>()
     val thread by remember(chatId) { if (chatId != null) messages.thread(chatId) else kotlinx.coroutines.flow.flowOf(emptyList()) }.collectAsState(emptyList())
     val fiat = wallet?.fiat
@@ -736,6 +750,32 @@ private fun androidx.compose.foundation.layout.BoxScope.CallLayer(backStack: Mut
             celebrations.receive(c, g.confirmed, visible = !now.minimised)
         }
     }
+    // Money to me on a 1:1 call (2026-11-10): the receiver's splash, "Juma sent you KES 500". The payment's card reaches
+    // the call's chat end to end, and the wallet's `payment.received` frame marks its transfer confirmed; only then does
+    // it splash. What was already in the chat when the call went live is the baseline, never celebrated.
+    val directLive = call?.let { !it.group && it.activeSince != null && it.phase != com.circaso.feature.calls.CallPhase.Ended } == true
+    LaunchedEffect(celebrations, chatId, directLive) {
+        val id = chatId ?: return@LaunchedEffect
+        if (!directLive) return@LaunchedEffect
+        val baseline = messages.thread(id).first().filterIsInstance<com.circaso.feature.messaging.domain.Message.Payment>().map { it.transferId }.toSet()
+        // A card whose transfer this phone hasn't heard of yet is read once (W5), in case its frame was missed.
+        val asked = mutableSetOf<String>()
+        @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+        messages.thread(id).flatMapLatest { list ->
+            val now = latestCall
+            val waiting = com.circaso.feature.calls.presentation.incomingOnCall(list, now?.people?.singleOrNull()?.userId, now?.activeSince, baseline)
+            wallets.transfers(waiting.map { it.transferId }).map { list to it.associate { t -> t.transferId to t.state } }
+        }.collect { (list, states) ->
+            val now = latestCall ?: return@collect
+            val peerId = now.people.singleOrNull()?.userId
+            com.circaso.feature.calls.presentation.incomingOnCall(list, peerId, now.activeSince, baseline)
+                .filter { it.transferId !in states && asked.add(it.transferId) }
+                .forEach { p -> launch { wallets.loadTransfer(p.transferId) } }
+            com.circaso.feature.calls.presentation.receivedOnCall(list, states, peerId, now.activeSince, baseline, celebrations.state.seen).forEach { p ->
+                celebrations.receive(com.circaso.feature.calls.presentation.receivedCelebration(p, now.people, latestFiat), confirmed = true, visible = !now.minimised)
+            }
+        }
+    }
     // One still "on its way" after a couple of minutes never confirmed (or its frame was lost; the reload has the truth).
     celebrations.state.pending.forEach { p ->
         androidx.compose.runtime.key(p.id) {
@@ -744,14 +784,19 @@ private fun androidx.compose.foundation.layout.BoxScope.CallLayer(backStack: Mut
     }
     // H2/H3: the newest money said in this chat sits under the name ("You sent KES 500 · for lunch").
     // Only money sent during this call, and only once its card has gone: never last month's payment, never a failed one.
+    // Money to me on a 1:1 call shows only once it has landed (the moment it splashes), in the splash's own words, so
+    // its coin settles into a line that has just changed, never one that said it before the chain did.
     val since = call?.activeSince
+    val landedForMe = celebrations.state.seen
     val money = thread.lastOrNull {
         it is com.circaso.feature.messaging.domain.Message.Payment && since != null && it.orderAt >= since &&
-            it.state in setOf(com.circaso.feature.messaging.domain.DeliveryState.Sent, com.circaso.feature.messaging.domain.DeliveryState.Delivered, com.circaso.feature.messaging.domain.DeliveryState.Read)
+            it.state in setOf(com.circaso.feature.messaging.domain.DeliveryState.Sent, com.circaso.feature.messaging.domain.DeliveryState.Delivered, com.circaso.feature.messaging.domain.DeliveryState.Read) &&
+            (it.outgoing || call?.group == true || it.transferId in landedForMe)
     }?.let { m ->
         val p = m as com.circaso.feature.messaging.domain.Message.Payment
-        val amount = com.circaso.feature.chama.presentation.amountText(p.amountMinor, fiat)
-        (if (p.outgoing) "You sent $amount" else "${p.senderName.substringBefore(' ')} sent you $amount") + (p.note?.let { " · $it" } ?: "")
+        val said = if (p.outgoing) "You sent ${com.circaso.feature.chama.presentation.amountText(p.amountMinor, fiat)}"
+            else com.circaso.feature.calls.presentation.receivedCelebration(p, call?.people.orEmpty(), fiat).text
+        said + (p.note?.let { " · $it" } ?: "")
     }
     val c = call
     val peer = c?.people?.singleOrNull()
@@ -786,6 +831,7 @@ private fun androidx.compose.foundation.layout.BoxScope.CallLayer(backStack: Mut
             onMinimise = controller::minimise,
             onAddPeople = controller::ringOthers,
             onShareScreen = if (controller.canShareScreen) controller::toggleScreenShare else null,
+            onAskAsha = onAskAsha,
             onMessage = { val id = chatId; controller.decline(); if (id != null) backStack.add(ChatRoute(id)) },
             // H1's "Send money instead": decline, then the chat with `#` in its composer (money starts in the chat).
             onSendMoneyInstead = if (directMoney && c != null) ({ controller.decline(); onMoneyInChat(c.chatId) }) else null,
