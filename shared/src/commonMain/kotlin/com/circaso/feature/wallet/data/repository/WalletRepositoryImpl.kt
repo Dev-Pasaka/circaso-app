@@ -89,10 +89,6 @@ class WalletRepositoryImpl(
      * end-to-end card can't be read on this phone (or this phone is new). Messaging dedupes it by transfer.
      */
     private val onChatPayment: suspend (com.circaso.feature.wallet.domain.ChatPaymentSeen) -> Unit = {},
-    /** The person turned on fingerprint / Face ID approval for this wallet ([walletId] null: personal) on this phone. */
-    private val biometricsOn: suspend (walletId: String?) -> Boolean = { false },
-    /** A payment was approved with the PIN while biometrics were off: the moment for the one-time offer. */
-    private val onApprovedWithPin: suspend (SignSubject) -> Unit = {},
 ) : WalletRepository {
     // Before init: a frame handled on Main.immediate could reach [save] while the class is still being built.
     private val settledOut = kotlinx.coroutines.flow.MutableSharedFlow<Transfer>(extraBufferCapacity = 16)
@@ -109,16 +105,7 @@ class WalletRepositoryImpl(
      */
     private val signing = Mutex()
 
-    private suspend fun sign(session: SdkSession, challengeId: String): SignOutcome {
-        val run = session.copy(biometrics = useBiometrics(session.subject))
-        return signing.withLock { signer().execute(run, challengeId) }
-    }
-
-    /**
-     * Biometrics take part only where an existing PIN is asked for (a payment, adding a network) and only once the
-     * person turned them on for that wallet; a new PIN (a new wallet) never offers Circle's own biometrics page.
-     */
-    private suspend fun useBiometrics(subject: SignSubject): Boolean = subject.purpose != SignPurpose.SetPin && biometricsOn(subject.walletId)
+    private suspend fun sign(session: SdkSession, challengeId: String): SignOutcome = signing.withLock { signer().execute(session, challengeId) }
 
     override val wallet: Flow<Wallet?> = dao.observeSnapshot().map { row -> row?.let { decode(it) } }
     override val transfers: Flow<List<Transfer>> = dao.observeTransfers().map { rows -> rows.map { it.toDomain() } }
@@ -193,7 +180,7 @@ class WalletRepositoryImpl(
         }
         Diagnostics.note("wallet: create ${created.status}, challenge=${created.challengeId != null}, signer=${signer().available}")
         created.challengeId?.let { challenge ->
-            when (val outcome = sign(created.sdk.toDomain(SignSubject.Personal.copy(purpose = SignPurpose.SetPin)), challenge)) {
+            when (val outcome = sign(created.sdk.toDomain(), challenge)) {
                 SignOutcome.Done -> Unit
                 else -> { Diagnostics.note("wallet: sign ${outcome::class.simpleName}"); return AppResult.Failure(outcome.toError()) }
             }
@@ -309,13 +296,8 @@ class WalletRepositoryImpl(
         val challenge = prepared.challengeId
         val sdk = prepared.sdk
         if (challenge != null && sdk != null) {
-            val subject = request.subject.copy(purpose = SignPurpose.Approve)
-            val withPin = !useBiometrics(subject)
-            when (val outcome = sign(sdk.toDomain(subject), challenge)) {
-                SignOutcome.Done -> {
-                    dao.upsert(row.copy(state = "SUBMITTED", updatedAt = nowMillis()))
-                    if (withPin) onApprovedWithPin(subject)
-                }
+            when (val outcome = sign(sdk.toDomain(request.subject.copy(purpose = SignPurpose.Approve)), challenge)) {
+                SignOutcome.Done -> dao.upsert(row.copy(state = "SUBMITTED", updatedAt = nowMillis()))
                 SignOutcome.Cancelled -> { dao.upsert(row.copy(state = "EXPIRED", failureReason = "cancelled", updatedAt = nowMillis())); return AppResult.Failure(outcome.toError()) }
                 else -> return AppResult.Failure(outcome.toError())
             }
@@ -590,15 +572,7 @@ internal fun SignOutcome.describe(): String = when (this) {
 internal fun SignOutcome.toError(): AppError = when (this) {
     SignOutcome.Cancelled -> AppError.Api("wallet.cancelled", 400, null, null, emptyMap())
     SignOutcome.Unavailable -> AppError.Api("wallet.sdk_unavailable", 400, null, null, emptyMap())
-    is SignOutcome.Failed -> AppError.Api(
-        when {
-            code.contains("pin", ignoreCase = true) && code.contains("lock", ignoreCase = true) -> "wallet.pin_locked"
-            code == "deviceNotSupportBiometrics" || code == "biometricsSettingNotEnabled" || code == "biometricsUserNotAllowPermission" -> "wallet.biometrics_unavailable"
-            code.startsWith("biometricsUserLockout") -> "wallet.biometrics_locked"
-            else -> "wallet.sdk_failed"
-        },
-        400, null, null, emptyMap(),
-    )
+    is SignOutcome.Failed -> AppError.Api(if (code.contains("pin", ignoreCase = true) && code.contains("lock", ignoreCase = true)) "wallet.pin_locked" else "wallet.sdk_failed", 400, null, null, emptyMap())
     SignOutcome.Done -> AppError.Unexpected(null)
 }
 

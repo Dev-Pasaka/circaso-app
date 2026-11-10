@@ -122,20 +122,7 @@ enum class RemindOutcome { Sent, AlreadySent, HasWallet }
  * so a session belongs to one wallet: [subject] says which, so the SDK module can name it on its screens and keep
  * biometrics apart per wallet.
  */
-data class SdkSession(
-    val appId: String,
-    val userToken: String,
-    val encryptionKey: String,
-    val expiresAt: String,
-    val subject: SignSubject = SignSubject.Personal,
-    /**
-     * This wallet approves with the fingerprint / Face ID on this phone (the person turned it on): Circle's PIN screen
-     * opens with the system prompt over it, and its PIN pad stays underneath if that fails, is cancelled or is locked
-     * out. False keeps Circle's biometrics out of the call entirely (no prompt, and none of Circle's own "Allow
-     * biometrics" pages after the PIN).
-     */
-    val biometrics: Boolean = false,
-)
+data class SdkSession(val appId: String, val userToken: String, val encryptionKey: String, val expiresAt: String, val subject: SignSubject = SignSubject.Personal)
 
 /** Whose money a wallet holds (W1 / W16 `owner`). A group wallet's name is the group's sealed name: the phone supplies it. */
 enum class WalletOwnerType { Person, Group, Space }

@@ -239,42 +239,29 @@ fun androidx.compose.foundation.layout.BoxScope.WalletOverlay(
         // Asked once, right after the wallet is made; later it lives in You → Security → Payments. The sheet stays up
         // through Circle's PIN screen so a failure is said here, and goes once it's on.
         androidx.compose.runtime.LaunchedEffect(bio.enabled) { if (bio.enabled) viewModel.onBiometricsOffered() }
-        // This is the personal wallet's one offer: answered here, none comes again after its first PIN payment.
-        val answered = { viewModel.onBiometricsOffered(); biometrics.onOffered() }
         CircasoSheet(
             state.offerBiometrics && !bio.enabled && bio.supported,
-            { if (!bio.busy) answered() },
+            { if (!bio.busy) viewModel.onBiometricsOffered() },
             label = "Approve payments with ${bio.inSentence}?",
         ) {
-            BiometricOfferContent(bio, onTurnOn = biometrics::onEnable, onNotNow = answered)
+            BiometricOfferContent(bio, onTurnOn = biometrics::onEnable, onNotNow = viewModel::onBiometricsOffered)
         }
     }
 }
 
 /** After wallet setup: approve payments with Face ID / Touch ID / fingerprint instead of typing the PIN. Stateless for previews. */
 @Composable
-fun BiometricOfferContent(
-    bio: com.circaso.feature.account.presentation.BiometricApprovalState,
-    onTurnOn: () -> Unit,
-    onNotNow: () -> Unit,
-    /** A group wallet's name, so the offer after its payment says which wallet; null for the personal one. */
-    walletName: String? = null,
-) {
+fun BiometricOfferContent(bio: com.circaso.feature.account.presentation.BiometricApprovalState, onTurnOn: () -> Unit, onNotNow: () -> Unit) {
     val c = CircasoTheme.colors
     val t = CircasoTheme.typography
     val what = bio.inSentence
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        BasicText(offerTitle(bio, walletName), Modifier.semantics { heading() }, style = t.title2.copy(color = c.ink))
-        // A group's owner has two PINs: name the one this is about.
+        BasicText("Approve payments with $what?", Modifier.semantics { heading() }, style = t.title2.copy(color = c.ink))
         BasicText(
-            if (walletName != null) "Approve $walletName’s payments without typing its PIN. You’ll enter $walletName’s PIN once to set it up, and it’s always there if $what doesn’t work. Circaso never sees a PIN."
-            else "Approve payments without typing your PIN. You’ll enter your PIN once to set it up, and it’s always there if $what doesn’t work. Circaso never sees your PIN.",
+            "Confirm payments without typing your PIN. You'll enter your PIN once to set it up, and it's always there if $what doesn't work. Circaso never sees your PIN.",
             style = t.body.copy(color = c.inkSecondary),
         )
-        if (!bio.online) {
-            val later = if (walletName != null) "in $walletName’s group info" else "in You → Security"
-            BasicText("Turning this on needs a connection. You can do it later $later.", style = t.footnote.copy(color = c.inkSecondary))
-        }
+        if (!bio.online) BasicText("Turning this on needs a connection. You can do it later in You → Security.", style = t.footnote.copy(color = c.inkSecondary))
     }
     Column(verticalArrangement = Arrangement.spacedBy(CircasoSpacing.s2)) {
         CircasoButton("Turn On ${bio.label}", onTurnOn, size = ButtonSize.Large, block = true, enabled = bio.online, busy = bio.busy)

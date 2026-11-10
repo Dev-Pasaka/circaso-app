@@ -176,7 +176,6 @@ class GroupWalletSetupViewModel(
         if (!s.online) { _state.update { it.copy(problem = SetupProblem.Offline) }; return }
         _state.update { it.copy(turningOnBiometrics = true) }
         viewModelScope.launch {
-            markOffered(s.walletId)
             val r = enableBiometrics(subject())
             if (r is AppResult.Success) prefs.setWalletBiometrics(s.walletId, true)
             // Not turned on (cancelled, or Circle couldn't): the wallet still works with its PIN; carry on either way.
@@ -187,15 +186,8 @@ class GroupWalletSetupViewModel(
 
     fun onNotNow() {
         if (_state.value.step != SetupStep.Biometrics) return
-        val walletId = _state.value.walletId
         _state.update { it.copy(step = SetupStep.Networks) }
-        viewModelScope.launch { markOffered(walletId) }
         run()
-    }
-
-    /** GW4 is this wallet's one offer: no second one after its first PIN approval (group info has the switch). */
-    private suspend fun markOffered(walletId: String?) {
-        if (walletId != null) prefs.setFlag(com.circaso.core.datastore.AppPreferences.biometricOfferedFlag(walletId), true)
     }
 
     /**

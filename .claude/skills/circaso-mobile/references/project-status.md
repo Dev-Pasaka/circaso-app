@@ -247,7 +247,7 @@ Media3 1.4.1, multiplatform-markdown-renderer 0.46.0.
 | Area | What works |
 | --- | --- |
 | Launch and sign-in | Splash held until session and theme are read (1.5 s cap), Welcome, Google (both platforms) / Apple (iOS), phone verification, device key, new phone, force update. |
-| Account and security | Profile edit, avatar, security screen, biometrics (2026-11-10: biometrics first, Circle's PIN as fallback, per wallet; offered once after the first PIN payment; turn off in Security; see app-architecture "Biometric approval"), security log, sign out, delete account (blocked while money is in the wallet), contacts, blocked people. |
+| Account and security | Profile edit, avatar, security screen, biometrics, security log, sign out, delete account (blocked while money is in the wallet), contacts, blocked people. |
 | Chats | Encrypted direct and group chats, roles, receipts, typing, delete for everyone, filter chips, paging, presence, Android push with heads-up, local notifications (F4). |
 | Media | Photos, gallery, voice notes, video, location, live location with background updates. |
 | Calls | Voice, video, group grid, incoming call screen, Android call notification from the data push, minimised call pill. |
