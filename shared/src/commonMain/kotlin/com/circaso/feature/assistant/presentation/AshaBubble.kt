@@ -36,6 +36,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.union
+import androidx.compose.foundation.layout.add
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.windowInsetsPadding
@@ -77,6 +78,7 @@ import androidx.compose.ui.semantics.progressBarRangeInfo
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.min
@@ -146,10 +148,52 @@ class AshaBubbleActions(
     val capture: (suspend () -> ScreenShot?)? = null,
 )
 
+/** A call, as Asha's bubble sees it. */
+enum class AshaCallState {
+    None,
+    /** Live, minimised to its pill: the app's screens are on show again. */
+    Minimised,
+    /** Ringing in, full screen (H1): Accept and Decline must show. */
+    Ringing,
+    /** Live on the full call screen (H2–H4). */
+    OnScreen,
+}
+
 /**
- * The layer: over every screen and its sheets, under calls (a call owns the screen and the microphone; when it is
- * minimised to its pill the bubble shows again). [hidden] keeps it out of sight without ending it (Asha's own screen or
- * voice mode is on top). [screen] is the screen's name for Asha ("Wallet › Send").
+ * How the bubble behaves with a call about (Pasaka, 2026-11-10: Asha works over calls too). [hidden] keeps her out of
+ * sight without ending her: one of her own screens is on top, unless a call covers it. [voice]: the call owns the
+ * microphone and the speaker, so no live voice, no spoken questions and no answers read aloud while one is live, even
+ * minimised. [showScreen]: no "Show Asha my screen" over a call screen, since it would be other people's faces and
+ * shared screens, and the picture would be of the app under the call, not what the person sees. [clearTop] and
+ * [clearBottom]: room the resting bubble keeps clear of, so it never sits on the call's top row or its controls.
+ * A ring coming in (H1) hides her until it is answered or declined: nothing of hers may sit on Accept or Decline,
+ * however large the text. Over the live call the open panel also stops above the call's controls, so mute and End are
+ * always one tap away.
+ */
+data class AshaBubbleMode(
+    val hidden: Boolean,
+    val voice: Boolean,
+    val showScreen: Boolean,
+    val clearTop: Dp = 0.dp,
+    val clearBottom: Dp = 0.dp,
+)
+
+/** The bubble's rules for [call], with one of Asha's own screens on top or not ([ashaOnTop]). */
+fun ashaBubbleMode(ashaOnTop: Boolean, call: AshaCallState): AshaBubbleMode = when (call) {
+    AshaCallState.None -> AshaBubbleMode(hidden = ashaOnTop, voice = true, showScreen = true)
+    AshaCallState.Minimised -> AshaBubbleMode(hidden = ashaOnTop, voice = false, showScreen = true)
+    AshaCallState.Ringing -> AshaBubbleMode(hidden = true, voice = false, showScreen = false)
+    AshaCallState.OnScreen -> AshaBubbleMode(hidden = false, voice = false, showScreen = false, clearTop = CallTopClear, clearBottom = CallBottomClear)
+}
+
+/** The call screen's top row (minimise, the name), and its control bar with the money line over it. */
+internal val CallTopClear = 64.dp
+internal val CallBottomClear = 112.dp
+
+/**
+ * The layer: over every screen and its sheets, and over calls (2026-11-10), under system dialogs and Circle's PIN.
+ * [mode] says what she may do with a call about ([ashaBubbleMode]). [screen] is the screen's name for Asha
+ * ("Wallet › Send").
  */
 @Composable
 @OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class)
@@ -157,9 +201,10 @@ fun BoxScope.AshaBubbleLayer(
     state: AshaBubbleState,
     viewModel: AshaViewModel,
     screen: String?,
-    hidden: Boolean,
+    mode: AshaBubbleMode,
     actions: AshaBubbleActions,
 ) {
+    val hidden = mode.hidden
     val ui by viewModel.state.collectAsState()
     val visible = state.open && !hidden
     // Asha's availability is watched only while the bubble is out (it stays composed, closed, for the session).
@@ -168,6 +213,8 @@ fun BoxScope.AshaBubbleLayer(
     LaunchedEffect(screen) { viewModel.onScreen(screen) }
     // Closed or out of sight: no microphone left open.
     LaunchedEffect(state.open, hidden) { if (!state.open || hidden) viewModel.onCancelRecording() }
+    // A call has the microphone and the speaker: a question being recorded is dropped and an answer being read stops.
+    LaunchedEffect(mode.voice) { if (!mode.voice) viewModel.onVoiceOff() }
     // Closing drops the waiting picture: the next summon starts clean.
     LaunchedEffect(state.open) { if (!state.open) viewModel.onAttachment(null) }
     LaunchedEffect(ui.attachment) { if (ui.attachment == null) state.preview = null }
@@ -195,7 +242,7 @@ fun BoxScope.AshaBubbleLayer(
                 exit = scaleOut(tween(CircasoMotion.QuickMs), targetScale = 0.92f, transformOrigin = TransformOrigin(0.5f, 1f)),
             )
             AshaPanel(
-                state, ui, viewModel, screen, actions,
+                state, ui, viewModel, screen, actions, mode,
                 alignment = if (wide) Alignment.BottomEnd else Alignment.BottomCenter,
                 modifier = Modifier.width(min(maxWidth - CircasoSpacing.s3 * 2, PanelMaxWidth)).then(grow),
             )
@@ -210,14 +257,14 @@ fun BoxScope.AshaBubbleLayer(
                 enter = scaleIn(spring(dampingRatio = 0.7f, stiffness = Spring.StiffnessMedium), initialScale = 0.6f),
                 exit = scaleOut(tween(CircasoMotion.QuickMs), targetScale = 0.6f),
             )
-            DraggableBubble(state, busy = ui.sending, pop)
+            DraggableBubble(state, busy = ui.sending, pop, mode.clearTop, mode.clearBottom)
         }
     }
 }
 
 /** The panel: Asha's header with her actions, the conversation, the picture waiting to go, and the field. */
 @Composable
-private fun AshaPanel(state: AshaBubbleState, ui: AshaUiState, viewModel: AshaViewModel, screen: String?, actions: AshaBubbleActions, alignment: Alignment, modifier: Modifier) {
+private fun AshaPanel(state: AshaBubbleState, ui: AshaUiState, viewModel: AshaViewModel, screen: String?, actions: AshaBubbleActions, mode: AshaBubbleMode, alignment: Alignment, modifier: Modifier) {
     val c = CircasoTheme.colors
     val t = CircasoTheme.typography
     val scope = rememberCoroutineScope()
@@ -231,7 +278,13 @@ private fun AshaPanel(state: AshaBubbleState, ui: AshaUiState, viewModel: AshaVi
     Box(
         Modifier.fillMaxSize()
             // Above the keyboard and clear of the system bars and cut-outs.
-            .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Horizontal + WindowInsetsSides.Bottom + WindowInsetsSides.Top).union(WindowInsets.ime))
+            // Over a call it also stops above the call's controls (mute and End stay reachable), unless the keyboard is
+            // higher still.
+            .windowInsetsPadding(
+                WindowInsets.safeDrawing.only(WindowInsetsSides.Horizontal + WindowInsetsSides.Top)
+                    .union(WindowInsets.safeDrawing.only(WindowInsetsSides.Bottom).add(WindowInsets(bottom = mode.clearBottom)))
+                    .union(WindowInsets.ime),
+            )
             .padding(CircasoSpacing.s3),
         contentAlignment = alignment,
     ) {
@@ -250,12 +303,12 @@ private fun AshaPanel(state: AshaBubbleState, ui: AshaUiState, viewModel: AshaVi
             PanelHeader(
                 subtitle = screen?.let { "On $it" } ?: ui.conversationTitle ?: "Here to help",
                 capturing = state.capturing,
-                showScreen = actions.capture != null,
+                showScreen = actions.capture != null && mode.showScreen,
                 canShowScreen = ui.canAsk && !ui.sending,
                 onShowScreen = {
                     val capture = actions.capture
                     when {
-                        capture == null || state.capturing -> Unit
+                        capture == null || state.capturing || !mode.showScreen -> Unit
                         // Never a picture of a PIN, a code or a password, even half-typed.
                         secrets?.any == true -> state.notice = "Asha can't see a screen with a PIN, code or password on it."
                         else -> scope.launch {
@@ -284,17 +337,22 @@ private fun AshaPanel(state: AshaBubbleState, ui: AshaUiState, viewModel: AshaVi
                         reverseLayout = true,
                         contentPadding = PaddingValues(horizontal = CircasoSpacing.s3, vertical = CircasoSpacing.s3),
                         verticalArrangement = Arrangement.spacedBy(CircasoSpacing.s2),
-                    ) { items(shown.asReversed(), key = { it.key }) { BubbleView(it, speaking = it.speakable && it.text == ui.speakingText, canSpeak = ui.online, onSpeak = viewModel::onSpeak) } }
+                    ) { items(shown.asReversed(), key = { it.key }) { BubbleView(it, speaking = it.speakable && it.text == ui.speakingText, canSpeak = ui.online && mode.voice, onSpeak = viewModel::onSpeak) } }
                     val still = CircasoTheme.reduceMotion
                     JumpToLatest(!follow.following, { scope.launch { follow.jump(!still) } }, Modifier.align(Alignment.BottomEnd).padding(end = CircasoSpacing.s3, bottom = CircasoSpacing.s2))
                 }
             }
             // The app's own notice (a screen it won't picture): calm, in secondary ink, gone with the next keystroke.
+            // On a call, where her voice button would be, she says why it isn't (once nothing else is being said).
             state.notice?.let {
                 BasicText(
                     it, Modifier.fillMaxWidth().padding(horizontal = CircasoSpacing.s4, vertical = CircasoSpacing.s1).semantics { liveRegion = LiveRegionMode.Polite },
                     style = t.footnote.copy(color = c.inkSecondary),
                 )
+            }
+            // A standing line, not an announcement: it would otherwise be spoken each time the panel opens.
+            if (state.notice == null && !mode.voice && ui.error == null) {
+                BasicText(VoiceOffOnCall, Modifier.fillMaxWidth().padding(horizontal = CircasoSpacing.s4, vertical = CircasoSpacing.s1), style = t.footnote.copy(color = c.inkSecondary))
             }
             ui.error?.let {
                 BasicText(
@@ -325,6 +383,7 @@ private fun AshaPanel(state: AshaBubbleState, ui: AshaUiState, viewModel: AshaVi
                 trailing = {
                     val recording = ui.voice == VoiceState.Recording
                     when {
+                        !mode.voice -> Unit
                         actions.onVoice != null && !recording -> if (ui.canAsk && !ui.sending) CircasoIconButton(CircasoIcon.Waveform, "Talk to Asha", actions.onVoice)
                         ui.canUseVoice || recording ->
                             CircasoIconButton(if (recording) CircasoIcon.Stop else CircasoIcon.Mic, if (recording) "Stop recording" else "Ask by voice", viewModel::onMic, emphasised = recording)
@@ -427,7 +486,7 @@ private fun AttachedScreen(preview: ImageBitmap, onRemove: () -> Unit) {
  * side (a flick carries it to the side it was thrown at), clear of the system bars. Tap opens the panel.
  */
 @Composable
-private fun DraggableBubble(state: AshaBubbleState, busy: Boolean, appear: Modifier) {
+private fun DraggableBubble(state: AshaBubbleState, busy: Boolean, appear: Modifier, clearTop: Dp, clearBottom: Dp) {
     val c = CircasoTheme.colors
     val density = LocalDensity.current
     val still = CircasoTheme.reduceMotion
@@ -438,8 +497,9 @@ private fun DraggableBubble(state: AshaBubbleState, busy: Boolean, appear: Modif
         val margin = with(density) { CircasoSpacing.s3.toPx() }
         val left = with(density) { safe.calculateLeftPadding(androidx.compose.ui.unit.LayoutDirection.Ltr).toPx() } + margin
         val right = with(density) { maxWidth.toPx() - safe.calculateRightPadding(androidx.compose.ui.unit.LayoutDirection.Ltr).toPx() } - margin - size
-        val top = with(density) { safe.calculateTopPadding().toPx() } + margin
-        val bottom = with(density) { maxHeight.toPx() - safe.calculateBottomPadding().toPx() } - margin - size
+        // Clear of the system bars, and of a call's top row and controls while one is on screen.
+        val top = with(density) { (safe.calculateTopPadding() + clearTop).toPx() } + margin
+        val bottom = with(density) { maxHeight.toPx() - (safe.calculateBottomPadding() + clearBottom).toPx() } - margin - size
         fun settle(at: Offset, velocityX: Float = 0f): Offset {
             // Where a flick would carry it, then the nearer side.
             val aimX = at.x + velocityX * FlickProjection
@@ -458,8 +518,15 @@ private fun DraggableBubble(state: AshaBubbleState, busy: Boolean, appear: Modif
             state.rest = target
             scope.launch { if (still) position.snapTo(target) else position.animateTo(target, spring(dampingRatio = 0.72f, stiffness = Spring.StiffnessMediumLow)) }
         }
-        // A turned or resized screen: back to its side, in the new bounds.
-        LaunchedEffect(left, right, top, bottom) { position.snapTo(settle(position.value)); state.rest = position.value }
+        // A turned or resized screen: back to its side, in the new bounds. A call coming on screen (or going) moves it
+        // clear of the call's controls with a spring; the first placing, a drag under way and Reduce Motion jump there.
+        val placed = remember { booleanArrayOf(false) }
+        LaunchedEffect(left, right, top, bottom) {
+            val target = settle(position.value)
+            state.rest = target
+            if (!placed[0] || latestStill || dragged != null) { placed[0] = true; position.snapTo(target) }
+            else position.animateTo(target, spring(dampingRatio = 0.85f, stiffness = Spring.StiffnessMediumLow))
+        }
         fun release(at: Offset, velocity: Offset) {
             val target = latestSettle(at, velocity.x)
             state.rest = target
@@ -554,3 +621,6 @@ private val PanelMaxWidth = 420.dp
 private val WidePanelAt = 600.dp
 
 private const val PanelSuggestion = "How do I use this screen?"
+
+/** Said where her voice button would be, while a call is live. */
+internal const val VoiceOffOnCall = "Voice is off during a call. Type to Asha."

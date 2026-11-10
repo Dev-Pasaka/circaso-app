@@ -1,6 +1,8 @@
 package com.circaso.feature.calls.presentation
 
 import com.circaso.feature.calls.CallPerson
+import com.circaso.feature.messaging.domain.Message
+import com.circaso.feature.wallet.domain.TransferState
 import com.circaso.feature.chama.domain.GroupContribution
 import com.circaso.feature.chama.presentation.amountText
 import com.circaso.feature.wallet.domain.FiatValue
@@ -23,11 +25,59 @@ data class Celebration(
     val coin: String,
     val userId: String?,
     val photoUrl: String? = null,
+    /** Its own words in place of "Amina +KES 1,000" ("Amina sent you KES 500", money to me on a 1:1 call). */
+    val line: String? = null,
 ) {
-    val text: String get() = "$who +$amount"
+    val text: String get() = line ?: "$who +$amount"
 
     /** What a screen reader says when it lands. */
-    val spoken: String get() = if (who == You) "You added $amount" else "$who added $amount"
+    val spoken: String get() = line ?: if (who == You) "You added $amount" else "$who added $amount"
+}
+
+/**
+ * Money to me on a 1:1 call (Pasaka, 2026-11-10): the payments in the call's chat that splash on the receiver's call
+ * screen, oldest first. Only one that reached me ([Message.Payment.outgoing] false) from the person on the call
+ * ([peerUserId]), that arrived during this call (not one already in the chat when the call went live, [baseline], nor
+ * one dated before the call, with [ClockSlackMillis] for the two phones' clocks), and that the server says has landed
+ * ([states]: confirmed on chain, as the receiver's wallet hears it in `payment.received`; never one still on its way or
+ * failed). Each once ([seen]). Payments are matched on their transfer, so the end-to-end card and the server's own
+ * card for the same payment are one.
+ */
+fun receivedOnCall(
+    thread: List<Message>,
+    states: Map<String, TransferState>,
+    peerUserId: String?,
+    since: Long?,
+    baseline: Set<String>,
+    seen: Set<String>,
+): List<Message.Payment> {
+    if (since == null || peerUserId == null) return emptyList()
+    return incomingOnCall(thread, peerUserId, since, baseline)
+        .filter { states[it.transferId] == TransferState.Confirmed && it.transferId !in seen }
+}
+
+/** The payments [receivedOnCall] waits on: to me, from [peerUserId], new since the call went live. */
+fun incomingOnCall(thread: List<Message>, peerUserId: String?, since: Long?, baseline: Set<String>): List<Message.Payment> {
+    if (since == null || peerUserId == null) return emptyList()
+    return thread.filterIsInstance<Message.Payment>()
+        .filter { !it.outgoing && it.senderId == peerUserId && it.transferId !in baseline && it.orderAt >= since - ClockSlackMillis }
+        .distinctBy { it.transferId }
+        .sortedBy { it.orderAt }
+}
+
+/** How far the sender's clock may run behind mine before a payment sent during the call reads as from before it. */
+const val ClockSlackMillis = 60_000L
+
+/**
+ * "Juma sent you KES 500" for [p]: their first name as the call shows it, a dollar coin in my money when the rate is
+ * known (as the call's money line says it), any other coin in its own units.
+ */
+fun receivedCelebration(p: Message.Payment, people: List<CallPerson>, fiat: FiatValue?): Celebration {
+    val person = people.firstOrNull { it.userId == p.senderId }
+    val who = (person?.name ?: p.senderName).firstName().ifBlank { "Someone" }
+    val coin = p.asset.uppercase().ifBlank { "USDC" }
+    val amount = if (MinorUnits.isDollar(coin) && fiat != null) amountText(p.amountMinor, fiat) else MinorUnits.coinText(p.amountMinor, coin)
+    return Celebration(p.transferId, who, amount, coin, p.senderId, person?.photoUrl, line = "$who sent you $amount")
 }
 
 /**

@@ -143,6 +143,8 @@ class CallActions(
     val onAddPeople: () -> Unit = {},
     /** Share screen, and Stop (2026-11-09); null where this phone can't share (iOS until its broadcast extension ships). */
     val onShareScreen: (() -> Unit)? = null,
+    /** The More sheet's "Ask Asha" (2026-11-10): her bubble over the call. Null where she can't be summoned. */
+    val onAskAsha: (() -> Unit)? = null,
 )
 
 /**
@@ -222,10 +224,14 @@ private fun CallSurface(
         }
         landings++
     }
+    // Money to me on a 1:1 call (2026-11-10): "Juma sent you KES 500" splashes over the call, rising from low on the
+    // screen, and its coin settles into the money line under their name.
+    val directAnchors = remember { CelebrationAnchors() }
     Box(
         Modifier.fillMaxSize().background(CallColors.Bg)
             // Nothing under the call surface takes a tap; no ripple, nothing for a screen reader to announce.
-            .pointerInput(Unit) { detectTapGestures { } },
+            .pointerInput(Unit) { detectTapGestures { } }
+            .onPlaced { directAnchors.root = it; directAnchors.tiles = it },
     ) {
         val layout = when {
             call.phase == CallPhase.Incoming -> 0
@@ -259,10 +265,17 @@ private fun CallSurface(
                         onFinished = { id -> celebrations?.finished(id) },
                     )
                     // "On its way" first, then the payment's own line once its card is in the chat (H2/H3).
-                    2 -> VideoCall(call, actions, stage, landed ?: money, openMoney, more)
-                    else -> VoiceCall(call, actions, landed ?: money, openMoney, more)
+                    2 -> VideoCall(call, actions, stage, landed ?: money, openMoney, more, onNotePlaced = { directAnchors.goal = it })
+                    else -> VoiceCall(call, actions, landed ?: money, openMoney, more, onNotePlaced = { directAnchors.goal = it })
                 }
             }
+        }
+        if (!call.group && call.phase != CallPhase.Incoming && celebrations != null) {
+            val highContrast = com.circaso.designsystem.platform.rememberIsHighContrast()
+            androidx.compose.runtime.CompositionLocalProvider(com.circaso.designsystem.theme.LocalCircasoColors provides com.circaso.designsystem.theme.circasoColors(dark = true, highContrast = highContrast)) {
+                CelebrationLayer(celebrations.state, directAnchors, onLanded = celebrations::landed, onFinished = celebrations::finished)
+            }
+            // The flying pill is silent to screen readers: the money line it settles into says it (a polite live region).
         }
         actions.moneySheet?.let { sheet ->
             // Dark over the black call in every theme, as H5's frame (data-theme="dark"); high contrast is kept. The call
@@ -310,7 +323,7 @@ private fun BoxScope.Incoming(call: CallUi, actions: CallActions) {
 
 /** Design H2. */
 @Composable
-private fun VoiceCall(call: CallUi, actions: CallActions, money: String?, onSendMoney: (() -> Unit)?, more: MoreState) {
+private fun VoiceCall(call: CallUi, actions: CallActions, money: String?, onSendMoney: (() -> Unit)?, more: MoreState, onNotePlaced: (androidx.compose.ui.layout.LayoutCoordinates) -> Unit = {}) {
     val t = CircasoTheme.typography
     val short = com.circaso.designsystem.adaptive.LocalWindowLayout.current.short
     val controls: @Composable () -> Unit = {
@@ -331,7 +344,7 @@ private fun VoiceCall(call: CallUi, actions: CallActions, money: String?, onSend
                     Handle(call.handle)
                     Status(call)
                     SharingLine(call, actions.onShareScreen, Modifier.padding(top = CircasoSpacing.s3))
-                    money?.let { Spacer(Modifier.height(CircasoSpacing.s3)); MoneyNote(it) }
+                    money?.let { Spacer(Modifier.height(CircasoSpacing.s3)); MoneyNote(it, Modifier.onPlaced(onNotePlaced)) }
                 }
                 Column(Modifier.weight(1f)) { controls() }
             }
@@ -345,7 +358,7 @@ private fun VoiceCall(call: CallUi, actions: CallActions, money: String?, onSend
             Handle(call.handle)
             Status(call)
             SharingLine(call, actions.onShareScreen, Modifier.padding(top = CircasoSpacing.s4))
-            money?.let { Spacer(Modifier.height(CircasoSpacing.s5)); MoneyNote(it) }
+            money?.let { Spacer(Modifier.height(CircasoSpacing.s5)); MoneyNote(it, Modifier.onPlaced(onNotePlaced)) }
             Spacer(Modifier.weight(1f))
             controls()
         }
@@ -358,7 +371,7 @@ private fun VoiceCall(call: CallUi, actions: CallActions, money: String?, onSend
  * Only this phone's view changes.
  */
 @Composable
-private fun BoxScope.VideoCall(call: CallUi, actions: CallActions, stage: CallStageState, money: String?, onSendMoney: (() -> Unit)?, more: MoreState) {
+private fun BoxScope.VideoCall(call: CallUi, actions: CallActions, stage: CallStageState, money: String?, onSendMoney: (() -> Unit)?, more: MoreState, onNotePlaced: (androidx.compose.ui.layout.LayoutCoordinates) -> Unit = {}) {
     val t = CircasoTheme.typography
     val them = call.people.firstOrNull { it.joined }
     // My picture: the camera, or the screen I'm sharing (drawn as a placeholder, not a mirror of itself).
@@ -376,7 +389,7 @@ private fun BoxScope.VideoCall(call: CallUi, actions: CallActions, stage: CallSt
             SharingLine(call, actions.onShareScreen, Modifier.padding(top = CircasoSpacing.s2))
         }
         Spacer(Modifier.weight(1f))
-        money?.let { MoneyNote(it, Modifier.align(Alignment.CenterHorizontally)); Spacer(Modifier.height(CircasoSpacing.s3)) }
+        money?.let { MoneyNote(it, Modifier.align(Alignment.CenterHorizontally).onPlaced(onNotePlaced)); Spacer(Modifier.height(CircasoSpacing.s3)) }
         // The glass bar, centred: money, camera, mic, More, End; the rest is on the More sheet.
         CallControlBar(call, actions, onSendMoney, "Send money", voice = false, moreOpen = more.open, onMore = more.onToggle, modifier = Modifier.align(Alignment.CenterHorizontally))
     }
@@ -1089,7 +1102,10 @@ private fun Landed(text: String) {
 private fun MoneyNote(text: String, modifier: Modifier = Modifier) {
     val t = CircasoTheme.typography
     Row(
-        modifier.clip(CircasoShapes.pill).background(CallColors.Control).padding(horizontal = CircasoSpacing.s4, vertical = CircasoSpacing.s2),
+        // Said as it changes ("Juma sent you KES 500" as their money lands on a 1:1 call), once, politely.
+        modifier.clip(CircasoShapes.pill).background(CallColors.Control)
+            .semantics(mergeDescendants = true) { liveRegion = androidx.compose.ui.semantics.LiveRegionMode.Polite }
+            .padding(horizontal = CircasoSpacing.s4, vertical = CircasoSpacing.s2),
         horizontalArrangement = Arrangement.spacedBy(CircasoSpacing.s2), verticalAlignment = Alignment.CenterVertically,
     ) {
         CircasoIconImage(CircasoIcon.Money, CallColors.Ink, Modifier.size(16.dp))

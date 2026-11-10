@@ -49,19 +49,29 @@ import com.circaso.feature.calls.CallUi
  */
 
 /** What the More sheet lists, in order. */
-internal enum class CallMoreItem { ShareScreen, FlipCamera, Speaker, AddPeople, Minimise }
+internal enum class CallMoreItem { ShareScreen, FlipCamera, Speaker, AddPeople, Minimise, AskAsha }
 
 /**
  * The More sheet's rows for [call] as it is now. Only what can be done right now is listed: share screen only where this
  * phone can share ([canShareScreen]; iOS until its broadcast extension ships), flip only while the camera is on and not
- * giving way to a shared screen, Add people only on a live group call with someone to ring.
+ * giving way to a shared screen, Add people only on a live group call with someone to ring. Ask Asha last, where she
+ * can be summoned ([canAskAsha]: a full session), never while the call is still ringing in.
  */
-internal fun callMoreItems(call: CallUi, canShareScreen: Boolean): List<CallMoreItem> = buildList {
+internal fun callMoreItems(call: CallUi, canShareScreen: Boolean, canAskAsha: Boolean = false): List<CallMoreItem> = buildList {
     if (canShareScreen) add(CallMoreItem.ShareScreen)
     if (call.camera && !call.screen) add(CallMoreItem.FlipCamera)
     add(CallMoreItem.Speaker)
     if (call.group && call.phase == CallPhase.Active && call.notOnCall.isNotEmpty()) add(CallMoreItem.AddPeople)
     add(CallMoreItem.Minimise)
+    if (canAskAsha && call.phase != CallPhase.Incoming && call.phase != CallPhase.Ended) add(CallMoreItem.AskAsha)
+}
+
+/** The call as Asha's bubble sees it (2026-11-10): over the full call screen, ringing in, minimised, or none. */
+fun ashaCallState(call: CallUi?): com.circaso.feature.assistant.presentation.AshaCallState = when {
+    call == null || call.phase == CallPhase.Ended -> com.circaso.feature.assistant.presentation.AshaCallState.None
+    call.minimised -> com.circaso.feature.assistant.presentation.AshaCallState.Minimised
+    call.phase == CallPhase.Incoming -> com.circaso.feature.assistant.presentation.AshaCallState.Ringing
+    else -> com.circaso.feature.assistant.presentation.AshaCallState.OnScreen
 }
 
 /**
@@ -121,7 +131,7 @@ internal fun BoxScope.CallMoreSheet(visible: Boolean, call: CallUi, actions: Cal
     CompositionLocalProvider(com.circaso.designsystem.theme.LocalCircasoColors provides com.circaso.designsystem.theme.circasoColors(dark = true, highContrast = highContrast)) {
         CircasoSheet(visible, onDismiss, label = "Call options") {
             SheetHead("Call options", onDismiss)
-            val items = callMoreItems(call, actions.onShareScreen != null)
+            val items = callMoreItems(call, actions.onShareScreen != null, actions.onAskAsha != null)
             val shape = CircasoShapes.lg
             Column(Modifier.fillMaxWidth().clip(shape).background(sheetGroupColor()).sheetGroupEdge(shape)) {
                 items.forEachIndexed { i, item ->
@@ -139,6 +149,12 @@ internal fun BoxScope.CallMoreSheet(visible: Boolean, call: CallUi, actions: Cal
                         CallMoreItem.Speaker -> SpeakerRow(call.speaker, actions.onSpeaker)
                         CallMoreItem.AddPeople -> MoreRow(CircasoIcon.UserPlus, "Add people", "Ring ${call.notOnCall.joinToString { it.name.substringBefore(' ') }}") { onDismiss(); actions.onAddPeople() }
                         CallMoreItem.Minimise -> MoreRow(CircasoIcon.Minimise, "Minimise call", "Keep talking while you use Circaso") { onDismiss(); actions.onMinimise(true) }
+                        // Her bubble opens over the call; she answers in text while the call has the microphone.
+                        CallMoreItem.AskAsha -> ListRow(
+                            "Ask Asha", sub = "Type a question without leaving the call",
+                            leading = { com.circaso.designsystem.components.AshaMark(size = MoreIcon) },
+                            onClick = { onDismiss(); actions.onAskAsha?.invoke() },
+                        )
                     }
                 }
             }
