@@ -50,7 +50,7 @@ class AppPreferences(private val store: DataStore<Preferences>) : com.circaso.co
     override suspend fun clear() {
         store.edit { prefs ->
             // The Wallet tab's remembered mode and group belong to the account too, and so do its group invites.
-            prefs.asMap().keys.filter { it.name.startsWith("rt.seq.") || it.name.startsWith("text.wallet.") || it.name == "text.$GroupInvitesText" || it.name == "flag.$BiometricApproval" || it.name.startsWith("flag.$BiometricApproval.") || it.name.startsWith("flag.biometric_lost.") }.forEach { prefs.remove(it) }
+            prefs.asMap().keys.filter { it.name.startsWith("rt.seq.") || it.name.startsWith("text.wallet.") || it.name == "text.$GroupInvitesText" || it.name == "flag.$BiometricApproval" || it.name.startsWith("flag.$BiometricApproval.") || it.name.startsWith("flag.biometric_lost.") || it.name.startsWith("flag.biometric_offered.") }.forEach { prefs.remove(it) }
         }
     }
 
@@ -123,5 +123,11 @@ class AppPreferences(private val store: DataStore<Preferences>) : com.circaso.co
 
         /** The flag that says a wallet approves with biometrics: the personal one keeps its old name. */
         fun biometricFlag(walletId: String?) = if (walletId == null) BiometricApproval else "$BiometricApproval.$walletId"
+
+        /** Set when Circle reports a wallet's biometrics gone, so its row says why it's off (GW8b). */
+        fun biometricLostFlag(walletId: String?) = "biometric_lost.${walletId ?: "personal"}"
+
+        /** The one-time "Approve with your fingerprint?" offer was made for this wallet on this phone. */
+        fun biometricOfferedFlag(walletId: String?) = "biometric_offered.${walletId ?: "personal"}"
     }
 }

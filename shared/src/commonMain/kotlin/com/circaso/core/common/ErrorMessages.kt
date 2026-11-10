@@ -81,6 +81,9 @@ object ErrorMessages {
         "wallet.cancelled" to "Nothing was sent.",
         "wallet.sdk_unavailable" to "Signing isn't available in this build yet.",
         "wallet.sdk_failed" to "Something went wrong while signing. Nothing was sent.",
+        // Turning on fingerprint / Face ID approval (2026-11-10); payments themselves always fall back to the PIN.
+        "wallet.biometrics_unavailable" to "Set up a fingerprint or face unlock in your phone's settings first, then try again.",
+        "wallet.biometrics_locked" to "Too many tries. Unlock your phone with its PIN, then try again.",
         // group wallets (phase 2)
         "wallet.group_wallets_unavailable" to "Group wallets aren't available on this server yet. Nothing was sent.",
         "wallet.group_not_found" to "You're not in this group any more.",

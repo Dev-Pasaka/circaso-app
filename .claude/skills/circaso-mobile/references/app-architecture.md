@@ -291,6 +291,20 @@ signer, admins approve payouts). The treasurer model above stays only for a serv
   screen never opens over another's. iOS: Circle's texts come from `CirclePWLocalizable.strings` and can't name the
   wallet; the app's own screen behind the PIN does (GW12b's approach). `WalletSigner` is unchanged, so swapping in
   Circle Modular Wallets (option B) later stays inside the module.
+- **Biometric approval (2026-11-10).** Circle's own feature, client only (no server call): `WalletSdk.setBiometricsPin`
+  (the PIN once, in Circle's screen) stores a key behind the phone's secure hardware for that Circle user. Circle's
+  switch (`SettingsManagement.isEnableBiometricsPin`) is set **per call** from `SdkSession.biometrics`: on only for a
+  wallet whose `biometric_approval[.<walletId>]` flag is on (and never for a new PIN, `SignPurpose.SetPin`), off
+  otherwise, so Circle never shows its own "Allow biometrics" page after a PIN and the app's switch really turns it
+  off. On: Circle's enter-PIN screen opens with the system prompt over it; cancel, failure or lockout leave its PIN
+  pad underneath ("Use biometrics instead" retries); new fingerprints invalidate the key, Circle drops it and offers
+  "Update biometrics" after the PIN (a Skip there reports lost: `BiometricSignals`). Android keeps the
+  `SettingsManagement` object passed to `init` (the SDK reads it live); iOS re-runs `setConfiguration` when it
+  changes (untested on device). The offer: once per wallet (`biometric_offered.<walletId|personal>`), after wallet
+  creation (personal), GW4 (group), or the first payment approved with the PIN (`PinApprovals` →
+  `BiometricOfferLayer` at the app root, `BiometricOfferRule`). Settings: You › Security › Payments (personal: Turn On,
+  "On" → turn-off sheet, lost state) and group info (per-wallet switch). No new library: `androidx.biometric` comes in
+  only as Circle's own dependency.
 - **Screens**: New Group (GW1–GW1d) → `GroupWalletSetupRoute` (W14 + PIN → W15 → GW4 biometrics → W13 → CH9 → CH2;
   GW5b/GW5c and a cancelled PIN; Try Again resumes without a second PIN) → the chat. Group info (`GroupMoneyRows`,
   GW6–GW8b; locked wallet when the signer left; leaving blocked while the wallet holds money, §11.9; Change PIN is a

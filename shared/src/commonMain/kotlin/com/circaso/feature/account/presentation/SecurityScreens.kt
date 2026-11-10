@@ -33,12 +33,20 @@ import com.circaso.designsystem.theme.CircasoTheme
 import com.circaso.feature.auth.domain.SocialProvider
 
 @Composable
-fun SecurityScreen(viewModel: SecurityViewModel, onBack: () -> Unit, onActivity: () -> Unit, onSendMoney: () -> Unit = {}, payments: @Composable () -> Unit = {}) {
+fun SecurityScreen(
+    viewModel: SecurityViewModel,
+    onBack: () -> Unit,
+    onActivity: () -> Unit,
+    onSendMoney: () -> Unit = {},
+    payments: @Composable () -> Unit = {},
+    /** The Payments section's own sheets (turning biometric approval off), drawn with the screen's other sheets. */
+    paymentsOverlay: @Composable androidx.compose.foundation.layout.BoxScope.() -> Unit = {},
+) {
     val state by viewModel.state.collectAsState()
     SecurityContent(
         state, onBack, onActivity, viewModel::onLink, viewModel::onConfirmRequested, viewModel::onConfirmDismissed,
         viewModel::onDeleteText, viewModel::onConfirmed, onSendMoney = onSendMoney, onDeleteBlockedDismissed = viewModel::onDeleteBlockedDismissed,
-        payments = payments,
+        payments = payments, paymentsOverlay = paymentsOverlay,
     )
 }
 
@@ -56,6 +64,7 @@ fun SecurityContent(
     onSendMoney: () -> Unit = {},
     onDeleteBlockedDismissed: () -> Unit = {},
     payments: @Composable () -> Unit = {},
+    paymentsOverlay: @Composable androidx.compose.foundation.layout.BoxScope.() -> Unit = {},
 ) {
     val c = CircasoTheme.colors
     val t = CircasoTheme.typography
@@ -65,6 +74,7 @@ fun SecurityContent(
         topBar = { CircasoNavBar(title = "Account and Security", onBack = onBack) },
         banner = { ConnectionBanner() },
         overlay = {
+            paymentsOverlay()
             val confirm = state.confirm
             ConfirmSheet(
                 visible = confirm == SecurityConfirm.SignOut,

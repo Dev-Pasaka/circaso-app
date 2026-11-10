@@ -12,22 +12,35 @@ import CircleProgrammableWalletSDK
 final class CircleWalletImpl: NSObject, WalletSigner {
     private static let endpoint = "https://enduser-sdk.circle.com/v1/w3s"
     private var configuredAppId: String?
+    private var configuredBiometrics: Bool?
 
     #if canImport(CircleProgrammableWalletSDK)
     var available: Bool { true }
 
-    private func configure(appId: String) throws {
-        if configuredAppId == appId { return }
-        // Biometric PIN on, so Circle's screens can offer Face ID / Touch ID instead of the PIN. Circle refuses that
-        // configuration on a phone with no biometrics set up (and in the Simulator), which would leave the person
-        // with no wallet at all: then it starts with the PIN only, and biometric approval simply isn't offered.
-        do {
+    /// UNTESTED on iOS (2026-11-10; written without Xcode, mirrors the Android module, verify on a device).
+    /// Circle's "biometrics instead of PIN" switch follows the wallet: on only for a wallet whose biometric approval
+    /// the person turned on (`session.biometrics`) and for the set-up itself. On, Circle's PIN screen asks Face ID /
+    /// Touch ID first and keeps its PIN pad if that fails or is cancelled. Off, there is no prompt and none of Circle's
+    /// own "Allow biometrics" pages after a PIN. Circle refuses it on a phone with no biometrics set up (and in the
+    /// Simulator): then it stays off and the PIN approves.
+    private func configure(appId: String, biometrics: Bool) throws {
+        if configuredAppId == appId && configuredBiometrics == biometrics { return }
+        if biometrics {
+            do {
+                try WalletSdk.shared.setConfiguration(
+                    WalletSdk.Configuration(endPoint: Self.endpoint, appId: appId, settingsManagement: WalletSdk.SettingsManagement(enableBiometricsPin: true))
+                )
+                configuredBiometrics = true
+            } catch {
+                print("CircasoNet: wallet: biometric PIN unavailable (\(error.localizedDescription)); PIN only")
+                try WalletSdk.shared.setConfiguration(WalletSdk.Configuration(endPoint: Self.endpoint, appId: appId))
+                configuredBiometrics = false
+            }
+        } else {
             try WalletSdk.shared.setConfiguration(
-                WalletSdk.Configuration(endPoint: Self.endpoint, appId: appId, settingsManagement: WalletSdk.SettingsManagement(enableBiometricsPin: true))
+                WalletSdk.Configuration(endPoint: Self.endpoint, appId: appId, settingsManagement: WalletSdk.SettingsManagement(enableBiometricsPin: false))
             )
-        } catch {
-            print("CircasoNet: wallet: biometric PIN unavailable (\(error.localizedDescription)); PIN only")
-            try WalletSdk.shared.setConfiguration(WalletSdk.Configuration(endPoint: Self.endpoint, appId: appId))
+            configuredBiometrics = false
         }
         WalletSdk.shared.setLayoutProvider(CircasoLayout())
         configuredAppId = appId
@@ -36,15 +49,22 @@ final class CircleWalletImpl: NSObject, WalletSigner {
     /// Face ID for payments: the person confirms with the PIN once; Circle keeps the key in the Secure Enclave.
     func enableBiometrics(session: SdkSession) async throws -> SignOutcome {
         do {
-            try configure(appId: session.appId)
+            try configure(appId: session.appId, biometrics: true)
         } catch {
             return SignOutcomeFailed(code: "init_failed", message: error.localizedDescription)
         }
+        if configuredBiometrics != true { return SignOutcomeFailed(code: "deviceNotSupportBiometrics", message: "Face ID isn't set up on this phone.") }
         return await withCheckedContinuation { continuation in
             DispatchQueue.main.async {
                 WalletSdk.shared.setBiometricsPin(userToken: session.userToken, encryptionKey: session.encryptionKey) { response in
                     switch response.result {
                     case .success:
+                        // Skip / "Don't ask me again" on Circle's page: the person's choice, nothing was set up.
+                        if let warning = response.onWarning,
+                           warning.warningType == .biometricsUserSkip || warning.warningType == .biometricsUserDisableForPin {
+                            continuation.resume(returning: SignOutcomeCancelled.shared)
+                            return
+                        }
                         continuation.resume(returning: SignOutcomeDone.shared)
                     case .failure(let error):
                         response.onErrorController?.dismiss(animated: true)
@@ -59,27 +79,29 @@ final class CircleWalletImpl: NSObject, WalletSigner {
         }
     }
 
-    private static let biometricsGone: Set<String> = [
-        "biometricsKeyPermanentlyInvalidated", "biometricsUserDisableForPin", "biometricsSettingNotEnabled",
-        "deviceNotSupportBiometrics", "biometricsUserNotAllowPermission",
-    ]
+    /// Face ID re-enrolled, turned off or not allowed for this wallet: it falls back to its PIN, so stop showing it as on.
+    private static func noteBiometrics(_ code: String, _ session: SdkSession) {
+        if BiometricSignals.shared.lost(code: code, usedBiometrics: session.biometrics) {
+            WalletSignerBridge.shared.reportBiometricsLost(walletId: session.subject.walletId)
+        }
+    }
 
     func execute(session: SdkSession, challengeId: String) async throws -> SignOutcome {
         do {
-            try configure(appId: session.appId)
+            try configure(appId: session.appId, biometrics: session.biometrics)
         } catch {
             return SignOutcomeFailed(code: "init_failed", message: error.localizedDescription)
         }
         return await withCheckedContinuation { continuation in
             DispatchQueue.main.async {
                 WalletSdk.shared.execute(userToken: session.userToken, encryptionKey: session.encryptionKey, challengeIds: [challengeId]) { response in
+                    if let warning = response.onWarning { Self.noteBiometrics("\(warning.warningType)", session) }
                     switch response.result {
                     case .success:
                         continuation.resume(returning: SignOutcomeDone.shared)
                     case .failure(let error):
                         response.onErrorController?.dismiss(animated: true)
-                        // Face ID re-enrolled, turned off or not allowed: approval falls back to the PIN, so stop showing it as on.
-                        if Self.biometricsGone.contains("\(error.errorCode)") { WalletSignerBridge.shared.reportBiometricsLost(walletId: session.subject.walletId) }
+                        Self.noteBiometrics("\(error.errorCode)", session)
                         if error.errorCode == .userCanceled {
                             continuation.resume(returning: SignOutcomeCancelled.shared)
                         } else {

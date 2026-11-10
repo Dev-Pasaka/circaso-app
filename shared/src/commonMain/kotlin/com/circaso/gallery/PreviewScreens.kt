@@ -10,7 +10,9 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.layout.statusBars
+import com.circaso.feature.account.presentation.BiometricTurnOffSheet
 import com.circaso.feature.calls.presentation.CallOverlay
+import com.circaso.feature.wallet.presentation.BiometricOfferLayer
 import androidx.compose.ui.unit.dp
 import com.circaso.feature.chama.domain.Approval
 import com.circaso.feature.chama.domain.Chama
@@ -314,19 +316,28 @@ fun PreviewScreens(name: String) {
             ),
             {}, {}, {}, {}, {}, {}, {},
         )
-        "security-biometric-off", "security-biometric-busy", "security-biometric-on", "security-biometric-error", "security-biometric-offline" -> {
+        "security-biometric-off", "security-biometric-busy", "security-biometric-on", "security-biometric-error", "security-biometric-offline",
+        "security-biometric-lost", "security-biometric-lost-offline", "security-biometric-turn-off" -> {
             val bio = com.circaso.feature.account.presentation.BiometricApprovalState(
                 hasWallet = true,
-                enabled = name.endsWith("-on"),
+                enabled = name.endsWith("-on") || name.endsWith("-turn-off"),
                 busy = name.endsWith("-busy"),
                 online = !name.endsWith("-offline"),
                 error = if (name.endsWith("-error")) "Something went wrong on our side. Try again. (Ref: 7F3A)" else null,
+                lost = name.contains("-lost"),
+                confirmOff = name.endsWith("-turn-off"),
             )
             SecurityContent(
                 SecurityUiState(overview = SecurityOverview("+254 7•• ••• 678", listOf(LinkedProvider("google", "a•••@gmail.com", "2026-10-01T00:00:00Z")), ActiveDevice("Pixel 8", "2026-10-12T00:00:00Z"), "VERIFIED")),
                 {}, {}, {}, {}, {}, {}, {},
                 payments = { com.circaso.feature.account.presentation.BiometricApprovalSection(bio, {}) },
+                paymentsOverlay = { BiometricTurnOffSheet(bio, {}, {}) },
             )
+        }
+        // The one-time offer after a PIN payment (2026-11-10), personal and a group wallet's.
+        "biometric-offer-after-pay", "biometric-offer-after-pay-group" -> androidx.compose.foundation.layout.Box(androidx.compose.ui.Modifier.fillMaxSize()) {
+            val subject = if (name.endsWith("-group")) com.circaso.feature.wallet.domain.SignSubject.group("gw-1", "Kilimani Chama") else com.circaso.feature.wallet.domain.SignSubject.Personal
+            BiometricOfferLayer(com.circaso.feature.wallet.presentation.BiometricOfferState(subject = subject), {}, {})
         }
         // The metallic money cards in each state (C3–C6), and the coin icons on them.
         "money-cards" -> androidx.compose.foundation.layout.Column(

@@ -153,4 +153,52 @@ class BiometricApprovalTest {
         assertFalse(vm.state.value.hasWallet)
         job.cancel()
     }
+
+    @Test fun turningItOffAsksFirstThenGoesBackToThePinEvenOffline() = runTest(dispatcher) {
+        val job = watch()
+        prefs.setWalletBiometrics(null, true)
+        monitor.osStatus.value = ConnectionStatus.Offline
+        vm.onTurnOffAsked()
+        assertTrue(vm.state.value.confirmOff)
+        assertTrue(vm.state.value.enabled, "nothing changes until the person confirms")
+        vm.onTurnOff()
+        assertFalse(vm.state.value.confirmOff)
+        assertFalse(vm.state.value.enabled)
+        assertFalse(prefs.walletBiometrics(null).first())
+        assertEquals(0, calls, "turning off needs no Circle call")
+        job.cancel()
+    }
+
+    @Test fun keepingItOnChangesNothing() = runTest(dispatcher) {
+        val job = watch()
+        prefs.setWalletBiometrics(null, true)
+        vm.onTurnOffAsked()
+        vm.onTurnOffDismissed()
+        assertFalse(vm.state.value.confirmOff)
+        assertTrue(vm.state.value.enabled)
+        job.cancel()
+    }
+
+    @Test fun lostSaysSoAndTurningOnAgainClearsIt() = runTest(dispatcher) {
+        val job = watch()
+        prefs.setFlag(AppPreferences.biometricLostFlag(null), true)
+        assertTrue(vm.state.value.lost)
+        vm.onEnable()
+        assertTrue(vm.state.value.enabled)
+        assertFalse(vm.state.value.lost)
+        assertFalse(prefs.flag(AppPreferences.biometricLostFlag(null)).first())
+        assertTrue(prefs.flag(AppPreferences.biometricOfferedFlag(null)).first(), "on: no offer after the next payment")
+        job.cancel()
+    }
+
+    @Test fun answeringTheWalletOfferUsesUpTheOneOffer() = runTest(dispatcher) {
+        vm.onOffered()
+        assertTrue(prefs.flag(AppPreferences.biometricOfferedFlag(null)).first())
+    }
+
+    @Test fun signingOutForgetsTheOfferToo() = runTest(dispatcher) {
+        prefs.setFlag(AppPreferences.biometricOfferedFlag("gw-1"), true)
+        prefs.clear()
+        assertFalse(prefs.flag(AppPreferences.biometricOfferedFlag("gw-1")).first())
+    }
 }
