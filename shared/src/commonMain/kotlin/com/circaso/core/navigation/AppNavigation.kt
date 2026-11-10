@@ -44,8 +44,6 @@ import com.circaso.feature.auth.presentation.WelcomeScreen
 import com.circaso.designsystem.components.AshaLauncher
 import com.circaso.designsystem.components.LocalAshaLauncher
 import com.circaso.feature.account.presentation.BiometricApprovalSection
-import com.circaso.feature.account.presentation.BiometricTurnOffSheet
-import com.circaso.feature.wallet.presentation.BiometricOfferLayer
 import com.circaso.feature.account.presentation.SecurityLogScreen
 import com.circaso.feature.account.presentation.SecurityScreen
 import com.circaso.core.platform.LiveMicrophone
@@ -446,8 +444,7 @@ fun AppNavigation(forceUpdate: Boolean, home: @Composable () -> Unit) {
             entry<SecurityRoute> {
                 SecurityScreen(
                     koinViewModel(), onBack = ::pop, onActivity = { backStack.add(SecurityLogRoute) }, onSendMoney = { backStack.add(PayRoute()) },
-                    payments = { BiometricApprovalSection(koinViewModel<com.circaso.feature.account.presentation.BiometricApprovalViewModel>()) },
-                    paymentsOverlay = { BiometricTurnOffSheet(koinViewModel<com.circaso.feature.account.presentation.BiometricApprovalViewModel>()) },
+                    payments = { BiometricApprovalSection(koinViewModel()) },
                 )
             }
             entry<NotificationsRoute> { NotificationsScreen(koinViewModel(), onBack = ::pop, onOpenTransfer = { id -> backStack.add(TransferRoute(id)) }) }
@@ -663,17 +660,6 @@ fun AppNavigation(forceUpdate: Boolean, home: @Composable () -> Unit) {
     if (state == AuthState.Active) {
         val scope = androidx.compose.runtime.rememberCoroutineScope()
         ShareLinkLayer(shareLinks) { text: String -> scope.launch { toast.show(text) } }
-        // After a payment approved with the PIN, once per wallet: approve with fingerprint / Face ID next time?
-        // It waits while a call is on screen or ringing, and while the pay screen (with its receipt) is open.
-        val callForOffer by calls.state.collectAsState()
-        val callUp = com.circaso.feature.calls.presentation.ashaCallState(callForOffer).let {
-            it == com.circaso.feature.assistant.presentation.AshaCallState.OnScreen || it == com.circaso.feature.assistant.presentation.AshaCallState.Ringing
-        }
-        BiometricOfferLayer(
-            koinViewModel<com.circaso.feature.wallet.presentation.BiometricOfferViewModel>(),
-            hold = callUp || backStack.lastOrNull() is PayRoute,
-            onTurnedOn = { text -> scope.launch { toast.show(text) } },
-        )
     }
     ToastHost(toast, Modifier.align(Alignment.TopCenter).statusBarsPadding().padding(top = 56.dp))
     // Calls (designs H1–H5) live above every screen: one can ring anywhere, and it keeps going while money is sent from it.

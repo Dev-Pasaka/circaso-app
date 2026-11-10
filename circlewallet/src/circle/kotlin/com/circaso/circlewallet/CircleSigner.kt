@@ -9,7 +9,6 @@ import circle.programmablewallet.sdk.api.Callback
 import circle.programmablewallet.sdk.api.ExecuteWarning
 import circle.programmablewallet.sdk.presentation.SecurityQuestion
 import circle.programmablewallet.sdk.result.ExecuteResult
-import com.circaso.feature.wallet.domain.BiometricSignals
 import com.circaso.feature.wallet.domain.SdkSession
 import com.circaso.feature.wallet.domain.SignOutcome
 import com.circaso.feature.wallet.domain.WalletSigner
@@ -30,21 +29,15 @@ private class CircleWalletSigner(private val context: Context, private val curre
     override val available = true
     private var configuredAppId: String? = null
 
-    /**
-     * Circle's "biometrics instead of PIN" switch. The SDK keeps the very object passed to `init` and reads
-     * `isEnableBiometricsPin` live at every PIN screen, so it is set per call (see [biometricsFor]):
-     * - on: Circle's enter-PIN screen opens with the system fingerprint / face prompt over it when this wallet has a
-     *   biometric key; cancel, failure or lockout leave its PIN pad underneath ("Use biometrics instead" retries). When
-     *   new fingerprints invalidate the key, Circle drops it and, after the PIN, offers to set it up again.
-     * - off: no prompt, and none of Circle's own "Allow biometrics" pages after a PIN; the wallet is PIN only.
-     * Init starts with it off, so a phone with no biometrics enrolled (where Circle refuses it at init) still gets
-     * its wallet.
-     */
-    private val settings = SettingsManagement(false)
-
     private fun configure(appId: String) {
         if (configuredAppId == appId) return
-        WalletSdk.init(context, WalletSdk.Configuration(CircleWallet.Endpoint, appId, settings))
+        // Biometric PIN on: once the person enables it, Circle's screens offer fingerprint / Face ID instead of the PIN.
+        // A phone Circle won't do that on must still get its wallet, so it then starts with the PIN only.
+        try {
+            WalletSdk.init(context, WalletSdk.Configuration(CircleWallet.Endpoint, appId, SettingsManagement(true)))
+        } catch (e: Throwable) {
+            WalletSdk.init(context, WalletSdk.Configuration(CircleWallet.Endpoint, appId))
+        }
         WalletSdk.setSecurityQuestions(
             listOf(
                 SecurityQuestion("What was the name of your first school?"),
@@ -74,8 +67,6 @@ private class CircleWalletSigner(private val context: Context, private val curre
         } catch (e: Throwable) {
             return@withContext SignOutcome.Failed("init_failed", e.message ?: "The PIN screen could not start.")
         }
-        // Circle's set-up refuses to run with the switch off (biometricsSettingNotEnabled).
-        settings.isEnableBiometricsPin = true
         suspendCancellableCoroutine<SignOutcome> { continuation ->
             WalletSdk.setBiometricsPin(
                 activity, session.userToken, session.encryptionKey,
@@ -87,13 +78,8 @@ private class CircleWalletSigner(private val context: Context, private val curre
                         if (continuation.isActive) continuation.resume(outcome)
                         return false
                     }
-                    // In the set-up every warning means it wasn't set up: Skip and "Don't ask me again" on Circle's
-                    // page are the person's choice (no error shown); a lockout or sensor error is said in the app.
                     override fun onWarning(warning: ExecuteWarning, result: ExecuteResult?): Boolean {
-                        val outcome = when (warning) {
-                            ExecuteWarning.biometricsUserSkip, ExecuteWarning.biometricsUserDisableForPin -> SignOutcome.Cancelled
-                            else -> SignOutcome.Failed(warning.name, warning.warningString ?: "Biometrics weren't turned on.")
-                        }
+                        val outcome = if (result != null) SignOutcome.Done else SignOutcome.Failed(warning.name, warning.warningString ?: "Biometrics weren't turned on.")
                         if (continuation.isActive) continuation.resume(outcome)
                         return false
                     }
@@ -110,24 +96,22 @@ private class CircleWalletSigner(private val context: Context, private val curre
         } catch (e: Throwable) {
             return@withContext SignOutcome.Failed("init_failed", e.message ?: "The signing screen could not start.")
         }
-        settings.isEnableBiometricsPin = session.biometrics
         suspendCancellableCoroutine<SignOutcome> { continuation ->
             WalletSdk.execute(
                 activity, session.userToken, session.encryptionKey, arrayOf(challengeId),
                 object : Callback<ExecuteResult> {
                     override fun onResult(result: ExecuteResult) { if (continuation.isActive) continuation.resume(SignOutcome.Done) }
                     override fun onError(error: Throwable): Boolean {
-                        noteBiometrics((error as? ApiError)?.code?.name, session)
+                        noteBiometrics((error as? ApiError)?.code?.name, session.subject.walletId)
                         val outcome = if (error is ApiError && error.code == ApiError.ErrorCode.userCanceled) SignOutcome.Cancelled
                         else SignOutcome.Failed((error as? ApiError)?.code?.name ?: "sdk", error.message ?: "Signing failed.")
                         if (continuation.isActive) continuation.resume(outcome)
                         return false // the SDK closes its screen
                     }
-                    // A biometrics warning comes from Circle's "allow / update biometrics" page after the PIN, with the
-                    // signed result: only a result means the challenge was signed. Without one it is a failure the
-                    // person can retry with the PIN.
+                    // A biometrics warning (skipped, locked out) can come with the signed result or without one: only a
+                    // result means the challenge was signed. Without one it is a failure the person can retry with the PIN.
                     override fun onWarning(warning: ExecuteWarning, result: ExecuteResult?): Boolean {
-                        noteBiometrics(warning.name, session)
+                        noteBiometrics(warning.name, session.subject.walletId)
                         val outcome = if (result != null) SignOutcome.Done else SignOutcome.Failed(warning.name, warning.warningString ?: "Signing didn't finish.")
                         if (continuation.isActive) continuation.resume(outcome)
                         return false
@@ -137,8 +121,18 @@ private class CircleWalletSigner(private val context: Context, private val curre
         }
     }
 
-    /** Biometric approval stopped working for the wallet (Circle user) this call was for only: the others keep theirs (GW8b). */
-    private fun noteBiometrics(code: String?, session: SdkSession) {
-        if (BiometricSignals.lost(code, usedBiometrics = session.biometrics)) WalletSignerBridge.reportBiometricsLost(session.subject.walletId)
+    /**
+     * Lockouts pass on their own; these mean the biometric key is gone or switched off until it's set up again, for
+     * the wallet (Circle user) this call was for only: the others keep theirs (GW8b).
+     */
+    private fun noteBiometrics(code: String?, walletId: String?) {
+        if (code in BiometricsGone) WalletSignerBridge.reportBiometricsLost(walletId)
+    }
+
+    private companion object {
+        val BiometricsGone = setOf(
+            "biometricsKeyPermanentlyInvalidated", "biometricsUserDisableForPin", "biometricsSettingNotEnabled",
+            "deviceNotSupportBiometrics", "biometricsUserNotAllowPermission",
+        )
     }
 }
