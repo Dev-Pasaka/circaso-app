@@ -218,7 +218,12 @@ private fun CallSurface(
                 celebrations?.receive(celebrationOf(mine, call.people, myUserId, s.wallet?.fiat ?: fiat, call.myPhotoUrl), confirmed = false, visible = true)
             }
             val to = if (call.group) chama?.goal?.name ?: call.title else s.payee?.displayName?.substringBefore(' ') ?: call.title
-            landed = (s.fiatText ?: s.usdcText)?.let { "Your $it is on its way to $to" } ?: "On its way to $to"
+            // 1:1 (Pasaka, 2026-11-10): the sender sees the same splash the group call gives, "You sent Mum KES 500",
+            // with the coin, the moment the PIN is done; the line under it still says it's on its way until it lands.
+            if (!call.group) sentCelebration(r.transferId, r.amount.asset, r.amount.amountMinor, s.fiatText, to, myUserId, call.myPhotoUrl)?.let {
+                celebrations?.receive(it, confirmed = true, visible = true)
+            }
+            landed =(s.fiatText ?: s.usdcText)?.let { "Your $it is on its way to $to" } ?: "On its way to $to"
         } else if (s.requested != null) {
             landed = "Asked the admins of ${s.walletName}. The request is in the group chat."
         }

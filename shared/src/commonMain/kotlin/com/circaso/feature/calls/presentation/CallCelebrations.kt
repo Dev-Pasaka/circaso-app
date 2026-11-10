@@ -81,6 +81,18 @@ fun receivedCelebration(p: Message.Payment, people: List<CallPerson>, fiat: Fiat
 }
 
 /**
+ * "You sent Mum KES 500" on the sender's 1:1 call, the moment the payment is signed: the amount as the money card said
+ * it ([fiatText], the person's money) or the coin's own units, and [to]'s first name. Null without a transfer.
+ */
+fun sentCelebration(transferId: String, asset: String, amountMinor: String, fiatText: String?, to: String, myUserId: String?, myPhotoUrl: String?): Celebration? {
+    if (transferId.isBlank()) return null
+    val coin = asset.uppercase().ifBlank { "USDC" }
+    val amount = fiatText ?: MinorUnits.coinText(amountMinor, coin)
+    val name = to.firstName().ifBlank { "them" }
+    return Celebration(transferId, You, amount, coin, myUserId, myPhotoUrl, line = "You sent $name $amount")
+}
+
+/**
  * The words for [c] on this call. The name is the one the call's own people list shows (the first name, as on the
  * tiles); someone not on the call keeps the server's name; my own is "You". A dollar coin is said in the person's
  * money ("KES 1,000", the way the goal is), any other coin in its own units ("0.01 ETH"), as it was paid.
