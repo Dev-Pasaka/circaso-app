@@ -14,6 +14,10 @@ import androidx.compose.animation.scaleOut
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.ui.graphics.Color
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.heightIn
@@ -31,7 +35,6 @@ import androidx.compose.ui.semantics.onClick
 import androidx.compose.ui.semantics.role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import com.circaso.designsystem.chrome.glass
 import com.circaso.designsystem.motion.pressable
 import com.circaso.designsystem.theme.CircasoMotion
 import com.circaso.designsystem.theme.CircasoShapes
@@ -52,9 +55,12 @@ fun AshaSuggestion(visible: Boolean, onSummon: () -> Unit, modifier: Modifier = 
     val reduce = CircasoTheme.reduceMotion
     val origin = TransformOrigin(0f, 1f)
     Box(
-        modifier.layout { measurable, constraints ->
+        // Inset from the field's start and lifted clear of its top edge, so it reads as its own small card above the
+        // field rather than something resting on the field's border (Pasaka, 2026-11-10).
+        modifier.padding(start = CircasoSpacing.s3).layout { measurable, constraints ->
             val placeable = measurable.measure(constraints.copy(minHeight = 0))
-            layout(placeable.width, 0) { placeable.place(0, -placeable.height) }
+            val gap = SuggestionGap.roundToPx()
+            layout(placeable.width, 0) { placeable.place(0, -placeable.height - gap) }
         },
     ) {
         AnimatedVisibility(
@@ -82,7 +88,12 @@ fun AshaSuggestion(visible: Boolean, onSummon: () -> Unit, modifier: Modifier = 
                 contentAlignment = Alignment.TopStart,
             ) {
                 Row(
-                    Modifier.heightIn(min = CircasoSizes.controlSm).glass(CircasoShapes.pill, floating = true)
+                    // A solid raised card with a hairline in the same family as its fill and a soft shadow: over the
+                    // composer's glass a glass pill blended in and its edge didn't match its fill.
+                    Modifier.heightIn(min = CircasoSizes.controlSm)
+                        .shadow(SuggestionShadow, CircasoShapes.pill, ambientColor = shadowTint(c.isDark), spotColor = shadowTint(c.isDark))
+                        .background(c.surfaceRaised, CircasoShapes.pill)
+                        .border(1.dp, c.separator, CircasoShapes.pill)
                         .clip(CircasoShapes.pill).pressable(role = Role.Button, onClick = onSummon)
                         .padding(start = CircasoSpacing.s1, end = CircasoSpacing.s3),
                     horizontalArrangement = Arrangement.spacedBy(CircasoSpacing.s2),
@@ -96,3 +107,8 @@ fun AshaSuggestion(visible: Boolean, onSummon: () -> Unit, modifier: Modifier = 
         }
     }
 }
+
+/** The room between the pill and the top of the field it belongs to. */
+private val SuggestionGap = 8.dp
+private val SuggestionShadow = 6.dp
+private fun shadowTint(dark: Boolean) = Color.Black.copy(alpha = if (dark) 0.5f else 0.12f)

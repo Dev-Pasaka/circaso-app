@@ -103,7 +103,7 @@ fun CircasoTextField(
                     ashaFragment(value)?.let { onValueChange(takeAshaFragment(value, it).text) }
                     asha?.open()
                 },
-                Modifier.padding(start = CircasoSpacing.s2),
+                Modifier,
             )
         }
         if (error != null) {
