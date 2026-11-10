@@ -100,7 +100,7 @@ import kotlinx.coroutines.delay
  * Calls are drawn on black in every theme (designs H1–H5), like the phone's own call screen: a video picture and white
  * controls read the same in light and dark. These are the call surface's own colours, not theme tokens.
  */
-private object CallColors {
+internal object CallColors {
     val Bg = Color(0xFF000000)
     val Ink = Color.White
     val InkSoft = Color.White.copy(alpha = 0.72f)
@@ -160,6 +160,8 @@ fun BoxScope.CallOverlay(
     /** The contributions landing on a group call, held for the whole call by the caller (it outlives minimising). */
     celebrations: CallCelebrationsModel? = null,
     myUserId: String? = null,
+    /** The gallery's capture of the More sheet. */
+    moreAtStart: Boolean = false,
 ) {
     val still = CircasoTheme.reduceMotion
     // Back on a full-screen call minimises it (never declines or hangs up); the screens under it stay where they were.
@@ -173,7 +175,7 @@ fun BoxScope.CallOverlay(
         enter = if (still) fadeIn(tween(CircasoMotion.QuickMs)) else fadeIn(tween(CircasoMotion.BaseMs)) + slideInVertically(tween(CircasoMotion.BaseMs)) { it / 6 },
         exit = if (still) fadeOut(tween(CircasoMotion.QuickMs)) else fadeOut(tween(CircasoMotion.QuickMs)) + slideOutVertically(tween(CircasoMotion.QuickMs)) { it / 6 },
     ) {
-        if (call != null) CallSurface(call, actions, money, chama, fiat, celebrations, myUserId, stage)
+        if (call != null) CallSurface(call, actions, money, chama, fiat, celebrations, myUserId, stage, moreAtStart)
     }
     AnimatedVisibility(call != null && call.minimised, Modifier.align(Alignment.TopCenter), enter = fadeIn(tween(CircasoMotion.BaseMs)), exit = fadeOut(tween(CircasoMotion.QuickMs))) {
         if (call != null) CallPill(call) { actions.onMinimise(false) }
@@ -190,10 +192,14 @@ private fun CallSurface(
     celebrations: CallCelebrationsModel?,
     myUserId: String?,
     stage: CallStageState,
+    moreAtStart: Boolean = false,
 ) {
     // The money sheet: the call chat's composer over the call (2026-11-09; it replaced H5's form and leaving for Pay).
     var moneyOpen by remember { mutableStateOf(false) }
     val openMoney: (() -> Unit)? = actions.moneySheet?.let { { moneyOpen = true } }
+    // The More sheet: everything that isn't money, camera, mic or End (Pasaka, 2026-11-10).
+    var moreOpen by remember { mutableStateOf(moreAtStart) }
+    val more = MoreState(moreOpen) { moreOpen = !moreOpen }
     // After the PIN: "Your KES 1,000 is on its way to Holiday Fund" on the call for a few seconds, then the goal moves.
     var landed by remember { mutableStateOf<String?>(null) }
     // Keyed on each landing, so a second contribution of the same amount keeps it up its full time.
@@ -246,15 +252,15 @@ private fun CallSurface(
                 when (l) {
                     0 -> Incoming(call, actions)
                     1 -> GroupCall(
-                        call, actions, stage, chama, fiat, landed,
+                        call, actions, stage, chama, fiat, landed, more,
                         onContribute = if (chama != null) openMoney else null,
                         celebrations = celebrations?.state ?: CelebrationState(),
                         onLanded = { id -> celebrations?.landed(id) },
                         onFinished = { id -> celebrations?.finished(id) },
                     )
                     // "On its way" first, then the payment's own line once its card is in the chat (H2/H3).
-                    2 -> VideoCall(call, actions, stage, landed ?: money, openMoney)
-                    else -> VoiceCall(call, actions, landed ?: money, openMoney)
+                    2 -> VideoCall(call, actions, stage, landed ?: money, openMoney, more)
+                    else -> VoiceCall(call, actions, landed ?: money, openMoney, more)
                 }
             }
         }
@@ -266,8 +272,12 @@ private fun CallSurface(
                 sheet(moneyOpen && call.phase != CallPhase.Incoming && call.phase != CallPhase.Ended, { moneyOpen = false }, onPaid)
             }
         }
+        CallMoreSheet(moreOpen && call.phase != CallPhase.Incoming && call.phase != CallPhase.Ended, call, actions) { moreOpen = false }
     }
 }
+
+/** Whether the More sheet is open, and its button. */
+internal class MoreState(val open: Boolean, val onToggle: () -> Unit)
 
 /** How long "on its way" stays on the call. */
 private const val LandedMillis = 4_000L
@@ -287,8 +297,8 @@ private fun BoxScope.Incoming(call: CallUi, actions: CallActions) {
         BasicText(if (call.group) (call.caller?.substringBefore(' ')?.let { "$it is calling the group" } ?: "Group call") else "is calling you…", style = t.body.copy(color = CallColors.InkSoft))
         Spacer(Modifier.weight(1f))
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
-            ControlButton(CircasoIcon.Chat, "Message", "Reply with a message", actions.onMessage)
-            if (actions.onSendMoneyInstead != null) ControlButton(CircasoIcon.Money, "Send money", "Send money instead", actions.onSendMoneyInstead)
+            ControlButton(CircasoIcon.Chat, "Message", "Reply with a message", actions.onMessage, toggle = false)
+            if (actions.onSendMoneyInstead != null) ControlButton(CircasoIcon.Money, "Send money", "Send money instead", actions.onSendMoneyInstead, toggle = false)
         }
         Spacer(Modifier.height(CircasoSpacing.s6))
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
@@ -300,21 +310,11 @@ private fun BoxScope.Incoming(call: CallUi, actions: CallActions) {
 
 /** Design H2. */
 @Composable
-private fun VoiceCall(call: CallUi, actions: CallActions, money: String?, onSendMoney: (() -> Unit)?) {
+private fun VoiceCall(call: CallUi, actions: CallActions, money: String?, onSendMoney: (() -> Unit)?, more: MoreState) {
     val t = CircasoTheme.typography
     val short = com.circaso.designsystem.adaptive.LocalWindowLayout.current.short
     val controls: @Composable () -> Unit = {
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
-            ControlButton(if (call.mic) CircasoIcon.Mic else CircasoIcon.MicOff, "Mute", if (call.mic) "Mute" else "Unmute", actions.onMute, on = !call.mic)
-            ControlButton(CircasoIcon.Speaker, "Speaker", "Speaker", actions.onSpeaker, on = call.speaker)
-            ControlButton(CircasoIcon.Video, "Video", "Video", actions.onCamera, on = call.camera)
-        }
-        Spacer(Modifier.height(CircasoSpacing.s5))
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
-            if (onSendMoney != null) ControlButton(CircasoIcon.Money, "Send money", "Send money", onSendMoney)
-            actions.onShareScreen?.let { ShareScreenButton(call, it, labelled = true) }
-            ControlButton(CircasoIcon.Phone, "End", "End call", actions.onEnd, tint = Tint.End)
-        }
+        CallControlBar(call, actions, onSendMoney, "Send money", voice = true, moreOpen = more.open, onMore = more.onToggle, modifier = Modifier.fillMaxWidth())
     }
     // Framed like every screen: the controls never spread across a tablet or a phone on its side.
     Column(Modifier.fillMaxSize().readableWidth(if (short) com.circaso.designsystem.adaptive.WindowLayout.WideContentWidth else com.circaso.designsystem.adaptive.WindowLayout.ReadableWidth).windowInsetsPadding(WindowInsets.safeDrawing).padding(horizontal = CircasoSpacing.s6, vertical = CircasoSpacing.s4), horizontalAlignment = Alignment.CenterHorizontally) {
@@ -358,7 +358,7 @@ private fun VoiceCall(call: CallUi, actions: CallActions, money: String?, onSend
  * Only this phone's view changes.
  */
 @Composable
-private fun BoxScope.VideoCall(call: CallUi, actions: CallActions, stage: CallStageState, money: String?, onSendMoney: (() -> Unit)?) {
+private fun BoxScope.VideoCall(call: CallUi, actions: CallActions, stage: CallStageState, money: String?, onSendMoney: (() -> Unit)?, more: MoreState) {
     val t = CircasoTheme.typography
     val them = call.people.firstOrNull { it.joined }
     // My picture: the camera, or the screen I'm sharing (drawn as a placeholder, not a mirror of itself).
@@ -377,25 +377,8 @@ private fun BoxScope.VideoCall(call: CallUi, actions: CallActions, stage: CallSt
         }
         Spacer(Modifier.weight(1f))
         money?.let { MoneyNote(it, Modifier.align(Alignment.CenterHorizontally)); Spacer(Modifier.height(CircasoSpacing.s3)) }
-        // A compact glass bar, centred: on a tablet or a phone on its side it keeps a hand's width (FaceTime). With six
-        // controls on a narrow phone the buttons step down a little (never under the 44 dp touch target) so End fits.
-        androidx.compose.foundation.layout.BoxWithConstraints(Modifier.readableWidth(VideoBarWidth)) {
-            val count = 4 + (if (actions.onShareScreen != null) 1 else 0) + (if (onSendMoney != null) 1 else 0)
-            val room = (maxWidth - CircasoSpacing.s3 * 2) / count
-            val button = if (room >= BarButton) null else maxOf(room, CircasoSizes.controlMd)
-            Row(
-                Modifier.fillMaxWidth().clip(CircasoShapes.pill).background(CallColors.Panel).padding(horizontal = CircasoSpacing.s3, vertical = CircasoSpacing.s2),
-                horizontalArrangement = Arrangement.SpaceEvenly, verticalAlignment = Alignment.CenterVertically,
-            ) {
-                // The camera has nothing to flip while the screen has the video track.
-                ControlButton(CircasoIcon.FlipCamera, null, "Flip camera", actions.onFlip, enabled = call.camera && !call.screen, size = button)
-                ControlButton(if (call.mic) CircasoIcon.Mic else CircasoIcon.MicOff, null, if (call.mic) "Mute" else "Unmute", actions.onMute, on = !call.mic, size = button)
-                ControlButton(if (call.camera) CircasoIcon.Video else CircasoIcon.VideoOff, null, if (call.camera) "Turn camera off" else "Turn camera on", actions.onCamera, on = !call.camera, size = button)
-                actions.onShareScreen?.let { ShareScreenButton(call, it, size = button) }
-                if (onSendMoney != null) ControlButton(CircasoIcon.Money, null, "Send money", onSendMoney, size = button)
-                ControlButton(CircasoIcon.Phone, null, "End call", actions.onEnd, tint = Tint.End, size = button)
-            }
-        }
+        // The glass bar, centred: money, camera, mic, More, End; the rest is on the More sheet.
+        CallControlBar(call, actions, onSendMoney, "Send money", voice = false, moreOpen = more.open, onMore = more.onToggle, modifier = Modifier.align(Alignment.CenterHorizontally))
     }
 }
 
@@ -539,15 +522,6 @@ private fun ScreenPlaceholder() {
     }
 }
 
-/** Share screen on the call's controls: white while sharing, like every control that is on. */
-@Composable
-private fun ShareScreenButton(call: CallUi, onClick: () -> Unit, labelled: Boolean = false, size: androidx.compose.ui.unit.Dp? = null) {
-    ControlButton(
-        CircasoIcon.ScreenShare, if (labelled) (if (call.screen) "Stop sharing" else "Share screen") else null,
-        if (call.screen) "Stop sharing your screen" else "Share your screen", onClick, on = call.screen, size = size,
-    )
-}
-
 /**
  * Who is sharing a screen: "You're sharing your screen · Stop" on the sharer's phone, "Amina is sharing their screen"
  * on everyone else's. Nothing when nobody is.
@@ -594,6 +568,7 @@ private fun GroupCall(
     chama: Chama?,
     fiat: FiatValue?,
     landed: String?,
+    more: MoreState,
     onContribute: (() -> Unit)?,
     celebrations: CelebrationState = CelebrationState(),
     onLanded: (String) -> Unit = {},
@@ -673,24 +648,12 @@ private fun GroupCall(
             if (beside && chama != null) Box(Modifier.width(GoalBesideWidth).fillMaxHeight(), contentAlignment = Alignment.BottomCenter) { LiveGoal(chama, fiat, celebrations, onRaisedPlaced = { anchors.goal = it }) }
         }
         if (!beside && chama != null) Box(Modifier.readableWidth()) { LiveGoal(chama, fiat, celebrations, onRaisedPlaced = { anchors.goal = it }) }
-        // The controls stay a hand's width apart on a tablet instead of spreading across the window.
-        Row(Modifier.readableWidth(ControlsWidth), horizontalArrangement = Arrangement.SpaceEvenly) {
-            ControlButton(if (call.mic) CircasoIcon.Mic else CircasoIcon.MicOff, null, if (call.mic) "Mute" else "Unmute", actions.onMute, on = !call.mic)
-            ControlButton(if (call.camera) CircasoIcon.Video else CircasoIcon.VideoOff, null, if (call.camera) "Turn camera off" else "Turn camera on", actions.onCamera, on = !call.camera)
-            // Design H4: the money moment is a button of its own, on the money card's colours.
-            if (onContribute != null && chama != null) {
-                Box(
-                    Modifier.size(52.dp).clip(CircleShape)
-                        .background(Brush.linearGradient(listOf(CircasoTheme.colors.moneyCardSheen, CircasoTheme.colors.moneyCard)))
-                        .pressable(role = Role.Button, onClick = onContribute).semantics { contentDescription = "Contribute to ${chama.goal.name}" },
-                    contentAlignment = Alignment.Center,
-                ) { CircasoIconImage(CircasoIcon.Plus, CircasoTheme.colors.onMoney, Modifier.size(24.dp)) }
-            } else {
-                ControlButton(CircasoIcon.Speaker, null, "Speaker", actions.onSpeaker, on = call.speaker)
-            }
-            actions.onShareScreen?.let { ShareScreenButton(call, it) }
-            ControlButton(CircasoIcon.Phone, null, "Leave call", actions.onEnd, tint = Tint.End)
-        }
+        // The same bar as every call; the contribute button is H4's money moment.
+        CallControlBar(
+            call, actions, if (chama != null) onContribute else null, chama?.let { "Contribute to ${it.goal.name}" } ?: "Contribute",
+            // A group voice call (nobody asked for video, my camera off) offers the camera as H2 does, not as "off".
+            voice = !call.video && !call.camera, moreOpen = more.open, onMore = more.onToggle, modifier = Modifier.align(Alignment.CenterHorizontally),
+        )
     }
         // Above the tiles, the goal and the controls; it takes no touches. On the H4 panel's dark money colours.
         val highContrast = com.circaso.designsystem.platform.rememberIsHighContrast()
@@ -923,12 +886,6 @@ internal fun fitTiles(count: Int, width: androidx.compose.ui.unit.Dp, height: an
 /** Below this a tile can't show a face: the grid scrolls instead of shrinking further. */
 private val MinTile = 96.dp
 
-/** The call controls' row never runs wider than this, centred (FaceTime keeps them together on an iPad). */
-private val ControlsWidth = 440.dp
-
-/** The video call's glass control bar at its widest. */
-private val VideoBarWidth = 520.dp
-
 /** Design H3's self-view, 104 x 150 on a phone, and a tablet's in proportion to its screen; [SelfViewTop] clears the top row. */
 private val SelfViewLong = 150.dp
 private val SelfViewShort = 104.dp
@@ -943,8 +900,6 @@ private val SelfViewRadius = 22.dp
 private val SelfViewHairline = Color.White.copy(alpha = 0.25f)
 /** The self-view in the top-left corner sits under H3's name, timer and sharing line. */
 private val SelfViewTopStart = 188.dp
-/** A control on the video bar or the group's row (no label under it). */
-private val BarButton = 52.dp
 
 /** In a group's spotlight, the strip of everyone else is at most this tall on a phone, or this wide beside the spotlight. */
 private val StripMaxHeight = 120.dp
@@ -1162,21 +1117,23 @@ private fun CallPill(call: CallUi, onOpen: () -> Unit) {
     }
 }
 
-private enum class Tint { Default, End, Accept }
+internal enum class Tint { Default, End, Accept }
 
-/** The call's round buttons: 64 dp glass discs with a label under, white when on; red to end, green to accept. */
+/**
+ * The call's round buttons: 64 dp glass discs with a label under, white when on; red to end, green to accept.
+ * [toggle]: it switches something on and off, so a screen reader hears its state (not Send money, More or Message). */
 @Composable
-private fun ControlButton(icon: CircasoIcon, label: String?, description: String, onClick: () -> Unit, on: Boolean = false, tint: Tint = Tint.Default, big: Boolean = false, enabled: Boolean = true, size: androidx.compose.ui.unit.Dp? = null) {
+internal fun ControlButton(icon: CircasoIcon, label: String?, description: String, onClick: () -> Unit, on: Boolean = false, tint: Tint = Tint.Default, big: Boolean = false, enabled: Boolean = true, size: androidx.compose.ui.unit.Dp? = null, toggle: Boolean = true) {
     val c = CircasoTheme.colors
     val t = CircasoTheme.typography
     val bg = when (tint) { Tint.End -> CallColors.End; Tint.Accept -> CallColors.Accept; Tint.Default -> if (on) CallColors.ControlOn else CallColors.Control }
     val fg = if (tint == Tint.Accept || (tint == Tint.Default && on)) CallColors.AcceptInk else Color.White
-    val size = size ?: if (big) 72.dp else if (label == null) BarButton else 64.dp
+    val size = size ?: if (big) 72.dp else if (label == null) CallBarButton else 64.dp
     Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(CircasoSpacing.s2)) {
         Box(
             Modifier.size(size).clip(CircleShape).background(if (enabled) bg else bg.copy(alpha = 0.06f))
                 .pressable(enabled = enabled, role = Role.Button, onClick = onClick)
-                .semantics { contentDescription = description; if (tint == Tint.Default && label != "Send money") stateDescription = if (on) "On" else "Off" },
+                .semantics { contentDescription = description; if (tint == Tint.Default && toggle) stateDescription = if (on) "On" else "Off" },
             contentAlignment = Alignment.Center,
         ) {
             // End and Decline draw the handset turned down, as the frames do.
