@@ -36,6 +36,28 @@ fun ashaCommandTyped(before: String, after: String, cursor: Int = -1): AshaComma
     return AshaCommandHit(after.removeRange(start, start + AshaCommand.length), start)
 }
 
+/**
+ * The start of `/asha` being typed at [cursor] (Pasaka 2026-11-10): the word that ends at the cursor begins a word with
+ * `/` and is still a prefix of the command, case-insensitive (`/`, `/a`, `/As`, `/ash`), so the field can offer Asha
+ * before the command is finished. Returns that fragment's range in [text] (`/` included), or null: not at a word start
+ * ("path/a"), a misspelling ("/ax"), a space typed, the cursor inside a longer word ("/as|k"), or a selection.
+ */
+fun ashaFragment(text: String, cursor: Int = text.length): IntRange? {
+    if (cursor < 1 || cursor > text.length) return null
+    var start = cursor
+    while (start > 0 && !text[start - 1].isWhitespace()) start--
+    val word = text.substring(start, cursor)
+    if (word.isEmpty() || word[0] != '/' || word.length > AshaCommand.length) return null
+    if (!AshaCommand.startsWith(word, ignoreCase = true)) return null
+    // Still in the middle of a longer word ("/as|k"): not the command being typed.
+    if (cursor < text.length && !text[cursor].isWhitespace()) return null
+    return start until cursor
+}
+
+/** [text] with the typed [fragment] (from [ashaFragment]) taken out, and the cursor where it was: Asha was summoned. */
+fun takeAshaFragment(text: String, fragment: IntRange): AshaCommandHit =
+    AshaCommandHit(text.removeRange(fragment.first, fragment.last + 1), fragment.first)
+
 /** Where `/asha` starts as its own word in [text]. */
 internal fun commandStarts(text: String): List<Int> {
     val out = mutableListOf<Int>()

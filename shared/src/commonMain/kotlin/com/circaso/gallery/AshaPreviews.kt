@@ -1,6 +1,10 @@
 package com.circaso.gallery
 
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
 import com.circaso.core.sync.nowMillis
 import com.circaso.feature.assistant.domain.AshaConversation
 import com.circaso.feature.assistant.domain.AshaMessage
@@ -69,6 +73,9 @@ internal fun AshaPreview(name: String): Boolean {
             {}, {}, {}, {},
         )
         "asha-voice-muted" -> VoiceContent(VoiceUiState(phase = VoicePhase.Listening, muted = true), {}, {}, {}, {})
+        // The composer (2026-11-10): `/` offers Asha above the field; a finished `#500` is an inverted chip.
+        "composer-asha-suggest" -> Composer("Can you check /as")
+        "composer-money-chip" -> Composer("#500 for lunch tomorrow")
         else -> return false
     }
     return true
@@ -94,6 +101,31 @@ private fun sampleUsage(used: Int = 18) = AshaUsage(
     periodStart = Instant.fromEpochMilliseconds(now - 21L * 24 * 3600_000).toString(),
     periodEnd = Instant.fromEpochMilliseconds(now + 9L * 24 * 3600_000).toString(),
 )
+
+/**
+ * The chat composer alone at the bottom of the screen, focused, with a session's Asha launcher (so `/` offers her) and
+ * `#` read as KES (so a finished amount is a chip). Tap the chip to see its ✕.
+ */
+@Composable
+private fun Composer(draft: String) {
+    var text by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(draft) }
+    val focus = androidx.compose.runtime.remember { androidx.compose.ui.focus.FocusRequester() }
+    androidx.compose.runtime.LaunchedEffect(Unit) { focus.requestFocus() }
+    androidx.compose.runtime.CompositionLocalProvider(
+        com.circaso.designsystem.components.LocalAshaLauncher provides com.circaso.designsystem.components.AshaLauncher { },
+    ) {
+        androidx.compose.foundation.layout.Box(
+            androidx.compose.ui.Modifier.fillMaxSize().background(com.circaso.designsystem.theme.CircasoTheme.colors.bg),
+            contentAlignment = androidx.compose.ui.Alignment.BottomCenter,
+        ) {
+            com.circaso.designsystem.components.ComposerBar(
+                value = text, onValueChange = { text = it }, placeholder = "Message", canSend = text.isNotBlank(), onSend = {},
+                focusRequester = focus,
+                amount = { t -> com.circaso.feature.messaging.presentation.composerAmount(t, null)?.let { it.copy(prefix = "KES ", suffix = "", chip = "KES " + it.chip.substringBefore(' ')) } },
+            )
+        }
+    }
+}
 
 @Composable
 private fun Chat(sheet: AshaSheet?, online: Boolean = true, usage: UsageUi = UsageUi.Loaded(sampleUsage()), confirmDelete: String? = null, change: (AshaUiState) -> AshaUiState = { it }) {
