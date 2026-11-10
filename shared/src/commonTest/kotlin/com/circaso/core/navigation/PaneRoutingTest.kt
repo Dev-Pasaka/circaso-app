@@ -46,6 +46,17 @@ class PaneRoutingTest {
     }
 
     @Test
+    fun theFullWindowListStaysInTheSplitSceneAndWhatItOpensCoversIt() {
+        // Home's Wallet tab: still this scene (never handed to another, which drew Home twice), the list alone.
+        val split = splitPanes(listOf(home), twoPane = true, listFull = true)!!
+        assertEquals(true, split.full)
+        assertNull(split.detail)
+        assertEquals(0, split.depth)
+        // Something opened from it covers the whole window, one screen at a time.
+        assertNull(splitPanes(listOf(home, entry("activity")), twoPane = true, listFull = true))
+    }
+
+    @Test
     fun aNarrowWindowOrAStackWithoutTheListIsOneScreenAtATime() {
         assertNull(splitPanes(listOf(home, entry("chat")), twoPane = false))
         assertNull(splitPanes(listOf(entry("welcome"), entry("phone")), twoPane = true))

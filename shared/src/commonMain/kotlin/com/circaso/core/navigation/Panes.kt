@@ -80,9 +80,14 @@ val LocalIsDetailRoot = androidx.compose.runtime.compositionLocalOf { false }
  * do: Home in a fixed list pane on the left, the top of the stack opened from it on the right. One scene for the
  * whole time Home is the list, so opening the next chat only changes the detail pane; the list never moves.
  */
-class ListDetailSceneStrategy<T : Any>(private val twoPane: Boolean, private val tabEpoch: Int = 0) : SceneStrategy<T> {
+class ListDetailSceneStrategy<T : Any>(
+    private val twoPane: Boolean,
+    private val tabEpoch: Int = 0,
+    /** The list takes the whole window (Home's Wallet tab, a dashboard): what it opens covers it, as on a phone. */
+    private val listFull: Boolean = false,
+) : SceneStrategy<T> {
     override fun SceneStrategyScope<T>.calculateScene(entries: List<NavEntry<T>>): Scene<T>? {
-        val split = splitPanes(entries, twoPane) ?: return null
+        val split = splitPanes(entries, twoPane, listFull) ?: return null
         val list = entries[split.listIndex]
         return ListDetailScene(
             key = list.contentKey,
@@ -91,6 +96,7 @@ class ListDetailSceneStrategy<T : Any>(private val twoPane: Boolean, private val
             underneath = split.underneath,
             depth = split.depth,
             tabEpoch = tabEpoch,
+            full = split.full,
             previousEntries = entries.dropLast(1),
             onBack = onBack,
         )
@@ -98,18 +104,31 @@ class ListDetailSceneStrategy<T : Any>(private val twoPane: Boolean, private val
 }
 
 /** Where each open screen goes on a wide window: the list, the detail on top, the one under it, how deep. */
-internal data class PaneSplit<T : Any>(val listIndex: Int, val detail: NavEntry<T>?, val underneath: NavEntry<T>?, val depth: Int)
+internal data class PaneSplit<T : Any>(
+    val listIndex: Int,
+    val detail: NavEntry<T>?,
+    val underneath: NavEntry<T>?,
+    val depth: Int,
+    /** The list alone across the whole window, no detail pane. */
+    val full: Boolean = false,
+)
 
 /**
  * The split for a back stack, or null when the window shows one screen at a time (too narrow, no list in the stack,
  * or a full-screen flow on top). Everything opened above the list goes to the detail side, never into the list pane:
  * the list pane only ever shows the list itself.
+ *
+ * With [listFull] the list alone fills the window, still in this scene: switching Home between its split tabs and
+ * the full-window Wallet must never hand Home from this scene to another one. During that hand-over both scenes drew
+ * Home for a frame and its saved state was registered twice ("Key HomeRoute was used multiple times", TestFlight
+ * on Mac, 2026-11-10). Anything opened above the full list covers it, one screen at a time.
  */
-internal fun <T : Any> splitPanes(entries: List<NavEntry<T>>, twoPane: Boolean): PaneSplit<T>? {
+internal fun <T : Any> splitPanes(entries: List<NavEntry<T>>, twoPane: Boolean, listFull: Boolean = false): PaneSplit<T>? {
     if (!twoPane) return null
     val listIndex = entries.indexOfLast { Panes.isList(it) }
     if (listIndex < 0) return null
     val above = entries.drop(listIndex + 1)
+    if (listFull) return if (above.isEmpty()) PaneSplit(listIndex, null, null, 0, full = true) else null
     // A full-screen flow on top covers everything (it is pushed over the split like any screen on a phone).
     if (above.any { Panes.isFullScreen(it) }) return null
     return PaneSplit(listIndex, above.lastOrNull(), above.getOrNull(above.size - 2), above.size)
@@ -125,18 +144,23 @@ internal class ListDetailScene<T : Any>(
     val depth: Int,
     /** Changes when Home's tab changes: the detail swaps in place rather than pushing or popping. */
     val tabEpoch: Int,
+    /** The list alone across the whole window (see [splitPanes]). */
+    val full: Boolean,
     override val previousEntries: List<NavEntry<T>>,
     private val onBack: () -> Unit,
 ) : Scene<T> {
     override val entries: List<NavEntry<T>> = listOfNotNull(list, underneath, detail)
 
-    override val content: @Composable () -> Unit = { ListDetail(list, detail, underneath, depth, tabEpoch, onBack) }
+    override val content: @Composable () -> Unit = {
+        if (full) Box(Modifier.fillMaxSize()) { list.Content() } else ListDetail(list, detail, underneath, depth, tabEpoch, onBack)
+    }
 
     override fun equals(other: Any?): Boolean =
         other is ListDetailScene<*> && key == other.key && list == other.list && detail == other.detail &&
-            underneath == other.underneath && depth == other.depth && tabEpoch == other.tabEpoch && previousEntries == other.previousEntries
+            underneath == other.underneath && depth == other.depth && tabEpoch == other.tabEpoch && full == other.full &&
+            previousEntries == other.previousEntries
 
-    override fun hashCode(): Int = listOf(key, list, detail, underneath, depth, tabEpoch, previousEntries).hashCode()
+    override fun hashCode(): Int = listOf(key, list, detail, underneath, depth, tabEpoch, full, previousEntries).hashCode()
 }
 
 @Composable
