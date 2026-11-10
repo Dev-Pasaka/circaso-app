@@ -180,7 +180,9 @@ class ContactsViewModel(
         viewModelScope.launch {
             when (action) {
                 is ContactAction.Remove -> removeContact(action.contact.person.userId)
-                is ContactAction.Block -> { block(action.contact.person); removeContact(action.contact.person.userId) }
+                // Blocking hides the person and stops them reaching you; it no longer deletes the contact, so unblocking
+                // (2026-11-10) brings them straight back and messages work again.
+                is ContactAction.Block -> block(action.contact.person)
             }
         }
     }

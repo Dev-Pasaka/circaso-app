@@ -73,6 +73,8 @@ class MomentViewerViewModel(
     private val replyInChat: suspend (posterId: String, text: String, moment: Moment) -> AppResult<String>,
     /** Open at this moment (a reply's quote in a chat was tapped); gone already means V7. */
     private val startAt: String? = null,
+    /** Blocked people (2026-11-10): their Moments can't be opened or swiped to. */
+    private val observeBlocks: com.circaso.feature.contacts.domain.ObserveBlocksUseCase? = null,
 ) : ViewModel() {
     private val _state = MutableStateFlow(MomentViewerUiState())
     val state: StateFlow<MomentViewerUiState> = _state.asStateFlow()
@@ -81,7 +83,7 @@ class MomentViewerViewModel(
 
     init {
         viewModelScope.launch {
-            combine(repository.moments, observeContacts(), repository.muted) { all, contacts, muted -> Triple(all, contacts, muted) }.collect { (all, contacts, muted) ->
+            combine(repository.moments, observeContacts().withoutBlocked(observeBlocks), repository.muted) { all, contacts, muted -> Triple(all, contacts, muted) }.collect { (all, contacts, muted) ->
                 val me = observeProfile().first()
                 val rings = if (posterId == null) {
                     val mine = all.filter { it.mine }.sortedBy { it.postedAt }

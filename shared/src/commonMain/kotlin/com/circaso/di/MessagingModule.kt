@@ -156,7 +156,7 @@ val messagingModule = module {
     factory { ObserveTypingUseCase(get()) }
     factory { MessagingSettingsUseCase(get()) }
 
-    viewModel { ChatsViewModel(get(), get(), get(), get(), get(), get(), get(), getOrNull(), invites = get()) }
+    viewModel { ChatsViewModel(get(), get(), get(), get(), get(), get(), get(), getOrNull(), invites = get(), observeBlocks = get()) }
     viewModel {
         NewChatViewModel(
             get(), get(), get(), observeChats = get(), connect = get(), createShareLink = get(),

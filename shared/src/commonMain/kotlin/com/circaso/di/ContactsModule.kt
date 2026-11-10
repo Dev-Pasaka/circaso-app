@@ -36,7 +36,10 @@ val contactsModule = module {
     single<ContactsRemote> { KtorContactsRemote(get()) }
     single { ContactRemoveHandler(get()) } bind OutboxHandler::class
     single { BlockSetHandler(get()) } bind OutboxHandler::class
-    single { BlockClearHandler(get()) } bind OutboxHandler::class
+    single {
+        val scope = this
+        BlockClearHandler(get(), onCleared = { scope.get<com.circaso.feature.contacts.domain.ContactsRepository>().refreshContacts() })
+    } bind OutboxHandler::class
     single<ContactsRepository> { ContactsRepositoryImpl(get(), get(), get(), kickOutbox = get(named("kickOutbox")), names = get()) }
     factory { ObserveContactsUseCase(get()) }
     factory { ObserveBlocksUseCase(get()) }

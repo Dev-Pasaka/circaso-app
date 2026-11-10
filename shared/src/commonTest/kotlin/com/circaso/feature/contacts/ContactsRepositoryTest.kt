@@ -167,6 +167,23 @@ class ContactsRepositoryTest {
         assertEquals(listOf("block.set", "block.clear"), outboxDao.rows.value.map { it.type })
     }
 
+    @Test fun aBlockedContactIsHiddenAndComesBackWhenUnblocked() = runSuspending {
+        repo.refreshContacts()
+        assertEquals(listOf("1", "2"), ids())
+        repo.block(Person("1", "Person 1", "h1", null, null))
+        assertEquals(listOf("2"), ids()) // hidden from the list, search and pickers, but still saved
+        assertEquals(listOf("1", "2"), dao.contacts.value.map { it.userId }.sorted())
+        repo.unblock("1")
+        assertEquals(listOf("1", "2"), ids())
+    }
+
+    @Test fun unblockingFetchesTheContactsAgainOnceTheServerHasIt() = runSuspending {
+        repo.block(Person("7", "Kevin", null, null, null)); repo.unblock("7")
+        var refreshed = 0
+        BlockClearHandler(remote) { refreshed++ }.send(outboxDao.rows.value[1])
+        assertEquals(1, refreshed)
+    }
+
     @Test fun blockHandlersSendTheRightCallWithTheItemsKey() = runSuspending {
         repo.block(Person("7", "Kevin", null, null, null)); repo.unblock("7")
         val (set, clear) = outboxDao.rows.value

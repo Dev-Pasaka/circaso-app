@@ -578,9 +578,9 @@ class FeatureViewModelsTest {
         assertEquals(emptyList(), contactsRepo.blocked) // nothing happens until confirmed
         vm.onActionConfirmed()
         assertEquals(listOf("1"), contactsRepo.blocked)
-        assertEquals(listOf("1"), contactsRepo.removed) // a blocked person also leaves your contacts
+        assertEquals(emptyList(), contactsRepo.removed) // blocking keeps the contact, so unblocking brings them back
         vm.onRemoveRequested(contactsRepo.list.value[1]); vm.onActionDismissed(); vm.onActionConfirmed()
-        assertEquals(listOf("1"), contactsRepo.removed) // cancelled: not removed
+        assertEquals(emptyList(), contactsRepo.removed) // cancelled: not removed
     }
 
     @Test fun anInviteGoesStraightToTheShareSheetOnce() = runTest(dispatcher) {
