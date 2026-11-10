@@ -53,6 +53,8 @@ object CircasoSizes {
 @Immutable
 object CircasoMotion {
     const val QuickMs = 150
+    /** Leaving is quicker than arriving: a small element going away (a suggestion no longer relevant). */
+    const val ExitMs = 100
     const val BaseMs = 280
     const val MomentMs = 900
 }

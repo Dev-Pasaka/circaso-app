@@ -35,6 +35,13 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.waitForUpOrCancellation
+import androidx.compose.foundation.layout.offset
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.semantics.onClick
+import androidx.compose.ui.semantics.role
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.text.TextRange
@@ -254,8 +261,59 @@ fun ComposerBar(
                 // The buttons sit centred on a one-line field and stay at the bottom as it grows (WhatsApp).
                 val buttonLift = Modifier.padding(bottom = (ComposerFieldMin - CircasoSizes.iconButton) / 2)
                 if (onAttach != null) Box(buttonLift) { CircasoIconButton(CircasoIcon.Plus, "Attach", onAttach) }
+                // The field keeps its own cursor; when the text is set from outside (a picked coin, a chip turned back
+                // into text, a cleared draft) the cursor goes to the end, ready to keep typing. Held here, outside the
+                // field's clipped box, so the `/` suggestion above it can read it.
+                var field by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(TextFieldValue(value, TextRange(value.length))) }
+                // The amount chip tapped (or backspaced into) once: it shows its ✕ (2026-11-10).
+                var chipSelected by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(false) }
+                // A tap that landed on the chip: the field's cursor from that tap goes after the chip, ready for backspace.
+                val chipTapped = androidx.compose.runtime.remember { booleanArrayOf(false) }
+                var focused by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(false) }
+                // What this field last handed up. The draft comes back through the screen's state a frame or more later,
+                // so while it still reads an older text that is lag, not a change from outside: taking it then threw
+                // away the keys just typed (fast typing lost letters, `/asha` needed several tries, the keyboard's word
+                // was reset). Only a draft this field didn't send is taken.
+                val pending = androidx.compose.runtime.remember { ArrayDeque<String>() }
+                val seen = androidx.compose.runtime.remember { arrayOf(value) }
+                if (value != seen[0]) {
+                    seen[0] = value
+                    val mine = pending.indexOf(value)
+                    // One of ours arriving: it and everything sent before it are through; the field is ahead.
+                    if (mine >= 0) repeat(mine + 1) { pending.removeFirst() }
+                    else { pending.clear(); if (field.text != value) { field = TextFieldValue(value, TextRange(value.length)); chipSelected = false } }
+                }
+                fun handUp(text: String) {
+                    if (text == (pending.lastOrNull() ?: seen[0])) return
+                    pending.addLast(text); if (pending.size > 64) pending.removeFirst()
+                    onValueChange(text)
+                }
+                val haptics = androidx.compose.ui.platform.LocalHapticFeedback.current
+                val ashaLauncher = LocalAshaLauncher.current
+                // `/` then the start of "asha" as a word: Asha is offered just above the field (2026-11-10).
+                val ashaTyping = ashaLauncher != null && focused && enabled && field.selection.collapsed && ashaFragment(field.text, field.selection.start) != null
+                fun summonAsha() {
+                    ashaFragment(field.text, field.selection.start)?.let { fragment ->
+                        val hit = takeAshaFragment(field.text, fragment)
+                        field = TextFieldValue(hit.text, TextRange(hit.cursor))
+                        handUp(hit.text)
+                    }
+                    ashaLauncher?.open()
+                }
+                // The typed amount drawn as money, and as a chip once finished (C3, 2026-11-09/10).
+                val typedAmount = amount?.invoke(field.text)?.takeIf { it.start >= 0 && it.end <= field.text.length && it.start < it.end }
+                val display = typedAmount?.let { AmountDisplay(field.text, it, chipSelected) }
+                fun removeChip() {
+                    val a = amount?.invoke(field.text)?.takeIf { it.end < field.text.length } ?: return
+                    val (text, cursor) = a.removeFrom(field.text)
+                    field = TextFieldValue(text, cursor)
+                    chipSelected = false
+                    handUp(text)
+                    haptics.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.TextHandleMove)
+                }
+                Box(Modifier.weight(1f)) {
                 Box(
-                    Modifier.weight(1f).defaultMinSize(minHeight = ComposerFieldMin).clip(ComposerFieldShape).background(c.fill)
+                    Modifier.fillMaxWidth().defaultMinSize(minHeight = ComposerFieldMin).clip(ComposerFieldShape).background(c.fill)
                         .then(if (c.isHighContrast) Modifier.border(1.dp, c.glassEdge, ComposerFieldShape) else Modifier)
                         .padding(horizontal = CircasoSpacing.s4, vertical = CircasoSpacing.s3),
                     contentAlignment = Alignment.CenterStart,
@@ -273,39 +331,10 @@ fun ComposerBar(
                             )
                         }
                         Box(Modifier.weight(1f), contentAlignment = Alignment.CenterStart) {
-                            // The field keeps its own cursor; when the text is set from outside (a picked coin, a chip
-                            // turned back into text, a cleared draft) the cursor goes to the end, ready to keep typing.
-                            var field by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(TextFieldValue(value, TextRange(value.length))) }
-                            // What this field last handed up. The draft comes back through the screen's state a frame or
-                            // more later, so while it still reads an older text that is lag, not a change from outside:
-                            // taking it then threw away the keys just typed (fast typing lost letters, `/asha` needed
-                            // several tries, the keyboard's word was reset). Only a draft this field didn't send is taken.
-                            val pending = androidx.compose.runtime.remember { ArrayDeque<String>() }
-                            val seen = androidx.compose.runtime.remember { arrayOf(value) }
-                            if (value != seen[0]) {
-                                seen[0] = value
-                                val mine = pending.indexOf(value)
-                                // One of ours arriving: it and everything sent before it are through; the field is ahead.
-                                if (mine >= 0) repeat(mine + 1) { pending.removeFirst() }
-                                else { pending.clear(); if (field.text != value) field = TextFieldValue(value, TextRange(value.length)) }
-                            }
-                            fun handUp(text: String) {
-                                if (text == (pending.lastOrNull() ?: seen[0])) return
-                                pending.addLast(text); if (pending.size > 64) pending.removeFirst()
-                                onValueChange(text)
-                            }
-                            // The typed amount drawn as money, and as a pill once typed past (C3, 2026-11-09).
-                            val typedAmount = amount?.invoke(field.text)?.takeIf { it.start >= 0 && it.end <= field.text.length && it.start < it.end }
-                            val display = typedAmount?.let { AmountDisplay(field.text, it, field.selection) }
                             val moneyStyle = androidx.compose.ui.text.SpanStyle(color = c.money, fontWeight = t.amountSmall.fontWeight, fontFamily = t.amountSmall.fontFamily, fontFeatureSettings = "tnum")
-                            // Built again only when the amount, its unit or the cursor changes, not on every price tick.
-                            val transformation = androidx.compose.runtime.remember(amount != null, typedAmount, field.selection, moneyStyle) {
-                                if (amount != null) amountTransformation(amount, field.selection, moneyStyle) else androidx.compose.ui.text.input.VisualTransformation.None
-                            }
                             var textLayout by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf<androidx.compose.ui.text.TextLayoutResult?>(null) }
-                            val haptics = androidx.compose.ui.platform.LocalHapticFeedback.current
-                            // The pill fades in as it forms rather than appearing in one frame; at once under reduce motion.
-                            val isPill = display?.pill != null
+                            // The chip fades in as it forms rather than appearing in one frame; at once under reduce motion.
+                            val isPill = display?.chip == true
                             val pillAlpha = androidx.compose.runtime.remember { androidx.compose.animation.core.Animatable(if (isPill) 1f else 0f) }
                             val reduce = CircasoTheme.reduceMotion
                             androidx.compose.runtime.LaunchedEffect(isPill) {
@@ -313,8 +342,31 @@ fun ComposerBar(
                                 else if (reduce) pillAlpha.snapTo(1f)
                                 else pillAlpha.animateTo(1f, androidx.compose.animation.core.tween(com.circaso.designsystem.theme.CircasoMotion.QuickMs))
                             }
-                            val pillColor = c.moneySurface
-                            val ashaLauncher = LocalAshaLauncher.current
+                            // The chip in inverted colours (Pasaka 2026-11-10): ink fill, the screen's background as its
+                            // text (white on near-black in light, near-black on white in dark; 19:1 and up in every theme).
+                            // Only the fill fades in; the label snaps (fading its colour would lay the text out every frame).
+                            val chipFill = c.ink
+                            val chipInk = c.bg
+                            val chipEdge = chipInk.copy(alpha = if (c.isHighContrast) 0.7f else 0.32f)
+                            // Past five lines the field scrolls and no chip is drawn: the amount stays in the money colour
+                            // then, never light text with nothing behind it.
+                            val chipDrawable = (textLayout?.lineCount ?: 1) <= 5
+                            // Built again only when the amount, its unit, the ✕ or the chip's colour changes, not on every price tick.
+                            val transformation = androidx.compose.runtime.remember(amount != null, typedAmount, chipSelected, moneyStyle, chipInk, chipDrawable) {
+                                if (amount != null) amountTransformation(amount, chipSelected, moneyStyle, if (chipDrawable) moneyStyle.copy(color = chipInk) else moneyStyle)
+                                else androidx.compose.ui.text.input.VisualTransformation.None
+                            }
+                            val density = androidx.compose.ui.platform.LocalDensity.current
+                            val pillSide = with(density) { PillSide.toPx() }
+                            val pillGrow = with(density) { PillGrow.toPx() }
+                            // For the gesture and the screen reader. The drawing works its own out in the draw pass, from
+                            // the layout of this very frame (here the layout can still be the previous text's).
+                            val bounds = chipBounds(textLayout, display, pillSide, pillGrow)
+                            val currentBounds = androidx.compose.runtime.rememberUpdatedState(bounds)
+                            val crossSlop = with(density) { CircasoSpacing.s2.toPx() }
+                            val crossReach = with(density) { (CircasoSizes.controlMd / 2).toPx() }
+                            // The gesture below lives as long as the field; it calls the latest removal (this draft, this unit).
+                            val removeChipNow = androidx.compose.runtime.rememberUpdatedState<() -> Unit> { removeChip() }
                             BasicTextField(
                                 value = field,
                                 onValueChange = onValueChange@{ next ->
@@ -324,22 +376,48 @@ fun ComposerBar(
                                     val hit = if (asha != null) ashaCommandTyped(field.text, next.text, next.selection.end) else null
                                     if (asha != null && hit != null) {
                                         field = TextFieldValue(hit.text, TextRange(hit.cursor))
+                                        chipSelected = false
                                         handUp(hit.text)
                                         asha.open()
                                         return@onValueChange
                                     }
                                     var kept = next
+                                    var select = false
+                                    val tapped = chipTapped[0].also { chipTapped[0] = false }
                                     if (amount != null) {
                                         val before = amount(field.text)
                                         val after = if (next.text == field.text) before else amount(next.text)
-                                        ComposerAmountKeys.backspaceIntoPill(field.text, next.text, next.selection, before, after)?.let { (text, cursor) -> kept = TextFieldValue(text, cursor) }
-                                        (if (kept.text == next.text) after else before)?.let { kept = kept.copy(selection = it.settle(kept.selection)) }
-                                        // A light tick when typing settles the amount into its pill (as the chip did), never
-                                        // for a cursor that merely moves away from it.
-                                        val wasPill = before?.let { AmountDisplay(field.text, it, field.selection).chip } == true
-                                        val nowPill = after?.takeIf { kept.text == next.text }?.let { AmountDisplay(kept.text, it, kept.selection).chip } == true
-                                        if (nowPill && !wasPill && kept.text.length > field.text.length) haptics.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.TextHandleMove)
+                                        when (val key = ComposerAmountKeys.backspaceAtChip(field.text, field.selection, next.text, next.selection, before, chipSelected)) {
+                                            // One backspace after the chip selects it (its ✕ shows), the next removes it.
+                                            is ComposerAmountKeys.Result.Select -> {
+                                                kept = TextFieldValue(key.text, key.selection); select = true
+                                                haptics.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.TextHandleMove)
+                                            }
+                                            is ComposerAmountKeys.Result.Remove -> {
+                                                kept = TextFieldValue(key.text, key.selection)
+                                                haptics.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.TextHandleMove)
+                                            }
+                                            null -> {
+                                                val a = after
+                                                if (a != null) {
+                                                    // A tap on the chip puts the cursor after it; otherwise never inside it.
+                                                    val chipNow = a.end < next.text.length
+                                                    // (Only a cursor the tap left at one of the chip's edges, so a flag left over
+                                                    // from a tap that moved nothing can't pull a later cursor along.)
+                                                    val atEdge = next.selection.collapsed && (next.selection.start == a.start || next.selection.start == a.end)
+                                                    kept = if (tapped && chipNow && atEdge && next.text == field.text) kept.copy(selection = TextRange(a.end + 1))
+                                                    else kept.copy(selection = a.settle(kept.text, kept.selection, field.selection))
+                                                }
+                                                // A light tick when typing finishes the amount into its chip.
+                                                val wasChip = before != null && before.end < field.text.length
+                                                val nowChip = after != null && after.end < next.text.length
+                                                if (nowChip && !wasChip && next.text.length > field.text.length) haptics.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.TextHandleMove)
+                                            }
+                                        }
                                     }
+                                    // A changed text hides the ✕ (unless this backspace just selected the chip); a cursor
+                                    // that only moves keeps it.
+                                    chipSelected = select || (chipSelected && kept.text == field.text)
                                     field = kept
                                     handUp(kept.text)
                                 },
@@ -348,23 +426,69 @@ fun ComposerBar(
                                 visualTransformation = transformation,
                                 onTextLayout = { textLayout = it },
                                 modifier = Modifier.fillMaxWidth().then(if (focusRequester != null) Modifier.focusRequester(focusRequester) else Modifier)
+                                    .onFocusChanged { focused = it.isFocused; if (!it.isFocused) chipSelected = false }
+                                    // A text field can't hold a tappable child, so the chip's taps are read here, before the
+                                    // field's own: on the ✕ the tap is the field's no longer (it would put the cursor back
+                                    // into the text just removed); on the chip it selects it and the field still focuses;
+                                    // anywhere else it hides the ✕.
+                                    .pointerInput(Unit) {
+                                        awaitEachGesture {
+                                            val down = awaitFirstDown(requireUnconsumed = false, pass = androidx.compose.ui.input.pointer.PointerEventPass.Initial)
+                                            val b = currentBounds.value
+                                            val at = down.position
+                                            val cross = b?.cross
+                                            // The ✕'s reach: 44 dp tall, from just before the ✕ to just past the chip's end,
+                                            // never over the next word.
+                                            val onCross = b != null && cross != null && at.x >= cross.left - crossSlop &&
+                                                at.x <= b.chip.right + crossSlop && kotlin.math.abs(at.y - b.chip.center.y) <= crossReach
+                                            when {
+                                                onCross -> {
+                                                    down.consume()
+                                                    val up = waitForUpOrCancellation(androidx.compose.ui.input.pointer.PointerEventPass.Initial)
+                                                    if (up != null) { up.consume(); removeChipNow.value() }
+                                                }
+                                                b != null && b.chip.contains(at) -> {
+                                                    // A tap, not a long press or a drag that starts on it: the field still
+                                                    // gets the touch either way (focus, the keyboard, the cursor after the chip).
+                                                    val up = waitForUpOrCancellation(androidx.compose.ui.input.pointer.PointerEventPass.Initial)
+                                                    if (up != null && up.uptimeMillis - down.uptimeMillis < viewConfiguration.longPressTimeoutMillis) {
+                                                        chipTapped[0] = true
+                                                        if (!chipSelected) {
+                                                            chipSelected = true
+                                                            haptics.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.TextHandleMove)
+                                                        }
+                                                    }
+                                                }
+                                                else -> { chipTapped[0] = false; chipSelected = false }
+                                            }
+                                        }
+                                    }
                                     .drawBehind {
-                                        // C3's `.cx-chip-money` behind the amount: 10 dp sides around its label, 2 dp above and
-                                        // below its text line (26 on a 22 line). Only while the field shows all its lines (past
-                                        // five it scrolls, and the amount stays plain money colour then).
-                                        val r = textLayout ?: return@drawBehind
-                                        val p = display?.pill ?: return@drawBehind
-                                        if (r.layoutInput.text.text != display.shown || r.lineCount > 5 || p.last >= display.shown.length) return@drawBehind
-                                        val line = r.getLineForOffset(p.first)
-                                        if (r.getLineForOffset(p.last) != line) return@drawBehind
-                                        val first = r.getBoundingBox(p.first)
-                                        val last = r.getBoundingBox(p.last)
-                                        val side = PillSide.toPx()
-                                        val left = minOf(first.left, last.left) - side
-                                        val right = maxOf(first.right, last.right) + side
-                                        val top = r.getLineTop(line) - PillGrow.toPx()
-                                        val height = r.getLineBottom(line) + PillGrow.toPx() - top
-                                        drawRoundRect(pillColor, androidx.compose.ui.geometry.Offset(left, top), androidx.compose.ui.geometry.Size(right - left, height), androidx.compose.ui.geometry.CornerRadius(height / 2), alpha = pillAlpha.value)
+                                        // The chip behind the amount: 10 dp sides around its label, 2 dp above and below its
+                                        // text line (26 on a 22 line), ink filled with a hairline edge inside, and its ✕ while
+                                        // selected. Only while the field shows all its lines (past five it scrolls, and the
+                                        // amount stays plain money colour then). Worked out here from this frame's layout.
+                                        val b = chipBounds(textLayout, display, pillSide, pillGrow) ?: return@drawBehind
+                                        val r = b.chip
+                                        val alpha = pillAlpha.value
+                                        drawRoundRect(chipFill, r.topLeft, r.size, androidx.compose.ui.geometry.CornerRadius(r.height / 2), alpha = alpha)
+                                        val edge = 1.dp.toPx()
+                                        val inset = 1.5.dp.toPx()
+                                        drawRoundRect(
+                                            chipEdge, androidx.compose.ui.geometry.Offset(r.left + inset, r.top + inset),
+                                            androidx.compose.ui.geometry.Size(r.width - 2 * inset, r.height - 2 * inset),
+                                            androidx.compose.ui.geometry.CornerRadius(r.height / 2 - inset), alpha = alpha,
+                                            style = androidx.compose.ui.graphics.drawscope.Stroke(edge),
+                                        )
+                                        b.cross?.let { x ->
+                                            // About two thirds of the type size, so it grows with Dynamic Type as the chip does.
+                                            val half = t.body.fontSize.toPx() * CrossMarkEm / 2
+                                            val o = x.center
+                                            val w = half * 0.32f
+                                            val cap = androidx.compose.ui.graphics.StrokeCap.Round
+                                            drawLine(chipInk, androidx.compose.ui.geometry.Offset(o.x - half, o.y - half), androidx.compose.ui.geometry.Offset(o.x + half, o.y + half), w, cap, alpha = alpha)
+                                            drawLine(chipInk, androidx.compose.ui.geometry.Offset(o.x - half, o.y + half), androidx.compose.ui.geometry.Offset(o.x + half, o.y - half), w, cap, alpha = alpha)
+                                        }
                                     }
 
                                     .onPreviewKeyEvent { e ->
@@ -372,9 +496,27 @@ fun ComposerBar(
                                         .also { if (it) onChipEdit() }
                                 },
                             )
+                            // The chip for a screen reader: one node over it, "Amount KES 500", double tap removes it.
+                            if (bounds != null && typedAmount != null) {
+                                val r = bounds.chip
+                                with(density) {
+                                    Box(
+                                        Modifier.align(Alignment.TopStart)
+                                            .offset { androidx.compose.ui.unit.IntOffset(r.left.toInt(), r.top.toInt()) }
+                                            .size(r.width.toDp(), r.height.toDp())
+                                            .semantics {
+                                                contentDescription = "Amount ${typedAmount.chip}"
+                                                role = Role.Button
+                                                onClick(label = "remove") { removeChip(); true }
+                                            },
+                                    )
+                                }
+                            }
                             if (value.isEmpty()) BasicText(if (chip != null) "Add a note" else placeholder, style = t.body.copy(color = c.inkSecondary), maxLines = 1, overflow = TextOverflow.Ellipsis)
                         }
                     }
+                }
+                    AshaSuggestion(ashaTyping, ::summonAsha, Modifier.align(Alignment.TopStart))
                 }
                 Row(buttonLift, horizontalArrangement = Arrangement.spacedBy(CircasoSpacing.s2)) {
                     trailing?.invoke(this)
@@ -390,6 +532,8 @@ private val ComposerFieldMin = 48.dp
 /** C3's `.cx-chip-money` in the field: `padding: 0 10px`, and 26 tall on the 22 body line (2 above and below). */
 private val PillSide = 10.dp
 private val PillGrow = 2.dp
+/** The chip's ✕ when it is selected, as a share of the body size (11 dp at 17 sp), in the chip's text colour. */
+private const val CrossMarkEm = 0.65f
 private val ComposerFieldShape = RoundedCornerShape(24.dp)
 
 /** The 36 dp search pill on list screens (`fill`, icon, 17 pt placeholder). Tapping it focuses a real field below it. */

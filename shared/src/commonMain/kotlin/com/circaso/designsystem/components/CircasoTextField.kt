@@ -62,36 +62,50 @@ fun CircasoTextField(
     }
     Column(modifier, verticalArrangement = Arrangement.spacedBy(6.dp)) {
         BasicText(label, Modifier.padding(horizontal = CircasoSpacing.s1), style = t.footnote.copy(color = c.inkSecondary))
-        BasicTextField(
-            value = value,
-            onValueChange = onChange,
-            enabled = enabled,
-            singleLine = singleLine,
-            textStyle = t.body.copy(color = if (enabled) c.ink else c.inkTertiary),
-            cursorBrush = SolidColor(c.ink),
-            keyboardOptions = if (secret) keyboardOptions.copy(keyboardType = KeyboardType.Password, autoCorrectEnabled = false) else keyboardOptions,
-            keyboardActions = keyboardActions,
-            visualTransformation = if (secret) PasswordVisualTransformation() else visualTransformation,
-            modifier = Modifier.fillMaxWidth().onFocusChanged { focused = it.isFocused },
-            decorationBox = { inner ->
-                Row(
-                    Modifier
-                        .fillMaxWidth()
-                        .height(CircasoSizes.controlLg)
-                        .background(c.fill, CircasoShapes.md)
-                        .border(2.dp, outline, CircasoShapes.md)
-                        .padding(horizontal = CircasoSpacing.s4),
-                    horizontalArrangement = Arrangement.spacedBy(CircasoSpacing.s2),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    leading?.invoke()
-                    Box(Modifier.weight(1f)) {
-                        if (value.isEmpty()) BasicText(placeholder, style = t.body.copy(color = c.inkTertiary))
-                        inner()
+        // `/` then the start of "asha" at the end of the text: Asha is offered just above the field (2026-11-10). The
+        // field hands up a plain String, so its cursor is taken to be at the end, where typing almost always is.
+        val asha = LocalAshaLauncher.current
+        val ashaTyping = asha != null && !secret && enabled && focused && ashaFragment(value) != null
+        Box {
+            BasicTextField(
+                value = value,
+                onValueChange = onChange,
+                enabled = enabled,
+                singleLine = singleLine,
+                textStyle = t.body.copy(color = if (enabled) c.ink else c.inkTertiary),
+                cursorBrush = SolidColor(c.ink),
+                keyboardOptions = if (secret) keyboardOptions.copy(keyboardType = KeyboardType.Password, autoCorrectEnabled = false) else keyboardOptions,
+                keyboardActions = keyboardActions,
+                visualTransformation = if (secret) PasswordVisualTransformation() else visualTransformation,
+                modifier = Modifier.fillMaxWidth().onFocusChanged { focused = it.isFocused },
+                decorationBox = { inner ->
+                    Row(
+                        Modifier
+                            .fillMaxWidth()
+                            .height(CircasoSizes.controlLg)
+                            .background(c.fill, CircasoShapes.md)
+                            .border(2.dp, outline, CircasoShapes.md)
+                            .padding(horizontal = CircasoSpacing.s4),
+                        horizontalArrangement = Arrangement.spacedBy(CircasoSpacing.s2),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        leading?.invoke()
+                        Box(Modifier.weight(1f)) {
+                            if (value.isEmpty()) BasicText(placeholder, style = t.body.copy(color = c.inkTertiary))
+                            inner()
+                        }
                     }
-                }
-            },
-        )
+                },
+            )
+            AshaSuggestion(
+                ashaTyping,
+                onSummon = {
+                    ashaFragment(value)?.let { onValueChange(takeAshaFragment(value, it).text) }
+                    asha?.open()
+                },
+                Modifier.padding(start = CircasoSpacing.s2),
+            )
+        }
         if (error != null) {
             BasicText(error, Modifier.padding(horizontal = CircasoSpacing.s1), style = t.footnote.copy(color = c.critical))
         }
