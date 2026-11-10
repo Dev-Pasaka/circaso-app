@@ -176,6 +176,26 @@ class PayFeeTest {
         assertEquals("q1", paid.single().quoteId)
     }
 
+    @Test fun theChatComposerTypingThenTheArrowPays() = runTest(dispatcher) {
+        // Exactly what ChatComposer does per keystroke since the amount stays in the text (2026-11-09).
+        val vm = vm(); keep(vm); advanceUntilIdle()
+        var last: String? = null
+        for (draft in listOf("#", "#5", "#50", "#500", "#500 ", "#500 f", "#500 fo", "#500 for", "#500 for lunch")) {
+            val typing = com.circaso.feature.messaging.presentation.typingAmount(draft)
+            if (typing != last) { if (typing != null) vm.onAmount(typing) else vm.onQuickReset(); last = typing }
+            if (typing != null) {
+                val (tag, note) = com.circaso.feature.messaging.presentation.splitAssetTag(com.circaso.feature.messaging.presentation.afterTypedAmount(draft))
+                vm.onAssetTag(tag); vm.onNote(note)
+            }
+            advanceTimeBy(150)
+        }
+        advanceUntilIdle()
+        val s = vm.state.value
+        assertTrue(s.canPay, "the arrow can pay")
+        vm.onPay(); advanceUntilIdle()
+        assertEquals(1, paid.size)
+    }
+
     @Test fun payingSendsTheQuoteThePersonSaw() = runTest(dispatcher) {
         val vm = vm(); keep(vm); advanceUntilIdle()
         vm.onAmount("500"); advanceUntilIdle()

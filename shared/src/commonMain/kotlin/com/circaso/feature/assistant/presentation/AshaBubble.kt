@@ -62,8 +62,6 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.TransformOrigin
-import androidx.compose.foundation.gestures.awaitEachGesture
-import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.semantics.isTraversalGroup
 import androidx.compose.ui.input.pointer.util.VelocityTracker
@@ -242,16 +240,11 @@ private fun AshaPanel(state: AshaBubbleState, ui: AshaUiState, viewModel: AshaVi
             // Sized from the whole window (not from what the keyboard leaves), then held to the room there is.
             modifier.heightIn(max = min(PanelMaxHeight, window.height * PanelHeightFraction)).fillMaxHeight()
                 .glass(shape, floating = true).clip(shape)
-                // Every touch on the panel is the panel's: nothing on the screen behind (a Pay button) gets it.
-                .pointerInput(Unit) {
-                    awaitEachGesture {
-                        awaitFirstDown(requireUnconsumed = false)
-                        do {
-                            val event = awaitPointerEvent(androidx.compose.ui.input.pointer.PointerEventPass.Final)
-                            event.changes.forEach { it.consume() }
-                        } while (event.changes.any { it.pressed })
-                    }
-                }
+                // Every touch on the panel is the panel's: a pointer-input node here ends hit-testing at the panel, so
+                // nothing on the screen behind (a Pay button) gets it. It only listens. Consuming would cancel the
+                // list's scroll and the buttons' taps, which check on the final pass whether something else took the
+                // touch before their slop is reached: slow drags didn't scroll, only flicks did.
+                .pointerInput(Unit) { awaitPointerEventScope { while (true) awaitPointerEvent() } }
                 .semantics { paneTitle = "Asha"; isTraversalGroup = true },
         ) {
             PanelHeader(
