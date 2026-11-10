@@ -152,7 +152,7 @@ internal class ListDetailScene<T : Any>(
     override val entries: List<NavEntry<T>> = listOfNotNull(list, underneath, detail)
 
     override val content: @Composable () -> Unit = {
-        if (full) Box(Modifier.fillMaxSize()) { list.Content() } else ListDetail(list, detail, underneath, depth, tabEpoch, onBack)
+        ListDetail(list, detail, underneath, depth, tabEpoch, full, onBack)
     }
 
     override fun equals(other: Any?): Boolean =
@@ -164,7 +164,7 @@ internal class ListDetailScene<T : Any>(
 }
 
 @Composable
-private fun <T : Any> ListDetail(list: NavEntry<T>, detail: NavEntry<T>?, underneath: NavEntry<T>?, depth: Int, tabEpoch: Int, onBack: () -> Unit) {
+private fun <T : Any> ListDetail(list: NavEntry<T>, detail: NavEntry<T>?, underneath: NavEntry<T>?, depth: Int, tabEpoch: Int, full: Boolean, onBack: () -> Unit) {
     val c = CircasoTheme.colors
     val still = CircasoTheme.reduceMotion
     // Back inside the detail pane follows the finger (Android's predictive back, iOS's edge swipe): the screen slides
@@ -195,12 +195,16 @@ private fun <T : Any> ListDetail(list: NavEntry<T>, detail: NavEntry<T>?, undern
     val change = remember(detail?.contentKey, depth, tabEpoch) { motion.next(depth, tabEpoch) }
     Row(Modifier.fillMaxSize().background(c.bg)) {
         // The list and, at its leading edge, the tabs' rail (the same rail the full-window Wallet shows).
-        ProvideWindowLayout(Modifier.width(WindowLayout.ListPaneWidth + WindowLayout.RailRoom).fillMaxHeight()) {
+        // Full (Home's Wallet tab) only widens this pane to the window and leaves the detail out: the list is drawn from
+        // this same place either way. Drawing it from elsewhere for Wallet moved Home's content between call sites on a
+        // tab change and broke Compose's group bookkeeping ("Missed recording an endGroup", build 2, 2026-11-10).
+        ProvideWindowLayout(if (full) Modifier.fillMaxSize() else Modifier.width(WindowLayout.ListPaneWidth + WindowLayout.RailRoom).fillMaxHeight()) {
             androidx.compose.runtime.CompositionLocalProvider(
                 LocalListHasDetail provides (detail != null),
                 com.circaso.designsystem.adaptive.LocalTabsAsRail provides true,
             ) { list.Content() }
         }
+        if (!full) {
         Box(Modifier.width(0.5.dp).fillMaxHeight().background(c.separator))
         ProvideWindowLayout(Modifier.weight(1f).fillMaxHeight().clipToBounds()) {
           androidx.compose.foundation.layout.BoxWithConstraints(Modifier.fillMaxSize()) {
@@ -236,6 +240,7 @@ private fun <T : Any> ListDetail(list: NavEntry<T>, detail: NavEntry<T>?, undern
                 }
             }
           }
+        }
         }
     }
 }
