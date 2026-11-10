@@ -87,8 +87,9 @@ fun initKoinIos() {
         single<com.circaso.core.platform.GroupPhotoEncoder> { com.circaso.core.platform.IosGroupPhotoEncoder() }
         single<com.circaso.core.platform.MomentCamera> { com.circaso.core.platform.IosMomentCamera() } // AVFoundation lives on the Swift side; see MomentCameraBridge
         single<com.circaso.core.platform.MediaLibrary> { com.circaso.core.platform.IosMediaLibrary() } // Photos recents here; loading and pickers on the Swift side, see MediaLibraryBridge
-        // APNs needs the Push Notifications capability and a server-side key; until then there is no address to send.
-        single<PushTokenProvider> { NoPushToken }
+        // Messages, payments and missed calls reach an iPhone through FCM (the server adds the APNs block): this phone's
+        // FCM token from Firebase Messaging on the Swift side. See IosPushToken.kt and PushNotificationsImpl.swift.
+        single<PushTokenProvider> { com.circaso.core.platform.IosPushTokenProvider() }
         // Calls ring through PushKit (VoIP pushes, sent by the server straight to APNs) and CallKit, even with Circaso
         // closed: this phone's VoIP token goes to `PUT /v1/devices/current/voip-token`. See IosCallKit.kt.
         single(org.koin.core.qualifier.named("voip"), createdAtStart = true) {

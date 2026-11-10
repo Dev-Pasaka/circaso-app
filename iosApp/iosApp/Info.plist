@@ -33,6 +33,8 @@
 	<false/>
 	<key>FacebookAutoLogAppEventsEnabled</key>
 	<false/>
+	<key>FirebaseAppDelegateProxyEnabled</key>
+	<false/>
 	<key>GIDClientID</key>
 	<string>177338416308-tr90ol3iijl7ipe9e5rovs9ms70n8r95.apps.googleusercontent.com</string>
 	<key>GIDServerClientID</key>
@@ -55,6 +57,7 @@
 		<string>location</string>
 		<string>processing</string>
 		<string>voip</string>
+		<string>remote-notification</string>
 	</array>
 </dict>
 </plist>
