@@ -42,6 +42,7 @@ import com.circaso.designsystem.theme.CircasoTheme
 import com.mikepenz.markdown.compose.Markdown
 import com.mikepenz.markdown.model.DefaultMarkdownColors
 import com.mikepenz.markdown.model.DefaultMarkdownTypography
+import com.mikepenz.markdown.model.rememberMarkdownState
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
@@ -176,8 +177,13 @@ private fun AshaMarkdown(markdown: String) {
     val c = CircasoTheme.colors
     val t = CircasoTheme.typography
     val body = t.body.copy(color = c.ink)
+    // Parsed at once the first time (an answer is short), so a line scrolling into view has its full height in its first
+    // frame: parsed in the background it was blank for a frame and then grew, and the list jumped as it scrolled. While
+    // an answer streams, the words already shown stay until the next parse lands (no blank flash per word). The state
+    // also holds one parser, where the plain overload made a new one per recomposition and parsed again each time.
+    val state = rememberMarkdownState(markdown, retainState = true, immediate = true)
     Markdown(
-        markdown,
+        markdownState = state,
         colors = DefaultMarkdownColors(
             text = c.ink, codeBackground = c.fill, inlineCodeBackground = c.fill, dividerColor = c.separator,
             tableBackground = c.fill, highlightText = c.ink, highlightBackground = c.fillStrong,

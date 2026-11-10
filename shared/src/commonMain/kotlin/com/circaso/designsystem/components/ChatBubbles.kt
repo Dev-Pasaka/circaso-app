@@ -276,7 +276,24 @@ fun ComposerBar(
                             // The field keeps its own cursor; when the text is set from outside (a picked coin, a chip
                             // turned back into text, a cleared draft) the cursor goes to the end, ready to keep typing.
                             var field by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(TextFieldValue(value, TextRange(value.length))) }
-                            if (field.text != value) field = TextFieldValue(value, TextRange(value.length))
+                            // What this field last handed up. The draft comes back through the screen's state a frame or
+                            // more later, so while it still reads an older text that is lag, not a change from outside:
+                            // taking it then threw away the keys just typed (fast typing lost letters, `/asha` needed
+                            // several tries, the keyboard's word was reset). Only a draft this field didn't send is taken.
+                            val pending = androidx.compose.runtime.remember { ArrayDeque<String>() }
+                            val seen = androidx.compose.runtime.remember { arrayOf(value) }
+                            if (value != seen[0]) {
+                                seen[0] = value
+                                val mine = pending.indexOf(value)
+                                // One of ours arriving: it and everything sent before it are through; the field is ahead.
+                                if (mine >= 0) repeat(mine + 1) { pending.removeFirst() }
+                                else { pending.clear(); if (field.text != value) field = TextFieldValue(value, TextRange(value.length)) }
+                            }
+                            fun handUp(text: String) {
+                                if (text == (pending.lastOrNull() ?: seen[0])) return
+                                pending.addLast(text); if (pending.size > 64) pending.removeFirst()
+                                onValueChange(text)
+                            }
                             // The typed amount drawn as money, and as a pill once typed past (C3, 2026-11-09).
                             val typedAmount = amount?.invoke(field.text)?.takeIf { it.start >= 0 && it.end <= field.text.length && it.start < it.end }
                             val display = typedAmount?.let { AmountDisplay(field.text, it, field.selection) }
@@ -307,7 +324,7 @@ fun ComposerBar(
                                     val hit = if (asha != null) ashaCommandTyped(field.text, next.text, next.selection.end) else null
                                     if (asha != null && hit != null) {
                                         field = TextFieldValue(hit.text, TextRange(hit.cursor))
-                                        if (hit.text != value) onValueChange(hit.text)
+                                        handUp(hit.text)
                                         asha.open()
                                         return@onValueChange
                                     }
@@ -324,7 +341,7 @@ fun ComposerBar(
                                         if (nowPill && !wasPill && kept.text.length > field.text.length) haptics.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.TextHandleMove)
                                     }
                                     field = kept
-                                    if (kept.text != value) onValueChange(kept.text)
+                                    handUp(kept.text)
                                 },
                                 enabled = enabled, maxLines = 5,
                                 textStyle = t.body.copy(color = c.ink), cursorBrush = SolidColor(c.ink),
