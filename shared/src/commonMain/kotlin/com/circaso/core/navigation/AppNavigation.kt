@@ -280,7 +280,9 @@ fun AppNavigation(forceUpdate: Boolean, home: @Composable () -> Unit) {
         // The Wallet tab is a dashboard, not a list (Pasaka, 2026-11-08: the card looked shrunk in the narrow list
         // pane): on a tablet it takes the whole window, its card centred at a card's size, and what it opens covers it
         // with a Back, as on a phone. Chats and You keep the list beside the detail.
-        sceneStrategies = listOf(remember(splitHome, tabEpoch) { ListDetailSceneStrategy(splitHome, tabEpoch) }),
+        // The full-window Wallet stays in the same scene as the split (listFull), so Home is never handed between
+        // scenes on a tab change: both drew it for a frame and the app aborted (TestFlight on Mac, 2026-11-10).
+        sceneStrategies = listOf(remember(twoPaneNow, splitHome, tabEpoch) { ListDetailSceneStrategy(twoPaneNow, tabEpoch, listFull = twoPaneNow && !splitHome) }),
         // The same screen on top before and after (a rotation or resize into or out of the split) only reflows; a
         // change of Home's tab swaps in place (iPadOS), never slides as a push or a back.
         transitionSpec = { if (tabSwap() || sameTop()) EnterTransition.None togetherWith ExitTransition.None else pushTransition(still) },
