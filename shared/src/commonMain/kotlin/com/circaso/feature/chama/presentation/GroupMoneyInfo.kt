@@ -120,18 +120,25 @@ class GroupInfoMoneySource(
     /** GW8: turn on fingerprint / Face ID for this wallet only (its own Circle user, its PIN once). */
     suspend fun turnOnBiometrics(walletId: String, name: String): AppResult<Unit> {
         val r = enableBiometrics(SignSubject.group(walletId, name))
-        if (r is AppResult.Success) { prefs.setWalletBiometrics(walletId, true); prefs.setFlag(lostFlag(walletId), false) }
+        if (r is AppResult.Success) {
+            prefs.setWalletBiometrics(walletId, true)
+            prefs.setFlag(lostFlag(walletId), false)
+            prefs.setFlag(AppPreferences.biometricOfferedFlag(walletId), true)
+        }
         return r
     }
 
     suspend fun setApprovalPolicy(chatId: String, policy: ApprovalPolicy, key: String) = setPolicy(chatId, policy, key)
 
-    /** Back to the wallet's PIN on this phone (the personal Security switch does the same). */
+    /**
+     * Back to the wallet's PIN on this phone (the personal Security row does the same): its challenges then run with
+     * Circle's biometrics switched off ([com.circaso.feature.wallet.domain.SdkSession.biometrics]).
+     */
     suspend fun turnOffBiometrics(walletId: String) = prefs.setWalletBiometrics(walletId, false)
 
     companion object {
         /** Set when Circle reports a wallet's biometrics gone, so its row says why it's off (GW8b). */
-        fun lostFlag(walletId: String?) = "biometric_lost.${walletId ?: "personal"}"
+        fun lostFlag(walletId: String?) = AppPreferences.biometricLostFlag(walletId)
     }
 }
 
@@ -264,7 +271,8 @@ fun ColumnScope.GroupMoneyRows(info: GroupInfoMoney, chat: Chat?, myUserId: Stri
                     ListRow(
                         label,
                         sub = when {
-                            info.biometricsLost -> "Stopped working for this wallet. Its PIN approves payments until you turn it on again."
+                            // Two lines beside the switch at default size (ListRow caps the sub there).
+                            info.biometricsLost -> "Stopped working. Its PIN approves for now"
                             off && !info.biometricsOn -> "Needs a connection"
                             else -> "Approve this wallet’s payments"
                         },

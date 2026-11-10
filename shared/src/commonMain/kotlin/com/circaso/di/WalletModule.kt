@@ -49,7 +49,12 @@ val walletModule = module {
         },
         // Money is never hidden by decryption: a confirmed chat payment always has its card in that chat.
         onChatPayment = { seen -> get<com.circaso.feature.messaging.data.repository.ChatPaymentCards>().fromWallet(seen) },
+        // Fingerprint / Face ID per wallet on this phone: on, Circle's PIN screen opens with the system prompt over it.
+        biometricsOn = { walletId -> get<com.circaso.core.datastore.AppPreferences>().walletBiometrics(walletId).first() },
+        onApprovedWithPin = { subject -> get<com.circaso.feature.wallet.domain.PinApprovals>().report(subject) },
     ) }
+    single { com.circaso.feature.wallet.domain.PinApprovals() }
+    viewModel { com.circaso.feature.wallet.presentation.BiometricOfferViewModel(get(), get(), get(), get(), get()) }
     single<WalletRepository> { get<WalletRepositoryImpl>() }
     factory { ObserveWalletUseCase(get()) }
     factory { RefreshWalletUseCase(get()) }
