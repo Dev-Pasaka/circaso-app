@@ -31,5 +31,9 @@ fun NotificationDestination.toUserInfo(): Map<Any?, Any?> = toExtras().mapKeys {
  */
 fun openNotification(userInfo: Map<Any?, *>): Boolean {
     val extras = userInfo.mapNotNull { (k, v) -> (k as? String)?.let { key -> (v as? String)?.let { key to it } } }.toMap()
-    return NotificationTaps.openFrom(extras)
+    if (NotificationTaps.openFrom(extras)) return true
+    // A push from the server (FCM puts its data at the top of userInfo, beside `aps`): ids and `kind` only.
+    val destination = NotificationDestination.fromPush(extras) ?: return false
+    NotificationTaps.open(destination)
+    return true
 }
