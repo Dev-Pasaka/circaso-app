@@ -16,6 +16,8 @@ data class Wallet(
     val owner: WalletOwner? = null,
     /** Whether this person signs for it (their own wallet, or a group wallet whose PIN they set). */
     val canSign: Boolean = true,
+    /** Why sending is held: `VAULT_OPENED`, or a recovery (`RELINKED`); null when not held or unknown. */
+    val holdReason: String? = null,
 ) {
     val isGroup get() = owner?.type == WalletOwnerType.Group
 

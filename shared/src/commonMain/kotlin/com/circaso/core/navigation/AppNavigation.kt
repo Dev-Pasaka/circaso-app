@@ -339,7 +339,7 @@ fun AppNavigation(forceUpdate: Boolean, home: @Composable () -> Unit) {
                         val s by chatsViewModel.state.collectAsState()
                         val w by walletViewModel.state.collectAsState()
                         androidx.compose.foundation.layout.Column {
-                            HoldBanner(w.wallet?.holdUntil, onNotMe = { backStack.add(SecurityRoute) })
+                            HoldBanner(w.wallet?.holdUntil, onNotMe = { backStack.add(SecurityRoute) }, reason = w.wallet?.holdReason)
                             ChatsBanner(s)
                         }
                     },
@@ -449,9 +449,21 @@ fun AppNavigation(forceUpdate: Boolean, home: @Composable () -> Unit) {
             entry<SecurityRoute> {
                 SecurityScreen(
                     koinViewModel(), onBack = ::pop, onActivity = { backStack.add(SecurityLogRoute) }, onSendMoney = { backStack.add(PayRoute()) },
-                    payments = { BiometricApprovalSection(koinViewModel()) },
+                    payments = {
+                        BiometricApprovalSection(koinViewModel())
+                        val walletRepo: com.circaso.feature.wallet.domain.WalletRepository = koinInject()
+                        val myWallet by walletRepo.wallet.collectAsState(null)
+                        val bio: com.circaso.core.platform.Biometrics = koinInject()
+                        com.circaso.feature.vault.presentation.VaultRow(
+                            repository = koinInject(),
+                            hasWallet = myWallet?.status == com.circaso.feature.wallet.domain.WalletStatus.Active,
+                            unlock = if (bio.available()) bio.name else "Screen Lock",
+                            onOpen = { backStack.add(VaultRoute) },
+                        )
+                    },
                 )
             }
+            entry<VaultRoute> { com.circaso.feature.vault.presentation.VaultScreen(koinViewModel(), onBack = ::pop) }
             entry<NotificationsRoute> { NotificationsScreen(koinViewModel(), onBack = ::pop, onOpenTransfer = { id -> backStack.add(TransferRoute(id)) }) }
             entry<SecurityLogRoute> { SecurityLogScreen(koinViewModel(), onBack = ::pop) }
             entry<AshaRoute> {

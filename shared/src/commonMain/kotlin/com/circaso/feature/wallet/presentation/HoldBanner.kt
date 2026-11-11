@@ -31,25 +31,31 @@ fun hoursUntil(iso: String?, now: Long = nowMillis()): Long? {
     return if (left <= 0) null else (left + 3_599_999) / 3_600_000
 }
 
-/** Design ID-23: the hold banner on the Chats tab after a recovery, with its sheet; tap "Details" or the banner. */
+/** The server's hold reason (`GET /v1/wallet` `hold.reason`): the PIN Vault was opened (2026-11-11); otherwise a recovery. */
+const val VaultOpenedHold = "VAULT_OPENED"
+
+/** Design ID-23: the hold banner on the Chats tab, with its sheet; tap "Details" or the banner. */
 @Composable
-fun HoldBanner(holdUntil: String?, onNotMe: () -> Unit) {
+fun HoldBanner(holdUntil: String?, reason: String? = null, onNotMe: () -> Unit) {
     val hours = hoursUntil(holdUntil) ?: return
     var sheet by remember { mutableStateOf(false) }
+    val why = if (reason == VaultOpenedHold) "Your PIN Vault was opened" else "Your account was recovered"
     Box(Modifier.fillMaxWidth().padding(horizontal = CircasoSpacing.s4, vertical = CircasoSpacing.s2).pressable(role = Role.Button, onClick = { sheet = true })) {
-        Banner("Payments resume in $hours h. Your account was recovered, so sending is paused. Details", CircasoIcon.Clock, tone = BannerTone.Warning)
+        Banner("Sending resumes in $hours h. $why. Details", CircasoIcon.Clock, tone = BannerTone.Warning)
     }
     // The sheet lives in whatever Box the banner sits in; the scaffold's banner slot is one.
-    androidx.compose.foundation.layout.Box { HoldSheet(sheet, hours, { sheet = false }, onNotMe) }
+    androidx.compose.foundation.layout.Box { HoldSheet(sheet, hours, { sheet = false }, onNotMe, reason) }
 }
 
 @Composable
-fun androidx.compose.foundation.layout.BoxScope.HoldSheet(visible: Boolean, hours: Long, onDismiss: () -> Unit, onNotMe: () -> Unit) {
+fun androidx.compose.foundation.layout.BoxScope.HoldSheet(visible: Boolean, hours: Long, onDismiss: () -> Unit, onNotMe: () -> Unit, reason: String? = null) {
     val c = CircasoTheme.colors
     val t = CircasoTheme.typography
     CircasoSheet(visible, onDismiss, label = "Sending is paused") {
         BasicText("Sending resumes in $hours h", style = t.title2.copy(color = c.ink))
-        BasicText("Your account was recovered on this phone, so sending is paused for 48 hours to keep your money safe. You can still chat and receive money.", style = t.body.copy(color = c.inkSecondary))
+        val body = if (reason == VaultOpenedHold) "Your PIN Vault was opened on this phone, so sending is paused for 24 hours to keep your money safe. You can still chat and receive money."
+        else "Your account was recovered on this phone, so sending is paused for 48 hours to keep your money safe. You can still chat and receive money."
+        BasicText(body, style = t.body.copy(color = c.inkSecondary))
         CircasoButton("OK", onDismiss, size = ButtonSize.Large, block = true)
         CircasoButton("This Wasn't Me", { onDismiss(); onNotMe() }, style = ButtonStyle.Plain, size = ButtonSize.Large, block = true)
     }

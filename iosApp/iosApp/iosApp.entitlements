@@ -12,6 +12,8 @@
 	<array>
 		<string>applinks:links.circaso.com</string>
 		<string>applinks:sandbox.circaso.com</string>
+		<string>webcredentials:circaso.com</string>
+		<string>webcredentials:circaso.com?mode=developer</string>
 	</array>
 </dict>
 </plist>

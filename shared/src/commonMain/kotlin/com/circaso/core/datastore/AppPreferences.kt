@@ -50,7 +50,7 @@ class AppPreferences(private val store: DataStore<Preferences>) : com.circaso.co
     override suspend fun clear() {
         store.edit { prefs ->
             // The Wallet tab's remembered mode and group belong to the account too, and so do its group invites.
-            prefs.asMap().keys.filter { it.name.startsWith("rt.seq.") || it.name.startsWith("text.wallet.") || it.name == "text.$GroupInvitesText" || it.name == "flag.$BiometricApproval" || it.name.startsWith("flag.$BiometricApproval.") || it.name.startsWith("flag.biometric_lost.") }.forEach { prefs.remove(it) }
+            prefs.asMap().keys.filter { it.name.startsWith("rt.seq.") || it.name.startsWith("text.wallet.") || it.name.startsWith("text.vault.") || it.name == "text.$GroupInvitesText" || it.name == "flag.$BiometricApproval" || it.name.startsWith("flag.$BiometricApproval.") || it.name.startsWith("flag.biometric_lost.") }.forEach { prefs.remove(it) }
         }
     }
 

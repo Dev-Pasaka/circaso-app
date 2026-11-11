@@ -61,6 +61,10 @@ data object BlockedRoute : Route
 @Serializable
 data object SecurityRoute : Route
 
+/** The PIN Vault (2026-11-11): the Circle PIN backed up under a passkey. */
+@Serializable
+data object VaultRoute : Route
+
 @Serializable
 data object SecurityLogRoute : Route
 
@@ -225,6 +229,7 @@ val routeSerializers = SerializersModule {
         subclass(MomentsPrivacyRoute::class)
         subclass(BlockedRoute::class)
         subclass(SecurityRoute::class)
+        subclass(VaultRoute::class)
         subclass(SecurityLogRoute::class)
         subclass(AshaRoute::class)
         subclass(VoiceRoute::class)
