@@ -72,6 +72,12 @@ class CircasoMessagingService : FirebaseMessagingService() {
             // A ringing call (guide CL1): ring now, the call itself loads when the app opens. With Notification
             // privacy on it says only "Incoming call".
             if (callId != null && message.data["kind"] == "call.ringing") {
+                // The server pushes every ring, socket or not (2026-11-11). Circaso in front with this call already on
+                // its answer screen (the frame came first): that screen rings, so no notification over it.
+                val onScreen = koin.get<com.circaso.feature.calls.CallController>().state.value
+                if (koin.get<com.circaso.core.platform.CurrentActivity>().inFront.value &&
+                    onScreen?.callId == callId && onScreen.phase == com.circaso.feature.calls.CallPhase.Incoming
+                ) return
                 val notifier = koin.get<com.circaso.core.calls.AndroidCallNotifier>()
                 runBlocking {
                     val chatId = message.data["chatId"]

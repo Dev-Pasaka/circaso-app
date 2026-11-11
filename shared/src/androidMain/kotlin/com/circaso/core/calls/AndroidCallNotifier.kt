@@ -79,7 +79,7 @@ class AndroidCallNotifier(private val context: Context, private val scope: Corou
         }
     }
 
-    private fun showing(callId: String): Boolean = runCatching {
+    fun showing(callId: String): Boolean = runCatching {
         context.getSystemService(android.app.NotificationManager::class.java).activeNotifications.any { it.id == callId.hashCode() }
     }.getOrDefault(false)
 

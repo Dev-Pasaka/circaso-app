@@ -73,7 +73,10 @@ fun initKoinAndroid(context: Context) {
             single<com.circaso.core.calls.CallEngine> { com.circaso.core.calls.AndroidCallEngine(app) }
             single { com.circaso.core.calls.AndroidCallNotifier(app, get()).also { n -> ringing = { id -> n.clear(id) } } }
             single(createdAtStart = true) { com.circaso.core.calls.CallKeepAlive(app, get(), get()).also { it.start() } }
-            single(createdAtStart = true) { com.circaso.core.calls.CallRinger(app, get(), get()).also { it.start() } }
+            single(createdAtStart = true) {
+                val notices = get<com.circaso.core.notifications.PushNotices>()
+                com.circaso.core.calls.CallRinger(app, get(), get(), get(), get(), words = { name, video -> notices.incomingCall(name, video) }).also { it.start() }
+            }
             single<com.circaso.core.platform.LocationProvider> { com.circaso.core.platform.AndroidLocation(app) }
             single<com.circaso.feature.messaging.data.repository.LiveTracker> { com.circaso.core.platform.AndroidLiveTracker(app) }
             single<com.circaso.core.sync.BackgroundSync> { com.circaso.core.sync.AndroidBackgroundSync(app) }

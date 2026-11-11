@@ -18,17 +18,24 @@ import com.google.android.libraries.identity.googleid.GoogleIdTokenCredential
 import com.google.android.libraries.identity.googleid.GoogleIdTokenParsingException
 import java.lang.ref.WeakReference
 
-/** Remembers the visible activity: Credential Manager needs one to show the account sheet. */
+/**
+ * Remembers the visible activity: Credential Manager needs one to show the account sheet. [inFront] says whether any
+ * Circaso screen is on screen (started), which decides how a call rings (2026-11-11): its own answer screen in front,
+ * the full-screen call notification otherwise.
+ */
 class CurrentActivity(application: Application) {
     private var ref = WeakReference<Activity>(null)
+    private var started = 0
+    private val front = kotlinx.coroutines.flow.MutableStateFlow(false)
+    val inFront: kotlinx.coroutines.flow.StateFlow<Boolean> = front
 
     init {
         application.registerActivityLifecycleCallbacks(object : Application.ActivityLifecycleCallbacks {
             override fun onActivityResumed(activity: Activity) { ref = WeakReference(activity) }
             override fun onActivityPaused(activity: Activity) { if (ref.get() === activity) ref = WeakReference(null) }
             override fun onActivityCreated(activity: Activity, savedInstanceState: Bundle?) = Unit
-            override fun onActivityStarted(activity: Activity) = Unit
-            override fun onActivityStopped(activity: Activity) = Unit
+            override fun onActivityStarted(activity: Activity) { started++; front.value = true }
+            override fun onActivityStopped(activity: Activity) { started = (started - 1).coerceAtLeast(0); front.value = started > 0 }
             override fun onActivitySaveInstanceState(activity: Activity, outState: Bundle) = Unit
             override fun onActivityDestroyed(activity: Activity) = Unit
         })

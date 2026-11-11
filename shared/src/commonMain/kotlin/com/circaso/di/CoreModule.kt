@@ -151,6 +151,7 @@ fun initKoin(platform: Module) {
     koin.get<com.circaso.feature.chama.data.repository.GroupMoneyLive>().start() // a group's money moves live on every screen
     koin.get<RealtimeSupervisor>().start()
     koin.get<PushTokenRegistrar>().start()
+    koin.get<com.circaso.feature.contacts.data.repository.PhoneBookAutoSync>().start() // contacts on Circaso, kept current
     koin.get<KeyMaintainer>().start() // encryption keys on the server, whenever signed in and online
     koin.get<com.circaso.feature.messaging.data.repository.MessagingStarter>().start()
     koin.get<com.circaso.feature.status.data.repository.MomentsStarter>().start() // contacts' moments at launch and sign-in
