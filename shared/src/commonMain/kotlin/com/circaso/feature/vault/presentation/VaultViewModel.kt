@@ -200,6 +200,8 @@ class VaultViewModel(
         is VaultProblem.Passkey -> copy(
             error = if (problem.reason == "no-passkey") "No Circaso passkey on this phone. Sign in to the same Google or Apple account you saved it with."
             else "Your passkey didn't answer. Try again.",
+            // What the passkey provider said, for support.
+            errorRef = problem.reason,
         )
         is VaultProblem.Server -> if ((problem.error as? AppError.Api)?.code == "request.rate_limited") {
             copy(error = "You can open your vault 5 times an hour. Try again a little later.", errorRef = null)
