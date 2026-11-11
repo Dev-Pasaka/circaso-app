@@ -47,6 +47,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
 import org.koin.core.context.startKoin
 import org.koin.core.module.Module
@@ -61,7 +62,12 @@ val coreModule = module {
     single { SessionStore(get(), get()) }
     single { DeviceIdentity(get(), get()) }
     // The session manager is both the token source and the refresher; the API client reaches it lazily to avoid a cycle.
-    single<SessionDataCleaner> { RoomSessionDataCleaner(get(), get<AppPreferences>()) }
+    single<SessionDataCleaner> {
+        val room = RoomSessionDataCleaner(get(), get<AppPreferences>())
+        val secure = get<com.circaso.core.platform.SecureStorage>()
+        // The group key backup's root goes with the person's data (KeyBackupRepository.LocalRoot).
+        SessionDataCleaner { room.clearUserData(); secure.remove(com.circaso.feature.keybackup.data.KeyBackupRepository.LocalRoot) }
+    }
     single { AuthManager(get(), get(), refreshOverHttp(lazy { get<CircasoApi>() }), cleaner = get()) }
     single<AccessTokenProvider> { get<AuthManager>() }
     single<SessionRefresher> { get<AuthManager>() }
@@ -136,7 +142,7 @@ private var started = false
  * (`KoinGraphTest`): a module read before its top-level `val` is initialised is null here, and Koin crashes at launch.
  */
 fun appModules(platform: Module): List<Module> =
-    listOf(coreModule, authModule, profileModule, contactsModule, accountModule, assistantModule, realtimeModule, messagingModule, walletModule, chamaModule, statusModule, callsModule, homeModule, shareModule, vaultModule, platform)
+    listOf(coreModule, authModule, profileModule, contactsModule, accountModule, assistantModule, realtimeModule, messagingModule, walletModule, chamaModule, statusModule, callsModule, homeModule, shareModule, vaultModule, keyBackupModule, platform)
 
 /** Starts Koin once. Called from each platform's entry point with its platform module. */
 fun initKoin(platform: Module) {
@@ -152,6 +158,19 @@ fun initKoin(platform: Module) {
     koin.get<RealtimeSupervisor>().start()
     koin.get<PushTokenRegistrar>().start()
     koin.get<com.circaso.feature.contacts.data.repository.PhoneBookAutoSync>().start() // contacts on Circaso, kept current
+    // The group key backup: whenever signed in and online, see whether it's on and send any keys the server may lack.
+    scope.launch {
+        val auth = koin.get<AuthManager>()
+        val connection = koin.get<com.circaso.core.sync.ConnectionState>()
+        kotlinx.coroutines.flow.combine(auth.state, connection.status) { a, c -> a == com.circaso.core.session.AuthState.Active && c == com.circaso.core.platform.ConnectionStatus.Online }
+            .distinctUntilChanged().collect { ready ->
+                if (!ready) return@collect
+                val backup = koin.get<com.circaso.feature.keybackup.data.KeyBackupRepository>()
+                if (!backup.supported()) return@collect
+                backup.refresh()
+                if (backup.status.value.onPhone) backup.backfill()
+            }
+    }
     koin.get<KeyMaintainer>().start() // encryption keys on the server, whenever signed in and online
     koin.get<com.circaso.feature.messaging.data.repository.MessagingStarter>().start()
     koin.get<com.circaso.feature.status.data.repository.MomentsStarter>().start() // contacts' moments at launch and sign-in

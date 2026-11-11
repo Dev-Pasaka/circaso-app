@@ -50,6 +50,8 @@ class VaultRepository(
     private val newIdempotencyKey: () -> String,
     private val readCache: suspend () -> String? = { null },
     private val writeCache: suspend (String?) -> Unit = {},
+    /** Told the passkey's PRF secret right after it answered (the group key backup turns on with it, no extra prompt). */
+    private val afterSecret: suspend (credentialId: ByteArray, secret: ByteArray) -> Unit = { _, _ -> },
 ) {
     private val sealer = VaultCrypto(crypto)
     private val knownStatus = MutableStateFlow<VaultStatus?>(null)
@@ -101,6 +103,8 @@ class VaultRepository(
                 else -> return VaultOutcome.Problem(used.problem())
             }
         }
+        // A copy for the group key backup, handed over only once the vault is saved, then wiped.
+        val forBackup = secret.copyOf()
         val sealed = try { sealer.seal(secret, person, contents) } finally { secret.fill(0) }
         val request = SaveVaultRequest(
             credentialId = Base64.UrlSafe.withPadding(Base64.PaddingOption.ABSENT).encode(credentialId),
@@ -110,8 +114,12 @@ class VaultRepository(
             expectedVersion = existing.version,
         )
         return when (val r = remote.save(request, newIdempotencyKey())) {
-            is AppResult.Success -> { remember(VaultStatus(r.value.exists, r.value.version, r.value.updatedAt)); VaultOutcome.Done(Unit) }
-            is AppResult.Failure -> VaultOutcome.Problem(VaultProblem.Server(r.error))
+            is AppResult.Success -> {
+                remember(VaultStatus(r.value.exists, r.value.version, r.value.updatedAt))
+                try { runCatching { afterSecret(credentialId, forBackup) } } finally { forBackup.fill(0) }
+                VaultOutcome.Done(Unit)
+            }
+            is AppResult.Failure -> { forBackup.fill(0); VaultOutcome.Problem(VaultProblem.Server(r.error)) }
         }
     }
 
@@ -146,7 +154,12 @@ class VaultRepository(
                 else -> return VaultOutcome.Problem(r.problem(), serverOpened = true)
             }
         }
-        val contents = try { sealer.open(secret, person, sealed) } finally { secret.fill(0) }
+        val contents = try {
+            sealer.open(secret, person, sealed).also { opened ->
+                // The vault's own passkey answered for the usual salt: the group key backup can use it too.
+                if (opened != null && salt.contentEquals(PrfSalt)) runCatching { afterSecret(credential, secret) }
+            }
+        } finally { secret.fill(0) }
         return contents?.let { VaultOutcome.Done(it) } ?: VaultOutcome.Problem(VaultProblem.WrongPasskey, serverOpened = true)
     }
 

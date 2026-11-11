@@ -212,8 +212,17 @@ class GroupKeys(
 
     suspend fun newMetaKey(): ByteArray = crypto.randomBytes(32)
 
-    suspend fun rememberMetaKey(chatId: String, metaVersion: Int, key: ByteArray) =
+    /** Told about every group key this phone keeps (the group key backup seals and uploads it); set by DI. */
+    var onKeyKept: (suspend (chatId: String, metaVersion: Int, key: ByteArray) -> Unit)? = null
+
+    suspend fun rememberMetaKey(chatId: String, metaVersion: Int, key: ByteArray) {
         chats.upsertMetaKey(GroupMetaKeyEntity(chatId, metaVersion, store.sealBytes(key, "meta:$chatId:$metaVersion"), now()))
+        onKeyKept?.let { tell -> runCatching { tell(chatId, metaVersion, key) } }
+    }
+
+    /** Every real group key on this phone, opened: (chatId, metaVersion, key). */
+    suspend fun allKeys(): List<Triple<String, Int, ByteArray>> =
+        chats.allMetaKeys().mapNotNull { row -> runCatching { Triple(row.chatId, row.metaVersion, store.openBytes(row.key, "meta:${row.chatId}:${row.metaVersion}")) }.getOrNull() }
 
     suspend fun latestMetaKey(chatId: String): ByteArray? = chats.latestMetaKey(chatId)?.let { store.openBytes(it.key, "meta:$chatId:${it.metaVersion}") }
 
