@@ -15,26 +15,62 @@ import com.circaso.feature.calls.CallController
 import com.circaso.feature.calls.CallPhase
 import com.circaso.feature.calls.data.CallsRemote
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
-import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import org.koin.mp.KoinPlatform
 
 /**
- * Rings while a call is incoming on screen (design H1): the phone's own ringtone, looping, and the vibration pattern
- * of a call, as the phone's ringer mode allows (silent: nothing; vibrate: vibration only). The ringing notification
- * stops its own sound once the app opens onto the call, so without this the answer screen was silent.
+ * Rings an incoming call (design H1) one way at a time, by where Circaso is (2026-11-11):
+ * - **In front**: the answer screen, with the phone's own ringtone looping and a call's vibration, as the ringer mode
+ *   allows (silent: nothing; vibrate: vibration only). A call notification for the same call is taken down, since
+ *   it would ring and show over the answer screen.
+ * - **Not in front** (the person just left the app while its socket was still open, so the ring came as a frame): the
+ *   full-screen call notification, which rings by itself, so this ringtone stays off. The server pushes the same ring
+ *   too; both post the same notification id, so it shows and rings once.
  */
-class CallRinger(private val context: Context, private val controller: CallController, private val scope: CoroutineScope) {
+class CallRinger(
+    private val context: Context,
+    private val controller: CallController,
+    private val scope: CoroutineScope,
+    private val notifier: AndroidCallNotifier,
+    private val activities: com.circaso.core.platform.CurrentActivity,
+    private val words: suspend (callerName: String?, video: Boolean) -> com.circaso.core.notifications.NotificationContent,
+) {
     private var ringtone: Ringtone? = null
     private val vibrator: Vibrator? by lazy {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) context.getSystemService(VibratorManager::class.java)?.defaultVibrator
         else @Suppress("DEPRECATION") context.getSystemService(Vibrator::class.java)
     }
 
+    private sealed interface Ring {
+        data object None : Ring
+        data class OnScreen(val callId: String) : Ring
+        data class Notification(val callId: String, val title: String, val video: Boolean) : Ring
+    }
+
     fun start() {
         scope.launch {
-            controller.state.map { it?.phase == CallPhase.Incoming }.distinctUntilChanged().collect { if (it) ring() else stop() }
+            combine(controller.state, activities.inFront) { call, inFront ->
+                val callId = call?.callId
+                when {
+                    call == null || callId == null || call.phase != CallPhase.Incoming -> Ring.None
+                    inFront -> Ring.OnScreen(callId)
+                    else -> Ring.Notification(callId, call.title, call.video)
+                }
+            }.distinctUntilChanged().collect { ring ->
+                when (ring) {
+                    Ring.None -> stop()
+                    is Ring.OnScreen -> { notifier.clear(ring.callId); ring() }
+                    is Ring.Notification -> {
+                        stop()
+                        if (!notifier.showing(ring.callId)) {
+                            val content = words(ring.title.takeIf { it.isNotBlank() }, ring.video)
+                            notifier.ringing(ring.callId, content.title, content.text)
+                        }
+                    }
+                }
+            }
         }
     }
 
