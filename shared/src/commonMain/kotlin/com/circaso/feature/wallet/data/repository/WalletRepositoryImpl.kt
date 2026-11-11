@@ -515,6 +515,7 @@ internal fun WalletResponse.toDomain(fetchedAt: Long) = Wallet(
     totals = totals.map { AssetTotal(it.symbol, it.decimals, it.amountMinor, it.amount, it.usdPrice) },
     fiat = fiat?.let { FiatValue(it.currency, it.amount, it.rate, it.asOf, it.partial) },
     holdUntil = hold?.until,
+    holdReason = hold?.reason,
     fetchedAt = fetchedAt,
     walletId = walletId,
     owner = owner?.toDomain(),

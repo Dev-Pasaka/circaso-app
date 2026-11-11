@@ -9,6 +9,7 @@ struct iOSApp: App {
 
     init() {
         GoogleSignInBridge.shared.provider = GoogleSignInImpl()
+        PasskeyBridge.shared.provider = PasskeyImpl() // the PIN Vault's PRF passkeys; see IosPasskeyPrf.kt
         SignalBridge.shared.api = SignalCryptoImpl() // libsignal for encrypted chats; see SignalBridge.kt
         LiveAudioBridge.shared.api = LiveAudioImpl() // live voice with Asha; see IosLiveAudio.kt
         VadBridge.shared.api = VadImpl() // Silero VAD for talking over Asha; see IosVadEngine.kt

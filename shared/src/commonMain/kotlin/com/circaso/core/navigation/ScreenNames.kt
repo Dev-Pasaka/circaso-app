@@ -41,6 +41,7 @@ fun screenName(route: NavKey?, homeTab: Int): String? = when (route) {
     EditProfileRoute -> "You › Edit profile"
     BlockedRoute -> "You › Blocked people"
     SecurityRoute -> "You › Security"
+    VaultRoute -> "You › Security › PIN Vault"
     SecurityLogRoute -> "You › Security activity"
     NotificationsRoute -> "Notifications"
     HelpRoute -> "You › Help"

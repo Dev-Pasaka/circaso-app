@@ -65,6 +65,7 @@ fun initKoinAndroid(context: Context) {
             single<SecureStorage> { AndroidSecureStorage(app) }
             single { CurrentActivity(app as Application) }
             single<ContactsReader> { AndroidContactsReader(app) }
+            single<com.circaso.core.platform.PasskeyPrf> { com.circaso.core.platform.AndroidPasskeyPrf(get()) } // the PIN Vault
             single<AudioRecorder> { AndroidAudioRecorder(app) }
             single<AudioPlayer> { AndroidAudioPlayer(app) }
             single<LiveMicrophone> { AndroidLiveMicrophone(app) }

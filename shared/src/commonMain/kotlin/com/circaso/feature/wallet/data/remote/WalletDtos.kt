@@ -9,7 +9,7 @@ import kotlinx.serialization.Serializable
 @Serializable data class AssetTotalDto(val symbol: String, val decimals: Int, val amountMinor: String, val amount: String, val usdPrice: String? = null)
 @Serializable data class ChainDto(val blockchain: String, val address: String, val state: String, val assets: List<AssetDto> = emptyList(), val receiveEnabled: Boolean = true)
 @Serializable data class FiatDto(val currency: String, val amount: String, val rate: String, val asOf: String, val partial: Boolean = false)
-@Serializable data class HoldDto(val until: String)
+@Serializable data class HoldDto(val until: String, val reason: String? = null)
 @Serializable data class WalletResponse(
     val status: String, val chains: List<ChainDto> = emptyList(), val totals: List<AssetTotalDto> = emptyList(), val fiat: FiatDto? = null, val hold: HoldDto? = null,
     // Phase 2 (PR #28): which wallet, whose, and whether you sign for it. Absent from an older server.

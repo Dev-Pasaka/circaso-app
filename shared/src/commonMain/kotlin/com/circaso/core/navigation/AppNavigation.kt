@@ -339,7 +339,7 @@ fun AppNavigation(forceUpdate: Boolean, home: @Composable () -> Unit) {
                         val s by chatsViewModel.state.collectAsState()
                         val w by walletViewModel.state.collectAsState()
                         androidx.compose.foundation.layout.Column {
-                            HoldBanner(w.wallet?.holdUntil, onNotMe = { backStack.add(SecurityRoute) })
+                            HoldBanner(w.wallet?.holdUntil, onNotMe = { backStack.add(SecurityRoute) }, reason = w.wallet?.holdReason)
                             ChatsBanner(s)
                         }
                     },
@@ -449,9 +449,24 @@ fun AppNavigation(forceUpdate: Boolean, home: @Composable () -> Unit) {
             entry<SecurityRoute> {
                 SecurityScreen(
                     koinViewModel(), onBack = ::pop, onActivity = { backStack.add(SecurityLogRoute) }, onSendMoney = { backStack.add(PayRoute()) },
-                    payments = { BiometricApprovalSection(koinViewModel()) },
+                    payments = {
+                        BiometricApprovalSection(koinViewModel())
+                        val vault: com.circaso.feature.vault.presentation.VaultViewModel = koinViewModel()
+                        val v by vault.state.collectAsState()
+                        com.circaso.feature.vault.presentation.VaultRow(
+                            supported = v.step != com.circaso.feature.vault.presentation.VaultStep.Unsupported,
+                            saved = when (v.step) {
+                                com.circaso.feature.vault.presentation.VaultStep.Saved, com.circaso.feature.vault.presentation.VaultStep.Revealed -> true
+                                com.circaso.feature.vault.presentation.VaultStep.Intro -> false
+                                else -> null
+                            },
+                            unlock = v.unlock,
+                            onOpen = { backStack.add(VaultRoute) },
+                        )
+                    },
                 )
             }
+            entry<VaultRoute> { com.circaso.feature.vault.presentation.VaultScreen(koinViewModel(), onBack = ::pop) }
             entry<NotificationsRoute> { NotificationsScreen(koinViewModel(), onBack = ::pop, onOpenTransfer = { id -> backStack.add(TransferRoute(id)) }) }
             entry<SecurityLogRoute> { SecurityLogScreen(koinViewModel(), onBack = ::pop) }
             entry<AshaRoute> {
