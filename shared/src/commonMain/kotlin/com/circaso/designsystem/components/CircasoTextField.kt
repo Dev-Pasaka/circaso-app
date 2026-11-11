@@ -47,6 +47,11 @@ fun CircasoTextField(
     visualTransformation: VisualTransformation = VisualTransformation.None,
     singleLine: Boolean = true,
     secret: Boolean = false,
+    /**
+     * A [secret] that stays readable, so it can be checked as it is typed (a security answer): still kept from Asha,
+     * `/asha` and autocorrect, but shown in plain text on an ordinary keyboard.
+     */
+    masked: Boolean = true,
 ) {
     val c = CircasoTheme.colors
     val t = CircasoTheme.typography
@@ -75,12 +80,13 @@ fun CircasoTextField(
                 textStyle = t.body.copy(color = if (enabled) c.ink else c.inkTertiary),
                 cursorBrush = SolidColor(c.ink),
                 // A secret keeps a number pad when one was asked for (PINs); every other secret gets the password keyboard.
-                keyboardOptions = if (secret) keyboardOptions.copy(
+                keyboardOptions = if (secret && !masked) keyboardOptions.copy(autoCorrectEnabled = false)
+                else if (secret) keyboardOptions.copy(
                     keyboardType = if (keyboardOptions.keyboardType == KeyboardType.NumberPassword) KeyboardType.NumberPassword else KeyboardType.Password,
                     autoCorrectEnabled = false,
                 ) else keyboardOptions,
                 keyboardActions = keyboardActions,
-                visualTransformation = if (secret) PasswordVisualTransformation() else visualTransformation,
+                visualTransformation = if (secret && masked) PasswordVisualTransformation() else visualTransformation,
                 modifier = Modifier.fillMaxWidth().onFocusChanged { focused = it.isFocused },
                 decorationBox = { inner ->
                     Row(
