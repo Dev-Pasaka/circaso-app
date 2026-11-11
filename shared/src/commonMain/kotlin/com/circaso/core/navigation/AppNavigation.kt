@@ -326,6 +326,9 @@ fun AppNavigation(forceUpdate: Boolean, home: @Composable () -> Unit) {
                     onDeletePost = momentsViewModel::onDeletePost,
                 )
                 val chatsMoments = remember(momentsViewModel) { com.circaso.feature.messaging.presentation.ChatsMoments(momentsViewModel, momentsActions) }
+                // First time on Home: the contacts prompt once, then the phone book syncs, so New chat isn't empty.
+                val phoneBook: com.circaso.feature.contacts.data.repository.PhoneBookAutoSync = koinInject()
+                androidx.compose.runtime.LaunchedEffect(phoneBook) { phoneBook.onHome() }
                 HomeScreen(
                     selectedTab = homeTab,
                     onSelectTab = { switchTab(it) },

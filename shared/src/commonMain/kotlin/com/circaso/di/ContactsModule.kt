@@ -22,8 +22,12 @@ import com.circaso.feature.contacts.domain.RevokeInviteUseCase
 import com.circaso.feature.contacts.domain.SyncPhoneBookUseCase
 import com.circaso.feature.contacts.domain.UnblockUseCase
 import org.koin.core.qualifier.named
+import kotlinx.coroutines.flow.first
 import org.koin.dsl.bind
 import org.koin.dsl.module
+
+/** On this phone: the contacts prompt was shown once from Home (whatever the answer), so it isn't shown again. */
+private const val ContactsAskedFlag = "contacts.asked"
 
 val contactsModule = module {
     single { get<CircasoDatabase>().contactsDao() }
@@ -37,6 +41,22 @@ val contactsModule = module {
     factory { RefreshContactsUseCase(get()) }
     factory { RefreshBlocksUseCase(get()) }
     factory { SyncPhoneBookUseCase(get()) }
+    single {
+        val auth = get<com.circaso.core.session.AuthManager>()
+        val connection = get<com.circaso.core.sync.ConnectionState>()
+        val prefs = get<com.circaso.core.datastore.AppPreferences>()
+        com.circaso.feature.contacts.data.repository.PhoneBookAutoSync(
+            reader = get(),
+            sync = get(),
+            ready = kotlinx.coroutines.flow.combine(auth.state, connection.status) { a, c ->
+                a == com.circaso.core.session.AuthState.Active && c == com.circaso.core.platform.ConnectionStatus.Online
+            },
+            asked = { prefs.flag(ContactsAskedFlag).first() },
+            markAsked = { prefs.setFlag(ContactsAskedFlag, true) },
+            scope = get(),
+            now = { com.circaso.core.sync.nowMillis() },
+        )
+    }
     factory { ConnectUseCase(get()) }
     factory { CreateInviteUseCase(get()) }
     factory { RevokeInviteUseCase(get()) }
