@@ -451,16 +451,13 @@ fun AppNavigation(forceUpdate: Boolean, home: @Composable () -> Unit) {
                     koinViewModel(), onBack = ::pop, onActivity = { backStack.add(SecurityLogRoute) }, onSendMoney = { backStack.add(PayRoute()) },
                     payments = {
                         BiometricApprovalSection(koinViewModel())
-                        val vault: com.circaso.feature.vault.presentation.VaultViewModel = koinViewModel()
-                        val v by vault.state.collectAsState()
+                        val walletRepo: com.circaso.feature.wallet.domain.WalletRepository = koinInject()
+                        val myWallet by walletRepo.wallet.collectAsState(null)
+                        val bio: com.circaso.core.platform.Biometrics = koinInject()
                         com.circaso.feature.vault.presentation.VaultRow(
-                            supported = v.step != com.circaso.feature.vault.presentation.VaultStep.Unsupported,
-                            saved = when (v.step) {
-                                com.circaso.feature.vault.presentation.VaultStep.Saved, com.circaso.feature.vault.presentation.VaultStep.Revealed -> true
-                                com.circaso.feature.vault.presentation.VaultStep.Intro -> false
-                                else -> null
-                            },
-                            unlock = v.unlock,
+                            repository = koinInject(),
+                            hasWallet = myWallet?.status == com.circaso.feature.wallet.domain.WalletStatus.Active,
+                            unlock = if (bio.available()) bio.name else "Screen Lock",
                             onOpen = { backStack.add(VaultRoute) },
                         )
                     },

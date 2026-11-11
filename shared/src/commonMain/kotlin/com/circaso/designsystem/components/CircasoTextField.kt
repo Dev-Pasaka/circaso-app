@@ -74,7 +74,11 @@ fun CircasoTextField(
                 singleLine = singleLine,
                 textStyle = t.body.copy(color = if (enabled) c.ink else c.inkTertiary),
                 cursorBrush = SolidColor(c.ink),
-                keyboardOptions = if (secret) keyboardOptions.copy(keyboardType = KeyboardType.Password, autoCorrectEnabled = false) else keyboardOptions,
+                // A secret keeps a number pad when one was asked for (PINs); every other secret gets the password keyboard.
+                keyboardOptions = if (secret) keyboardOptions.copy(
+                    keyboardType = if (keyboardOptions.keyboardType == KeyboardType.NumberPassword) KeyboardType.NumberPassword else KeyboardType.Password,
+                    autoCorrectEnabled = false,
+                ) else keyboardOptions,
                 keyboardActions = keyboardActions,
                 visualTransformation = if (secret) PasswordVisualTransformation() else visualTransformation,
                 modifier = Modifier.fillMaxWidth().onFocusChanged { focused = it.isFocused },
