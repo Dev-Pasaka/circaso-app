@@ -694,7 +694,7 @@ class ThreadPaymentStatesTest {
             val target = vm.state.value.replyingTo
             assertEquals("m1", target?.messageId)
             assertEquals("You", target?.senderName, "my own message")
-            assertEquals("Payment", target?.preview)
+            assertEquals("Payment · lunch", target?.preview)
             vm.onCancelReply()
             assertEquals(null, vm.state.value.replyingTo)
             // A message the server hasn't got yet can't be quoted.

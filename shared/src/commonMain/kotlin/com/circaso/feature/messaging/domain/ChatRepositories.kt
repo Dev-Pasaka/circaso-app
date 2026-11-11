@@ -95,6 +95,9 @@ interface MessagesRepository {
 
     /** Saves the message on this phone and queues it. */
     suspend fun send(chatId: String, text: String, replyTo: String? = null)
+
+    /** A message a reply quotes, from this phone's history by its server id; null when the phone doesn't have it. */
+    suspend fun quoted(chatId: String, messageId: String): Message? = null
     /** A reply to someone's moment (V8): an ordinary text that quotes it; it waits offline like any message. */
     suspend fun sendMomentReply(chatId: String, text: String, quote: com.circaso.core.crypto.MomentQuote)
     /** Reactions by message id: each person's (userId, emoji). */

@@ -49,7 +49,7 @@ fun Message.replyPreview(): String = when (this) {
         isFile -> "Document"
         else -> "Photo"
     }
-    is Message.Payment -> "Payment"
+    is Message.Payment -> "Payment" + (note?.takeIf { it.isNotBlank() }?.let { " · $it" } ?: "")
     else -> "Message"
 }
 
@@ -69,6 +69,11 @@ data class ThreadUiState(
     val draft: String = "",
     /** The message being replied to, shown above the composer; sent as the reply's `replyTo`. */
     val replyingTo: ReplyTarget? = null,
+    /**
+     * Messages that replies quote but that aren't in the loaded window, from this phone's history by server id; a null
+     * value means the phone doesn't have it.
+     */
+    val quoted: Map<String, Message?> = emptyMap(),
     val online: Boolean = true,
     val selected: Message.Text? = null,
     val message: String? = null,
@@ -263,7 +268,13 @@ class ThreadViewModel(
             // A window of the newest messages that grows by a page as the person scrolls up (onLoadOlder).
             @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
             window.flatMapLatest { limit -> observeThread(chatId, limit) }.collect { list ->
-                _state.update { it.copy(messages = list) }
+                val before = _state.value
+                val lastOutgoing = before.messages.filter { it.isOutgoing() }.maxOfOrNull { it.localId } ?: Long.MAX_VALUE
+                // Something else went out while a reply was set up (a photo, voice note, location, money, a quick
+                // reply): it isn't the reply, so the bar goes rather than quote the next text by surprise.
+                val otherSend = before.replyingTo != null && before.messages.isNotEmpty() && list.any { it.isOutgoing() && it.localId > lastOutgoing }
+                _state.update { it.copy(messages = list, replyingTo = if (otherSend) null else it.replyingTo) }
+                loadQuoted(list)
                 if (onScreen) markRead(chatId) // the thread is on screen: everything in it has been seen
             }
         }
@@ -351,6 +362,19 @@ class ThreadViewModel(
     }
 
     fun onCancelReply() = _state.update { it.copy(replyingTo = null) }
+
+    /** Quotes whose originals are older than the loaded window: looked up once each in this phone's history. */
+    private fun loadQuoted(list: List<Message>) {
+        val repo = messagesRepository ?: return
+        val inWindow = list.mapNotNullTo(HashSet()) { it.serverId() }
+        val known = _state.value.quoted.keys
+        val wanted = list.mapNotNull { (it as? Message.Text)?.replyTo }.filter { it !in inWindow && it !in known }.distinct()
+        if (wanted.isEmpty()) return
+        viewModelScope.launch {
+            val found = wanted.associateWith { id -> runCatching { repo.quoted(chatId, id) }.getOrNull() }
+            _state.update { it.copy(quoted = it.quoted + found) }
+        }
+    }
 
     /** A chip under a money card (design C6): sent as a message of its own. */
     fun onQuickReply(text: String) {

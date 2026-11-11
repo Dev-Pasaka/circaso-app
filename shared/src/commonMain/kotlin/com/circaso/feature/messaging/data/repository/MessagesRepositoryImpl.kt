@@ -39,6 +39,7 @@ import com.circaso.feature.messaging.domain.MessagingSettings
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.update
@@ -125,6 +126,11 @@ class MessagesRepositoryImpl(
         }
 
     override suspend fun send(chatId: String, text: String, replyTo: String?) = send(chatId, text, replyTo, null)
+
+    override suspend fun quoted(chatId: String, messageId: String): Message? {
+        val row = dao.byMessageId(messageId)?.takeIf { it.chatId == chatId } ?: return null
+        return row.toDomain(chats.observeMembers(chatId).first(), ownUserId())
+    }
 
     override suspend fun sendMomentReply(chatId: String, text: String, quote: com.circaso.core.crypto.MomentQuote) = send(chatId, text, null, quote)
 

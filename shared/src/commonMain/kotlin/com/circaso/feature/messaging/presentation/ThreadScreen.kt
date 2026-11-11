@@ -329,16 +329,19 @@ fun ThreadContent(
         onOptions = options?.let { o -> { reactingTo = null; o() } },
         onShowAll = messageId?.takeIf { state.isGroup }?.let { id -> { reactingTo = null; reactorsOf = id } },
     )
-    // A reply's quote: the answered message from this thread (the phone keeps its history); tap to jump to it.
+    // A reply's quote: the answered message from the loaded thread, or from this phone's history further back.
+    val byServerId = androidx.compose.runtime.remember(state.messages) { state.messages.mapNotNull { m -> m.serverId()?.let { it to m } }.toMap() }
     fun quoteFor(m: Message.Text): QuoteUi? {
         val target = m.replyTo ?: return null
-        val original = state.messages.firstOrNull { it.serverId() == target }
-        val name = when {
-            original == null -> "Message"
-            original.isOutgoing() -> "You"
-            else -> (original as? Message.Text)?.senderName ?: (original as? Message.Media)?.senderName ?: (original as? Message.Payment)?.senderName ?: "Message"
+        val inThread = byServerId[target]
+        val original = inThread ?: state.quoted[target]
+        val quoteState = when {
+            original == null -> if (target in state.quoted) QuoteState.Missing else QuoteState.Found("", "…")
+            original is Message.Deleted -> QuoteState.Deleted
+            original is Message.Unreadable -> QuoteState.Unreadable
+            else -> QuoteState.Found(original.quoteName(), original.replyPreview())
         }
-        return QuoteUi(name, original?.replyPreview(), onOpen = original?.let { { jumpTo(target) } })
+        return QuoteUi(quoteState, onOpen = if (inThread != null) ({ jumpTo(target) }) else null)
     }
     val t = CircasoTheme.typography
     val toast = rememberToastState()
@@ -488,11 +491,17 @@ fun ThreadContent(
         toast = { ToastHost(toast, Modifier.align(Alignment.TopCenter).padding(top = 8.dp)) },
         overlay = {
             // Who reacted to a group message (2026-11-11), from the chat's members.
-            val reactorsFor = reactorsOf
-            CircasoSheet(visible = reactorsFor != null, onDismiss = { reactorsOf = null }, label = "Reactions") {
-                val list = reactorsFor?.let { id -> state.reactions[id] }.orEmpty().map { (userId, emoji) ->
+            // Kept through the sheet's exit, so it doesn't empty while it slides away.
+            var reactorsShown by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf<String?>(null) }
+            reactorsOf?.let { reactorsShown = it }
+            val reactorsFor = reactorsShown
+            val reactorsList = reactorsFor?.let { id -> state.reactions[id] }.orEmpty()
+            // Everyone took theirs back while it was open: nothing left to show.
+            LaunchedEffect(reactorsOf, reactorsList.isEmpty()) { if (reactorsOf != null && reactorsList.isEmpty()) reactorsOf = null }
+            CircasoSheet(visible = reactorsOf != null, onDismiss = { reactorsOf = null }, label = "Reactions") {
+                val list = reactorsList.map { (userId, emoji) ->
                     val member = state.chat?.members?.firstOrNull { it.userId == userId }
-                    Reactor(userId, member?.displayName ?: "Someone", member?.avatarUrl, emoji, mine = userId == state.myId)
+                    Reactor(userId, member?.displayName ?: "Former member", member?.avatarUrl, emoji, mine = userId == state.myId)
                 }
                 ReactorsSheetContent(list, onRemoveMine = { reactorsFor?.let { onReactTo(it, null) } }, onClose = { reactorsOf = null })
             }
@@ -644,11 +653,16 @@ fun ThreadContent(
                 itemsIndexed(threadRowList.asReversed(), key = { _, row -> row.key }) { _, row ->
                     val m = row.first
                     val index = row.index
-                    val glow by androidx.compose.animation.animateColorAsState(
-                        if (highlighted != null && highlighted == m.serverId()) c.action.copy(alpha = 0.14f) else androidx.compose.ui.graphics.Color.Transparent,
-                        tween(CircasoMotion.BaseMs), label = "reply target",
-                    )
-                    Box(Modifier.fillMaxWidth().clip(com.circaso.designsystem.theme.CircasoShapes.sm).background(glow)) {
+                    // The message a reply's quote jumped to pulses once (a dip in strength under reduced motion).
+                    val target = highlighted != null && (highlighted == m.serverId() || (row is ThreadRow.Album && row.items.any { it.messageId == highlighted }))
+                    val pulse = androidx.compose.runtime.remember { androidx.compose.animation.core.Animatable(1f) }
+                    val reduce = CircasoTheme.reduceMotion
+                    LaunchedEffect(target) {
+                        if (!target) return@LaunchedEffect
+                        if (reduce) { pulse.animateTo(0.55f, tween(CircasoMotion.QuickMs)); pulse.animateTo(1f, tween(CircasoMotion.BaseMs)) }
+                        else { pulse.animateTo(1.04f, tween(CircasoMotion.QuickMs)); pulse.animateTo(1f, androidx.compose.animation.core.spring(dampingRatio = 0.5f)) }
+                    }
+                    Box(Modifier.fillMaxWidth().graphicsLayer { if (reduce) alpha = pulse.value else { scaleX = pulse.value; scaleY = pulse.value } }) {
                     val previous = state.messages.getOrNull(index - 1)
                     if (previous == null || localDayIndex(previous.orderAt) != localDayIndex(m.orderAt)) DayLabel(threadDayLabel(m.orderAt, now))
                     when (m) {
@@ -662,12 +676,12 @@ fun ThreadContent(
                             }) { onSelect(m) }
                             }
                         }
-                        is Message.Payment -> PaymentMessage(m, onOpen = { onOpenTransfer(m.transferId) }, moment = !m.outgoing && !groupPayoutCard(m, state.groupMoney) && index == state.messages.lastIndex && now - m.orderAt < MoneyMomentMillis, onThanks = { onQuickReply("Asante!") }, chama = chama, fiat = state.fiat, coinRates = coinRates, groupName = state.chat?.title?.takeIf { state.groupMoney?.hasWallet == true }, groupPayout = groupPayoutCard(m, state.groupMoney),
+                        is Message.Payment -> SwipeToReply(m.messageId?.let { { onReply(m); focusComposer() } }) { PaymentMessage(m, onOpen = { onOpenTransfer(m.transferId) }, moment = !m.outgoing && !groupPayoutCard(m, state.groupMoney) && index == state.messages.lastIndex && now - m.orderAt < MoneyMomentMillis, onThanks = { onQuickReply("Asante!") }, chama = chama, fiat = state.fiat, coinRates = coinRates, groupName = state.chat?.title?.takeIf { state.groupMoney?.hasWallet == true }, groupPayout = groupPayoutCard(m, state.groupMoney),
                             react = reactUi(m.messageId), transfer = state.paymentStates[m.transferId], pendingPayment = state.paymentPending(m, now),
                             // Only a payment made just now is read out (not old cards a new phone's sync brings back).
                             announce = m.outgoing && m.localId == lastOutgoingPayment && now - m.orderAt < AnnounceWithinMillis,
                             // Only my own payment from here comes back to the card; a payout is paid again from its request.
-                            onRetry = if (m.outgoing && payable && !groupPayoutCard(m, state.groupMoney)) ({ retryCard(m) }) else null)
+                            onRetry = if (m.outgoing && payable && !groupPayoutCard(m, state.groupMoney)) ({ retryCard(m) }) else null) }
                         is Message.Deleted -> MessageColumn(m.outgoing) { ChatBubble("This message was deleted", m.outgoing, quiet = true) }
                         is Message.Unreadable -> MessageColumn(false) { ChatBubble("A message from ${m.senderName} this phone can't show", false, quiet = true) }
                         is Message.System -> SystemLine(m.text)
@@ -733,7 +747,7 @@ fun ThreadContent(
                 // Kept through the exit so the bar doesn't empty while it closes.
                 var shown by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(state.replyingTo) }
                 state.replyingTo?.let { shown = it }
-                shown?.let { ReplyBar(it, onCancelReply) }
+                shown?.let { r -> ReplyBar(r, onCancelReply, onOpen = if (byServerId.containsKey(r.messageId)) ({ jumpTo(r.messageId) }) else null) }
             }
             ChatComposer(
                 state, onDraft, onSend, quickPay, composerMoney, composerFocus,
@@ -764,7 +778,7 @@ private fun TextMessage(m: Message.Text, group: Boolean, firstOfRun: Boolean, pe
             val bubble: @Composable () -> Unit = {
                 ChatBubble(m.text, m.outgoing, faded = waiting, onClick = if (failed || m.outgoing) onTap else null, onLongClick = react?.onOpen, above = if ((group && !m.outgoing && firstOfRun) || m.momentQuote != null || quote != null) ({
                     if (group && !m.outgoing && firstOfRun) BasicText(m.senderName, style = CircasoTheme.typography.caption1.copy(color = c.inkSecondary), modifier = Modifier.padding(bottom = 2.dp))
-                    quote?.let { q -> ReplyQuoteCard(q.name, q.preview, m.outgoing, q.onOpen) }
+                    quote?.let { q -> ReplyQuoteCard(q, m.outgoing) }
                     m.momentQuote?.let { q -> MomentQuoteCard(q, m.outgoing, if (m.outgoing) peerName else m.senderName) { onOpenMoment(q, m.outgoing) } }
                 }) else null)
             }
