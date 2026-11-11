@@ -39,7 +39,7 @@ class KeyBackupRepositoryTest {
             val all = keys.entries.map { (k, v) -> BackedUpGroupKey(k.first, k.second, v) }
             val start = after?.toInt() ?: 0
             val page = all.drop(start).take(limit)
-            return AppResult.Success(GroupKeysPage(page, next = (start + page.size).takeIf { it < all.size }?.toString()))
+            return AppResult.Success(GroupKeysPage(page, nextCursor = (start + page.size).takeIf { it < all.size }?.toString()))
         }
         override suspend fun remove(): AppResult<NoBody> { root = BackupRootDto(false); keys.clear(); return AppResult.Success(NoBody()) }
     }

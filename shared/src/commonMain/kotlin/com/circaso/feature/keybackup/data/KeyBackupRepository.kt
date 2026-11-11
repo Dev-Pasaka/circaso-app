@@ -180,7 +180,7 @@ class KeyBackupRepository(
                     val key = runCatching { crypto.aesGcmOpen(rootKey, sealed, keyAad(person, item.chatId, item.metaVersion)) }.getOrNull() ?: continue
                     keepKey(item.chatId, item.metaVersion, key)
                 }
-                after = page.next
+                after = page.nextCursor
             } while (after != null)
         } finally { restoring = false }
         runCatching { refreshChats() }

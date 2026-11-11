@@ -30,7 +30,7 @@ import kotlinx.serialization.Serializable
 
 @Serializable data class BackedUpGroupKey(val chatId: String, val metaVersion: Int, val ciphertext: String)
 
-@Serializable data class GroupKeysPage(val items: List<BackedUpGroupKey> = emptyList(), val next: String? = null)
+@Serializable data class GroupKeysPage(val items: List<BackedUpGroupKey> = emptyList(), val nextCursor: String? = null)
 
 /** The group key backup on the server (2026-11-11): only sealed bytes; the root is sealed under the person's passkey. */
 interface KeyBackupRemote {
@@ -68,7 +68,7 @@ class KtorKeyBackupRemote(private val api: CircasoApi) : KeyBackupRemote {
         method = HttpMethod.Get
         url("/v1/key-backup/group-keys")
         parameter("limit", limit)
-        after?.let { parameter("after", it) }
+        after?.let { parameter("cursor", it) }
     }
 
     override suspend fun remove() = api.call<NoBody> {
