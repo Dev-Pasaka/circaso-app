@@ -462,7 +462,7 @@ fun AppNavigation(forceUpdate: Boolean, home: @Composable () -> Unit) {
                             unlock = if (bio.available()) bio.name else "Screen Lock",
                             onOpen = { backStack.add(VaultRoute) },
                         )
-                        com.circaso.feature.keybackup.presentation.GroupBackupSection(koinViewModel())
+                        com.circaso.feature.keybackup.presentation.GroupBackupSection(koinViewModel(), unlock = if (bio.available()) bio.name else "Screen Lock")
                     },
                 )
             }

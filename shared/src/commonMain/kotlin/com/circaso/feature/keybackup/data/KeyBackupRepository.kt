@@ -31,6 +31,8 @@ sealed interface KeyBackupProblem {
     data object WrongPasskey : KeyBackupProblem
     data class Passkey(val reason: String) : KeyBackupProblem
     data class Server(val error: AppError) : KeyBackupProblem
+    /** Backup was turned off (on another phone) before this one restored. */
+    data object TurnedOff : KeyBackupProblem
 }
 
 /**
@@ -156,7 +158,7 @@ class KeyBackupRepository(
     suspend fun restore(): KeyBackupProblem? {
         val person = userId() ?: return KeyBackupProblem.Server(AppError.Unexpected(401))
         val current = when (val r = remote.root()) {
-            is AppResult.Success -> r.value.takeIf { it.exists } ?: return KeyBackupProblem.Server(AppError.Unexpected(404))
+            is AppResult.Success -> r.value.takeIf { it.exists } ?: return KeyBackupProblem.TurnedOff
             is AppResult.Failure -> return KeyBackupProblem.Server(r.error)
         }
         val credential = current.credentialId?.let { runCatching { decodeId(it) }.getOrNull() } ?: return KeyBackupProblem.WrongPasskey
@@ -166,7 +168,6 @@ class KeyBackupRepository(
             else -> return r.problem()
         }
         val rootKey = try { openRoot(secret, person, current) } finally { secret.fill(0) } ?: return KeyBackupProblem.WrongPasskey
-        lock.withLock { keepLocal(person, rootKey) }
         restoring = true
         try {
             var after: String? = null
@@ -183,6 +184,8 @@ class KeyBackupRepository(
                 after = page.nextCursor
             } while (after != null)
         } finally { restoring = false }
+        // Only once every key is back does this phone count as backed up (a failed page leaves the restore on offer).
+        lock.withLock { keepLocal(person, rootKey) }
         runCatching { refreshChats() }
         return null
     }
