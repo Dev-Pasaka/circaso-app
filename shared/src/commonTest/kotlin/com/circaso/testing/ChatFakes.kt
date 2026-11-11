@@ -66,6 +66,7 @@ class FakeChatsDao : ChatsDao {
     override suspend fun metaKey(chatId: String, metaVersion: Int) = metaKeys[chatId to metaVersion]
     override suspend fun latestMetaKey(chatId: String) = metaKeys.values.filter { it.chatId == chatId }.maxByOrNull { it.metaVersion }
     override suspend fun upsertMetaKey(key: GroupMetaKeyEntity) { metaKeys[key.chatId to key.metaVersion] = key }
+    override suspend fun allMetaKeys() = metaKeys.values.filterNot { it.chatId.startsWith("pending:") }
     override suspend fun pendingMetaKeys() = metaKeys.values.filter { it.chatId.startsWith("pending:") }
     override suspend fun deleteMetaKeys(chatId: String) { metaKeys.keys.removeAll { it.first == chatId } }
     override suspend fun deletePendingMetaKeysBefore(before: Long) { metaKeys.values.removeAll { it.chatId.startsWith("pending:") && it.createdAt < before } }

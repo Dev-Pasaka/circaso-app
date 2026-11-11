@@ -201,6 +201,10 @@ interface ChatsDao {
      * the create call until the group's own row replaces them, so a create whose answer never reached this phone can
      * still be opened when the group turns up in the list.
      */
+    /** Every real group's keys (not creates still waiting): what the group key backup sends. */
+    @Query("SELECT * FROM group_meta_key WHERE chatId NOT LIKE 'pending:%'")
+    suspend fun allMetaKeys(): List<GroupMetaKeyEntity>
+
     @Query("SELECT * FROM group_meta_key WHERE chatId LIKE 'pending:%'")
     suspend fun pendingMetaKeys(): List<GroupMetaKeyEntity>
 

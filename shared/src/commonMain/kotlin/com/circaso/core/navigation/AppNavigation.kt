@@ -341,6 +341,8 @@ fun AppNavigation(forceUpdate: Boolean, home: @Composable () -> Unit) {
                         androidx.compose.foundation.layout.Column {
                             HoldBanner(w.wallet?.holdUntil, onNotMe = { backStack.add(SecurityRoute) }, reason = w.wallet?.holdReason)
                             ChatsBanner(s)
+                            val bio: com.circaso.core.platform.Biometrics = koinInject()
+                            com.circaso.feature.keybackup.presentation.RestoreGroupNamesCard(koinViewModel(), unlock = if (bio.available()) bio.name else "Screen Lock")
                         }
                     },
                     wallet = { bottomPadding ->
@@ -460,6 +462,7 @@ fun AppNavigation(forceUpdate: Boolean, home: @Composable () -> Unit) {
                             unlock = if (bio.available()) bio.name else "Screen Lock",
                             onOpen = { backStack.add(VaultRoute) },
                         )
+                        com.circaso.feature.keybackup.presentation.GroupBackupSection(koinViewModel(), unlock = if (bio.available()) bio.name else "Screen Lock")
                     },
                 )
             }

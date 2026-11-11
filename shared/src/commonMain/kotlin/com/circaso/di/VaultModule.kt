@@ -21,6 +21,8 @@ val vaultModule = module {
         VaultRepository(
             get(), get(), get(), userId = { get<AuthManager>().userId }, newIdempotencyKey = ::newIdempotencyKey,
             readCache = { prefs.text(VaultStatusText).first() }, writeCache = { prefs.setText(VaultStatusText, it) },
+            // The group key backup turns on with the vault's passkey answer: no second prompt.
+            afterSecret = { id, secret -> get<com.circaso.feature.keybackup.data.KeyBackupRepository>().onPrfSecret(id, secret) },
         )
     }
     viewModel { VaultViewModel(get(), get(), get(), getOrNull(), wallet = getOrNull()) }
