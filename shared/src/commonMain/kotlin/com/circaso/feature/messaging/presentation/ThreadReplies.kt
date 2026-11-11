@@ -1,0 +1,227 @@
+package com.circaso.feature.messaging.presentation
+
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.spring
+import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.BasicText
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.semantics.CustomAccessibilityAction
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.customActions
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.dp
+import com.circaso.designsystem.components.Avatar
+import com.circaso.designsystem.components.CircasoIcon
+import com.circaso.designsystem.components.CircasoIconImage
+import com.circaso.designsystem.components.ListRow
+import com.circaso.designsystem.components.RowDivider
+import com.circaso.designsystem.motion.pressable
+import com.circaso.designsystem.theme.CircasoShapes
+import com.circaso.designsystem.theme.CircasoSizes
+import com.circaso.designsystem.theme.CircasoSpacing
+import com.circaso.designsystem.theme.CircasoTheme
+import kotlinx.coroutines.launch
+import kotlin.math.roundToInt
+
+/** How far a message must be pulled to reply on release, and the most it moves (it resists past the threshold). */
+private val ReplyThreshold = 56.dp
+private val ReplyMaxPull = 84.dp
+
+/**
+ * Swipe to reply (WhatsApp, Pasaka 2026-11-11): pull a message to the right, yours or theirs. It follows the finger,
+ * slows past [ReplyThreshold] where a reply arrow fills in with a tick of haptics, and springs back on release; let go
+ * past the threshold and [onReply] runs. Only a horizontal drag is taken, so the thread still scrolls; screen readers
+ * get "Reply" as an action. [onReply] null turns it off (a message that isn't sent yet).
+ */
+@Composable
+fun SwipeToReply(onReply: (() -> Unit)?, modifier: Modifier = Modifier, content: @Composable () -> Unit) {
+    if (onReply == null) { Box(modifier) { content() }; return }
+    val density = LocalDensity.current
+    val threshold = with(density) { ReplyThreshold.toPx() }
+    val maxPull = with(density) { ReplyMaxPull.toPx() }
+    val haptics = LocalHapticFeedback.current
+    val scope = rememberCoroutineScope()
+    val offset = remember { Animatable(0f) }
+    var armed by remember { mutableStateOf(false) }
+    val reduceMotion = CircasoTheme.reduceMotion
+    Box(
+        modifier
+            .semantics { customActions = listOf(CustomAccessibilityAction("Reply") { onReply(); true }) }
+            .pointerInput(onReply) {
+                detectHorizontalDragGestures(
+                    onDragEnd = {
+                        if (armed) onReply()
+                        armed = false
+                        scope.launch { offset.animateTo(0f, if (reduceMotion) spring(stiffness = Spring.StiffnessHigh) else spring(dampingRatio = 0.7f, stiffness = Spring.StiffnessMediumLow)) }
+                    },
+                    onDragCancel = {
+                        armed = false
+                        scope.launch { offset.animateTo(0f) }
+                    },
+                ) { change, dragAmount ->
+                    val current = offset.value
+                    // Right only; past the threshold every pixel moves it a third as far (rubber band), up to the max.
+                    val next = (current + if (current > threshold && dragAmount > 0) dragAmount / 3f else dragAmount).coerceIn(0f, maxPull)
+                    if (next != current) change.consume()
+                    scope.launch { offset.snapTo(next) }
+                    val nowArmed = next >= threshold
+                    if (nowArmed && !armed) haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                    armed = nowArmed
+                }
+            },
+    ) {
+        // The arrow waits behind the message's leading edge and fills in as it's pulled.
+        val progress = (offset.value / threshold).coerceIn(0f, 1f)
+        Box(
+            Modifier.align(Alignment.CenterStart).padding(start = CircasoSpacing.s1).size(28.dp)
+                .graphicsLayer { alpha = progress; scaleX = 0.6f + 0.4f * progress; scaleY = 0.6f + 0.4f * progress }
+                .clip(CircasoShapes.circle).background(CircasoTheme.colors.fill),
+            contentAlignment = Alignment.Center,
+        ) { CircasoIconImage(CircasoIcon.Reply, CircasoTheme.colors.ink, Modifier.size(16.dp)) }
+        Box(Modifier.offset { IntOffset(offset.value.roundToInt(), 0) }) { content() }
+    }
+}
+
+/** The answered message inside a reply's bubble: a bar, who wrote it and its first lines; tap to jump to it. */
+@Composable
+fun ReplyQuoteCard(name: String, preview: String?, outgoing: Boolean, onOpen: (() -> Unit)?) {
+    val c = CircasoTheme.colors
+    val t = CircasoTheme.typography
+    val ink = if (outgoing) c.onAction else c.ink
+    val shape = CircasoShapes.xs
+    Row(
+        Modifier.padding(bottom = CircasoSpacing.s1).clip(shape)
+            .background(if (outgoing) c.onAction.copy(alpha = 0.16f) else c.fill)
+            .then(if (onOpen != null) Modifier.pressable(role = Role.Button, pressedScale = 0.98f, onClick = onOpen) else Modifier)
+            .heightIn(min = 40.dp)
+            .semantics(mergeDescendants = true) { contentDescription = "Reply to $name: ${preview ?: "a message that isn't on this phone"}" },
+    ) {
+        Box(Modifier.width(3.dp).fillMaxHeight().heightIn(min = 40.dp).background(if (outgoing) c.onAction else c.action))
+        Column(Modifier.padding(horizontal = CircasoSpacing.s2, vertical = 6.dp)) {
+            BasicText(name, style = t.caption1.copy(color = if (outgoing) ink else c.action), maxLines = 1)
+            BasicText(preview ?: "Message not on this phone", style = t.footnote.copy(color = ink.copy(alpha = if (preview == null) 0.7f else 0.9f)), maxLines = 2, overflow = TextOverflow.Ellipsis)
+        }
+    }
+}
+
+/** Above the composer while replying: who and what is being answered, with a × to stop. */
+@Composable
+fun ReplyBar(target: ReplyTarget, onCancel: () -> Unit) {
+    val c = CircasoTheme.colors
+    val t = CircasoTheme.typography
+    Row(
+        Modifier.fillMaxWidth().padding(start = CircasoSpacing.s4, end = CircasoSpacing.s2, top = CircasoSpacing.s2),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Row(Modifier.weight(1f).clip(CircasoShapes.xs).background(c.fill)) {
+            Box(Modifier.width(3.dp).height(48.dp).background(c.action))
+            Column(Modifier.padding(horizontal = CircasoSpacing.s3, vertical = 6.dp)) {
+                BasicText(if (target.outgoing) "Replying to yourself" else "Replying to ${target.senderName}", style = t.caption1.copy(color = c.action), maxLines = 1)
+                BasicText(target.preview, style = t.footnote.copy(color = c.inkSecondary), maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+        }
+        Box(
+            Modifier.size(CircasoSizes.controlMd).clip(CircasoShapes.circle).pressable(role = Role.Button, onClick = onCancel)
+                .semantics { contentDescription = "Cancel reply" },
+            contentAlignment = Alignment.Center,
+        ) { CircasoIconImage(CircasoIcon.Close, c.inkSecondary, Modifier.size(18.dp)) }
+    }
+}
+
+/** Who reacted to one message in a group: one person per row, mine first, filtered by emoji. */
+data class Reactor(val userId: String, val name: String, val avatarUrl: String?, val emoji: String, val mine: Boolean)
+
+/**
+ * The reactions sheet for a group message (WhatsApp, Pasaka 2026-11-11): "All N" then a chip per emoji with its count;
+ * below, each person and their emoji. My own row says "Tap to remove".
+ */
+@Composable
+fun ColumnScope.ReactorsSheetContent(reactors: List<Reactor>, onRemoveMine: () -> Unit, onClose: () -> Unit) {
+    val c = CircasoTheme.colors
+    val t = CircasoTheme.typography
+    var filter by remember { mutableStateOf<String?>(null) }
+    val counts = reactors.groupingBy { it.emoji }.eachCount().entries.sortedByDescending { it.value }
+    BasicText("Reactions", style = t.title3.copy(color = c.ink))
+    Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(CircasoSpacing.s2)) {
+        FilterChip("All ${reactors.size}", filter == null) { filter = null }
+        counts.forEach { (emoji, n) -> FilterChip("$emoji $n", filter == emoji) { filter = emoji } }
+    }
+    val shown = reactors.filter { filter == null || it.emoji == filter }.sortedByDescending { it.mine }
+    Column(Modifier.fillMaxWidth().clip(CircasoShapes.md).background(c.surface)) {
+        shown.forEachIndexed { i, r ->
+            if (i > 0) RowDivider()
+            ListRow(
+                if (r.mine) "You" else r.name,
+                sub = if (r.mine) "Tap to remove" else null,
+                leading = { Avatar(r.name, size = CircasoSizes.avatarSm, imageUrl = r.avatarUrl) },
+                trailing = { BasicText(r.emoji, style = t.title3) },
+                onClick = if (r.mine) ({ onRemoveMine(); onClose() }) else null,
+            )
+        }
+    }
+    Spacer(Modifier.height(CircasoSpacing.s2))
+}
+
+@Composable
+private fun FilterChip(label: String, selected: Boolean, onClick: () -> Unit) {
+    val c = CircasoTheme.colors
+    val t = CircasoTheme.typography
+    Box(
+        Modifier.heightIn(min = 36.dp).clip(CircasoShapes.pill).background(if (selected) c.ink else c.fill)
+            .pressable(role = Role.Tab, onClick = onClick).padding(horizontal = CircasoSpacing.s3, vertical = 6.dp)
+            .semantics { if (selected) contentDescription = "$label, selected" },
+        contentAlignment = Alignment.Center,
+    ) { BasicText(label, style = t.subhead.copy(color = if (selected) c.bg else c.ink, fontFeatureSettings = "tnum")) }
+}
+
+/** A reply's quote as the bubble draws it; [preview] null when the answered message isn't on this phone. */
+class QuoteUi(val name: String, val preview: String?, val onOpen: (() -> Unit)?)
+
+/** The server's id of a message, when it has one (only those can be replied to or jumped to). */
+fun com.circaso.feature.messaging.domain.Message.serverId(): String? = when (this) {
+    is com.circaso.feature.messaging.domain.Message.Text -> messageId
+    is com.circaso.feature.messaging.domain.Message.Media -> messageId
+    is com.circaso.feature.messaging.domain.Message.Payment -> messageId
+    else -> null
+}
+
+fun com.circaso.feature.messaging.domain.Message.isOutgoing(): Boolean = when (this) {
+    is com.circaso.feature.messaging.domain.Message.Text -> outgoing
+    is com.circaso.feature.messaging.domain.Message.Media -> outgoing
+    is com.circaso.feature.messaging.domain.Message.Payment -> outgoing
+    else -> false
+}

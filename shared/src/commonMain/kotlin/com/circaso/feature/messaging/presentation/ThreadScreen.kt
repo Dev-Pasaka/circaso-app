@@ -171,6 +171,7 @@ fun ThreadScreen(
         payout = paying, onPayoutClose = onPayoutClose, moneyPrompt = moneyPrompt, onMoneyPromptHandled = onMoneyPromptHandled,
         notice = if (payoutBusy) "This payout is already on its way." else null, onNoticeShown = { payoutBusy = false },
         onLoadOlder = viewModel::onLoadOlder, onSavePeer = viewModel::onSavePeer, onOpenMoment = onOpenMoment, onReactTo = viewModel::onReactTo,
+        onReply = viewModel::onReply, onCancelReply = viewModel::onCancelReply,
         media = viewModel.media?.let { m ->
             ThreadMediaActions(
                 canShareLocation = m.canShareLocation, onCompose = onComposeMedia, uploading = m.progress, downloading = m.downloading, onLocation = viewModel::onSendLocation,
@@ -240,6 +241,9 @@ fun ThreadContent(
     onReactTo: (messageId: String, emoji: String?) -> Unit = { _, _ -> },
     /** A reply's quoted moment was tapped: open it ([posterId] null for my own). */
     onOpenMoment: (posterId: String?, momentId: String) -> Unit = { _, _ -> },
+    /** Swipe to reply (2026-11-11): answer a message, and stop answering it. */
+    onReply: (Message) -> Unit = {},
+    onCancelReply: () -> Unit = {},
 ) {
     val c = CircasoTheme.colors
     var toastPayError by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf<String?>(null) }
@@ -306,6 +310,12 @@ fun ThreadContent(
     // The options sheet closed (any button, or dismissed): the album it was for is let go too.
     LaunchedEffect(selectedMedia) { if (selectedMedia == null) selectedAlbum = null }
     var reactingTo by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf<String?>(null) }
+    // A group message whose reactions sheet is open (who reacted with what).
+    var reactorsOf by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf<String?>(null) }
+    // A message just jumped to from a reply's quote: it glows for a moment.
+    var highlighted by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf<String?>(null) }
+    var jumpTo: (String) -> Unit = {}
+    LaunchedEffect(highlighted) { if (highlighted != null) { kotlinx.coroutines.delay(1_600); highlighted = null } }
     // A new message moves the list under the open reaction bubble: close it rather than leave it beside nothing.
     LaunchedEffect(state.messages.lastOrNull()?.localId) { reactingTo = null }
     // One message's reactions and its reaction bubble; a message without a server id (not sent yet) can't take one.
@@ -317,7 +327,19 @@ fun ThreadContent(
         onPick = { emoji -> reactingTo = null; messageId?.let { onReactTo(it, emoji) } },
         onDismiss = { reactingTo = null },
         onOptions = options?.let { o -> { reactingTo = null; o() } },
+        onShowAll = messageId?.takeIf { state.isGroup }?.let { id -> { reactingTo = null; reactorsOf = id } },
     )
+    // A reply's quote: the answered message from this thread (the phone keeps its history); tap to jump to it.
+    fun quoteFor(m: Message.Text): QuoteUi? {
+        val target = m.replyTo ?: return null
+        val original = state.messages.firstOrNull { it.serverId() == target }
+        val name = when {
+            original == null -> "Message"
+            original.isOutgoing() -> "You"
+            else -> (original as? Message.Text)?.senderName ?: (original as? Message.Media)?.senderName ?: (original as? Message.Payment)?.senderName ?: "Message"
+        }
+        return QuoteUi(name, original?.replyPreview(), onOpen = original?.let { { jumpTo(target) } })
+    }
     val t = CircasoTheme.typography
     val toast = rememberToastState()
     val quoteScope = androidx.compose.runtime.rememberCoroutineScope()
@@ -357,6 +379,16 @@ fun ThreadContent(
     }
     val awayFromLatest by androidx.compose.runtime.remember { androidx.compose.runtime.derivedStateOf { listState.firstVisibleItemIndex > 3 } }
     val listScope = androidx.compose.runtime.rememberCoroutineScope()
+    // Scroll to the message a reply quotes and make it glow. The list is reversed with the tail items first, so a
+    // row's item is counted from the end.
+    jumpTo = { id ->
+        val rowIndex = threadRowList.indexOfFirst { row -> row.first.serverId() == id || (row is ThreadRow.Album && row.items.any { it.messageId == id }) }
+        if (rowIndex >= 0) listScope.launch {
+            val item = (listState.layoutInfo.totalItemsCount - 1 - rowIndex).coerceAtLeast(0)
+            listState.animateScrollToItem(item)
+            highlighted = id
+        }
+    }
     val now = nowMillis()
     val chama = state.chama
     val lastOutgoingPayment = state.messages.lastOrNull { it is Message.Payment && it.outgoing }?.localId
@@ -455,6 +487,15 @@ fun ThreadContent(
         },
         toast = { ToastHost(toast, Modifier.align(Alignment.TopCenter).padding(top = 8.dp)) },
         overlay = {
+            // Who reacted to a group message (2026-11-11), from the chat's members.
+            val reactorsFor = reactorsOf
+            CircasoSheet(visible = reactorsFor != null, onDismiss = { reactorsOf = null }, label = "Reactions") {
+                val list = reactorsFor?.let { id -> state.reactions[id] }.orEmpty().map { (userId, emoji) ->
+                    val member = state.chat?.members?.firstOrNull { it.userId == userId }
+                    Reactor(userId, member?.displayName ?: "Someone", member?.avatarUrl, emoji, mine = userId == state.myId)
+                }
+                ReactorsSheetContent(list, onRemoveMine = { reactorsFor?.let { onReactTo(it, null) } }, onClose = { reactorsOf = null })
+            }
             val m = state.selected
             CircasoSheet(visible = m != null, onDismiss = { onSelect(null) }, label = "Message") {
                 if (m != null) {
@@ -603,17 +644,23 @@ fun ThreadContent(
                 itemsIndexed(threadRowList.asReversed(), key = { _, row -> row.key }) { _, row ->
                     val m = row.first
                     val index = row.index
-                    Box(Modifier.fillMaxWidth()) {
+                    val glow by androidx.compose.animation.animateColorAsState(
+                        if (highlighted != null && highlighted == m.serverId()) c.action.copy(alpha = 0.14f) else androidx.compose.ui.graphics.Color.Transparent,
+                        tween(CircasoMotion.BaseMs), label = "reply target",
+                    )
+                    Box(Modifier.fillMaxWidth().clip(com.circaso.designsystem.theme.CircasoShapes.sm).background(glow)) {
                     val previous = state.messages.getOrNull(index - 1)
                     if (previous == null || localDayIndex(previous.orderAt) != localDayIndex(m.orderAt)) DayLabel(threadDayLabel(m.orderAt, now))
                     when (m) {
                         is Message.Text -> {
                             val firstOfRun = previous !is Message.Text || previous.senderId != m.senderId || previous.outgoing != m.outgoing
-                            TextMessage(m, state.isGroup, firstOfRun, peerName = state.chat?.title, react = reactUi(m.messageId), onOpenMoment = { q, outgoing ->
+                            SwipeToReply(m.messageId?.let { { onReply(m); focusComposer() } }) {
+                            TextMessage(m, state.isGroup, firstOfRun, peerName = state.chat?.title, react = reactUi(m.messageId), quote = quoteFor(m), onOpenMoment = { q, outgoing ->
                                 // My reply quotes their moment; their reply quotes mine.
                                 if (q.expiresAt?.let { it <= com.circaso.core.sync.nowMillis() } == true) quoteScope.launch { toast.show("This moment is no longer available") }
                                 else onOpenMoment(if (outgoing) state.chat?.peerId else null, q.momentId)
                             }) { onSelect(m) }
+                            }
                         }
                         is Message.Payment -> PaymentMessage(m, onOpen = { onOpenTransfer(m.transferId) }, moment = !m.outgoing && !groupPayoutCard(m, state.groupMoney) && index == state.messages.lastIndex && now - m.orderAt < MoneyMomentMillis, onThanks = { onQuickReply("Asante!") }, chama = chama, fiat = state.fiat, coinRates = coinRates, groupName = state.chat?.title?.takeIf { state.groupMoney?.hasWallet == true }, groupPayout = groupPayoutCard(m, state.groupMoney),
                             react = reactUi(m.messageId), transfer = state.paymentStates[m.transferId], pendingPayment = state.paymentPending(m, now),
@@ -638,6 +685,7 @@ fun ThreadContent(
                         } else {
                             val firstOfRun = !(previous is Message.Media && previous.senderId == m.senderId && previous.outgoing == m.outgoing) &&
                                 !(previous is Message.Text && previous.senderId == m.senderId && previous.outgoing == m.outgoing)
+                            SwipeToReply(m.messageId?.let { { onReply(m); focusComposer() } }) {
                             MediaRow(
                                 m, state.isGroup, firstOfRun, online = state.online, playing = state.playing == m.localId,
                                 playingSince = state.playingSince.takeIf { state.playing == m.localId }, load = loadMedia,
@@ -648,6 +696,7 @@ fun ThreadContent(
                                 uploadProgress = uploading?.let { u -> androidx.compose.runtime.remember(m.localId, u) { androidx.compose.runtime.derivedStateOf { u.value[m.localId] } }.value },
                                 react = reactUi(m.messageId, options = if (m.state == DeliveryState.Failed || m.outgoing) ({ selectedMedia = m }) else null),
                             )
+                            }
                         }
                     }
                     }
@@ -676,6 +725,16 @@ fun ThreadContent(
                 }
             }
             }
+            androidx.compose.animation.AnimatedVisibility(
+                state.replyingTo != null,
+                enter = androidx.compose.animation.expandVertically(tween(CircasoMotion.BaseMs)) + fadeIn(tween(CircasoMotion.BaseMs)),
+                exit = androidx.compose.animation.shrinkVertically(tween(CircasoMotion.QuickMs)) + fadeOut(tween(CircasoMotion.QuickMs)),
+            ) {
+                // Kept through the exit so the bar doesn't empty while it closes.
+                var shown by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(state.replyingTo) }
+                state.replyingTo?.let { shown = it }
+                shown?.let { ReplyBar(it, onCancelReply) }
+            }
             ChatComposer(
                 state, onDraft, onSend, quickPay, composerMoney, composerFocus,
                 onToast = { text, _ -> toastPayError = text },
@@ -691,7 +750,7 @@ fun ThreadContent(
 
 /** A text message as the design draws it: the bubble, then its time (or state) under it on the sender's side. */
 @Composable
-private fun TextMessage(m: Message.Text, group: Boolean, firstOfRun: Boolean, peerName: String? = null, onOpenMoment: (com.circaso.core.crypto.MomentQuote, Boolean) -> Unit = { _, _ -> }, react: ReactUi? = null, onTap: () -> Unit) {
+private fun TextMessage(m: Message.Text, group: Boolean, firstOfRun: Boolean, peerName: String? = null, onOpenMoment: (com.circaso.core.crypto.MomentQuote, Boolean) -> Unit = { _, _ -> }, react: ReactUi? = null, quote: QuoteUi? = null, onTap: () -> Unit) {
     val c = CircasoTheme.colors
     val waiting = m.state == DeliveryState.Waiting || m.state == DeliveryState.Sending
     val failed = m.state == DeliveryState.Failed
@@ -703,8 +762,9 @@ private fun TextMessage(m: Message.Text, group: Boolean, firstOfRun: Boolean, pe
         }
         MessageColumn(m.outgoing, Modifier.weight(1f, fill = false)) {
             val bubble: @Composable () -> Unit = {
-                ChatBubble(m.text, m.outgoing, faded = waiting, onClick = if (failed || m.outgoing) onTap else null, onLongClick = react?.onOpen, above = if ((group && !m.outgoing && firstOfRun) || m.momentQuote != null) ({
+                ChatBubble(m.text, m.outgoing, faded = waiting, onClick = if (failed || m.outgoing) onTap else null, onLongClick = react?.onOpen, above = if ((group && !m.outgoing && firstOfRun) || m.momentQuote != null || quote != null) ({
                     if (group && !m.outgoing && firstOfRun) BasicText(m.senderName, style = CircasoTheme.typography.caption1.copy(color = c.inkSecondary), modifier = Modifier.padding(bottom = 2.dp))
+                    quote?.let { q -> ReplyQuoteCard(q.name, q.preview, m.outgoing, q.onOpen) }
                     m.momentQuote?.let { q -> MomentQuoteCard(q, m.outgoing, if (m.outgoing) peerName else m.senderName) { onOpenMoment(q, m.outgoing) } }
                 }) else null)
             }
@@ -1749,6 +1809,8 @@ private class ReactUi(
     val onDismiss: () -> Unit,
     /** The message's other options (send again, delete), for messages whose tap does something else. */
     val onOptions: (() -> Unit)? = null,
+    /** In a group, tapping the reactions shows who reacted (2026-11-11); null in a direct chat (the tap changes mine). */
+    val onShowAll: (() -> Unit)? = null,
 ) {
     val mine: String? get() = reactions.firstOrNull { it.first == myId }?.second
 }
@@ -1805,11 +1867,11 @@ private fun ReactionBadge(ui: ReactUi) {
         Modifier
             // The cut-out: the thread's own background, so it follows the theme.
             .clip(shape).background(c.bg)
-            .then(if (ui.onOpen != null) Modifier.pressable(role = androidx.compose.ui.semantics.Role.Button, pressedScale = 0.92f, onClick = ui.onOpen) else Modifier)
+            .then((ui.onShowAll ?: ui.onOpen)?.let { tap -> Modifier.pressable(role = androidx.compose.ui.semantics.Role.Button, pressedScale = 0.92f, onClick = tap) } ?: Modifier)
             .padding(horizontal = 6.dp, vertical = 2.dp)
             .clearAndSetSemantics {
                 contentDescription = "Reactions: " + counts.joinToString { "${it.key} ${it.value}" } + (ui.mine?.let { ", yours $it" } ?: "")
-                ui.onOpen?.let { open -> onClick("Change reaction") { open(); true } }
+                ui.onShowAll?.let { all -> onClick("See who reacted") { all(); true } } ?: ui.onOpen?.let { open -> onClick("Change reaction") { open(); true } }
             },
         horizontalArrangement = Arrangement.spacedBy(1.dp), verticalAlignment = Alignment.CenterVertically,
     ) {
