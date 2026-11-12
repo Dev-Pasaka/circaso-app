@@ -64,8 +64,9 @@ import kotlinx.coroutines.Dispatchers
         com.circaso.feature.status.data.local.MomentEntity::class, com.circaso.feature.status.data.local.PendingMomentEntity::class,
         com.circaso.feature.status.data.local.MutedPosterEntity::class, com.circaso.feature.status.data.local.MomentPrivacyEntity::class,
         com.circaso.feature.messaging.data.local.MessageReactionEntity::class, com.circaso.feature.messaging.data.local.MessageRetryEntity::class,
+        com.circaso.feature.names.data.SavedNameEntity::class,
     ],
-    version = 21,
+    version = 22,
     autoMigrations = [
         AutoMigration(from = 1, to = 2), AutoMigration(from = 2, to = 3),
         AutoMigration(from = 3, to = 4), AutoMigration(from = 4, to = 5),
@@ -82,6 +83,9 @@ import kotlinx.coroutines.Dispatchers
         AutoMigration(from = 19, to = 20, spec = DropSpacesTables::class),
         // 21: chat.avatarMediaId, the group photo the server keeps (backend PR #47). Null until the next refresh.
         AutoMigration(from = 20, to = 21),
+        // 22: saved names (saved_name: names I give people, null = cleared) and transfer.counterpartUserId, so a
+        // payment row shows the name I saved for the other person.
+        AutoMigration(from = 21, to = 22),
     ],
 )
 @ConstructedBy(CircasoDatabaseConstructor::class)
@@ -99,6 +103,7 @@ abstract class CircasoDatabase : RoomDatabase() {
     abstract fun momentsDao(): com.circaso.feature.status.data.local.MomentsDao
     abstract fun reactionsDao(): com.circaso.feature.messaging.data.local.ReactionsDao
     abstract fun recoveryDao(): com.circaso.feature.messaging.data.local.RecoveryDao
+    abstract fun savedNamesDao(): com.circaso.feature.names.data.SavedNamesDao
 }
 
 /** Version 19 → 20: Spaces was removed from the app; its tables and its outbox rows are dropped. */

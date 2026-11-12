@@ -37,7 +37,7 @@ val contactsModule = module {
     single { ContactRemoveHandler(get()) } bind OutboxHandler::class
     single { BlockSetHandler(get()) } bind OutboxHandler::class
     single { BlockClearHandler(get()) } bind OutboxHandler::class
-    single<ContactsRepository> { ContactsRepositoryImpl(get(), get(), get(), kickOutbox = get(named("kickOutbox"))) }
+    single<ContactsRepository> { ContactsRepositoryImpl(get(), get(), get(), kickOutbox = get(named("kickOutbox")), names = get()) }
     factory { ObserveContactsUseCase(get()) }
     factory { ObserveBlocksUseCase(get()) }
     factory { RefreshContactsUseCase(get()) }

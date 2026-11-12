@@ -27,7 +27,8 @@ import com.circaso.designsystem.theme.CircasoTheme
 @Composable
 fun Avatar(name: String, modifier: Modifier = Modifier, size: Dp = CircasoSizes.avatarMd, imageUrl: String? = null, bytes: ByteArray? = null) {
     val c = CircasoTheme.colors
-    val initials = name.trim().split(" ").filter { it.isNotEmpty() }.take(2).joinToString("") { it.first().uppercase() }
+    // Each word's first letter or digit: a saved name like "Shiru (cousin)" gives "SC", never "S(".
+    val initials = name.trim().split(" ").mapNotNull { w -> w.firstOrNull { it.isLetterOrDigit() } }.take(2).joinToString("") { it.uppercase() }
     Box(
         modifier.size(size).clip(CircasoShapes.circle).background(c.fillStrong),
         contentAlignment = Alignment.Center,

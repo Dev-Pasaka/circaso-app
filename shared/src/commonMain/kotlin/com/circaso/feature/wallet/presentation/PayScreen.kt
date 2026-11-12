@@ -245,6 +245,12 @@ private fun AmountStep(state: PayUiState, padding: PaddingValues, onAmount: (Str
             Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(CircasoSpacing.s2), modifier = Modifier.padding(top = CircasoSpacing.s2)) {
                 if (state.toGroup) WalletAvatar(payee.displayName, payee.avatarUrl, group = true) else Avatar(payee.displayName, size = CircasoSizes.avatarLg, imageUrl = payee.avatarUrl)
                 BasicText(if (state.toSelf && state.directPayout) "You" else payee.displayName, style = t.headline.copy(color = c.ink))
+                // A name I saved for them: who the money really goes to, under it (and their @username).
+                if (!state.toGroup && !state.toSelf && payee.renamed) {
+                    com.circaso.feature.names.presentation.ProfileNameLine(
+                        payee.profileName + (payee.handle?.let { " · @$it" } ?: ""), t.footnote.copy(color = c.inkSecondary),
+                    )
+                }
                 when {
                     // GW9d: into the group's own wallet, not anyone's personal one.
                     state.toGroup -> BasicText("the group’s own wallet", style = t.footnote.copy(color = c.inkSecondary))

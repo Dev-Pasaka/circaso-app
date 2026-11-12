@@ -17,7 +17,7 @@ import org.koin.dsl.module
 /** Share links (SH1–SH4, decision 2026-11-06): making, opening and turning off the links every share now sends. */
 val shareModule = module {
     single<ShareLinksRemote> { KtorShareLinksRemote(get()) }
-    single<ShareLinksRepository> { ShareLinksRepositoryImpl(get()) }
+    single<ShareLinksRepository> { ShareLinksRepositoryImpl(get(), names = get()) }
     factory { CreateShareLinkUseCase(get()) }
     factory { ListShareLinksUseCase(get()) }
     factory { RevokeShareLinkUseCase(get()) }

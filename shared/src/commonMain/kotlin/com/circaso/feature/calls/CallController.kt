@@ -104,6 +104,8 @@ class CallController(
     private val names: suspend (chatId: String) -> Pair<String, Boolean>?,
     /** Each person's "@username" in the call's chat, shown under their full name (Pasaka, 2026-10-30). */
     private val labels: suspend (chatId: String) -> Map<String, String> = { emptyMap() },
+    /** The name shown for someone on the call: the one I saved for them, else [profileName] (theirs). */
+    private val personName: (userId: String, profileName: String) -> String = { _, profileName -> profileName },
     /** Clears the platform's ringing notification once the call is answered, declined or over. */
     private val stopRinging: (callId: String) -> Unit = {},
     /** Whether the phone is online; a call rejoins when it comes back. */
@@ -308,8 +310,9 @@ class CallController(
                 takeOver()
                 call = c
                 labelOf = labels(c.chatId)
-                val (title, group) = names(c.chatId) ?: (c.participants.firstOrNull { it.userId == c.startedBy }?.displayName.orEmpty() to false)
-                val caller = c.participants.firstOrNull { it.userId == c.startedBy }?.displayName?.takeIf { it.isNotBlank() }
+                val starter = c.participants.firstOrNull { it.userId == c.startedBy }
+                val caller = starter?.let { personName(it.userId, it.displayName) }?.takeIf { it.isNotBlank() }
+                val (title, group) = names(c.chatId) ?: (caller.orEmpty() to false)
                 // The photo gets a moment to be in the first frame (a store read is a few ms); the ring never waits longer.
                 val token = photoToken
                 val lookup = scope.async { photosFor(c.chatId) }
@@ -564,7 +567,7 @@ class CallController(
             val joined = p.state == "JOINED"
             val heard = receiving == null || graceOver || mediaMids[p.userId].orEmpty().any { it in receiving }
             CallPerson(
-                p.userId, p.displayName.ifBlank { labelOf[p.userId] ?: "Someone" }, joined, p.audio, p.video, p.state == "INVITED", midOf[p.userId],
+                p.userId, personName(p.userId, p.displayName).ifBlank { labelOf[p.userId] ?: "Someone" }, joined, p.audio, p.video, p.state == "INVITED", midOf[p.userId],
                 handle = labelOf[p.userId], live = joined && heard, photoUrl = photosOf.people[p.userId],
                 screen = joined && p.video && p.screen,
             )

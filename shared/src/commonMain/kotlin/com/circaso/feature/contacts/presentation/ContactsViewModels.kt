@@ -63,7 +63,7 @@ data class ContactsUiState(
 ) {
     val visible: List<Contact>
         get() = (if (query.isBlank()) contacts else contacts.filter {
-            it.person.displayName.contains(query.trim(), ignoreCase = true) || it.person.handle?.contains(query.trim().removePrefix("@"), ignoreCase = true) == true
+            it.person.displayName.contains(query.trim(), ignoreCase = true) || it.person.profileName.contains(query.trim(), ignoreCase = true) || it.person.handle?.contains(query.trim().removePrefix("@"), ignoreCase = true) == true
         }).sortedBy { it.person.displayName.lowercase() }
 
     /** [visible] in letter sections (A, B, …, then # for names that don't start with a letter). */
@@ -87,13 +87,20 @@ class ContactsViewModel(
     private val reader: ContactsReader,
     private val syncPhoneBook: SyncPhoneBookUseCase,
     private val homeCountry: com.circaso.core.platform.HomeCountry? = null,
+    /** Edit name (saved names, 2026-11-12). */
+    val editName: com.circaso.feature.names.presentation.EditNameController,
 ) : ViewModel() {
     private val local = MutableStateFlow(ContactsUiState())
     val state: StateFlow<ContactsUiState> = combine(observeContacts(), local, connection.status) { contacts, ui, status ->
-        ui.copy(contacts = contacts, online = status == ConnectionStatus.Online, loaded = true)
+        // The open contact follows the list: back from Edit name, its sheet shows the new name.
+        val selected = ui.selected?.let { s -> contacts.firstOrNull { it.person.userId == s.person.userId } ?: s }
+        ui.copy(contacts = contacts, online = status == ConnectionStatus.Online, loaded = true, selected = selected)
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), ContactsUiState())
 
-    init { viewModelScope.launch { refreshContacts() } }
+    init {
+        viewModelScope.launch { refreshContacts() }
+        editName.onProblem = { text -> local.update { it.copy(message = text) } }
+    }
 
     fun onQuery(text: String) = local.update { it.copy(query = text) }
     fun onConnectInput(text: String) = local.update { it.copy(connectInput = text, message = null) }
@@ -157,6 +164,12 @@ class ContactsViewModel(
 
     fun onSelect(contact: Contact) = local.update { it.copy(selected = contact) }
     fun onSelectedDismissed() = local.update { it.copy(selected = null) }
+
+    /** Edit name from a contact's sheet: the name sheet takes its place, and the contact's sheet comes back after. */
+    fun onEditName(contact: Contact) {
+        local.update { it.copy(selected = null) }
+        editName.open(contact.person.userId, contact.person.profileName, contact.person.displayName, returnTo = { onSelect(contact) })
+    }
     fun onRemoveRequested(contact: Contact) = local.update { it.copy(selected = null, pendingAction = ContactAction.Remove(contact)) }
     fun onBlockRequested(contact: Contact) = local.update { it.copy(selected = null, pendingAction = ContactAction.Block(contact)) }
     fun onActionDismissed() = local.update { it.copy(pendingAction = null) }

@@ -29,7 +29,7 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
 /** Someone to show in a people list: a contact, or the other person in a recent chat. */
-data class PersonRow(val userId: String, val name: String, val handle: String?, val avatarUrl: String?, val about: String? = null) {
+data class PersonRow(val userId: String, val name: String, val handle: String?, val avatarUrl: String?, val about: String? = null, val profileName: String = name) {
     /** The grey line under the name: the @handle, else their about line. */
     val sub: String? get() = handle?.let { "@$it" } ?: about?.takeIf { it.isNotBlank() }
 }
@@ -64,7 +64,7 @@ data class NewChatUiState(
 ) {
     private val cleanQuery get() = query.trim().removePrefix("@")
 
-    private val people: List<PersonRow> get() = contacts.map { PersonRow(it.person.userId, it.person.displayName, it.person.handle, it.person.avatarUrl, it.person.about) }
+    private val people: List<PersonRow> get() = contacts.map { PersonRow(it.person.userId, it.person.displayName, it.person.handle, it.person.avatarUrl, it.person.about, it.person.profileName) }
 
     /** The people you chatted with lately (up to 4), only while not searching. */
     val recent: List<PersonRow> get() {
@@ -84,7 +84,7 @@ data class NewChatUiState(
         val q = cleanQuery
         val all = people.sortedBy { it.name.lowercase() }
         if (q.isEmpty()) return all
-        return all.filter { it.name.contains(q, ignoreCase = true) || it.handle?.contains(q, ignoreCase = true) == true }
+        return all.filter { it.name.contains(q, ignoreCase = true) || it.profileName.contains(q, ignoreCase = true) || it.handle?.contains(q, ignoreCase = true) == true }
     }
 
     /** [matches] in letter sections, as the system contacts app does. */

@@ -1,5 +1,8 @@
 package com.circaso.feature.messaging.presentation
 
+import com.circaso.feature.names.presentation.EditName
+import com.circaso.feature.names.presentation.EditNameSheet
+import com.circaso.feature.names.presentation.ProfileNameLine
 import androidx.compose.foundation.layout.height
 import androidx.compose.runtime.setValue
 import androidx.compose.foundation.layout.Box
@@ -51,6 +54,7 @@ import com.circaso.designsystem.theme.CircasoSizes
 import com.circaso.designsystem.theme.CircasoSpacing
 import com.circaso.designsystem.theme.CircasoTheme
 import com.circaso.feature.messaging.domain.MemberRole
+import com.circaso.feature.messaging.domain.ChatMember
 import com.circaso.feature.chama.presentation.ApprovalPolicyContent
 import com.circaso.feature.chama.presentation.ChangePinComingContent
 import com.circaso.feature.chama.presentation.GroupMoneyRows
@@ -81,6 +85,8 @@ fun ChatInfoScreen(
 ) {
     var viewing by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf<ByteArray?>(null) }
     val state by viewModel.state.collectAsState()
+    val names = viewModel.editName
+    val editing by (names?.state ?: androidx.compose.runtime.remember { kotlinx.coroutines.flow.MutableStateFlow<EditName?>(null) }).collectAsState()
     val c = CircasoTheme.colors
     val t = CircasoTheme.typography
     val toast = rememberToastState()
@@ -120,11 +126,21 @@ fun ChatInfoScreen(
                 }
                 CircasoButton("Done", { viewModel.onSearch(false) }, style = ButtonStyle.Plain, size = ButtonSize.Large, block = true)
             }
-            val member = state.selected
+            // The open member follows the chat: back from Edit name, their sheet shows the new name.
+            val member = state.selected?.let { s -> chat?.members?.firstOrNull { it.userId == s.userId } ?: s }
             CircasoSheet(visible = member != null, onDismiss = { viewModel.onSelect(null) }, label = member?.displayName ?: "Member") {
                 if (member != null) {
                     BasicText(member.displayName, style = t.title2.copy(color = c.ink))
+                    // A name I saved: their own under it, WhatsApp-style.
+                    if (member.renamed) ProfileNameLine(member.profileName, t.body.copy(color = c.inkSecondary))
                     member.handle?.let { BasicText("@$it", style = t.body.copy(color = c.inkSecondary)) }
+                    if (names != null && EditName.allowedFor(member.userId)) {
+                        CircasoButton(
+                            "Edit Name",
+                            { viewModel.onSelect(null); names.open(member.userId, member.profileName, member.displayName, returnTo = { viewModel.onSelect(member) }) },
+                            style = ButtonStyle.Secondary, size = ButtonSize.Large, block = true,
+                        )
+                    }
                     if (state.amAdmin && member.role != MemberRole.Owner) {
                         if (member.role == MemberRole.Member) CircasoButton("Make Admin", { viewModel.onAction(InfoAction.MakeAdmin(member)) }, style = ButtonStyle.Secondary, size = ButtonSize.Large, block = true, enabled = state.canChange)
                         if (member.role == MemberRole.Admin) CircasoButton("Make Member", { viewModel.onAction(InfoAction.MakeMember(member)) }, style = ButtonStyle.Secondary, size = ButtonSize.Large, block = true, enabled = state.canChange)
@@ -170,6 +186,9 @@ fun ChatInfoScreen(
                 destructive = action is InfoAction.Remove || action == InfoAction.Leave,
                 onConfirm = viewModel::onConfirm,
                 onDismiss = { viewModel.onAction(null) },
+            )
+            EditNameSheet(
+                editing, onDraft = { names?.onDraft(it) }, onSave = { names?.onSave() }, onUseTheirs = { names?.onUseTheirs() }, onDismiss = { names?.onDismiss() },
             )
             CircasoSheet(visible = state.renaming, onDismiss = { viewModel.onRename(false) }, label = if (state.namingForPhoto) "Name the group" else "Rename group") {
                 BasicText(if (state.namingForPhoto) "Name the group" else "Group name", style = t.title2.copy(color = c.ink))
@@ -237,7 +256,7 @@ fun ChatInfoScreen(
                     }
                     BasicText(chat?.title ?: "", style = t.title1.copy(color = c.ink, textAlign = TextAlign.Center))
                     if (state.isGroup) BasicText("${chat?.members?.size ?: 0} members" + if (state.money.enabled && state.money.money?.hasWallet == true) " · Group wallet" else "", style = t.subhead.copy(color = c.inkSecondary))
-                    else chat?.members?.firstOrNull { it.userId == chat.peerId }?.handle?.let { BasicText("@$it", style = t.body.copy(color = c.inkSecondary)) }
+                    else PeerNameLines(chat?.members?.firstOrNull { it.userId == chat.peerId })
                     if (state.isGroup && state.amAdmin && state.photosAvailable && !state.online) {
                         BasicText("Changing the group photo needs a connection.", style = t.footnote.copy(color = c.inkTertiary, textAlign = TextAlign.Center))
                     }
@@ -245,6 +264,11 @@ fun ChatInfoScreen(
             }
             if (!state.isGroup) {
                 item { ProfileActions(onCall = onCall, onPay = onPay, onSearch = { viewModel.onSearch(true) }, online = state.online) }
+                val peer = chat?.members?.firstOrNull { it.userId == chat.peerId }
+                if (names != null && peer != null && EditName.allowedFor(peer.userId)) {
+                    // Saved names (2026-11-12): works offline, the name changes everywhere at once.
+                    item(key = "edit-name") { EditNameRow { names.open(peer.userId, peer.profileName, peer.displayName) } }
+                }
             }
             if (state.media.isNotEmpty()) {
                 item {
@@ -293,7 +317,8 @@ fun ChatInfoScreen(
                         sub = member.handle?.let { "@$it" },
                         meta = when (member.role) { MemberRole.Owner -> "Owner"; MemberRole.Admin -> "Admin"; MemberRole.Member -> null },
                         leading = { Avatar(member.displayName, imageUrl = member.avatarUrl) },
-                        onClick = if (state.amAdmin && member.role != MemberRole.Owner) ({ viewModel.onSelect(member) }) else null,
+                        // Anyone but me opens their sheet: Edit name for everyone, roles for admins.
+                        onClick = if (member.userId != state.myUserId && ((names != null && EditName.allowedFor(member.userId)) || (state.amAdmin && member.role != MemberRole.Owner))) ({ viewModel.onSelect(member) }) else null,
                     )
                     RowDivider(Modifier.padding(start = 76.dp))
                 }
@@ -335,6 +360,26 @@ fun ChatInfoScreen(
             }
         }
     }
+}
+
+/** Under a direct chat's name in its info: their own name when I saved one ("~ John Kamau"), then their @username. */
+@Composable
+internal fun PeerNameLines(peer: ChatMember?) {
+    val c = CircasoTheme.colors
+    val t = CircasoTheme.typography
+    if (peer?.renamed == true) ProfileNameLine(peer.profileName, t.body.copy(color = c.inkSecondary, textAlign = TextAlign.Center))
+    peer?.handle?.let { BasicText("@$it", style = t.body.copy(color = c.inkSecondary)) }
+}
+
+/** Contact info's Edit name row (saved names, 2026-11-12): opens a sheet, so no chevron, like Rename group. */
+@Composable
+internal fun EditNameRow(onClick: () -> Unit) {
+    ListRow(
+        "Edit name", sub = "Only you see this name",
+        leading = { CircasoIconImage(CircasoIcon.Pencil, CircasoTheme.colors.ink, Modifier.size(20.dp)) },
+        onClick = onClick,
+        modifier = Modifier.padding(top = CircasoSpacing.s4),
+    )
 }
 
 /**

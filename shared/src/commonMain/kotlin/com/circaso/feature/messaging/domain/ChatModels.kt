@@ -4,7 +4,10 @@ enum class ChatKind { Direct, Group }
 
 enum class MemberRole { Owner, Admin, Member }
 
-data class ChatMember(val userId: String, val displayName: String, val handle: String?, val avatarUrl: String?, val role: MemberRole, val joinedAt: String)
+/** A chat member; [displayName] is the name shown (the one I saved for them, else theirs), [profileName] their own. */
+data class ChatMember(val userId: String, val displayName: String, val handle: String?, val avatarUrl: String?, val role: MemberRole, val joinedAt: String, val profileName: String = displayName) {
+    val renamed: Boolean get() = profileName != displayName
+}
 
 /** A chat as the screens see it. For a direct chat [title] is the other person's name; for a group the opened name. */
 data class Chat(

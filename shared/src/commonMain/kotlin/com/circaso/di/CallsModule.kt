@@ -38,6 +38,7 @@ val callsModule = module {
         val auth = get<com.circaso.core.session.AuthManager>()
         CallController(get(), get(), myUserId = { auth.userId }, scope = get(), names = { chatId -> chats.chat(chatId).first()?.let { it.title to (it.kind == ChatKind.Group) } },
             labels = { chatId -> chats.chat(chatId).first()?.members.orEmpty().mapNotNull { m -> m.handle?.let { m.userId to "@$it" } }.toMap() },
+            personName = get<com.circaso.feature.names.domain.PeopleNames>()::of,
             stopRinging = ringing,
             online = get<com.circaso.core.sync.ConnectionState>().status.map { it == com.circaso.core.platform.ConnectionStatus.Online },
             log = { e ->

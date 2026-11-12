@@ -44,6 +44,8 @@ data class TransferEntity(
     @ColumnInfo(defaultValue = "NULL") val toGroupId: String? = null,
     /** The approved payout request it pays. */
     @ColumnInfo(defaultValue = "NULL") val payoutRequestId: String? = null,
+    /** The other person on Circaso (either direction), so the row shows the name I saved for them (DB v22). */
+    @ColumnInfo(defaultValue = "NULL") val counterpartUserId: String? = null,
 )
 
 /** The last W1 answer for a group wallet, one row per wallet; the personal wallet stays in `wallet_snapshot`. */
