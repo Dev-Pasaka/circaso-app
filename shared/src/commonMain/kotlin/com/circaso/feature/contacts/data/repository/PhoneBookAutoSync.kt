@@ -32,6 +32,8 @@ class PhoneBookAutoSync(
     private val asked: suspend () -> Boolean,
     private val markAsked: suspend () -> Unit,
     private val scope: CoroutineScope,
+    /** The country of the person's own number, for phone book numbers saved without a country code. */
+    private val homeCountry: suspend () -> com.circaso.feature.auth.domain.Country = { com.circaso.feature.auth.domain.Countries.Kenya },
     private val now: () -> Long,
 ) {
     private val lock = Mutex()
@@ -56,7 +58,7 @@ class PhoneBookAutoSync(
         val last = lastSyncAt
         if (last != null && now() - last < MinGapMillis) return@withLock
         val numbers = try { reader.readNumbers() } catch (e: CancellationException) { throw e } catch (e: Exception) { return@withLock }
-        if (sync(PhoneBookNumbers.normalise(numbers)) is AppResult.Success) lastSyncAt = now()
+        if (sync(PhoneBookNumbers.normalise(numbers, homeCountry())) is AppResult.Success) lastSyncAt = now()
     }
 
     companion object {

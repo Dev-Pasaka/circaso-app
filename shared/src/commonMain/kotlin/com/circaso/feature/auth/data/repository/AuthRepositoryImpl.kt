@@ -28,6 +28,8 @@ class AuthRepositoryImpl(
     private val session: AuthManager,
     private val identity: DeviceIdentity,
     private val client: ClientInfo,
+    /** Remembers the country of the person's number, for reading their phone book (2026-11-12). */
+    private val homeCountry: com.circaso.core.platform.HomeCountry? = null,
 ) : AuthRepository {
 
     override suspend fun requestNonce(): AppResult<String> = remote.nonce().map { it.nonce }
@@ -62,18 +64,25 @@ class AuthRepositoryImpl(
                 val body = result.value
                 val step = body.next.toStep() ?: return AppResult.Failure(AppError.Unexpected(null))
                 if (step == SignInStep.Done) session.startSession(body.session, body.agentSession) else session.startOnboarding(body.session, body.next, body.maskedPhone)
+                homeCountry?.rememberFrom(body.maskedPhone)
                 AppResult.Success(SignInOutcome(step, body.maskedPhone))
             }
         }
     }
 
+    /** The number a code was last sent to; its country is remembered once the code is right. */
+    private var pendingPhone: String? = null
+
     override suspend fun startPhoneVerification(phone: String): AppResult<PhoneVerification> =
         remote.startPhone(StartPhoneRequest(phone)).map {
+            pendingPhone = phone
             PhoneVerification(it.verificationId, it.codeLength, it.expiresInSeconds, it.resendAfterSeconds)
         }
 
     override suspend fun verifyPhoneCode(verificationId: String, code: String): AppResult<SignInStep> =
-        remote.verifyCode(VerifyCodeRequest(verificationId, code)).toStepAndAdvance()
+        remote.verifyCode(VerifyCodeRequest(verificationId, code)).toStepAndAdvance().also {
+            if (it is AppResult.Success) homeCountry?.rememberFrom(pendingPhone)
+        }
 
     override suspend fun verifyPhoneWithCarrier(carrierToken: String): AppResult<SignInStep> =
         remote.carrier(CarrierRequest(carrierToken)).toStepAndAdvance()

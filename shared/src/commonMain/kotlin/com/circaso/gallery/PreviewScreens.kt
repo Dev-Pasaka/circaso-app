@@ -1,5 +1,6 @@
 package com.circaso.gallery
 
+import com.circaso.feature.auth.presentation.PhoneViewModel
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.width
@@ -209,6 +210,19 @@ fun PreviewScreens(name: String) {
                     PreviewScreens(if (name == "split") "chat" else "transfer")
                 }
             }
+        }
+        // The number screen (ID-04) and its country picker (2026-11-12), from sample state: nothing is sent.
+        "phone", "phone-picker", "phone-picker-search", "phone-picker-empty", "phone-uk", "phone-error" -> {
+            val uk = com.circaso.feature.auth.domain.Countries.byIso("GB")!!
+            val state = when (name) {
+                "phone-picker" -> PhoneViewModel.UiState(picking = true)
+                "phone-picker-search" -> PhoneViewModel.UiState(picking = true, query = "united")
+                "phone-picker-empty" -> PhoneViewModel.UiState(picking = true, query = "zzz")
+                "phone-uk" -> PhoneViewModel.UiState(country = uk, input = "7700900123")
+                "phone-error" -> PhoneViewModel.UiState(input = "71234", error = "That number looks too short. Kenyan numbers have 9 digits after +254.")
+                else -> PhoneViewModel.UiState()
+            }
+            com.circaso.feature.auth.presentation.PhoneContent(state, com.circaso.feature.auth.presentation.PhoneActions())
         }
         // The Moments viewer (V1, V4, V5) and its reaction picker: sample moments, nothing loads.
         "moment-text" -> MomentPreview(sampleMoment(com.circaso.feature.status.domain.MomentKind.Text))

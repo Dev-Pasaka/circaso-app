@@ -117,6 +117,7 @@ class NewChatViewModel(
     private val createShareLink: CreateShareLinkUseCase? = null,
     private val reader: ContactsReader? = null,
     private val syncPhoneBook: SyncPhoneBookUseCase? = null,
+    private val homeCountry: com.circaso.core.platform.HomeCountry? = null,
 ) : ViewModel() {
     private val _state = MutableStateFlow(NewChatUiState())
     val state: StateFlow<NewChatUiState> = _state.asStateFlow()
@@ -199,7 +200,7 @@ class NewChatViewModel(
         _state.update { it.copy(phoneBook = PhoneBookState.Syncing, message = null) }
         viewModelScope.launch {
             if (!reader.requestAccess()) { _state.update { it.copy(phoneBook = PhoneBookState.Denied) }; return@launch }
-            when (val r = sync(PhoneBookNumbers.normalise(reader.readNumbers()))) {
+            when (val r = sync(PhoneBookNumbers.normalise(reader.readNumbers(), homeCountry?.get() ?: com.circaso.feature.auth.domain.Countries.Kenya))) {
                 is AppResult.Success -> _state.update {
                     val n = r.value.matches.size
                     it.copy(phoneBook = PhoneBookState.Done, message = when { n == 0 -> "No one new from your contacts is on Circaso yet."; n == 1 -> "Found 1 friend on Circaso."; else -> "Found $n friends on Circaso." })

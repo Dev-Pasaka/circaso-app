@@ -41,6 +41,47 @@ import com.circaso.designsystem.platform.PlatformStyle
 import com.circaso.designsystem.theme.CircasoShapes
 import com.circaso.designsystem.theme.CircasoSpacing
 import com.circaso.designsystem.theme.CircasoTheme
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.runtime.remember
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.selected
+import com.circaso.designsystem.chrome.CircasoSheet
+import com.circaso.designsystem.chrome.SheetHead
+import com.circaso.designsystem.components.CircasoIcon
+import com.circaso.designsystem.components.CircasoIconImage
+import com.circaso.designsystem.components.ListRow
+import com.circaso.designsystem.motion.pressable
+import com.circaso.feature.auth.domain.Countries
+import com.circaso.feature.auth.domain.Country
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.core.snap
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.layout.IntrinsicSize
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.ime
+import androidx.compose.foundation.layout.statusBars
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.semantics.disabled
+import androidx.compose.ui.semantics.role
+import com.circaso.designsystem.components.SearchField
+import com.circaso.designsystem.theme.CircasoMotion
+import com.circaso.designsystem.theme.CircasoSizes
 import com.circaso.feature.auth.domain.PhoneNumber
 import com.circaso.feature.auth.domain.PhoneVerification
 import com.circaso.feature.auth.domain.SocialProvider
@@ -143,11 +184,50 @@ fun PhoneScreen(viewModel: PhoneViewModel, onLostAccess: (phone: String) -> Unit
             if (event is PhoneViewModel.Event.CodeSent) onCodeSent(event.phone, event.verification)
         }
     }
+    PhoneContent(
+        state,
+        PhoneActions(
+            onInput = viewModel::onInput, onSendCode = viewModel::onSendCode, onCancel = viewModel::onCancel,
+            onUseDifferentNumber = viewModel::onUseDifferentNumber, onLostAccess = { onLostAccess(state.typed) },
+            onPickCountry = viewModel::onPickCountry, onQuery = viewModel::onQuery, onCountry = viewModel::onCountry,
+        ),
+    )
+}
+
+/** What ID-04 does, so previews can draw it from sample state. */
+class PhoneActions(
+    val onInput: (String) -> Unit = {},
+    val onSendCode: () -> Unit = {},
+    val onCancel: () -> Unit = {},
+    val onUseDifferentNumber: () -> Unit = {},
+    val onLostAccess: () -> Unit = {},
+    val onPickCountry: (Boolean) -> Unit = {},
+    val onQuery: (String) -> Unit = {},
+    val onCountry: (Country) -> Unit = {},
+)
+
+@Composable
+fun PhoneContent(state: PhoneViewModel.UiState, actions: PhoneActions) {
     val c = CircasoTheme.colors
     val t = CircasoTheme.typography
+    val focus = LocalFocusManager.current
+    val numberFocus = remember { FocusRequester() }
+    // Back to typing once a country is picked: the sheet closes and the number field takes the keyboard again.
+    var refocus by remember { mutableStateOf(false) }
+    LaunchedEffect(state.picking) {
+        if (!state.picking && refocus) {
+            refocus = false
+            runCatching { numberFocus.requestFocus() }
+        }
+    }
     CircasoScaffold(
-        topBar = { CircasoNavBar(title = "", onBack = viewModel::onCancel) },
+        topBar = { CircasoNavBar(title = "", onBack = actions.onCancel) },
         banner = { ConnectionBanner() },
+        overlay = {
+            CircasoSheet(state.picking, { actions.onPickCountry(false) }, label = "Choose your country") {
+                CountryPickerContent(state, actions.onQuery, { refocus = true; actions.onCountry(it) }, onClose = { actions.onPickCountry(false) })
+            }
+        },
     ) {
         if (state.numberTaken) {
             Column(Modifier.fillMaxSize().fillOrScroll().padding(horizontal = 20.dp, vertical = 16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -157,10 +237,10 @@ fun PhoneScreen(viewModel: PhoneViewModel, onLostAccess: (phone: String) -> Unit
                     BasicText("Sign in with the Google or Apple account you used before, and you'll go straight in.", style = t.body.copy(color = c.inkSecondary))
                 }
                 Spacer(Modifier.weight(1f))
-                CircasoButton("Sign In with a Different Account", viewModel::onCancel, size = ButtonSize.Large, block = true)
-                CircasoButton("Use a Different Number", viewModel::onUseDifferentNumber, style = ButtonStyle.Secondary, size = ButtonSize.Large, block = true)
+                CircasoButton("Sign In with a Different Account", actions.onCancel, size = ButtonSize.Large, block = true)
+                CircasoButton("Use a Different Number", actions.onUseDifferentNumber, style = ButtonStyle.Secondary, size = ButtonSize.Large, block = true)
                 // Design SP06: the account is theirs but the Google or Apple login is gone.
-                CircasoButton("Lost Access to That Account?", { onLostAccess(state.input) }, style = ButtonStyle.Plain, size = ButtonSize.Large, block = true)
+                CircasoButton("Lost Access to That Account?", actions.onLostAccess, style = ButtonStyle.Plain, size = ButtonSize.Large, block = true)
             }
         } else {
             Column(Modifier.fillMaxSize().fillOrScroll().padding(horizontal = 20.dp, vertical = 16.dp)) {
@@ -174,27 +254,63 @@ fun PhoneScreen(viewModel: PhoneViewModel, onLostAccess: (phone: String) -> Unit
                     // The masked number gets its own line: on some phones the bullets are wide and would wrap mid-number.
                     state.accountNumberHint?.let { BasicText(it.maskedForDisplay(), style = t.headline.copy(color = c.ink)) }
                 }
-                Row(Modifier.padding(top = 32.dp), horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.Top) {
-                    Column(Modifier.width(112.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                        BasicText("Country", Modifier.padding(horizontal = 4.dp), style = t.footnote.copy(color = c.inkSecondary))
-                        Box(Modifier.fillMaxWidth().height(50.dp).background(c.fill, CircasoShapes.md).padding(horizontal = 16.dp), contentAlignment = Alignment.CenterStart) {
-                            BasicText("KE ${PhoneNumber.CountryCode}", style = t.body.copy(color = c.ink))
-                        }
+                Row(Modifier.padding(top = 32.dp), horizontalArrangement = Arrangement.spacedBy(CircasoSpacing.s3), verticalAlignment = Alignment.Top) {
+                    Column(Modifier.width(IntrinsicSize.Max).widthIn(min = 112.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        BasicText("Country", Modifier.padding(horizontal = CircasoSpacing.s1), style = t.footnote.copy(color = c.inkSecondary))
+                        CountryButton(state, onClick = {
+                            // The number pad would otherwise stay up under the sheet, typing into a hidden field.
+                            focus.clearFocus()
+                            actions.onPickCountry(true)
+                        })
                     }
                     CircasoTextField(
                         value = state.input,
-                        onValueChange = viewModel::onInput,
+                        onValueChange = actions.onInput,
                         label = "Phone number",
-                        placeholder = "712 345 678",
+                        placeholder = state.country.example.takeIf { it.isNotEmpty() }?.let { PhoneNumberTransformation(state.country.lengths.last).spaced(it) }.orEmpty(),
                         error = state.error,
-                        modifier = Modifier.weight(1f),
+                        modifier = Modifier.weight(1f).focusRequester(numberFocus),
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone),
-                        visualTransformation = PhoneNumberTransformation,
+                        visualTransformation = remember(state.country) { PhoneNumberTransformation(state.country.lengths.last) },
                     )
                 }
                 Spacer(Modifier.weight(1f))
-                CircasoButton("Send Code", viewModel::onSendCode, size = ButtonSize.Large, busy = state.busy, block = true)
+                CircasoButton("Send Code", actions.onSendCode, size = ButtonSize.Large, busy = state.busy, block = true)
             }
+        }
+    }
+}
+
+/** The country box (frame ID04c, a picker since 2026-11-12): flag and code on the left, the chevron at the right edge. */
+@Composable
+private fun CountryButton(state: PhoneViewModel.UiState, onClick: () -> Unit) {
+    val c = CircasoTheme.colors
+    val t = CircasoTheme.typography
+    val ink = if (state.busy) c.inkTertiary else c.ink
+    Row(
+        Modifier.fillMaxWidth().heightIn(min = CircasoSizes.controlLg).clip(CircasoShapes.md).background(c.fill)
+            .pressable(enabled = !state.busy, onClickLabel = "Change country", onClick = onClick)
+            .clearAndSetSemantics {
+                contentDescription = "Country, ${state.country.name}, plus ${state.country.dialCode}"
+                role = Role.Button
+                if (state.busy) disabled()
+            }
+            .padding(start = CircasoSpacing.s4, end = CircasoSpacing.s3),
+        horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically,
+    ) {
+        val reduce = CircasoTheme.reduceMotion
+        AnimatedContent(
+            state.country,
+            transitionSpec = { if (reduce) fadeIn(snap()) togetherWith fadeOut(snap()) else fadeIn(tween(CircasoMotion.QuickMs)) togetherWith fadeOut(tween(CircasoMotion.QuickMs)) },
+            label = "country",
+        ) { country ->
+            Row(horizontalArrangement = Arrangement.spacedBy(CircasoSpacing.s2), verticalAlignment = Alignment.CenterVertically) {
+                BasicText(country.flag, style = t.body)
+                BasicText("+${country.dialCode}", style = t.body.copy(color = ink), maxLines = 1)
+            }
+        }
+        Box(Modifier.padding(start = CircasoSpacing.s2)) {
+            CircasoIconImage(CircasoIcon.ChevronDown, ink, Modifier.size(14.dp), strokeWidth = 2.2f)
         }
     }
 }
@@ -270,3 +386,56 @@ fun RegisteringScreen(viewModel: RegisteringViewModel) {
         }
     }
 }
+
+
+/**
+ * The country picker (2026-11-12): search by name or calling code; Kenya first (and the chosen country next), then A to Z.
+ * The list takes the room left above the keyboard, so the head and search never scroll away.
+ */
+@Composable
+private fun CountryPickerContent(state: PhoneViewModel.UiState, onQuery: (String) -> Unit, onPick: (Country) -> Unit, onClose: () -> Unit) {
+    val c = CircasoTheme.colors
+    val t = CircasoTheme.typography
+    val list = remember(state.query, state.country) { state.countries }
+    val density = LocalDensity.current
+    val window = com.circaso.designsystem.adaptive.LocalWindowLayout.current
+    val keyboard = with(density) { WindowInsets.ime.getBottom(this).toDp() }
+    val status = with(density) { WindowInsets.statusBars.getTop(this).toDp() }
+    // Window less the keyboard, the status bar, a gap above the sheet and the sheet's own head, grabber, search and padding.
+    val listMax = (window.height - keyboard - status - CircasoSpacing.s3 - PickerChrome).coerceIn(PickerMinList, PickerMaxList)
+    Column(Modifier.fillMaxWidth()) {
+        SheetHead("Country", onClose)
+        SearchField(
+            state.query, onQuery, placeholder = "Search country or code", modifier = Modifier.padding(vertical = CircasoSpacing.s2),
+            // One match: the Search key picks it.
+            onSearch = list.singleOrNull()?.let { only -> { onPick(only) } },
+        )
+        if (list.isEmpty()) {
+            BasicText(
+                "No country matches “${state.query.trim()}”.",
+                Modifier.fillMaxWidth().padding(CircasoSpacing.s6).semantics { liveRegion = LiveRegionMode.Polite },
+                style = t.subhead.copy(color = c.inkSecondary, textAlign = TextAlign.Center),
+            )
+        }
+        LazyColumn(Modifier.fillMaxWidth().heightIn(max = listMax)) {
+            items(list, key = { it.iso }) { country ->
+                val selected = country == state.country
+                ListRow(
+                    country.name,
+                    leading = { BasicText(country.flag, Modifier.clearAndSetSemantics {}, style = t.title3) },
+                    meta = "+${country.dialCode}",
+                    trailing = if (selected) ({ CircasoIconImage(CircasoIcon.Check, c.ink, Modifier.size(18.dp)) }) else null,
+                    onClick = { onPick(country) },
+                    // The sheet already insets its content; rows line up with its title.
+                    horizontalPadding = 0.dp,
+                    role = Role.RadioButton,
+                    modifier = Modifier.semantics { this.selected = selected },
+                )
+            }
+        }
+    }
+}
+
+private val PickerChrome = 190.dp
+private val PickerMinList = 168.dp
+private val PickerMaxList = 460.dp

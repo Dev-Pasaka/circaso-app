@@ -44,13 +44,15 @@ fun ListRow(
     titleEnd: (@Composable () -> Unit)? = null,
     /** The content's side inset; a list whose rows are already inset (Chats' rounded rows) passes less. */
     horizontalPadding: androidx.compose.ui.unit.Dp = CircasoSpacing.s4,
+    /** How screen readers announce a tappable row: a button, or a choice in a list (`Role.RadioButton`). */
+    role: androidx.compose.ui.semantics.Role = androidx.compose.ui.semantics.Role.Button,
 ) {
     val c = CircasoTheme.colors
     val t = CircasoTheme.typography
     Row(
         modifier
             .fillMaxWidth()
-            .then(if (onClick != null) Modifier.pressable(onClick = onClick) else Modifier)
+            .then(if (onClick != null) Modifier.pressable(role = role, onClick = onClick) else Modifier)
             .defaultMinSize(minHeight = 56.dp)
             .padding(horizontal = horizontalPadding, vertical = CircasoSpacing.s3),
         horizontalArrangement = Arrangement.spacedBy(CircasoSpacing.s3),

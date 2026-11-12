@@ -160,7 +160,7 @@ val messagingModule = module {
     viewModel {
         NewChatViewModel(
             get(), get(), get(), observeChats = get(), connect = get(), createShareLink = get(),
-            reader = get(), syncPhoneBook = get(),
+            reader = get(), syncPhoneBook = get(), homeCountry = get(),
         )
     }
     factory {

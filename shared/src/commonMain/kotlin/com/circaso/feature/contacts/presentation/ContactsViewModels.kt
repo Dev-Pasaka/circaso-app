@@ -86,6 +86,7 @@ class ContactsViewModel(
     connection: ConnectionState,
     private val reader: ContactsReader,
     private val syncPhoneBook: SyncPhoneBookUseCase,
+    private val homeCountry: com.circaso.core.platform.HomeCountry? = null,
 ) : ViewModel() {
     private val local = MutableStateFlow(ContactsUiState())
     val state: StateFlow<ContactsUiState> = combine(observeContacts(), local, connection.status) { contacts, ui, status ->
@@ -141,7 +142,7 @@ class ContactsViewModel(
         viewModelScope.launch {
             val message: String = if (!reader.requestAccess()) {
                 "Circaso can't see your contacts. You can allow it in your phone's settings."
-            } else when (val r = syncPhoneBook(PhoneBookNumbers.normalise(reader.readNumbers()))) {
+            } else when (val r = syncPhoneBook(PhoneBookNumbers.normalise(reader.readNumbers(), homeCountry?.get() ?: com.circaso.feature.auth.domain.Countries.Kenya))) {
                 is AppResult.Success -> when (val n = r.value.matches.size) {
                     0 -> if (r.value.numbersSent == 0) "You're up to date." else "No one from your contacts is on Circaso yet."
                     1 -> "Found 1 friend on Circaso."

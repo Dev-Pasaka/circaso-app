@@ -98,11 +98,13 @@ class CodeViewModel(
     }
 
     companion object {
-        /** `+254712345678` shown as `+254 7•• ••• 678`. */
+        /** `+254712345678` shown as `+254 7•• ••• 678`; any other country the same way after its calling code. */
         fun mask(e164: String): String {
-            if (!e164.startsWith("+254") || e164.length < 13) return e164
-            val national = e164.drop(4)
-            return "+254 ${national.first()}•• ••• ${national.takeLast(3)}"
+            val digits = e164.removePrefix("+")
+            val country = com.circaso.feature.auth.domain.Countries.forInternational(digits) ?: return e164
+            val national = digits.drop(country.dialCode.length)
+            if (national.length < 6) return e164
+            return "+${country.dialCode} ${national.first()}•• ••• ${national.takeLast(3)}"
         }
     }
 }
