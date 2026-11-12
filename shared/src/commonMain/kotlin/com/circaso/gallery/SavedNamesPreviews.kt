@@ -57,11 +57,11 @@ internal fun SavedNamesPreview(name: String): Boolean {
 private fun ContactInfoHeaderPreview() {
     val c = CircasoTheme.colors
     val t = CircasoTheme.typography
-    val peer = ChatMember("8", "Shiru (cousin)", "wanjiru", null, MemberRole.Member, "", profileName = "Wanjiru Kamau")
+    val peer = ChatMember("8", "Shiru (cousin)", "wanjiru", DemoPhotos.Wanjiru, MemberRole.Member, "", profileName = "Wanjiru Kamau")
     CircasoScaffold(grouped = true, topBar = { CircasoNavBar(title = "Contact Info", onBack = {}) }) { _ ->
         Column {
             Column(Modifier.fillMaxWidth().padding(vertical = CircasoSpacing.s6), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(CircasoSpacing.s2)) {
-                Avatar(peer.displayName, size = CircasoSizes.avatarXl)
+                Avatar(peer.displayName, size = CircasoSizes.avatarXl, imageUrl = peer.avatarUrl)
                 BasicText(peer.displayName, style = t.title1.copy(color = c.ink, textAlign = TextAlign.Center))
                 PeerNameLines(peer)
             }

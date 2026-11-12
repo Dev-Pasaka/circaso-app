@@ -75,11 +75,11 @@ import com.circaso.feature.wallet.presentation.AllGroupWalletsContent
 
 // Debug previews for group wallets (Spaces phase 2, frames GW1–GW19): `-preview=gw-…` on iOS, `--es preview gw-…` on Android.
 
-private fun gwMember(id: String, name: String, role: MemberRole = MemberRole.Member) = ChatMember(id, name, null, null, role, "2026-10-01T00:00:00Z")
+private fun gwMember(id: String, name: String, role: MemberRole = MemberRole.Member) = ChatMember(id, name, null, DemoPhotos.member(id, name), role, "2026-10-01T00:00:00Z")
 
 private val kilimani = Chat(
     "g1", ChatKind.Group, "Kilimani Chama", null,
-    listOf(gwMember("me", "Pasaka Mutuku", MemberRole.Owner), gwMember("2", "Otieno Ouma", MemberRole.Admin), gwMember("3", "Wanjiru Kamau", MemberRole.Admin), gwMember("4", "Achieng Odhiambo")),
+    listOf(gwMember("me", "Amina Wanjiru", MemberRole.Owner), gwMember("2", "Otieno Ouma", MemberRole.Admin), gwMember("3", "Wanjiru Kamau", MemberRole.Admin), gwMember("4", "Achieng Odhiambo")),
     false, 3, 1, MemberRole.Owner, null,
 )
 
@@ -355,8 +355,8 @@ internal fun GroupWalletPreview(name: String): Boolean {
         "gw-request-payout" -> PayPreview(payState(PayUiState(payee = Person("2", "Otieno Ouma", null, null, null), chatId = "dm", amountText = "5000", note = "Venue deposit", groupMoney = gwMoney())).copy(payingFrom = kilimaniWallet, wallet = gwWallet()))
         // 2026-11-06: the owner pays straight from the group wallet; the picker offers You, an address and the members.
         "gw-pay-direct" -> PayPreview(payState(PayUiState(payee = Person("4", "Achieng Odhiambo", null, null, null), amountText = "1500", note = "Bus fare", groupMoney = gwMoney())).copy(payingFrom = kilimaniWallet, wallet = gwWallet()))
-        "gw-pay-direct-self" -> PayPreview(payState(PayUiState(payee = Person("me", "Pasaka Mutuku", null, null, null), me = Person("me", "Pasaka Mutuku", null, null, null), amountText = "2000", groupMoney = gwMoney())).copy(payingFrom = kilimaniWallet, wallet = gwWallet()))
-        "gw-pay-pick-owner" -> PayContent(payState(PayUiState(step = PayStep.Pick, me = Person("me", "Pasaka Mutuku", null, null, null), contacts = gwContacts().map { it.person } + Person("6", "Mum", null, null, null))).copy(payingFrom = kilimaniWallet, wallet = gwWallet()), {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, null, onToAddress = {})
+        "gw-pay-direct-self" -> PayPreview(payState(PayUiState(payee = Person("me", "Amina Wanjiru", null, null, null), me = Person("me", "Amina Wanjiru", null, null, null), amountText = "2000", groupMoney = gwMoney())).copy(payingFrom = kilimaniWallet, wallet = gwWallet()))
+        "gw-pay-pick-owner" -> PayContent(payState(PayUiState(step = PayStep.Pick, me = Person("me", "Amina Wanjiru", null, null, null), contacts = gwContacts().map { it.person } + Person("6", "Mum", null, null, null))).copy(payingFrom = kilimaniWallet, wallet = gwWallet()), {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, null, onToAddress = {})
         "gw-send-to-wallet-group" -> com.circaso.feature.wallet.presentation.SendToWalletContent(
             com.circaso.feature.wallet.presentation.SendToWalletUiState(step = com.circaso.feature.wallet.presentation.ExternalStep.Review, wallet = gwWallet(), blockchain = "BASE-SEPOLIA", address = "0x12ab0000000000000000000000000000004ab4", checkedAddress = "0x12ab0000000000000000000000000000004ab4", amountText = "150", note = "To Binance", from = kilimaniWallet, fee = PayFee.Quoted("750000", 50)),
             {}, {}, {}, {}, {}, {}, {}, {}, {},
@@ -380,14 +380,14 @@ internal fun GroupWalletPreview(name: String): Boolean {
                 failure = com.circaso.feature.wallet.presentation.PayFailure("Kilimani Chama", "Something went wrong while signing. Nothing was sent.", "req_N2sX8c")),
             {}, {}, {}, {}, {}, {}, {}, {}, {},
         )
-        "gw-pay-personal" -> PayPreview(payState(PayUiState(payee = Person("6", "Mum", null, null, null), chatId = "dm", amountText = "500", note = "for lunch tomorrow")))
-        "gw-pay-from" -> PayPreview(payState(PayUiState(payee = Person("6", "Mum", null, null, null), chatId = "dm", amountText = "500", note = "for lunch tomorrow", choosing = true)))
+        "gw-pay-personal" -> PayPreview(payState(PayUiState(payee = Person("6", "Mum", null, DemoPhotos.Mum, null), chatId = "dm", amountText = "500", note = "for lunch tomorrow")))
+        "gw-pay-from" -> PayPreview(payState(PayUiState(payee = Person("6", "Mum", null, DemoPhotos.Mum, null), chatId = "dm", amountText = "500", note = "for lunch tomorrow", choosing = true)))
         // Phase 2F on the Pay screen (Wallet tab Send): the same fee line, GW13 to GW13d, GW20.
-        "gw-pay-fee" -> PayPreview(payState(PayUiState(payee = Person("6", "Mum", null, null, null), chatId = "dm", amountText = "500", note = "for lunch tomorrow", fee = PayFee.Quoted("19380", 50, quoteId = "q1", expiresAt = kotlin.time.Instant.fromEpochMilliseconds(nowMillis() + 900_000).toString()))))
-        "gw-pay-fee-quoting" -> PayPreview(payState(PayUiState(payee = Person("6", "Mum", null, null, null), chatId = "dm", amountText = "500", fee = PayFee.Quoting)))
-        "gw-pay-fee-error" -> PayPreview(payState(PayUiState(payee = Person("6", "Mum", null, null, null), chatId = "dm", amountText = "500", fee = PayFee.Failed("req_F9a2Lm"))))
-        "gw-pay-fee-short" -> PayPreview(payState(PayUiState(payee = Person("6", "Mum", null, null, null), chatId = "dm", amountText = "18240", note = "rent", fee = PayFee.Quoted("706900", 50), block = com.circaso.feature.wallet.presentation.PayBlock.Funds("140480000"))))
-        "gw-pay-offline" -> PayPreview(payState(PayUiState(payee = Person("6", "Mum", null, null, null), chatId = "dm", amountText = "500")).copy(online = false))
+        "gw-pay-fee" -> PayPreview(payState(PayUiState(payee = Person("6", "Mum", null, DemoPhotos.Mum, null), chatId = "dm", amountText = "500", note = "for lunch tomorrow", fee = PayFee.Quoted("19380", 50, quoteId = "q1", expiresAt = kotlin.time.Instant.fromEpochMilliseconds(nowMillis() + 900_000).toString()))))
+        "gw-pay-fee-quoting" -> PayPreview(payState(PayUiState(payee = Person("6", "Mum", null, DemoPhotos.Mum, null), chatId = "dm", amountText = "500", fee = PayFee.Quoting)))
+        "gw-pay-fee-error" -> PayPreview(payState(PayUiState(payee = Person("6", "Mum", null, DemoPhotos.Mum, null), chatId = "dm", amountText = "500", fee = PayFee.Failed("req_F9a2Lm"))))
+        "gw-pay-fee-short" -> PayPreview(payState(PayUiState(payee = Person("6", "Mum", null, DemoPhotos.Mum, null), chatId = "dm", amountText = "18240", note = "rent", fee = PayFee.Quoted("706900", 50), block = com.circaso.feature.wallet.presentation.PayBlock.Funds("140480000"))))
+        "gw-pay-offline" -> PayPreview(payState(PayUiState(payee = Person("6", "Mum", null, DemoPhotos.Mum, null), chatId = "dm", amountText = "500")).copy(online = false))
         else -> return false
     }
     return true
@@ -396,18 +396,18 @@ internal fun GroupWalletPreview(name: String): Boolean {
 // ---- Money in the chat (Pasaka, 2026-11-04): the chat's money card is the review; Pay goes straight to the PIN.
 
 private val mum = com.circaso.feature.messaging.domain.Chat(
-    "dm", ChatKind.Direct, "Mum", null, listOf(gwMember("me", "Pasaka Mutuku"), gwMember("6", "Mum")), false, 1, 0, MemberRole.Member, "6",
+    "dm", ChatKind.Direct, "Mum", DemoPhotos.Mum, listOf(gwMember("me", "Amina Wanjiru"), gwMember("6", "Mum")), false, 1, 0, MemberRole.Member, "6",
 )
 
 private fun gwPayment(id: Long, transferId: String, minor: String, outgoing: Boolean, note: String?, minutesAgo: Long, chat: String = "dm", sender: String = "me") =
     com.circaso.feature.messaging.domain.Message.Payment(
-        id, chat, nowMillis() - minutesAgo * 60_000, null, "m$id", sender, if (sender == "me") "Pasaka" else "Mum", outgoing, transferId, minor, "USDC", "BASE-SEPOLIA", note,
+        id, chat, nowMillis() - minutesAgo * 60_000, null, "m$id", sender, if (sender == "me") "Amina" else "Mum", outgoing, transferId, minor, "USDC", "BASE-SEPOLIA", note,
         com.circaso.feature.messaging.domain.DeliveryState.Delivered, null,
     )
 
 private fun gwText(id: Long, text: String, outgoing: Boolean, minutesAgo: Long, chat: String = "dm") =
     com.circaso.feature.messaging.domain.Message.Text(
-        id, chat, nowMillis() - minutesAgo * 60_000, null, "t$id", if (outgoing) "me" else "6", if (outgoing) "Pasaka" else "Mum", outgoing, text,
+        id, chat, nowMillis() - minutesAgo * 60_000, null, "t$id", if (outgoing) "me" else "6", if (outgoing) "Amina" else "Mum", outgoing, text,
         com.circaso.feature.messaging.domain.DeliveryState.Read, null, null,
     )
 
@@ -438,7 +438,7 @@ private val waitingRequest = com.circaso.feature.chama.domain.ChamaRequest(
 /** Draws a chat-money preview; false when [name] isn't one. */
 @Composable
 internal fun ChatMoneyPreview(name: String): Boolean {
-    val mumPay = payState(PayUiState(payee = Person("6", "Mum", null, null, null), chatId = "dm", amountText = "500", note = "for lunch tomorrow"))
+    val mumPay = payState(PayUiState(payee = Person("6", "Mum", null, DemoPhotos.Mum, null), chatId = "dm", amountText = "500", note = "for lunch tomorrow"))
     val direct = com.circaso.feature.messaging.presentation.ThreadUiState(chat = mum, messages = mumThread, draft = "#500 for lunch tomorrow", fiat = gwFiat)
     val group = com.circaso.feature.messaging.presentation.ThreadUiState(
         chat = kilimani, messages = listOf(gwText(1, "November contributions are due Friday", false, 30, "g1")), groupMoney = gwMoney(), fiat = gwFiat, myUserId = "me",
@@ -491,7 +491,7 @@ internal fun ChatMoneyPreview(name: String): Boolean {
         )
         "chat-request-cap" -> ChatPreview(
             direct.copy(draft = "#150000 Stock for December"),
-            payState(PayUiState(payee = Person("6", "Mum", null, null, null), chatId = "dm", amountText = "150000", note = "Stock for December", groupMoney = gwMoney()))
+            payState(PayUiState(payee = Person("6", "Mum", null, DemoPhotos.Mum, null), chatId = "dm", amountText = "150000", note = "Stock for December", groupMoney = gwMoney()))
                 .copy(payingFrom = kilimaniWallet, wallet = gwWallet(), fee = PayFee.Quoted("11627900", 100), block = com.circaso.feature.wallet.presentation.PayBlock.Daily("599000000", "10000000000", null, capFits, "594000000")),
         )
         // GW14c: the approved payout's card in the thread when it waits for the limit.
