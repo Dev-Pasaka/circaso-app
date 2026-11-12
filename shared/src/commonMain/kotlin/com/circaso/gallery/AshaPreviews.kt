@@ -35,8 +35,8 @@ internal fun AshaPreview(name: String): Boolean {
         "asha-voice-listening" -> VoiceContent(
             VoiceUiState(
                 phase = VoicePhase.Listening,
-                turns = listOf(VoiceTurn("Who did I chat with this week?", listOf("Mostly Amina and Otieno.", "You also caught up with the Kilimani group on Tuesday."), done = true)),
-                heard = "And how much did I send Amina",
+                turns = listOf(VoiceTurn("Who did I chat with this week?", listOf("Mostly Achieng and Otieno.", "You also caught up with the Kilimani group on Tuesday."), done = true)),
+                heard = "And how much did I send Achieng",
                 micLevel = 0.55f,
                 voiceSecondsLeft = 412,
             ),
@@ -46,8 +46,8 @@ internal fun AshaPreview(name: String): Boolean {
             VoiceUiState(
                 phase = VoicePhase.Speaking,
                 turns = listOf(
-                    VoiceTurn("Who did I chat with this week?", listOf("Mostly Amina and Otieno."), done = true),
-                    VoiceTurn("And how much did I send Amina?", listOf("You sent Amina **KES 2,400** this week, in two payments.", "The last one was on Thursday for lunch.")),
+                    VoiceTurn("Who did I chat with this week?", listOf("Mostly Achieng and Otieno."), done = true),
+                    VoiceTurn("And how much did I send Achieng?", listOf("You sent Achieng **KES 2,400** this week, in two payments.", "The last one was on Thursday for lunch.")),
                 ),
                 voiceLevel = 0.7f,
             ),
@@ -61,7 +61,7 @@ internal fun AshaPreview(name: String): Boolean {
         "asha-usage-failed" -> Chat(AshaSheet.Usage, usage = UsageUi.Failed("Something went wrong. Try again."))
         "asha-voice-connecting" -> VoiceContent(VoiceUiState(), {}, {}, {}, {})
         "asha-voice-offline" -> VoiceContent(
-            VoiceUiState(phase = VoicePhase.Ended, ending = com.circaso.feature.assistant.presentation.VoiceEnding.Offline, turns = listOf(VoiceTurn("Who did I chat with this week?", listOf("Mostly Amina and Otieno."), done = true))),
+            VoiceUiState(phase = VoicePhase.Ended, ending = com.circaso.feature.assistant.presentation.VoiceEnding.Offline, turns = listOf(VoiceTurn("Who did I chat with this week?", listOf("Mostly Achieng and Otieno."), done = true))),
             {}, {}, {}, {},
         )
         "asha-waiting" -> Chat(null, online = false) {
@@ -69,7 +69,7 @@ internal fun AshaPreview(name: String): Boolean {
         }
         "asha-back-online" -> Chat(null) { it.copy(backOnline = true, pendingQuestion = "And how much on transport?", carried = "Let me check your transport payments this") }
         "asha-voice-reconnecting" -> VoiceContent(
-            VoiceUiState(phase = VoicePhase.Reconnecting, turns = listOf(VoiceTurn("Who did I chat with this week?", listOf("Mostly Amina and Otieno."), done = true), VoiceTurn("And Mum?", listOf("You and Mum talked on"), done = true, cutOff = true))),
+            VoiceUiState(phase = VoicePhase.Reconnecting, turns = listOf(VoiceTurn("Who did I chat with this week?", listOf("Mostly Achieng and Otieno."), done = true), VoiceTurn("And Mum?", listOf("You and Mum talked on"), done = true, cutOff = true))),
             {}, {}, {}, {},
         )
         "asha-voice-muted" -> VoiceContent(VoiceUiState(phase = VoicePhase.Listening, muted = true), {}, {}, {}, {})

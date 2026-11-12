@@ -274,6 +274,8 @@ private fun Rows(entries: List<LedgerEntry>, state: ChamaUiState, fiat: FiatValu
         if (empty != null) BasicText(empty, style = t.footnote.copy(color = c.inkSecondary), modifier = Modifier.padding(horizontal = CircasoSpacing.s1))
         return
     }
+    // Members by id once, for each row's photo (not a search per row).
+    val members = androidx.compose.runtime.remember(state.chat?.members) { state.chat?.members.orEmpty().associateBy { it.userId } }
     Column(Modifier.fillMaxWidth().clip(CircasoShapes.lg).background(c.surface)) {
         entries.forEachIndexed { i, e ->
             val incoming = e.direction == LedgerDirection.In
@@ -285,7 +287,12 @@ private fun Rows(entries: List<LedgerEntry>, state: ChamaUiState, fiat: FiatValu
             ListRow(
                 title = who,
                 sub = listOfNotNull(if (!incoming) e.request?.note else null, at?.let { chatListTime(it, now) }).joinToString(" · "),
-                leading = { if (incoming || e.request?.payeeUserId != null) Avatar(who, size = CircasoSizes.avatarMd) else com.circaso.designsystem.components.LetterDisc("OUT") },
+                leading = {
+                    // The member's own photo and initials, as the Members tab shows them (my row is titled "You").
+                    val member = (if (incoming) e.userId else e.request?.payeeUserId)?.let(members::get)
+                    if (incoming || e.request?.payeeUserId != null) Avatar(member?.displayName ?: who, size = CircasoSizes.avatarMd, imageUrl = member?.avatarUrl)
+                    else com.circaso.designsystem.components.LetterDisc("OUT")
+                },
                 trailing = { RowAmount((if (incoming) "+" else "−") + amountText(e.amountMinor, fiat), meta = if (fiat != null) MinorUnits.toDisplay(e.amountMinor, 6) + " USDC" else null, incoming = incoming) },
                 onClick = e.transferId?.let { id -> { onOpen(id) } },
             )

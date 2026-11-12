@@ -54,8 +54,8 @@ internal fun AlbumPreview(name: String) {
     )
     val sending = messages.first { (it as? Message.Media)?.state == DeliveryState.Sending }.localId
     val member = { uid: String, n: String, r: MemberRole -> ChatMember(uid, n, n.lowercase(), null, r, "2026-10-20T00:00:00Z") }
-    val chat = if (group) Chat("g", ChatKind.Group, "Holiday Fund", null, listOf(member("me", "Pasaka", MemberRole.Owner), member("2", "Wanjiru", MemberRole.Member), member("4", "Otieno", MemberRole.Member)), false, 1, 1, MemberRole.Owner, null)
-    else Chat("c", ChatKind.Direct, "Wanjiru", null, listOf(member("me", "Pasaka", MemberRole.Member), member("2", "Wanjiru", MemberRole.Member)), false, 1, 0, MemberRole.Member, "2")
+    val chat = if (group) Chat("g", ChatKind.Group, "Holiday Fund", null, listOf(member("me", "Amina", MemberRole.Owner), member("2", "Wanjiru", MemberRole.Member), member("4", "Otieno", MemberRole.Member)), false, 1, 1, MemberRole.Owner, null)
+    else Chat("c", ChatKind.Direct, "Wanjiru", null, listOf(member("me", "Amina", MemberRole.Member), member("2", "Wanjiru", MemberRole.Member)), false, 1, 0, MemberRole.Member, "2")
     val actions = ThreadMediaActions(
         canShareLocation = true, onCompose = {}, onLocation = {}, onVoiceStart = {}, onVoiceEnd = {},
         load = { d -> d.file?.let { library.read(it) }?.let { MediaLoad.Loaded(it) } ?: MediaLoad.Failed },
