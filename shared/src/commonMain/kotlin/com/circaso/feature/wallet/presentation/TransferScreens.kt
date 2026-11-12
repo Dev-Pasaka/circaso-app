@@ -136,6 +136,8 @@ fun TransferContent(state: TransferUiState, onBack: () -> Unit) {
             AmountDisplay(cur, num, sub = "${if (incoming) "Received from" else "Sent to"} $name · $when_", size = AmountSize.Medium, tone = if (incoming && transfer.settled) AmountTone.Money else AmountTone.Ink)
             Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 DetailRow(if (incoming) "From" else "To", name)
+                // A name I saved for them: who it really is, beside it (money never goes by a nickname alone).
+                transfer.counterpartOwnName?.let { DetailRow("Their name", it) }
                 handleOf(transfer)?.let { DetailRow("Username", it) }
                 transfer.note?.let { DetailRow("Note", it) }
                 DetailRow("Date", when_)

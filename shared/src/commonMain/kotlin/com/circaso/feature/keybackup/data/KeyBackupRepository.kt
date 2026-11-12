@@ -71,6 +71,22 @@ class KeyBackupRepository(
     private var root: ByteArray? = null
     @kotlin.concurrent.Volatile private var restoring = false
 
+    /**
+     * Runs (outside the lock, never throwing to the caller) once this phone holds the root: after [restore], [turnOn]
+     * and [onPrfSecret]. Other sealed backups that ride on the root (saved names) pull and merge here.
+     */
+    internal var onRootReady: suspend () -> Unit = {}
+
+    /** A copy of the root while this phone holds it (backup on here), for the other backups sealed with it; else null. */
+    internal suspend fun rootOnPhone(): ByteArray? = lock.withLock {
+        if (root == null) userId()?.let { root = loadLocal(it) }
+        root?.copyOf()
+    }
+
+    private suspend fun rootReady() {
+        try { onRootReady() } catch (e: CancellationException) { throw e } catch (e: Exception) { /* tried again next start */ }
+    }
+
     suspend fun supported(): Boolean = runCatching { passkeys.isSupported() }.getOrDefault(false)
 
     /** Reads this phone's root and asks the server whether backup is on; cheap, call on start and sign-in. */
@@ -124,6 +140,7 @@ class KeyBackupRepository(
             createRoot(person, credentialId, secret)
         }
         backfill()
+        if (root != null) rootReady()
     }
 
     /** Turns backup on from Security: the vault's passkey (or a new one) answers once. */
@@ -151,6 +168,7 @@ class KeyBackupRepository(
             }
         } finally { secret.fill(0) }
         backfill()
+        rootReady()
         return null
     }
 
@@ -187,6 +205,7 @@ class KeyBackupRepository(
         // Only once every key is back does this phone count as backed up (a failed page leaves the restore on offer).
         lock.withLock { keepLocal(person, rootKey) }
         runCatching { refreshChats() }
+        rootReady()
         return null
     }
 

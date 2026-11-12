@@ -49,6 +49,7 @@ val walletModule = module {
         },
         // Money is never hidden by decryption: a confirmed chat payment always has its card in that chat.
         onChatPayment = { seen -> get<com.circaso.feature.messaging.data.repository.ChatPaymentCards>().fromWallet(seen) },
+        names = get(),
     ) }
     single<WalletRepository> { get<WalletRepositoryImpl>() }
     factory { ObserveWalletUseCase(get()) }

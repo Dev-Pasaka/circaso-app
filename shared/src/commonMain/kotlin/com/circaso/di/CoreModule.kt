@@ -168,7 +168,10 @@ fun initKoin(platform: Module) {
                 val backup = koin.get<com.circaso.feature.keybackup.data.KeyBackupRepository>()
                 if (!backup.supported()) return@collect
                 backup.refresh()
-                if (backup.status.value.onPhone) backup.backfill()
+                if (backup.status.value.onPhone) {
+                    backup.backfill()
+                    koin.get<com.circaso.feature.names.data.SavedNamesRepository>().sync() // names saved on other phones
+                }
             }
     }
     koin.get<KeyMaintainer>().start() // encryption keys on the server, whenever signed in and online

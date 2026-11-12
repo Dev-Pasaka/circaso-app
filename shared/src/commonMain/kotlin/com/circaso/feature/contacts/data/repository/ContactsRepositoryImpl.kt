@@ -27,11 +27,15 @@ class ContactsRepositoryImpl(
     private val remote: ContactsRemote,
     private val dao: ContactsDao,
     private val outbox: Outbox,
+    /** Names I saved for people: shown in place of theirs, theirs kept as [Person.profileName]. */
+    private val names: com.circaso.feature.names.domain.PeopleNames = com.circaso.feature.names.domain.PeopleNames.None,
     private val kickOutbox: () -> Unit,
 ) : ContactsRepository {
 
-    override val contacts: Flow<List<Contact>> = dao.observeContacts().map { rows -> rows.map { it.toDomain() } }
-    override val blocks: Flow<List<Person>> = dao.observeBlocked().map { rows -> rows.map { it.toDomain() } }
+    override val contacts: Flow<List<Contact>> =
+        kotlinx.coroutines.flow.combine(dao.observeContacts(), names.saved) { rows, saved -> rows.map { it.toDomain().let { c -> c.copy(person = c.person.named(saved)) } } }
+    override val blocks: Flow<List<Person>> =
+        kotlinx.coroutines.flow.combine(dao.observeBlocked(), names.saved) { rows, saved -> rows.map { it.toDomain().named(saved) } }
 
     override suspend fun refreshContacts(): AppResult<Unit> {
         val all = mutableListOf<com.circaso.feature.contacts.data.remote.ContactDto>()
@@ -90,7 +94,7 @@ class ContactsRepositoryImpl(
     }
 
     override suspend fun connect(via: ConnectVia, value: String): AppResult<Connection> {
-        val result = remote.connect(ConnectRequest(via.apiName, value)).map { Connection(it.user.toDomain(), it.created) }
+        val result = remote.connect(ConnectRequest(via.apiName, value)).map { Connection(it.user.toDomain().named(names.saved.value), it.created) }
         if (result is AppResult.Success) refreshContacts()
         return result
     }
@@ -106,7 +110,7 @@ class ContactsRepositoryImpl(
     }
 
     override suspend fun block(person: Person) {
-        dao.upsertBlocked(listOf(BlockedEntity(person.userId, person.displayName, person.handle, person.avatarUrl, person.about)))
+        dao.upsertBlocked(listOf(BlockedEntity(person.userId, person.profileName, person.handle, person.avatarUrl, person.about)))
         outbox.enqueue(BlockSetHandler.Type, person.userId)
         kickOutbox()
     }
@@ -128,6 +132,10 @@ class ContactsRepositoryImpl(
 }
 
 private fun PersonDto.toDomain() = Person(userId, displayName, handle, avatarUrl, about)
+
+/** The name I saved for them shown, their own kept as [Person.profileName]. */
+internal fun Person.named(saved: Map<String, String>): Person =
+    saved[userId]?.let { copy(displayName = it, profileName = profileName) } ?: this
 private fun PersonDto.toBlocked() = BlockedEntity(userId, displayName, handle, avatarUrl, about)
 private fun com.circaso.feature.contacts.data.remote.ContactDto.toEntity() =
     ContactEntity(user.userId, user.displayName, user.handle, user.avatarUrl, user.about, source, addedAt)

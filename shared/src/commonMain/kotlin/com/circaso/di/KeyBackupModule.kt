@@ -1,6 +1,14 @@
 package com.circaso.di
 
+import com.circaso.core.database.CircasoDatabase
 import com.circaso.core.session.AuthManager
+import com.circaso.core.sync.nowMillis
+import com.circaso.feature.names.data.KtorSavedNamesRemote
+import com.circaso.feature.names.data.SavedNamesRemote
+import com.circaso.feature.names.data.SavedNamesRepository
+import com.circaso.feature.names.domain.PeopleNames
+import com.circaso.feature.names.domain.SavedNames
+import org.koin.dsl.bind
 import com.circaso.feature.keybackup.data.KeyBackupRemote
 import com.circaso.feature.keybackup.data.KeyBackupRepository
 import com.circaso.feature.keybackup.data.KtorKeyBackupRemote
@@ -30,7 +38,21 @@ val keyBackupModule = module {
                     ?.let { runCatching { Base64.UrlSafe.withPadding(Base64.PaddingOption.ABSENT_OPTIONAL).decode(it) }.getOrNull() }
             },
             refreshChats = { get<ChatsRepository>().refresh() },
-        ).also { backup -> groupKeys.onKeyKept = { chatId, version, key -> backup.onKeyKept(chatId, version, key) } }
+        ).also { backup ->
+            groupKeys.onKeyKept = { chatId, version, key -> backup.onKeyKept(chatId, version, key) }
+            // Saved names ride on the same root: pulled and merged as soon as this phone holds it.
+            backup.onRootReady = { get<SavedNamesRepository>().sync() }
+        }
     }
+    // Saved names (2026-11-12): on the phone first, backed up sealed with the root above.
+    single { get<CircasoDatabase>().savedNamesDao() }
+    single<SavedNamesRemote> { KtorSavedNamesRemote(get()) }
+    single {
+        SavedNamesRepository(
+            dao = get(), remote = get(), crypto = get(), userId = { get<AuthManager>().userId },
+            root = { get<KeyBackupRepository>().rootOnPhone() }, scope = get(), now = { nowMillis() },
+        )
+    } bind SavedNames::class
+    single { PeopleNames(get<SavedNames>().names) }
     viewModel { KeyBackupViewModel(get(), get(), get(), get()) }
 }

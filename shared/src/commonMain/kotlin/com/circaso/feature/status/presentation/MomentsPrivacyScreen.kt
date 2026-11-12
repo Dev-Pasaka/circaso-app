@@ -66,7 +66,7 @@ data class MomentsPrivacyUiState(
     val query: String = "",
     val mutedOpen: Boolean = false,
 ) {
-    val shown: List<Contact> get() = if (query.isBlank()) contacts else contacts.filter { it.person.displayName.contains(query.trim(), true) }
+    val shown: List<Contact> get() = if (query.isBlank()) contacts else contacts.filter { it.person.displayName.contains(query.trim(), true) || it.person.profileName.contains(query.trim(), true) }
 }
 
 class MomentsPrivacyViewModel(private val repository: MomentsRepository, observeContacts: ObserveContactsUseCase) : ViewModel() {

@@ -21,7 +21,11 @@ import com.circaso.feature.share.domain.SharedReceipt
 import com.circaso.feature.share.domain.SharedStatement
 import com.circaso.feature.share.domain.SharedStatementLine
 
-class ShareLinksRepositoryImpl(private val remote: ShareLinksRemote) : ShareLinksRepository {
+class ShareLinksRepositoryImpl(
+    private val remote: ShareLinksRemote,
+    /** Names I saved for people: a pay link from someone I named reads with my name for them. */
+    private val names: com.circaso.feature.names.domain.PeopleNames = com.circaso.feature.names.domain.PeopleNames.None,
+) : ShareLinksRepository {
     override suspend fun create(request: ShareRequest): AppResult<ShareLink> = remote.create(request.toDto()).map { it.toModel() }
 
     override suspend fun list(cursor: String?): AppResult<ShareLinkPage> =
@@ -29,11 +33,18 @@ class ShareLinksRepositoryImpl(private val remote: ShareLinksRemote) : ShareLink
 
     override suspend fun revoke(code: String): AppResult<Unit> = remote.revoke(code).map { }
 
-    override suspend fun open(code: String): AppResult<SharedLink> = remote.open(code).map { it.toModel() }
+    override suspend fun open(code: String): AppResult<SharedLink> = remote.open(code).map { it.toModel().named(names.saved.value) }
 
     private companion object {
         const val PageSize = 50
     }
+}
+
+/** A pay link names its person by id: the name I saved for them, if any, on the card and the button. */
+internal fun SharedLink.named(saved: Map<String, String>): SharedLink {
+    val pay = open as? OpenTarget.Pay ?: return this
+    val name = pay.userId?.let { saved[it] } ?: return this
+    return copy(person = person?.copy(displayName = name), open = pay.copy(displayName = name))
 }
 
 internal fun ShareRequest.toDto() = CreateShareLinkRequest(

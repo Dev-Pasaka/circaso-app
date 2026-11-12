@@ -22,7 +22,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
@@ -52,6 +54,8 @@ fun CircasoTextField(
      * `/asha` and autocorrect, but shown in plain text on an ordinary keyboard.
      */
     masked: Boolean = true,
+    /** A prefilled field opens with all its text selected, so one keystroke replaces it (Edit name). */
+    selectAllOnStart: Boolean = false,
 ) {
     val c = CircasoTheme.colors
     val t = CircasoTheme.typography
@@ -60,6 +64,10 @@ fun CircasoTextField(
     // A password-like field on screen: the screen can't be shown to Asha while it is.
     SecretOnScreen(secret)
     var focused by remember { mutableStateOf(false) }
+    // The field keeps its own selection; a prefilled value starts with the cursor after it (or all of it selected),
+    // never in front of it, where Backspace does nothing.
+    var field by remember { mutableStateOf(TextFieldValue(value, if (selectAllOnStart) TextRange(0, value.length) else TextRange(value.length))) }
+    if (field.text != value) field = field.copy(text = value, selection = TextRange(field.selection.start.coerceAtMost(value.length), field.selection.end.coerceAtMost(value.length)))
     val outline = when {
         error != null -> c.critical
         focused -> c.ink
@@ -73,8 +81,8 @@ fun CircasoTextField(
         val ashaTyping = asha != null && !secret && enabled && focused && ashaFragment(value) != null
         Box {
             BasicTextField(
-                value = value,
-                onValueChange = onChange,
+                value = field,
+                onValueChange = { next -> field = next; if (next.text != value) onChange(next.text) },
                 enabled = enabled,
                 singleLine = singleLine,
                 textStyle = t.body.copy(color = if (enabled) c.ink else c.inkTertiary),

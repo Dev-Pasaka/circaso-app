@@ -91,7 +91,7 @@ data class NewGroupUiState(
     val shownContacts: List<Contact> get() {
         val q = query.trim().removePrefix("@")
         val all = contacts.sortedBy { it.person.displayName.lowercase() }
-        return if (q.isEmpty()) all else all.filter { it.person.displayName.contains(q, true) || it.person.handle?.contains(q, true) == true }
+        return if (q.isEmpty()) all else all.filter { it.person.displayName.contains(q, true) || it.person.profileName.contains(q, true) || it.person.handle?.contains(q, true) == true }
     }
 
     /** The chosen people in the order they were picked. */

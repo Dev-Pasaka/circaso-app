@@ -105,6 +105,10 @@ data class Transfer(
     val payoutRequestId: String? = null,
     /** The other side is a group's wallet (W6 `counterparty.groupId`): name it from the group. */
     val counterpartGroupId: String? = null,
+    /** The other person on Circaso, when known: their saved name (if I gave one) is shown as [counterpartName]. */
+    val counterpartUserId: String? = null,
+    /** Their own name when [counterpartName] is one I saved for them: shown beside it wherever money is involved. */
+    val counterpartOwnName: String? = null,
 ) {
     val outgoing get() = direction == TransferDirection.Out
     val settled get() = state == TransferState.Confirmed

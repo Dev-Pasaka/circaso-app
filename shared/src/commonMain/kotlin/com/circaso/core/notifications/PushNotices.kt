@@ -46,6 +46,8 @@ class PushNotices(
     private val prefs: AppPreferences,
     /** Group invites (2026-11-09): an invite's push is worded from the invite itself. */
     private val invites: com.circaso.feature.messaging.domain.GroupInvitesRepository? = null,
+    /** Names I saved for people: a notice the phone words itself uses them (the server's own pushes can't). */
+    private val names: com.circaso.feature.names.domain.PeopleNames = com.circaso.feature.names.domain.PeopleNames.None,
 ) {
     suspend fun privacyOn(): Boolean = prefs.flag(AppPreferences.NotificationPrivacy).first()
 
@@ -90,7 +92,7 @@ class PushNotices(
     }
 
     private suspend fun senderName(chatId: String, userId: String?) =
-        userId?.let { id -> chats.members(chatId).firstOrNull { it.userId == id }?.displayName }
+        userId?.let { id -> names.orNull(id, chats.members(chatId).firstOrNull { it.userId == id }?.displayName) }
 
     private suspend fun message(chatId: String, messageId: String): Notice? {
         messages.syncInbox()
@@ -187,7 +189,9 @@ class PushNotices(
 
     private suspend fun missedCall(chatId: String?, callId: String?, callerName: String?, video: Boolean): Notice {
         val chat = chatId?.let { chats.chat(it) }
-        val caller = callerName ?: chat?.takeIf { it.kind != "GROUP" }?.name ?: chat?.name
+        // A direct call: the name I saved for them first, over the server's.
+        val saved = chat?.takeIf { it.kind != "GROUP" }?.let { c -> chats.members(c.chatId).firstNotNullOfOrNull { names.saved.value[it.userId] } }
+        val caller = saved ?: callerName ?: chat?.takeIf { it.kind != "GROUP" }?.name ?: chat?.name
         val content = compose(NotificationEvent.MissedCall(caller, video))
         return Notice(content, NoticeChannel.Message, "call:${callId ?: chatId}", NotificationDestination.MissedCall(chatId, callId), chatId)
     }

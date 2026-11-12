@@ -82,6 +82,8 @@ class MessagesRepositoryImpl(
     private val now: () -> Long = ::nowMillis,
     private val reactionsDao: com.circaso.feature.messaging.data.local.ReactionsDao? = null,
     private val paymentCards: ChatPaymentCards? = null,
+    /** Names I saved for people: senders, typing and notices about someone use them. */
+    private val names: com.circaso.feature.names.domain.PeopleNames = com.circaso.feature.names.domain.PeopleNames.None,
 ) : MessagesRepository {
     /** messageId -> each person's reaction (userId to emoji), oldest first. */
     override fun reactions(chatId: String): kotlinx.coroutines.flow.Flow<Map<String, List<Pair<String, String>>>> =
@@ -116,13 +118,13 @@ class MessagesRepositoryImpl(
     private val presenceState = MutableStateFlow<Map<String, com.circaso.feature.messaging.domain.Presence>>(emptyMap())
 
     override fun thread(chatId: String, limit: Int): Flow<List<Message>> =
-        combine(dao.observeRecent(chatId, limit), chats.observeMembers(chatId), flow { emit(ownUserId()) }) { rows, members, me ->
-            rows.asReversed().map { it.toDomain(members, me) }
+        combine(dao.observeRecent(chatId, limit), chats.observeMembers(chatId), flow { emit(ownUserId()) }, names.saved) { rows, members, me, saved ->
+            rows.asReversed().map { it.toDomain(members, me, saved) }
         }
 
     override fun thread(chatId: String): Flow<List<Message>> =
-        combine(dao.observeThread(chatId), chats.observeMembers(chatId), flow { emit(ownUserId()) }) { rows, members, me ->
-            rows.map { it.toDomain(members, me) }
+        combine(dao.observeThread(chatId), chats.observeMembers(chatId), flow { emit(ownUserId()) }, names.saved) { rows, members, me, saved ->
+            rows.map { it.toDomain(members, me, saved) }
         }
 
     override suspend fun send(chatId: String, text: String, replyTo: String?) = send(chatId, text, replyTo, null)
@@ -239,9 +241,9 @@ class MessagesRepositoryImpl(
     }
 
     override fun typing(chatId: String): Flow<List<String>> =
-        combine(typingState, chats.observeMembers(chatId)) { state, members ->
+        combine(typingState, chats.observeMembers(chatId), names.saved) { state, members, saved ->
             val t = now()
-            state[chatId].orEmpty().filterValues { it > t }.keys.mapNotNull { id -> members.firstOrNull { it.userId == id }?.displayName }
+            state[chatId].orEmpty().filterValues { it > t }.keys.mapNotNull { id -> saved[id] ?: members.firstOrNull { it.userId == id }?.displayName }
         }
 
     override suspend fun syncInbox(): AppResult<Unit> = inbox.sync()
@@ -321,6 +323,8 @@ class ChatSendHandler(
     private val uploadMedia: (suspend (localId: Long) -> AppResult<Unit>)? = null,
     /** Keeps a photo, video or voice note going when the person leaves Circaso mid-upload. */
     private val uploads: com.circaso.core.platform.BackgroundUploads = com.circaso.core.platform.NoBackgroundUploads,
+    /** Names I saved for people: "Sending a video to …" uses mine. */
+    private val names: com.circaso.feature.names.domain.PeopleNames = com.circaso.feature.names.domain.PeopleNames.None,
 ) : OutboxHandler {
     override val type = OutboxType.ChatMessage
     private val sealer = ChatSealer(dao, chats, sessions, groupKeys, ownUserId, now)
@@ -350,7 +354,7 @@ class ChatSendHandler(
         val chat = chats.chat(chatId) ?: return null
         if (chat.kind != MessagingWire.Direct) return chat.name?.takeIf { it.isNotBlank() }
         val me = ownUserId()
-        return chats.members(chatId).firstOrNull { it.userId != me }?.displayName?.takeIf { it.isNotBlank() }
+        return chats.members(chatId).firstOrNull { it.userId != me }?.let { m -> names.of(m.userId, m.displayName) }?.takeIf { it.isNotBlank() }
     }
 
     private suspend fun sendNow(item: OutboxEntity, job: ChatMessageJob): AppResult<Unit> {
@@ -792,10 +796,18 @@ class MessagingFrameHandler(
 
 // ---- mapping
 
-internal fun MessageEntity.toDomain(members: List<ChatMemberEntity>, me: String?): Message {
-    val name = members.firstOrNull { it.userId == senderId }?.displayName ?: if (senderId == me) "You" else "Someone"
+/**
+ * A notice about someone ("Amina joined", "Amina's security code changed") was written with their name at the time; it
+ * reads with the name I saved for them instead, so it matches the rest of the chat.
+ */
+internal fun systemText(text: String, profileName: String?, savedName: String?): String =
+    if (savedName != null && !profileName.isNullOrBlank() && text.startsWith(profileName)) savedName + text.removePrefix(profileName) else text
+
+internal fun MessageEntity.toDomain(members: List<ChatMemberEntity>, me: String?, saved: Map<String, String> = emptyMap()): Message {
+    val member = members.firstOrNull { it.userId == senderId }
+    val name = saved[senderId].takeIf { senderId != me } ?: member?.displayName ?: if (senderId == me) "You" else "Someone"
     return when {
-        kind == MessageKind.System -> Message.System(localId, chatId, orderAt, sentAt, text.orEmpty())
+        kind == MessageKind.System -> Message.System(localId, chatId, orderAt, sentAt, systemText(text.orEmpty(), member?.displayName, saved[senderId]))
         status == MessageStatus.Deleted -> Message.Deleted(localId, chatId, orderAt, sentAt, outgoing)
         isMediaKind(kind) -> {
             val d = MediaDetails.read(text) ?: MediaDetails(MediaDetails.Location)

@@ -95,7 +95,7 @@ val messagingModule = module {
             uploads = getOrNull<com.circaso.core.platform.BackgroundUploads>() ?: com.circaso.core.platform.NoBackgroundUploads,
         )
     }
-    single { ChatsRepositoryImpl(get(), get(), get(), get(), get(), get(named("ownUserId")), photos = get()) } bind ChatsRepository::class
+    single { ChatsRepositoryImpl(get(), get(), get(), get(), get(), get(named("ownUserId")), photos = get(), names = get()) } bind ChatsRepository::class
     single { get<CircasoDatabase>().recoveryDao() }
     single { com.circaso.feature.messaging.data.repository.ChatPaymentCards(get(), get(), get(), get(named("ownUserId")), { id -> get<ChatsRepositoryImpl>().refreshChat(id) }) }
     single { com.circaso.feature.messaging.data.repository.RetryReceipts(get(), get(), get(), get(), get(), get(), get(), get(named("ownUserId"))) }
@@ -106,10 +106,10 @@ val messagingModule = module {
             retries = get(), paymentCards = get(),
         )
     }
-    single { MessagesRepositoryImpl(get(), get(), get(), get(), get(), get(named("kickOutbox")), get<RealtimeClient>(), get(), get(named("ownUserId")), reactionsDao = get(), paymentCards = get()) } bind MessagesRepository::class
+    single { MessagesRepositoryImpl(get(), get(), get(), get(), get(), get(named("kickOutbox")), get<RealtimeClient>(), get(), get(named("ownUserId")), reactionsDao = get(), paymentCards = get(), names = get()) } bind MessagesRepository::class
     single { ChatSendHandler(get(), get(), get(), get(), get(), get(), get(named("ownUserId")), { id -> get<ChatsRepositoryImpl>().refreshChat(id) },
             uploadMedia = { id -> get<com.circaso.feature.messaging.data.repository.MediaMessages>().uploadPending(id) },
-            uploads = getOrNull<com.circaso.core.platform.BackgroundUploads>() ?: com.circaso.core.platform.NoBackgroundUploads) } bind OutboxHandler::class
+            uploads = getOrNull<com.circaso.core.platform.BackgroundUploads>() ?: com.circaso.core.platform.NoBackgroundUploads, names = get()) } bind OutboxHandler::class
     single<com.circaso.feature.messaging.data.repository.AttachmentsRemote> { com.circaso.feature.messaging.data.repository.KtorAttachmentsRemote(get()) }
     single {
         com.circaso.feature.messaging.data.repository.MediaMessages(
@@ -123,12 +123,12 @@ val messagingModule = module {
     single<com.circaso.feature.messaging.data.remote.InvitesRemote> { com.circaso.feature.messaging.data.remote.KtorInvitesRemote(get()) }
     single {
         com.circaso.feature.messaging.data.repository.GroupInvitesRepositoryImpl(
-            get(), get(), get(), get(), com.circaso.feature.messaging.data.repository.PreferencesInviteCache(get()), get(), photos = get(),
+            get(), get(), get(), get(), com.circaso.feature.messaging.data.repository.PreferencesInviteCache(get()), get(), photos = get(), names = get(),
         )
     } bind com.circaso.feature.messaging.domain.GroupInvitesRepository::class
     single { MessagingFrameHandler(get(), get(), get(), get(), get(), get(), invites = get()) }
     // Notifications (2026-11-06): pushes worded on the phone with privacy, and where a tap lands.
-    single { com.circaso.core.notifications.PushNotices(get(), get(), get(), get(), get(), get(), get(), get(), invites = get()) }
+    single { com.circaso.core.notifications.PushNotices(get(), get(), get(), get(), get(), get(), get(), get(), invites = get(), names = get()) }
     factory<com.circaso.core.notifications.NotificationLookups> { com.circaso.core.notifications.AppNotificationLookups(get(), get(), get()) }
     single { MessagingStarter(get<RealtimeClient>().connected, get(), get(), get(), live = get(), invites = get()) }
 
@@ -223,6 +223,7 @@ val messagingModule = module {
             setGroupPhoto = get(), invites = get(),
             encoder = getOrNull<com.circaso.core.platform.GroupPhotoEncoder>() ?: com.circaso.core.platform.NoGroupPhotoEncoder,
             sources = getOrNull(),
+            editName = com.circaso.feature.names.presentation.EditNameController(get(), get()),
         )
     }
 }

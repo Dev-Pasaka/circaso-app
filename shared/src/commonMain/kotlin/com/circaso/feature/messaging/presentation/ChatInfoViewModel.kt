@@ -140,11 +140,15 @@ class ChatInfoViewModel(
     sources: com.circaso.feature.profile.presentation.PhotoSources? = null,
     /** Group invites (2026-11-09): the Invited list and Cancel Invite; null in previews. */
     private val invites: com.circaso.feature.messaging.domain.GroupInvitesRepository? = null,
+    /** Edit name (saved names, 2026-11-12): for the other person in a direct chat, or any member; null in previews. */
+    val editName: com.circaso.feature.names.presentation.EditNameController? = null,
 ) : ViewModel() {
     private val _state = MutableStateFlow(
         ChatInfoUiState(myUserId = myUserId, photosAvailable = setGroupPhoto != null && sources != null && encoder !== com.circaso.core.platform.NoGroupPhotoEncoder),
     )
     val state: StateFlow<ChatInfoUiState> = _state.asStateFlow()
+
+    init { editName?.onProblem = { text -> _state.update { it.copy(message = text) } } }
 
     /** The group photo's sheet and camera (the profile photo's pattern); null in previews. */
     val photos: com.circaso.feature.profile.presentation.PhotoChooser? =

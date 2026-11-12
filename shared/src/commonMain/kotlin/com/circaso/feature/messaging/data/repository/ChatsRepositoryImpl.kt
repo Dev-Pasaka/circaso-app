@@ -46,6 +46,8 @@ class ChatsRepositoryImpl(
     private val now: () -> Long = ::nowMillis,
     /** Group photos (null in tests that don't need them: groups then show initials). */
     private val photos: GroupPhotos? = null,
+    /** Names I saved for people: a direct chat's title and every member's name follow them. */
+    private val names: com.circaso.feature.names.domain.PeopleNames = com.circaso.feature.names.domain.PeopleNames.None,
 ) : ChatsRepository {
     /**
      * The chat rows, again whenever a group photo lands on this phone (the list swaps the thumbnail for it) and when a
@@ -56,15 +58,15 @@ class ChatsRepositoryImpl(
         else combine(dao.observeChats(), photos.changes, groupKeys.unavailable) { rows, _, _ -> rows }
 
     override val chats: Flow<List<ChatSummary>> =
-        combine(chatRows(), dao.observeAllMembers(), messages.observeLatestPerChat(), messages.observeUnread(), ownUserIdFlow()) { chats, members, latest, unread, me ->
+        combine(chatRows(), combine(dao.observeAllMembers(), names.saved) { m, n -> m to n }, messages.observeLatestPerChat(), messages.observeUnread(), ownUserIdFlow()) { chats, (members, saved), latest, unread, me ->
             val byChat = members.groupBy { it.chatId }
             val latestByChat = latest.associateBy { it.chatId }
             val unreadByChat = unread.associate { it.chatId to it.count }
             chats.map { chat ->
                 val chatMembers = byChat[chat.chatId].orEmpty()
                 ChatSummary(
-                    chat = chat.toDomain(chatMembers, me, groupPhoto(chat), keyUnavailable = chat.chatId in groupKeys.unavailable.value),
-                    latest = latestByChat[chat.chatId]?.toDomain(chatMembers, me),
+                    chat = chat.toDomain(chatMembers, me, groupPhoto(chat), keyUnavailable = chat.chatId in groupKeys.unavailable.value, saved = saved),
+                    latest = latestByChat[chat.chatId]?.toDomain(chatMembers, me, saved),
                     unread = unreadByChat[chat.chatId] ?: 0,
                 )
             }
@@ -73,8 +75,8 @@ class ChatsRepositoryImpl(
     private fun ownUserIdFlow(): Flow<String?> = kotlinx.coroutines.flow.flow { emit(ownUserId()) }
 
     override fun chat(chatId: String): Flow<Chat?> =
-        combine(dao.observeChat(chatId), dao.observeMembers(chatId), ownUserIdFlow(), photos?.changes ?: kotlinx.coroutines.flow.flowOf(0), groupKeys.unavailable) { chat, members, me, _, unavailable ->
-            chat?.toDomain(members, me, groupPhoto(chat), keyUnavailable = chat.chatId in unavailable)
+        combine(dao.observeChat(chatId), combine(dao.observeMembers(chatId), names.saved) { m, n -> m to n }, ownUserIdFlow(), photos?.changes ?: kotlinx.coroutines.flow.flowOf(0), groupKeys.unavailable) { chat, (members, saved), me, _, unavailable ->
+            chat?.toDomain(members, me, groupPhoto(chat), keyUnavailable = chat.chatId in unavailable, saved = saved)
         }
 
     /**
@@ -338,7 +340,7 @@ class ChatsRepositoryImpl(
         refreshChat(chatId)
         if (joined) {
             for (userId in userIds) {
-                val name = dao.members(chatId).firstOrNull { it.userId == userId }?.displayName ?: "Someone"
+                val name = dao.members(chatId).firstOrNull { it.userId == userId }?.displayName ?: "Someone" // their own name: the thread shows my saved name over it (systemText)
                 insertSystemRow(messages, chatId, userId, "$name joined", now())
             }
         }
@@ -416,7 +418,7 @@ class ChatsRepositoryImpl(
         val members = dto.members.map { ChatMemberEntity(dto.chatId, it.user.userId, it.role, it.user.displayName, it.user.handle, it.user.avatarUrl, it.joinedAt) }
         dao.deleteMembers(dto.chatId)
         dao.insertMembers(members)
-        return entity.toDomain(members, ownUserId(), groupPhoto(entity))
+        return entity.toDomain(members, ownUserId(), groupPhoto(entity), saved = names.saved.value)
     }
 
     companion object {
@@ -431,8 +433,13 @@ class ChatsRepositoryImpl(
     private fun MemberRole.wire() = when (this) { MemberRole.Owner -> MessagingWire.Owner; MemberRole.Admin -> MessagingWire.Admin; MemberRole.Member -> MessagingWire.Member }
 }
 
-internal fun ChatEntity.toDomain(members: List<ChatMemberEntity>, me: String?, groupPhoto: String? = null, keyUnavailable: Boolean = false): Chat {
-    val others = members.filter { it.userId != me }
+internal fun ChatEntity.toDomain(
+    members: List<ChatMemberEntity>, me: String?, groupPhoto: String? = null, keyUnavailable: Boolean = false,
+    /** Names I saved for people (userId -> name): shown in place of theirs. */
+    saved: Map<String, String> = emptyMap(),
+): Chat {
+    val shown = members.map { if (it.userId == me) it else saved[it.userId]?.let { n -> it.copy(displayName = n) } ?: it }
+    val others = shown.filter { it.userId != me }
     val direct = kind == MessagingWire.Direct
     val nameKnown = direct || name != null
     return Chat(
@@ -440,7 +447,7 @@ internal fun ChatEntity.toDomain(members: List<ChatMemberEntity>, me: String?, g
         kind = if (direct) ChatKind.Direct else ChatKind.Group,
         title = if (direct) others.firstOrNull()?.displayName ?: "Chat" else name ?: unnamedGroupTitle(others.map { it.displayName }),
         avatarUrl = if (direct) others.firstOrNull()?.avatarUrl else groupPhoto,
-        members = members.map { ChatMember(it.userId, it.displayName, it.handle, it.avatarUrl, it.role.toRole(), it.joinedAt) },
+        members = members.zip(shown) { own, it -> ChatMember(it.userId, it.displayName, it.handle, it.avatarUrl, it.role.toRole(), it.joinedAt, profileName = own.displayName) },
         membersCanAdd = membersCanAdd,
         version = version,
         metaVersion = metaVersion,

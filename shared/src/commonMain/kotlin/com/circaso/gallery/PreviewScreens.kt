@@ -92,7 +92,7 @@ private val contacts = listOf(
     Contact(person("4", "Kevin Mwangi", "kevo"), "sync", "2026-10-22"),
 )
 /** A fuller address book for the people screens: handles, an about line, a name without a letter. */
-private val peopleContacts = listOf(
+internal val peopleContacts = listOf(
     Contact(person("2", "Achieng Akinyi", "achieng"), "sync", "2026-10-20"),
     Contact(Person("3", "Baraka Otieno", null, null, "Mombasa · football on Sundays"), "sync", "2026-10-20"),
     Contact(person("4", "Juma Kariuki", "juma.k"), "qr", "2026-10-21"),
@@ -554,7 +554,7 @@ fun PreviewScreens(name: String) {
             }
             com.circaso.feature.wallet.presentation.ActivityContent(state, {}, {}, {}, {})
         }
-        else -> if (!GroupWalletPreview(name) && !ChatMoneyPreview(name) && !MomentsChatsPreview(name) && !AshaPreview(name) && !VaultPreview(name)) BasicText("Unknown preview: $name")
+        else -> if (!GroupWalletPreview(name) && !ChatMoneyPreview(name) && !MomentsChatsPreview(name) && !AshaPreview(name) && !VaultPreview(name) && !SavedNamesPreview(name)) BasicText("Unknown preview: $name")
     }
 }
 

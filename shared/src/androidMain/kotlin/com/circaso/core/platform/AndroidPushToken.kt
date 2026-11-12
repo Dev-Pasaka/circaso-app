@@ -87,7 +87,14 @@ class CircasoMessagingService : FirebaseMessagingService() {
                         if (withTimeoutOrNull(200) { notices.privacyOn() } != false) null
                         else withTimeoutOrNull(250) { chatId?.let { koin.get<com.circaso.feature.messaging.domain.ChatsRepository>().chat(it).first()?.avatarUrl } }
                     }
-                    val name = withTimeoutOrNull(2_000) { chatId?.let { koin.get<ChatsDao>().chat(it)?.name } } ?: message.data["callerName"]
+                    // A direct call is named as the chat is (the name I saved for them, else theirs); a group by its name.
+                    val name = withTimeoutOrNull(2_000) {
+                        chatId?.let { id ->
+                            val chat = koin.get<com.circaso.feature.messaging.domain.ChatsRepository>().chat(id).first()
+                            if (chat?.kind == com.circaso.feature.messaging.domain.ChatKind.Direct) chat.members.firstOrNull { it.userId == chat.peerId }?.displayName
+                            else koin.get<ChatsDao>().chat(id)?.name
+                        }
+                    } ?: message.data["callerName"]
                     val content = withTimeoutOrNull(1_000) { notices.incomingCall(name, message.data["callKind"] == "VIDEO") }
                         ?: com.circaso.core.notifications.NotificationText.compose(com.circaso.core.notifications.NotificationEvent.IncomingCall(null, false), private = true, fiat = null)
                     // Already done in the usual case; the ring waits at most a beat more for it.

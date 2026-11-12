@@ -496,6 +496,7 @@ class FeatureViewModelsTest {
     private fun contactsVm() = ContactsViewModel(
         ObserveContactsUseCase(contactsRepo), RefreshContactsUseCase(contactsRepo), ConnectUseCase(contactsRepo), com.circaso.feature.share.domain.CreateShareLinkUseCase(shareLinks),
         RemoveContactUseCase(contactsRepo), BlockUseCase(contactsRepo), connection, reader, SyncPhoneBookUseCase(contactsRepo),
+        editName = com.circaso.feature.names.presentation.EditNameController.preview(kotlinx.coroutines.CoroutineScope(dispatcher)),
     )
 
     @Test fun findingFriendsExplainsFirstThenAsksThePhoneForAccess() = runTest(dispatcher) {

@@ -89,7 +89,12 @@ class WalletRepositoryImpl(
      * end-to-end card can't be read on this phone (or this phone is new). Messaging dedupes it by transfer.
      */
     private val onChatPayment: suspend (com.circaso.feature.wallet.domain.ChatPaymentSeen) -> Unit = {},
+    /** Names I saved for people: a payment row shows them in place of the server's name. */
+    private val names: com.circaso.feature.names.domain.PeopleNames = com.circaso.feature.names.domain.PeopleNames.None,
 ) : WalletRepository {
+    private fun Transfer.named(saved: Map<String, String>): Transfer =
+        counterpartUserId?.let { saved[it] }?.takeIf { it != counterpartName }?.let { copy(counterpartName = it, counterpartOwnName = counterpartName) } ?: this
+
     // Before init: a frame handled on Main.immediate could reach [save] while the class is still being built.
     private val settledOut = kotlinx.coroutines.flow.MutableSharedFlow<Transfer>(extraBufferCapacity = 16)
     override val settled: Flow<Transfer> = settledOut
@@ -108,8 +113,8 @@ class WalletRepositoryImpl(
     private suspend fun sign(session: SdkSession, challengeId: String): SignOutcome = signing.withLock { signer().execute(session, challengeId) }
 
     override val wallet: Flow<Wallet?> = dao.observeSnapshot().map { row -> row?.let { decode(it) } }
-    override val transfers: Flow<List<Transfer>> = dao.observeTransfers().map { rows -> rows.map { it.toDomain() } }
-    override fun transfer(transferId: String): Flow<Transfer?> = dao.observeTransfer(transferId).map { it?.toDomain() }
+    override val transfers: Flow<List<Transfer>> = combine(dao.observeTransfers(), names.saved) { rows, saved -> rows.map { it.toDomain().named(saved) } }
+    override fun transfer(transferId: String): Flow<Transfer?> = combine(dao.observeTransfer(transferId), names.saved) { row, saved -> row?.toDomain()?.named(saved) }
 
     /** Who asked this person to set up a wallet (`setup.requested`), for the tab's nudge; cleared once a wallet exists. */
     private val _setupRequestedBy = MutableStateFlow<String?>(null)
@@ -290,6 +295,7 @@ class WalletRepositoryImpl(
             createdAt = now, updatedAt = now,
             // A payout lives with the group wallet it leaves, not in the person's own list; a contribution leaves theirs.
             walletId = request.fromWalletId, toGroupId = request.toGroupId, payoutRequestId = request.payoutRequestId,
+            counterpartUserId = request.toUserId,
             fromGroupId = request.fromWalletId?.let { request.chatId },
         )
         dao.upsert(row)
@@ -344,9 +350,10 @@ class WalletRepositoryImpl(
     }
 
     override fun activity(walletId: String): Flow<List<Transfer>> =
-        combine(dao.observeActivity(walletId), dao.observeTransfersOf(walletId)) { history, signedHere ->
+        combine(dao.observeActivity(walletId), dao.observeTransfersOf(walletId), names.saved) { history, signedHere, saved ->
             val known = history.mapNotNull { it.transferId }.toSet()
             (history.map { it.toDomain() } + signedHere.filter { it.transferId !in known }.map { it.toDomain() }).sortedByDescending { it.createdAt }
+                .map { it.named(saved) }
         }
 
     override suspend fun refreshActivity(walletId: String): AppResult<Unit> =
@@ -409,7 +416,7 @@ class WalletRepositoryImpl(
     }
 
     override fun transfers(ids: Collection<String>): Flow<List<Transfer>> =
-        if (ids.isEmpty()) kotlinx.coroutines.flow.flowOf(emptyList()) else dao.observeTransfersIn(ids.distinct()).map { rows -> rows.map { it.toDomain() } }
+        if (ids.isEmpty()) kotlinx.coroutines.flow.flowOf(emptyList()) else combine(dao.observeTransfersIn(ids.distinct()), names.saved) { rows, saved -> rows.map { it.toDomain().named(saved) } }
 
     /** Saves the row; an outgoing payment that has just been confirmed or failed is announced on [settled]. */
     private suspend fun save(row: TransferEntity, existing: TransferEntity?) {
@@ -455,13 +462,13 @@ class WalletRepositoryImpl(
                 val asset = amount?.get("asset")?.jsonPrimitive?.contentOrNull ?: Wallet.Usdc
                 val amountMinor = amount?.get("amountMinor")?.jsonPrimitive?.contentOrNull ?: "0"
                 dao.upsert(
-                    existing?.copy(state = "CONFIRMED", chatId = existing.chatId ?: str("chatId"), counterpartName = existing.counterpartName ?: str("fromName"), updatedAt = now)
+                    existing?.copy(state = "CONFIRMED", chatId = existing.chatId ?: str("chatId"), counterpartName = existing.counterpartName ?: str("fromName"), counterpartUserId = existing.counterpartUserId ?: str("fromUserId"), updatedAt = now)
                         ?: TransferEntity(
                             transferId = key, direction = TransferDirection.In.name, state = "CONFIRMED", blockchain = str("blockchain").orEmpty(),
                             fromAddress = "", toUserId = null, toAddress = "", asset = asset,
                             amountMinor = amountMinor, amount = amount?.get("amount")?.jsonPrimitive?.contentOrNull ?: "0",
                             feeMinor = null, chatId = str("chatId"), txHash = null, failureReason = null, counterpartName = str("fromName"), note = null,
-                            createdAt = now, updatedAt = now,
+                            createdAt = now, updatedAt = now, counterpartUserId = str("fromUserId"),
                         ),
                 )
                 // Paid from a chat: that chat shows the card, whatever happened to the end-to-end one.
@@ -557,6 +564,7 @@ internal fun WalletActivityEntity.toDomain(): Transfer {
         toAddress = if (incoming) "" else counterpartAddress.orEmpty(), amount = Amount(asset, amountMinor, amount), fee = null, chatId = chatId,
         txHash = txHash, failureReason = null, counterpartName = counterpartName, note = null, createdAt = occurredAt, updatedAt = occurredAt,
         counterpartHandle = counterpartHandle, counterpartAvatar = counterpartAvatar, walletId = walletId, counterpartGroupId = counterpartGroupId,
+        counterpartUserId = counterpartUserId,
     )
 }
 
@@ -588,6 +596,7 @@ internal fun TransferResponse.toEntity(existing: TransferEntity?): TransferEntit
         counterpartHandle = existing?.counterpartHandle, counterpartAvatar = existing?.counterpartAvatar,
         walletId = existing?.walletId, fromGroupId = fromGroupId ?: existing?.fromGroupId, toGroupId = toGroupId ?: existing?.toGroupId,
         payoutRequestId = payoutRequestId ?: existing?.payoutRequestId,
+        counterpartUserId = existing?.counterpartUserId ?: to.userId.takeIf { direction != "IN" },
     )
 }
 
@@ -606,6 +615,7 @@ internal fun TransactionDto.toEntity(key: String, existing: TransferEntity?): Tr
         createdAt = existing?.createdAt ?: at, updatedAt = maxOf(existing?.updatedAt ?: 0L, at),
         counterpartHandle = party?.handle ?: existing?.counterpartHandle, counterpartAvatar = party?.avatarUrl ?: existing?.counterpartAvatar,
         walletId = existing?.walletId, fromGroupId = existing?.fromGroupId, toGroupId = party?.groupId ?: existing?.toGroupId, payoutRequestId = existing?.payoutRequestId,
+        counterpartUserId = party?.userId ?: existing?.counterpartUserId,
     )
 }
 
@@ -620,6 +630,7 @@ internal fun TransferEntity.toDomain() = Transfer(
     chatId = chatId, txHash = txHash, failureReason = failureReason, counterpartName = counterpartName, note = note,
     createdAt = createdAt, updatedAt = updatedAt, counterpartHandle = counterpartHandle, counterpartAvatar = counterpartAvatar,
     walletId = walletId, fromGroupId = fromGroupId, toGroupId = toGroupId, payoutRequestId = payoutRequestId,
+    counterpartUserId = counterpartUserId ?: toUserId,
 )
 
 private fun QuoteTransferResponse.toDomain() = PaymentQuote(

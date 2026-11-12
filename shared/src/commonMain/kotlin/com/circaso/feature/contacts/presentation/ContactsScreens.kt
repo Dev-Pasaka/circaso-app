@@ -1,5 +1,8 @@
 package com.circaso.feature.contacts.presentation
 
+import com.circaso.feature.names.presentation.EditName
+import com.circaso.feature.names.presentation.EditNameSheet
+import com.circaso.feature.names.presentation.ProfileNameLine
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -90,11 +93,18 @@ class ContactsActions(
     val onActionConfirmed: () -> Unit = {},
     val onActionDismissed: () -> Unit = {},
     val onMessageShown: () -> Unit = {},
+    val onEditName: (Contact) -> Unit = {},
+    val onNameDraft: (String) -> Unit = {},
+    val onNameSave: () -> Unit = {},
+    val onUseTheirName: () -> Unit = {},
+    val onNameDismissed: () -> Unit = {},
 )
 
 @Composable
 fun ContactsScreen(viewModel: ContactsViewModel, onBack: () -> Unit) {
     val state by viewModel.state.collectAsState()
+    val names = viewModel.editName
+    val editing by names.state.collectAsState()
     LaunchedEffect(state.share) { state.share?.let { shareText(it, com.circaso.feature.messaging.presentation.NewChatViewModel.InviteSubject); viewModel.onShared() } }
     ContactsContent(
         state,
@@ -105,7 +115,10 @@ fun ContactsScreen(viewModel: ContactsViewModel, onBack: () -> Unit) {
             onSelect = viewModel::onSelect, onSelectedDismissed = viewModel::onSelectedDismissed, onRemove = viewModel::onRemoveRequested,
             onBlock = viewModel::onBlockRequested, onActionConfirmed = viewModel::onActionConfirmed, onActionDismissed = viewModel::onActionDismissed,
             onMessageShown = viewModel::onMessageShown,
+            onEditName = viewModel::onEditName,
+            onNameDraft = names::onDraft, onNameSave = names::onSave, onUseTheirName = names::onUseTheirs, onNameDismissed = names::onDismiss,
         ),
+        editing = editing,
     )
 }
 
@@ -116,7 +129,7 @@ fun ContactsScreen(viewModel: ContactsViewModel, onBack: () -> Unit) {
  */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-fun ContactsContent(state: ContactsUiState, actions: ContactsActions) {
+fun ContactsContent(state: ContactsUiState, actions: ContactsActions, editing: EditName? = null) {
     val c = CircasoTheme.colors
     val t = CircasoTheme.typography
     val toast = rememberToastState()
@@ -130,7 +143,10 @@ fun ContactsContent(state: ContactsUiState, actions: ContactsActions) {
         },
         banner = { ConnectionBanner(showing = "Adding people needs a connection") },
         toast = { ToastHost(toast, Modifier.align(Alignment.TopCenter).padding(top = 8.dp)) },
-        overlay = { ContactsSheets(state, actions) },
+        overlay = {
+            ContactsSheets(state, actions)
+            EditNameSheet(editing, actions.onNameDraft, actions.onNameSave, actions.onUseTheirName, actions.onNameDismissed)
+        },
     ) { padding ->
         LazyColumn(
             Modifier.fillMaxSize(),
@@ -266,11 +282,17 @@ private fun androidx.compose.foundation.layout.BoxScope.ContactsSheets(state: Co
             Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(CircasoSpacing.s1)) {
                 Avatar(p.displayName, size = CircasoSizes.avatarLg + 8.dp, imageUrl = p.avatarUrl)
                 BasicText(p.displayName, Modifier.padding(top = CircasoSpacing.s2), style = t.title3.copy(color = c.ink, textAlign = TextAlign.Center))
+                // A name I saved: their own under it, WhatsApp-style.
+                if (p.renamed) ProfileNameLine(p.profileName, t.subhead.copy(color = c.inkSecondary, textAlign = TextAlign.Center))
                 p.handle?.let { BasicText("@$it", style = t.subhead.copy(color = c.inkSecondary)) }
                 p.about?.takeIf { it.isNotBlank() }?.let { BasicText(it, style = t.footnote.copy(color = c.inkSecondary, textAlign = TextAlign.Center)) }
             }
             Box(Modifier.clip(CircasoShapes.lg).background(c.fill)) {
                 Column {
+                    if (EditName.allowedFor(p.userId)) {
+                        ListRow("Edit name", leading = { CircasoIconImage(CircasoIcon.Pencil, c.ink, Modifier.size(20.dp)) }, onClick = { actions.onEditName(selected) })
+                        RowDivider()
+                    }
                     ListRow("Block", leading = { CircasoIconImage(CircasoIcon.Ban, c.ink, Modifier.size(20.dp)) }, onClick = { actions.onBlock(selected) })
                     RowDivider()
                     ListRow("Remove from Contacts", destructive = true, leading = { CircasoIconImage(CircasoIcon.UserMinus, c.critical, Modifier.size(20.dp)) }, onClick = { actions.onRemove(selected) })

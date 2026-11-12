@@ -54,6 +54,8 @@ class GroupInvitesRepositoryImpl(
     private val json: Json,
     private val photos: GroupPhotos? = null,
     private val now: () -> Long = ::nowMillis,
+    /** Names I saved for people: who invited me, and who is invited, read with them. */
+    private val names: com.circaso.feature.names.domain.PeopleNames = com.circaso.feature.names.domain.PeopleNames.None,
 ) : GroupInvitesRepository {
     /** The server's list as last seen; null until the cache is read. */
     private val raw = MutableStateFlow<List<InviteDto>?>(null)
@@ -63,7 +65,7 @@ class GroupInvitesRepositoryImpl(
     override val changed: Flow<String> = _changed.asSharedFlow()
 
     override val invites: Flow<List<GroupInvite>> =
-        combine(raw.onStart { loadCache() }.filterNotNull(), photos?.changes ?: flowOf(0)) { list, _ ->
+        combine(raw.onStart { loadCache() }.filterNotNull(), photos?.changes ?: flowOf(0), names.saved) { list, _, _ ->
             val t = now()
             list.filter { (isoToMillis(it.expiresAt) ?: Long.MAX_VALUE) > t }.map { it.toDomain() }
         }.flowOn(kotlinx.coroutines.Dispatchers.Default) // names open off the main thread, however many invites wait
@@ -165,7 +167,7 @@ class GroupInvitesRepositoryImpl(
         )
     }
 
-    private fun ChatProfileDto.toPerson() = InvitePerson(userId, displayName, avatarUrl)
+    private fun ChatProfileDto.toPerson() = InvitePerson(userId, names.of(userId, displayName), avatarUrl)
 
     companion object {
         const val InviteNotFound = "messaging.invite_not_found"
