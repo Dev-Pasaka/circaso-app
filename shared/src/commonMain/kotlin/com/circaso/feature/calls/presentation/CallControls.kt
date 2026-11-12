@@ -163,7 +163,7 @@ internal fun BoxScope.CallMoreSheet(visible: Boolean, call: CallUi, actions: Cal
 }
 
 /** The other person on a 1:1 call, by first name. */
-private fun them(call: CallUi): String = (call.people.firstOrNull()?.name ?: call.title).substringBefore(' ').ifBlank { call.title }
+private fun them(call: CallUi): String = com.circaso.designsystem.components.firstNameWord(call.people.firstOrNull()?.name ?: call.title).ifBlank { call.title }
 
 @Composable
 private fun MoreRow(icon: CircasoIcon, title: String, sub: String?, onClick: () -> Unit) {

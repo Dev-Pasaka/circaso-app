@@ -1072,7 +1072,7 @@ private fun statusText(call: CallUi, short: Boolean = false): String = when (cal
 /** Who a call is still reaching: the other person, or in a group the first who joined but isn't heard yet. */
 private fun connectingTo(call: CallUi): String? {
     val name = if (call.group) call.people.firstOrNull { it.joined && !it.live }?.name else call.people.firstOrNull()?.name ?: call.title
-    return name?.substringBefore(' ')?.takeIf { it.isNotBlank() }
+    return name?.let { com.circaso.designsystem.components.firstNameWord(it) }?.takeIf { it.isNotBlank() }
 }
 
 /** "04:12", ticking once a second. */

@@ -267,8 +267,8 @@ private fun MembersStep(state: NewGroupUiState, actions: NewGroupActions, paddin
                 )
             }
             else -> {
-                val sections = state.shownContacts.groupBy { p -> p.person.displayName.trim().firstOrNull()?.uppercaseChar()?.takeIf { it.isLetter() }?.toString() ?: "#" }
-                    .toList().sortedWith(compareBy({ it.first == "#" }, { it.first }))
+                val sections = state.shownContacts.groupBy { p -> com.circaso.designsystem.components.sectionLetter(p.person.displayName) }
+                    .toList().sortedWith(compareBy({ it.first == "#" }, { it.first })).map { (l, list) -> l to list.sortedBy { com.circaso.designsystem.components.sortKey(it.person.displayName) } }
                 sections.forEach { (letter, people) ->
                     stickyHeader(key = "letter-$letter") { LetterHeader(letter) }
                     items(people, key = { it.person.userId }) { contact ->

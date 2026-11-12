@@ -20,3 +20,5 @@ actual fun rememberReduceMotion(): Boolean {
     val resolver = LocalContext.current.contentResolver
     return android.provider.Settings.Global.getFloat(resolver, android.provider.Settings.Global.ANIMATOR_DURATION_SCALE, 1f) == 0f
 }
+
+actual val avatarPlatformTextStyle: androidx.compose.ui.text.PlatformTextStyle? = androidx.compose.ui.text.PlatformTextStyle(includeFontPadding = false)

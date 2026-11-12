@@ -25,3 +25,6 @@ expect fun rememberReduceMotion(): Boolean
 
 /** Read in the theme; motion that slides or scales falls back to a plain fade when it is on. */
 val LocalReduceMotion = androidx.compose.runtime.staticCompositionLocalOf { false }
+
+/** Text in a fixed shape (an avatar's initials): Android's extra font padding off, so the glyph centres; null on iOS. */
+expect val avatarPlatformTextStyle: androidx.compose.ui.text.PlatformTextStyle?

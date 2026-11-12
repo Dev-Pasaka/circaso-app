@@ -11,3 +11,5 @@ actual fun rememberIsHighContrast(): Boolean = UIAccessibilityDarkerSystemColors
 
 @Composable
 actual fun rememberReduceMotion(): Boolean = UIAccessibilityIsReduceMotionEnabled()
+
+actual val avatarPlatformTextStyle: androidx.compose.ui.text.PlatformTextStyle? = null
