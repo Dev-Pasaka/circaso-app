@@ -25,7 +25,7 @@ val authModule = module {
     single<AuthRemote> { KtorAuthRemote(get()) }
     // Replaced by the platform module once Google/Apple sign-in is implemented.
     single<SocialSignIn> { UnavailableSocialSignIn }
-    single<AuthRepository> { AuthRepositoryImpl(get(), get(), get(), get()) }
+    single<AuthRepository> { AuthRepositoryImpl(get(), get(), get(), get(), getOrNull()) }
     factory { SignInWithSocialUseCase(get(), get()) }
     factory { StartPhoneVerificationUseCase(get()) }
     factory { VerifyPhoneCodeUseCase(get()) }

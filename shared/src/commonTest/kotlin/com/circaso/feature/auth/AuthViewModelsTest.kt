@@ -137,6 +137,56 @@ class AuthViewModelsTest {
         assertEquals(0, repo.startCalls)
     }
 
+    /** Types [text] one key at a time, as the keyboard does. */
+    private fun PhoneViewModel.type(text: String) = text.forEach { ch -> onInput(state.value.input + ch) }
+
+    @Test fun phoneAnotherCountryShowsItsOwnLength() = runTest(dispatcher) {
+        val vm = phone(); vm.onCountry(com.circaso.feature.auth.domain.Countries.byIso("GB")!!); vm.type("77009"); vm.onSendCode()
+        assertEquals("That number looks too short. Numbers with +44 have 10 digits after the code.", vm.state.value.error)
+        assertEquals(0, repo.startCalls)
+    }
+
+    @Test fun phoneATypedPlusCodePicksItsCountryKeyByKey() = runTest(dispatcher) {
+        val vm = phone(); vm.type("+447700900123")
+        assertEquals("GB", vm.state.value.country.iso)
+        assertEquals("7700900123", vm.state.value.input)
+        vm.onSendCode()
+        assertEquals("+447700900123", (vm.eventFlow.first() as PhoneViewModel.Event.CodeSent).phone)
+    }
+
+    @Test fun phoneAPlusOneWaitsUntilTheCodeIsCertain() = runTest(dispatcher) {
+        val vm = phone(); vm.type("+1")
+        assertEquals("KE", vm.state.value.country.iso, "+1 could still be +1268")
+        assertEquals("+1", vm.state.value.input)
+        vm.type("202")
+        assertEquals("US", vm.state.value.country.iso)
+        assertEquals("202", vm.state.value.input)
+    }
+
+    @Test fun phoneTypingNeverStripsWhatLooksLikeTheCallingCode() = runTest(dispatcher) {
+        val vm = phone(); vm.onCountry(com.circaso.feature.auth.domain.Countries.byIso("DE")!!); vm.type("04921123456")
+        assertEquals("4921123456", vm.state.value.input, "the 0 goes, the 49 stays")
+    }
+
+    @Test fun phoneAPastedNumberDropsItsCallingCode() = runTest(dispatcher) {
+        val vm = phone(); vm.onCountry(com.circaso.feature.auth.domain.Countries.byIso("GB")!!); vm.onInput("44 7700 900123")
+        assertEquals("7700900123", vm.state.value.input)
+    }
+
+    @Test fun phonePickingACountryKeepsTheDigitsAndClosesThePicker() = runTest(dispatcher) {
+        val vm = phone(); vm.type("712"); vm.onPickCountry(true); vm.onQuery("uga")
+        assertEquals("UG", vm.state.value.countries.first().iso)
+        vm.onCountry(vm.state.value.countries.first())
+        assertEquals("712", vm.state.value.input)
+        assertFalse(vm.state.value.picking)
+        assertEquals("", vm.state.value.query)
+    }
+
+    @Test fun phoneThePickerListsKenyaThenTheChosenCountry() = runTest(dispatcher) {
+        val vm = phone(); vm.onCountry(com.circaso.feature.auth.domain.Countries.byIso("GB")!!)
+        assertEquals(listOf("KE", "GB"), vm.state.value.countries.take(2).map { it.iso })
+    }
+
     @Test fun phoneValidNumberEmitsTheCodeSentEvent() = runTest(dispatcher) {
         val vm = phone(); vm.onInput("712345678"); vm.onSendCode()
         val event = vm.eventFlow.first() as PhoneViewModel.Event.CodeSent

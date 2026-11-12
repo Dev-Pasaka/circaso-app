@@ -1,5 +1,6 @@
 package com.circaso.feature.messaging.presentation
 
+import com.circaso.designsystem.components.SearchField
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.snap

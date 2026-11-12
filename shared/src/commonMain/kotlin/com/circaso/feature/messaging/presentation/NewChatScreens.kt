@@ -1,5 +1,6 @@
 package com.circaso.feature.messaging.presentation
 
+import com.circaso.designsystem.components.SearchField
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.snap
 import androidx.compose.animation.core.tween
@@ -268,42 +269,3 @@ private fun RecentStrip(recent: List<PersonRow>, opening: String?, online: Boole
     }
 }
 
-/**
- * The 36 dp search pill (design C8), with a clear button once something is typed and a focus handle so "Find by
- * Username" can put the cursor in it.
- */
-@Composable
-internal fun SearchField(value: String, onValueChange: (String) -> Unit, placeholder: String, focus: FocusRequester? = null, modifier: Modifier = Modifier) {
-    val c = CircasoTheme.colors
-    val t = CircasoTheme.typography
-    Row(
-        modifier.fillMaxWidth().heightIn(min = 36.dp).clip(CircasoShapes.pill).background(c.fill).padding(start = 12.dp, end = 0.dp),
-        horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically,
-    ) {
-        CircasoIconImage(CircasoIcon.Search, c.inkSecondary, Modifier.size(18.dp))
-        Box(Modifier.weight(1f), contentAlignment = Alignment.CenterStart) {
-            BasicTextField(
-                value = value, onValueChange = com.circaso.designsystem.components.ashaAware(value, onValueChange), singleLine = true,
-                textStyle = t.body.copy(color = c.ink), cursorBrush = SolidColor(c.ink),
-                keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Words, autoCorrectEnabled = false, imeAction = ImeAction.Search),
-                modifier = Modifier.fillMaxWidth().then(if (focus != null) Modifier.focusRequester(focus) else Modifier).semantics { contentDescription = placeholder },
-            )
-            if (value.isEmpty()) BasicText(placeholder, style = t.body.copy(color = c.inkSecondary), maxLines = 1)
-        }
-        val reduce = CircasoTheme.reduceMotion
-        AnimatedVisibility(
-            value.isNotEmpty(),
-            enter = if (reduce) fadeIn(snap()) else fadeIn(tween(CircasoMotion.QuickMs)),
-            exit = if (reduce) fadeOut(snap()) else fadeOut(tween(CircasoMotion.QuickMs)),
-        ) {
-            Box(
-                Modifier.size(CircasoSizes.iconButton).clip(CircasoShapes.circle).pressable(role = Role.Button, onClick = { onValueChange("") }).semantics { contentDescription = "Clear search" },
-                contentAlignment = Alignment.Center,
-            ) {
-                Box(Modifier.size(18.dp).background(c.inkTertiary, CircasoShapes.circle), contentAlignment = Alignment.Center) {
-                    CircasoIconImage(CircasoIcon.Close, c.fill, Modifier.size(10.dp), strokeWidth = 3f)
-                }
-            }
-        }
-    }
-}

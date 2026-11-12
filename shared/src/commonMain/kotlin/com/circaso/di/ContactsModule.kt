@@ -28,6 +28,8 @@ import org.koin.dsl.module
 
 /** On this phone: the contacts prompt was shown once from Home (whatever the answer), so it isn't shown again. */
 private const val ContactsAskedFlag = "contacts.asked"
+/** The ISO code of the person's own number's country (HomeCountry). */
+private const val HomeCountryKey = "home.country"
 
 val contactsModule = module {
     single { get<CircasoDatabase>().contactsDao() }
@@ -55,7 +57,12 @@ val contactsModule = module {
             markAsked = { prefs.setFlag(ContactsAskedFlag, true) },
             scope = get(),
             now = { com.circaso.core.sync.nowMillis() },
+            homeCountry = { get<com.circaso.core.platform.HomeCountry>().get() },
         )
+    }
+    single {
+        val prefs = get<com.circaso.core.datastore.AppPreferences>()
+        com.circaso.core.platform.HomeCountry(read = { prefs.text(HomeCountryKey).first() }, write = { prefs.setText(HomeCountryKey, it) })
     }
     factory { ConnectUseCase(get()) }
     factory { CreateInviteUseCase(get()) }
