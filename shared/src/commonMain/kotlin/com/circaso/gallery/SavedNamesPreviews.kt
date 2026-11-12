@@ -46,6 +46,7 @@ internal fun SavedNamesPreview(name: String): Boolean {
             editing = EditName("8", "Wanjiru Kamau", "Shiru (cousin)", hasSaved = true),
         )
         "chat-info-saved-name" -> ContactInfoHeaderPreview()
+        "avatars-emoji" -> EmojiAvatarsPreview()
         else -> return false
     }
     return true
@@ -65,6 +66,25 @@ private fun ContactInfoHeaderPreview() {
                 PeerNameLines(peer)
             }
             EditNameRow {}
+        }
+    }
+}
+
+/** Avatars for names with emoji (2026-11-12), at every size: letters skip the emoji; emoji-only names show it whole. */
+@Composable
+private fun EmojiAvatarsPreview() {
+    val c = CircasoTheme.colors
+    val t = CircasoTheme.typography
+    val names = listOf("🌸 Wanjiru Kamau", "Kevin 🔥", "🔥🔥", "👩🏽‍💻", "🇰🇪", "Shiru (cousin)", "𝓙𝓪𝓷𝓮")
+    val sizes = listOf(CircasoSizes.avatarSm, CircasoSizes.avatarMd, CircasoSizes.avatarLg, CircasoSizes.avatarXl)
+    CircasoScaffold(topBar = { CircasoNavBar(title = "Avatars", onBack = {}) }) { _ ->
+        Column(Modifier.padding(CircasoSpacing.s4), verticalArrangement = Arrangement.spacedBy(CircasoSpacing.s3)) {
+            names.forEach { n ->
+                androidx.compose.foundation.layout.Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(CircasoSpacing.s3)) {
+                    sizes.forEach { Avatar(n, size = it) }
+                    BasicText(n, style = t.footnote.copy(color = c.inkSecondary))
+                }
+            }
         }
     }
 }

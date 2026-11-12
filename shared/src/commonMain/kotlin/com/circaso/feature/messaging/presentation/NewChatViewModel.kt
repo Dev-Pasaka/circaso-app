@@ -89,8 +89,8 @@ data class NewChatUiState(
 
     /** [matches] in letter sections, as the system contacts app does. */
     val sections: List<PeopleSection> get() = matches
-        .groupBy { p -> p.name.trim().firstOrNull()?.uppercaseChar()?.takeIf { it.isLetter() }?.toString() ?: "#" }
-        .toList().sortedWith(compareBy({ it.first == "#" }, { it.first })).map { (letter, list) -> PeopleSection(letter, list) }
+        .groupBy { p -> com.circaso.designsystem.components.sectionLetter(p.name) }
+        .toList().sortedWith(compareBy({ it.first == "#" }, { it.first })).map { (letter, list) -> PeopleSection(letter, list.sortedBy { com.circaso.designsystem.components.sortKey(it.name) }) }
 
     /**
      * The handle to look up on Circaso: what is typed looks like a handle (3+ letters, digits, dots, underscores) and no

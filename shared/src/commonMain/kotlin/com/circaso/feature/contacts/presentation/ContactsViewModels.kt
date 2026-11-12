@@ -64,11 +64,11 @@ data class ContactsUiState(
     val visible: List<Contact>
         get() = (if (query.isBlank()) contacts else contacts.filter {
             it.person.displayName.contains(query.trim(), ignoreCase = true) || it.person.profileName.contains(query.trim(), ignoreCase = true) || it.person.handle?.contains(query.trim().removePrefix("@"), ignoreCase = true) == true
-        }).sortedBy { it.person.displayName.lowercase() }
+        }).sortedBy { com.circaso.designsystem.components.sortKey(it.person.displayName) }
 
     /** [visible] in letter sections (A, B, …, then # for names that don't start with a letter). */
     val sections: List<Pair<String, List<Contact>>>
-        get() = visible.groupBy { c -> c.person.displayName.trim().firstOrNull()?.uppercaseChar()?.takeIf { it.isLetter() }?.toString() ?: "#" }
+        get() = visible.groupBy { c -> com.circaso.designsystem.components.sectionLetter(c.person.displayName) }
             .toList().sortedWith(compareBy({ it.first == "#" }, { it.first }))
 
     /** What is typed looks like a handle: 3 or more letters, digits, dots or underscores (after an optional @). */
