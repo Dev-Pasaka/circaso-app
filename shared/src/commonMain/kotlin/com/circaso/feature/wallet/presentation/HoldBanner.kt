@@ -36,12 +36,12 @@ const val VaultOpenedHold = "VAULT_OPENED"
 
 /** Design ID-23: the hold banner on the Chats tab, with its sheet; tap "Details" or the banner. */
 @Composable
-fun HoldBanner(holdUntil: String?, reason: String? = null, onNotMe: () -> Unit) {
+fun HoldBanner(holdUntil: String?, reason: String? = null, floating: Boolean = false, onNotMe: () -> Unit) {
     val hours = hoursUntil(holdUntil) ?: return
     var sheet by remember { mutableStateOf(false) }
     val why = if (reason == VaultOpenedHold) "Your PIN Vault was opened" else "Your account was recovered"
     Box(Modifier.fillMaxWidth().padding(horizontal = CircasoSpacing.s4, vertical = CircasoSpacing.s2).pressable(role = Role.Button, onClick = { sheet = true })) {
-        Banner("Sending resumes in $hours h. $why. Details", CircasoIcon.Clock, tone = BannerTone.Warning)
+        Banner("Sending resumes in $hours h. $why. Details", CircasoIcon.Clock, tone = BannerTone.Warning, floating = floating)
     }
     // The sheet lives in whatever Box the banner sits in; the scaffold's banner slot is one.
     androidx.compose.foundation.layout.Box { HoldSheet(sheet, hours, { sheet = false }, onNotMe, reason) }

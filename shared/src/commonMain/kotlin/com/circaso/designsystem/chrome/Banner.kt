@@ -22,7 +22,7 @@ enum class BannerTone { Neutral, Warning, Critical }
 
 /** Inline glass card (design `cx-banner`): icon and one line of text, announced politely. A notice that comes and goes over the screen is a [FloatingNotice]. */
 @Composable
-fun Banner(text: String, icon: CircasoIcon, modifier: Modifier = Modifier, tone: BannerTone = BannerTone.Neutral) {
+fun Banner(text: String, icon: CircasoIcon, modifier: Modifier = Modifier, tone: BannerTone = BannerTone.Neutral, floating: Boolean = false) {
     val c = CircasoTheme.colors
     val iconTint = when (tone) {
         BannerTone.Neutral -> c.inkSecondary
@@ -32,7 +32,8 @@ fun Banner(text: String, icon: CircasoIcon, modifier: Modifier = Modifier, tone:
     Row(
         modifier
             .fillMaxWidth()
-            .glass(CircasoShapes.md)
+            // Floating over the screen (the scaffold's banner slot), it carries the floating glass's shadow.
+            .glass(CircasoShapes.md, floating = floating)
             .padding(horizontal = 16.dp, vertical = 10.dp)
             .semantics { liveRegion = LiveRegionMode.Polite },
         horizontalArrangement = Arrangement.spacedBy(10.dp),

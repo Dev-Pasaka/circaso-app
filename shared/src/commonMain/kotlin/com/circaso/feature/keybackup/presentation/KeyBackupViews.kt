@@ -47,7 +47,7 @@ import com.circaso.designsystem.theme.CircasoTheme
  * back with one passkey answer. After a restore it says plainly what the backup didn't have, then can be closed.
  */
 @Composable
-fun RestoreGroupNamesCard(viewModel: KeyBackupViewModel, unlock: String) {
+fun RestoreGroupNamesCard(viewModel: KeyBackupViewModel, unlock: String, floating: Boolean = false) {
     val s by viewModel.state.collectAsState()
     val c = CircasoTheme.colors
     val t = CircasoTheme.typography
@@ -60,7 +60,7 @@ fun RestoreGroupNamesCard(viewModel: KeyBackupViewModel, unlock: String) {
     ) {
         Column(
             Modifier.fillMaxWidth().padding(horizontal = CircasoSpacing.s4, vertical = CircasoSpacing.s2)
-                .glass(CircasoShapes.lg).padding(CircasoSpacing.s3),
+                .glass(CircasoShapes.lg, floating = floating).padding(CircasoSpacing.s3),
             verticalArrangement = Arrangement.spacedBy(CircasoSpacing.s3),
         ) {
             Row(Modifier.semantics(mergeDescendants = true) {}, horizontalArrangement = Arrangement.spacedBy(CircasoSpacing.s3), verticalAlignment = Alignment.Top) {
@@ -87,7 +87,8 @@ fun RestoreGroupNamesCard(viewModel: KeyBackupViewModel, unlock: String) {
             }
             if (s.offerRestore) {
                 Row(horizontalArrangement = Arrangement.spacedBy(CircasoSpacing.s2)) {
-                    CircasoButton("Not Now", viewModel::onNotNow, Modifier.weight(1f), style = ButtonStyle.Plain, size = ButtonSize.Medium)
+                    // "Not Now" takes only what it needs, so "Restore With Fingerprint" is never cut off.
+                    CircasoButton("Not Now", viewModel::onNotNow, style = ButtonStyle.Plain, size = ButtonSize.Medium)
                     CircasoButton("Restore With $unlock", viewModel::onRestore, Modifier.weight(1f), style = ButtonStyle.Secondary, size = ButtonSize.Medium, busy = s.busy, enabled = s.online)
                 }
                 if (!s.online) BasicText("Restoring needs a connection.", Modifier.semantics { liveRegion = LiveRegionMode.Polite }, style = t.footnote.copy(color = c.inkTertiary))

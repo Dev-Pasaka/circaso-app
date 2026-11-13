@@ -1,5 +1,7 @@
 package com.circaso.core.navigation
 
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.ui.input.pointer.pointerInput
 import com.circaso.feature.share.presentation.ShareLinkLayer
 import androidx.compose.foundation.layout.Box
 import kotlinx.coroutines.flow.first
@@ -335,16 +337,19 @@ fun AppNavigation(forceUpdate: Boolean, home: @Composable () -> Unit) {
                     onBackToTab = { switchTab(it, restore = false) },
                     chats = { bottomPadding -> ChatsTab(chatsViewModel, bottomPadding, onAsha = { backStack.add(AshaRoute) }, onVoice = { backStack.add(AshaRoute); backStack.add(VoiceRoute) }, onNewChat = { backStack.add(NewChatRoute) }, selectedChatId = if (twoPane) backStack.filterIsInstance<ChatRoute>().lastOrNull()?.chatId else null, moments = chatsMoments) { id -> openChatFromList(id) } },
                     chatsActions = {},
+                    // Every in-app notice on Chats floats over the top of the screen, over the Circaso masthead, never
+                    // pushing it down (Pasaka, 2026-11-13): offline, a wallet hold, restoring group names.
                     chatsBanner = {
                         val s by chatsViewModel.state.collectAsState()
-                        ChatsBanner(s)
-                    },
-                    chatsStrip = {
                         val w by walletViewModel.state.collectAsState()
-                        androidx.compose.foundation.layout.Column {
-                            HoldBanner(w.wallet?.holdUntil, onNotMe = { backStack.add(SecurityRoute) }, reason = w.wallet?.holdReason)
+                        androidx.compose.foundation.layout.Column(
+                            // The cards take their own taps: nothing in the list under them opens through a card.
+                            Modifier.pointerInput(Unit) { detectTapGestures { } },
+                        ) {
+                            ChatsBanner(s)
+                            HoldBanner(w.wallet?.holdUntil, onNotMe = { backStack.add(SecurityRoute) }, reason = w.wallet?.holdReason, floating = true)
                             val bio: com.circaso.core.platform.Biometrics = koinInject()
-                            com.circaso.feature.keybackup.presentation.RestoreGroupNamesCard(koinViewModel(), unlock = if (bio.available()) bio.name else "Screen Lock")
+                            com.circaso.feature.keybackup.presentation.RestoreGroupNamesCard(koinViewModel(), unlock = if (bio.available()) bio.name else "Screen Lock", floating = true)
                         }
                     },
                     wallet = { bottomPadding ->
