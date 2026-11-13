@@ -63,12 +63,14 @@ fun App() {
     CircasoTheme(darkTheme = isDark, highContrast = isHigh) {
         // In front or not, for the "Online" / "last seen" others see (away 15 s after leaving the app).
         val presence: com.circaso.core.realtime.PresenceReporter = koinInject()
+        // And for notifying a message that arrives over the socket while Circaso is away (2026-11-13).
+        val liveNotices: com.circaso.core.notifications.LiveMessageNotices = koinInject()
         val lifecycle = androidx.lifecycle.compose.LocalLifecycleOwner.current
         androidx.compose.runtime.DisposableEffect(lifecycle) {
             val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
                 when (event) {
-                    androidx.lifecycle.Lifecycle.Event.ON_START -> presence.onForeground()
-                    androidx.lifecycle.Lifecycle.Event.ON_STOP -> presence.onBackground()
+                    androidx.lifecycle.Lifecycle.Event.ON_START -> { liveNotices.onForeground(); presence.onForeground() }
+                    androidx.lifecycle.Lifecycle.Event.ON_STOP -> { liveNotices.onBackground(); presence.onBackground() }
                     else -> Unit
                 }
             }

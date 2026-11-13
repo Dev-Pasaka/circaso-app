@@ -107,6 +107,15 @@ class CircasoMessagingService : FirebaseMessagingService() {
             // Cancelled or answered elsewhere: stop ringing (a missed one is then worded below).
             if (callId != null) koin.get<com.circaso.core.calls.AndroidCallNotifier>().clear(callId)
             val notifications = koin.get<ChatNotifications>() as? AndroidChatNotifications ?: return
+            // A message the socket already brought and notified (the server pushes while Circaso is away, 2026-11-13):
+            // shown once, so the phone doesn't buzz twice for it.
+            val messageId = message.data["messageId"]?.takeIf { it.isNotBlank() }
+            val posted = koin.get<com.circaso.core.notifications.PostedMessages>()
+            if (messageId != null && runBlocking { posted.posted(messageId) }) {
+                com.circaso.core.common.Diagnostics.note("push: message already notified from the socket")
+                return
+            }
+            val received = com.circaso.core.sync.nowMillis()
             runBlocking {
                 withTimeoutOrNull(SyncWindowMillis) {
                     // A push with its own alert ("Payment sent", "Name is on Circaso"…) reaches here only while Circaso is
@@ -122,8 +131,10 @@ class CircasoMessagingService : FirebaseMessagingService() {
                             )
                         }
                         ?: return@withTimeoutOrNull
+                    if (messageId != null && !posted.claim(messageId)) return@withTimeoutOrNull
                     val coinsOff = koin.get<com.circaso.core.datastore.AppPreferences>().flag(com.circaso.core.datastore.AppPreferences.MoneySoundOff).first()
                     notifications.show(notice, coins = !coinsOff)
+                    if (messageId != null) com.circaso.core.common.Diagnostics.note("notify: push message posted ${com.circaso.core.sync.nowMillis() - received} ms after the push")
                 }
             }
         }

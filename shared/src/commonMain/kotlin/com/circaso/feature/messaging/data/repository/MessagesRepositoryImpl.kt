@@ -502,6 +502,11 @@ class InboxProcessor(
     private val retries: RetryReceipts? = null,
     /** Payment cards keyed by transfer, so the wallet's fallback card and the end-to-end one are one card. */
     private val paymentCards: ChatPaymentCards? = null,
+    /**
+     * A `message.new` frame brought a message this phone didn't have (2026-11-13): it is decrypted and saved by now,
+     * so its notification can be posted at once rather than waiting for a push.
+     */
+    private val onLiveMessage: (com.circaso.core.notifications.LiveMessage) -> Unit = {},
 ) {
     private val lock = Mutex()
 
@@ -545,14 +550,22 @@ class InboxProcessor(
 
     /** `message.new`: the ciphertext comes with the frame when small enough; otherwise it waits in the inbox. */
     suspend fun onMessageNew(data: JsonObject) {
-        val dto = runCatching {
-            InboxMessageDto(
-                messageId = data.string("messageId")!!, chatId = data.string("chatId")!!, senderId = data.string("senderId")!!,
-                kind = data.string("kind")!!, ciphertext = data.string("ciphertext") ?: return sync().let { }, sentAt = data.string("sentAt")!!,
-            )
-        }.getOrNull() ?: return
-        lock.withLock { if (handle(dto)) ack(listOf(dto.messageId)) }
-        askAgain(always = false)
+        val messageId = data.string("messageId") ?: return
+        val chatId = data.string("chatId") ?: return
+        val senderId = data.string("senderId") ?: return
+        val kind = data.string("kind") ?: return
+        val sentAt = data.string("sentAt")
+        // New to this phone: a push may have pulled it from the inbox first, and then that path shows it.
+        val fresh = dao.byMessageId(messageId) == null
+        val ciphertext = data.string("ciphertext")
+        if (ciphertext == null) {
+            sync()
+        } else {
+            val dto = InboxMessageDto(messageId = messageId, chatId = chatId, senderId = senderId, kind = kind, ciphertext = ciphertext, sentAt = sentAt ?: return)
+            lock.withLock { if (handle(dto)) ack(listOf(dto.messageId)) }
+            askAgain(always = false)
+        }
+        if (fresh && kind == MessagingWire.KindMessage) onLiveMessage(com.circaso.core.notifications.LiveMessage(chatId, messageId, senderId, sentAt))
     }
 
     private suspend fun ack(ids: List<String>) {

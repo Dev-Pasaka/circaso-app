@@ -104,6 +104,7 @@ val messagingModule = module {
             get(), get(), get(), get(), get(), get<RealtimeClient>(), { id -> get<ChatsRepositoryImpl>().refreshChat(id) },
             onPaymentReceived = { id -> get<com.circaso.feature.wallet.domain.WalletRepository>().loadTransfer(id) }, reactionsDao = get(),
             retries = get(), paymentCards = get(),
+            onLiveMessage = { m -> get<com.circaso.core.notifications.LiveMessageNotices>().onArrived(m) },
         )
     }
     single { MessagesRepositoryImpl(get(), get(), get(), get(), get(), get(named("kickOutbox")), get<RealtimeClient>(), get(), get(named("ownUserId")), reactionsDao = get(), paymentCards = get(), names = get()) } bind MessagesRepository::class
@@ -129,6 +130,15 @@ val messagingModule = module {
     single { MessagingFrameHandler(get(), get(), get(), get(), get(), get(), invites = get()) }
     // Notifications (2026-11-06): pushes worded on the phone with privacy, and where a tap lands.
     single { com.circaso.core.notifications.PushNotices(get(), get(), get(), get(), get(), get(), get(), get(), invites = get(), names = get()) }
+    // A message that arrives over the socket is notified at once (2026-11-13); one notification per message either way.
+    single { com.circaso.core.notifications.PostedMessages() }
+    single {
+        val notices = get<com.circaso.core.notifications.PushNotices>()
+        com.circaso.core.notifications.LiveMessageNotices(
+            { chatId, messageId -> notices.forArrived(chatId, messageId) }, get(), get(), getOrNull<com.circaso.core.notifications.NoticePoster>() ?: com.circaso.core.notifications.NoNoticePoster,
+            get(named("ownUserId")), get<kotlinx.coroutines.CoroutineScope>(),
+        )
+    }
     factory<com.circaso.core.notifications.NotificationLookups> { com.circaso.core.notifications.AppNotificationLookups(get(), get(), get()) }
     single { MessagingStarter(get<RealtimeClient>().connected, get(), get(), get(), live = get(), invites = get()) }
 
