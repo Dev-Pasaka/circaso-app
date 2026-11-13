@@ -55,6 +55,11 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.foundation.layout.size
+import com.circaso.designsystem.components.CircasoIcon
+import com.circaso.designsystem.components.CircasoIconImage
 import androidx.compose.ui.unit.dp
 import com.circaso.designsystem.components.ButtonSize
 import com.circaso.designsystem.components.ButtonStyle
@@ -180,7 +185,118 @@ fun SheetHead(title: String, onClose: () -> Unit, modifier: Modifier = Modifier,
     }
 }
 
-/** The design's confirm pattern (ID-26 "Sign out of Circaso?"): title, one line of explanation, a main button and Cancel. */
+/** What a sheet's icon badge says before a word is read: plain information, something to be careful of, or a destructive step. */
+enum class SheetTone { Neutral, Warning, Critical }
+
+/**
+ * The big round icon at the top of a message or confirm sheet (the canvas's `.big-ico`, 64 dp on ID-23 "Sending is
+ * paused"). It settles in with a small spring as the sheet rises, so the sheet reads as one designed moment rather than a
+ * box of text; under Reduce Motion it is simply there.
+ */
+@Composable
+fun SheetBadge(icon: CircasoIcon, tone: SheetTone = SheetTone.Neutral, modifier: Modifier = Modifier) {
+    val c = CircasoTheme.colors
+    val ink = when (tone) { SheetTone.Neutral -> c.ink; SheetTone.Warning -> c.warning; SheetTone.Critical -> c.critical }
+    // A tint of the tone on the sheet (the canvas's banner tints); grey for plain information, as `.big-ico` has it.
+    val ground = when (tone) { SheetTone.Neutral -> c.fill; else -> ink.copy(alpha = if (c.isDark) 0.22f else 0.12f) }
+    val reduce = CircasoTheme.reduceMotion
+    val settle = remember { Animatable(if (reduce) 1f else 0f) }
+    androidx.compose.runtime.LaunchedEffect(Unit) {
+        if (!reduce) settle.animateTo(1f, CircasoSpring.settle())
+    }
+    Box(
+        modifier
+            .size(com.circaso.designsystem.theme.CircasoSizes.sheetBadge)
+            .graphicsLayer {
+                val v = settle.value
+                alpha = v.coerceIn(0f, 1f)
+                scaleX = 0.82f + 0.18f * v
+                scaleY = 0.82f + 0.18f * v
+            }
+            .clip(CircasoShapes.pill)
+            .background(ground)
+            // High contrast: a hairline in the badge's own colour, so a red or amber badge isn't ringed in grey.
+            .let { if (c.isHighContrast) it.border(1.dp, if (tone == SheetTone.Neutral) c.separator else ink.copy(alpha = 0.5f), CircasoShapes.pill) else it },
+        contentAlignment = Alignment.Center,
+    ) {
+        CircasoIconImage(icon, ink, Modifier.size(com.circaso.designsystem.theme.CircasoSizes.sheetBadgeIcon), strokeWidth = 1.8f)
+    }
+}
+
+/**
+ * The top of a message or confirm sheet: [SheetBadge], then the title (`title-2`, a heading for screen readers) and one
+ * short paragraph under it, centred. With no [icon] it falls back to the canvas's plain left-aligned pair (ID-26).
+ */
+@Composable
+fun SheetMessage(
+    title: String,
+    message: String?,
+    icon: CircasoIcon?,
+    modifier: Modifier = Modifier,
+    tone: SheetTone = SheetTone.Neutral,
+) {
+    val c = CircasoTheme.colors
+    val t = CircasoTheme.typography
+    val centred = icon != null
+    val align = if (centred) TextAlign.Center else TextAlign.Start
+    Column(
+        modifier.fillMaxWidth().padding(top = if (centred) CircasoSpacing.s2 else 0.dp),
+        horizontalAlignment = if (centred) Alignment.CenterHorizontally else Alignment.Start,
+        verticalArrangement = Arrangement.spacedBy(CircasoSpacing.s4),
+    ) {
+        if (icon != null) SheetBadge(icon, tone)
+        Column(
+            Modifier.fillMaxWidth().padding(horizontal = if (centred) CircasoSpacing.s2 else 0.dp),
+            horizontalAlignment = if (centred) Alignment.CenterHorizontally else Alignment.Start,
+            // The canvas's own 6 px between a sheet title and its line (ID-23, ID-26): tighter than any spacing step.
+            verticalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            BasicText(title, Modifier.semantics { heading() }, style = t.title2.copy(color = c.ink, textAlign = align))
+            if (!message.isNullOrBlank()) BasicText(message, style = t.body.copy(color = c.inkSecondary, textAlign = align))
+        }
+    }
+}
+
+/**
+ * The foot of a message or confirm sheet: the main button (`control-lg`, red when it destroys something), an optional
+ * footnote under it (why it is greyed out: offline, or what failed), then the way out as a plain button. While [busy]
+ * the main button spins and the way out waits, so a second tap can't race the first.
+ */
+@Composable
+fun SheetActions(
+    primaryLabel: String,
+    onPrimary: () -> Unit,
+    secondaryLabel: String? = "Cancel",
+    onSecondary: () -> Unit = {},
+    destructive: Boolean = false,
+    enabled: Boolean = true,
+    busy: Boolean = false,
+    note: String? = null,
+    noteIsError: Boolean = false,
+) {
+    val c = CircasoTheme.colors
+    val t = CircasoTheme.typography
+    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(CircasoSpacing.s2)) {
+        // The design system's destructive button is red text on nothing, which beside a plain Cancel leaves the sheet
+        // with no main action. Here it sits on a pill of its own red (grey when it can't be tapped yet), the same tint
+        // as the badge above, so the step reads as the main one and as dangerous at once.
+        val ground = if (!destructive) Modifier else Modifier.clip(CircasoShapes.pill)
+            .background(if (enabled) c.critical.copy(alpha = if (c.isDark) 0.22f else 0.12f) else c.fill)
+        CircasoButton(primaryLabel, onPrimary, ground, style = if (destructive) ButtonStyle.Destructive else ButtonStyle.Primary, size = ButtonSize.Large, block = true, enabled = enabled, busy = busy)
+        if (note != null) BasicText(
+            note, Modifier.fillMaxWidth().padding(horizontal = CircasoSpacing.s2),
+            style = t.footnote.copy(color = if (noteIsError) c.critical else c.inkSecondary, textAlign = TextAlign.Center),
+        )
+        if (secondaryLabel != null) CircasoButton(secondaryLabel, onSecondary, style = ButtonStyle.Plain, size = ButtonSize.Large, block = true, enabled = !busy)
+    }
+}
+
+/**
+ * The confirm sheet every "Are you sure?" in the app uses (ID-26 "Sign out of Circaso?", ID-27 "Remove this phone?"):
+ * an icon badge saying what kind of step this is, the question, one line of what happens, then the main button and the
+ * way out. Destructive steps get a red badge and a red button. With no [icon] given, a Delete or Remove shows the bin, another
+ * destructive step a warning, and anything else an info mark, so no confirm in the app is a bare block of text.
+ */
 @Composable
 fun BoxScope.ConfirmSheet(
     visible: Boolean,
@@ -191,17 +307,29 @@ fun BoxScope.ConfirmSheet(
     onDismiss: () -> Unit,
     destructive: Boolean = false,
     cancelLabel: String = "Cancel",
+    icon: CircasoIcon? = when {
+        confirmLabel.startsWith("Delete") || confirmLabel.startsWith("Remove") -> CircasoIcon.Trash
+        destructive -> CircasoIcon.Warning
+        else -> CircasoIcon.Info
+    },
+    tone: SheetTone = if (destructive) SheetTone.Critical else SheetTone.Neutral,
+    busy: Boolean = false,
+    enabled: Boolean = true,
+    note: String? = null,
 ) {
-    val c = CircasoTheme.colors
-    val t = CircasoTheme.typography
-    CircasoSheet(visible, onDismiss, label = title) {
-        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            BasicText(title, style = t.title2.copy(color = c.ink))
-            BasicText(message, style = t.body.copy(color = c.inkSecondary))
-        }
-        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            CircasoButton(confirmLabel, onConfirm, style = if (destructive) ButtonStyle.Destructive else ButtonStyle.Primary, size = ButtonSize.Large, block = true)
-            CircasoButton(cancelLabel, onDismiss, style = ButtonStyle.Plain, size = ButtonSize.Large, block = true)
-        }
+    // While the sheet slides away its caller has usually cleared what it was about (the contact, the member), so the
+    // words, icon and colour would change mid-exit: hold what was last shown until it is gone.
+    val now = ConfirmLook(title, message, confirmLabel, cancelLabel, icon, tone, destructive)
+    val shown = remember { androidx.compose.runtime.mutableStateOf(now) }
+    if (visible) shown.value = now
+    val look = shown.value
+    CircasoSheet(visible, { if (!busy) onDismiss() }, label = look.title) {
+        SheetMessage(look.title, look.message, look.icon, tone = look.tone)
+        SheetActions(look.confirmLabel, onConfirm, look.cancelLabel, onDismiss, destructive = look.destructive, enabled = enabled, busy = busy, note = note)
     }
 }
+
+private data class ConfirmLook(
+    val title: String, val message: String, val confirmLabel: String, val cancelLabel: String,
+    val icon: CircasoIcon?, val tone: SheetTone, val destructive: Boolean,
+)

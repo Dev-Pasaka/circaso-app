@@ -181,6 +181,7 @@ fun YouContent(
                 title = "Sign out of Circaso?",
                 message = "You can sign back in with Google or Apple. Your chats and money stay safe, and this phone stays yours. Anything not yet sent from this phone is removed.",
                 confirmLabel = "Sign Out",
+                icon = com.circaso.designsystem.components.CircasoIcon.SignOut,
                 onConfirm = onSignOutConfirmed,
                 onDismiss = onSignOutCancelled,
             )

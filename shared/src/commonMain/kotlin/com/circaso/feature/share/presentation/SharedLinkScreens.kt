@@ -339,6 +339,7 @@ fun SharedLinksContent(
                 onConfirm = { confirm?.let { onRevoke(it.code) }; confirm = null },
                 onDismiss = { confirm = null },
                 destructive = true,
+                icon = com.circaso.designsystem.components.CircasoIcon.Link,
             )
         },
     ) { padding ->

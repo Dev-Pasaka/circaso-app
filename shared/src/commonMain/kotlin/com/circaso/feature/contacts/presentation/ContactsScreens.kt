@@ -271,6 +271,7 @@ private fun androidx.compose.foundation.layout.BoxScope.ContactsSheets(state: Co
         },
         confirmLabel = if (action is ContactAction.Block) "Block" else "Remove",
         destructive = true,
+        icon = if (action is ContactAction.Block) CircasoIcon.Ban else CircasoIcon.UserMinus,
         onConfirm = actions.onActionConfirmed,
         onDismiss = actions.onActionDismissed,
     )
@@ -322,8 +323,7 @@ private fun androidx.compose.foundation.layout.BoxScope.ContactsSheets(state: Co
     CircasoSheet(visible = state.adding, onDismiss = actions.onAddDismissed, label = "Add by username") {
         val focus = remember { FocusRequester() }
         LaunchedEffect(state.adding) { if (state.adding) runCatching { focus.requestFocus() } }
-        BasicText("Add by Username", style = t.title2.copy(color = c.ink))
-        BasicText("Type their Circaso @username. You'll be in each other's contacts.", style = t.subhead.copy(color = c.inkSecondary))
+        com.circaso.designsystem.chrome.SheetMessage("Add by Username", "Type their Circaso @username. You'll be in each other's contacts.", CircasoIcon.UserPlus)
         Row(
             Modifier.fillMaxWidth().heightIn(min = CircasoSizes.controlLg).clip(CircasoShapes.md).background(c.fill).padding(horizontal = CircasoSpacing.s4),
             verticalAlignment = Alignment.CenterVertically,
@@ -340,9 +340,11 @@ private fun androidx.compose.foundation.layout.BoxScope.ContactsSheets(state: Co
                 if (state.connectInput.removePrefix("@").isEmpty()) BasicText("username", style = t.body.copy(color = c.inkTertiary))
             }
         }
-        CircasoButton("Add", actions.onConnect, size = ButtonSize.Large, block = true, enabled = state.online && state.connectReady, busy = state.connecting)
-        if (!state.online) BasicText("Adding people needs a connection.", style = t.footnote.copy(color = c.inkSecondary))
-        CircasoButton("Cancel", actions.onAddDismissed, style = ButtonStyle.Plain, size = ButtonSize.Medium, block = true)
+        com.circaso.designsystem.chrome.SheetActions(
+            "Add", actions.onConnect, "Cancel", actions.onAddDismissed,
+            enabled = state.online && state.connectReady, busy = state.connecting,
+            note = if (!state.online) "Adding people needs a connection." else null,
+        )
     }
 }
 

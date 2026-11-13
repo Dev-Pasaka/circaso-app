@@ -25,7 +25,9 @@ enum class CircasoIcon { Back, Close, Check, Delete, Backspace, Offline, Clock, 
     // Asha's bubble (2026-11-09): "Show Asha my screen", a phone with a sparkle of light in its corner.
     Screen,
     // Calls (2026-11-09): sharing the screen, a display with an arrow rising out of it.
-    ScreenShare }
+    ScreenShare,
+    // Sheets polish (2026-11-13): signing out, a door with an arrow leaving it.
+    SignOut }
 
 /** Icons kept as the canvas's own SVG path data (24 grid, stroked), parsed once per draw. */
 private val SvgIcons = mapOf(
@@ -46,6 +48,7 @@ private val SvgIcons = mapOf(
     CircasoIcon.Screen to "M7.5 3.5h9a1.5 1.5 0 0 1 1.5 1.5v14a1.5 1.5 0 0 1-1.5 1.5h-9A1.5 1.5 0 0 1 6 19V5a1.5 1.5 0 0 1 1.5-1.5zM10.5 17.5h3M12 7l.7 1.6 1.6.7-1.6.7-.7 1.6-.7-1.6-1.6-.7 1.6-.7z",
     CircasoIcon.Document to "M6 3.5h8l4.5 4.5v12.5H6zM13.5 3.5V8.5h5M9 13h6M9 16.5h6",
     CircasoIcon.ScreenShare to "M4 5h16a1.5 1.5 0 0 1 1.5 1.5v9a1.5 1.5 0 0 1-1.5 1.5H4a1.5 1.5 0 0 1-1.5-1.5v-9A1.5 1.5 0 0 1 4 5zM8.5 20.5h7M12 14V8.5M9.5 11l2.5-2.5l2.5 2.5",
+    CircasoIcon.SignOut to "M10 4.5H6a1.5 1.5 0 0 0-1.5 1.5v12A1.5 1.5 0 0 0 6 19.5h4M15 8l4 4l-4 4M19 12H9.5",
     CircasoIcon.Mute to "M4 4l16 16M9 5.5A3 3 0 0 1 15 6.5v4M15 14a3 3 0 0 1-6-2.5V9M5.5 11a6.5 6.5 0 0 0 10.4 5.2M18.5 11c0 .8-.1 1.5-.4 2.2M12 17.5v3",
 )
 

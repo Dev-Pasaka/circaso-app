@@ -70,34 +70,43 @@ fun SecurityContent(
                 visible = confirm == SecurityConfirm.SignOut,
                 title = "Sign out of Circaso?",
                 message = "You can sign back in with Google or Apple. Your chats and money stay safe, and this phone stays yours. Anything not yet sent from this phone is removed.",
-                confirmLabel = "Sign Out", onConfirm = onConfirmed, onDismiss = onConfirmDismissed,
+                confirmLabel = "Sign Out", icon = com.circaso.designsystem.components.CircasoIcon.SignOut, onConfirm = onConfirmed, onDismiss = onConfirmDismissed,
             )
             ConfirmSheet(
                 visible = confirm == SecurityConfirm.RemovePhone,
                 title = "Remove this phone?",
                 message = "For when you sell or give it away. Your Circaso data is wiped from this phone, and the next sign-in on any phone will verify your number again.",
-                confirmLabel = "Remove This Phone", destructive = true, onConfirm = onConfirmed, onDismiss = onConfirmDismissed,
+                confirmLabel = "Remove This Phone", destructive = true, icon = com.circaso.designsystem.components.CircasoIcon.Phone,
+                enabled = state.online, note = if (!state.online) "Removing this phone needs a connection." else null, onConfirm = onConfirmed, onDismiss = onConfirmDismissed,
             )
             ConfirmSheet(
                 visible = confirm is SecurityConfirm.Unlink,
                 title = "Remove this sign-in?",
                 message = "You'll no longer be able to sign in with it. You need at least one sign-in account.",
-                confirmLabel = "Remove", destructive = true, onConfirm = onConfirmed, onDismiss = onConfirmDismissed,
+                confirmLabel = "Remove", destructive = true, icon = com.circaso.designsystem.components.CircasoIcon.Link,
+                enabled = state.online, note = if (!state.online) "Removing a sign-in needs a connection." else null, onConfirm = onConfirmed, onDismiss = onConfirmDismissed,
             )
             // ID-28b: the server refused because the wallet still holds money.
             CircasoSheet(visible = state.deleteBlocked, onDismiss = onDeleteBlockedDismissed, label = "Send out your money first") {
-                BasicText("Send out your money first", style = t.title2.copy(color = c.ink))
-                BasicText("Your wallet still holds ${state.walletBalance ?: "money"}. Move it to someone or to an external wallet, then come back to delete your account.", style = t.body.copy(color = c.inkSecondary))
+                com.circaso.designsystem.chrome.SheetMessage(
+                    "Send out your money first",
+                    "Your wallet still holds ${state.walletBalance ?: "money"}. Move it to someone or to an external wallet, then come back to delete your account.",
+                    com.circaso.designsystem.components.CircasoIcon.Wallet, tone = com.circaso.designsystem.chrome.SheetTone.Warning,
+                )
                 state.walletBalance?.let { DetailRow("Wallet balance · Available now", it) }
-                CircasoButton("Send My Money", { onDeleteBlockedDismissed(); onSendMoney() }, size = ButtonSize.Large, block = true)
-                CircasoButton("Not Now", onDeleteBlockedDismissed, style = ButtonStyle.Plain, size = ButtonSize.Large, block = true)
+                com.circaso.designsystem.chrome.SheetActions("Send My Money", { onDeleteBlockedDismissed(); onSendMoney() }, "Not Now", onDeleteBlockedDismissed)
             }
             CircasoSheet(visible = confirm == SecurityConfirm.DeleteAccount, onDismiss = onConfirmDismissed, label = "Delete your account") {
-                BasicText("Delete your account?", style = t.title2.copy(color = c.ink))
-                BasicText("This can't be undone. Your account closes now. After 30 days your profile, contacts and Asha chat are erased for good, and your number and handle are released.", style = t.body.copy(color = c.inkSecondary))
+                com.circaso.designsystem.chrome.SheetMessage(
+                    "Delete your account?",
+                    "This can't be undone. Your account closes now. After 30 days your profile, contacts and Asha chat are erased for good, and your number and handle are released.",
+                    com.circaso.designsystem.components.CircasoIcon.Trash, tone = com.circaso.designsystem.chrome.SheetTone.Critical,
+                )
                 CircasoTextField(state.deleteText, onDeleteText, label = "Type DELETE to confirm", placeholder = "DELETE")
-                CircasoButton("Delete My Account", onConfirmed, style = ButtonStyle.Destructive, size = ButtonSize.Large, enabled = state.canDelete, block = true)
-                CircasoButton("Cancel", onConfirmDismissed, style = ButtonStyle.Plain, size = ButtonSize.Large, block = true)
+                com.circaso.designsystem.chrome.SheetActions(
+                    "Delete My Account", onConfirmed, "Cancel", onConfirmDismissed, destructive = true, enabled = state.canDelete,
+                    note = if (!state.online) "Deleting your account needs a connection." else null,
+                )
             }
         },
     ) {
