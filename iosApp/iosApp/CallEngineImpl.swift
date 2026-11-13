@@ -531,6 +531,13 @@ final class CallEngineImpl: NSObject, CallEngineProvider, RTCPeerConnectionDeleg
         DispatchQueue.main.async { if self.pc === peerConnection { self.gatherWaiter?("srflx") } }
     }
     func peerConnection(_ peerConnection: RTCPeerConnection, didRemove candidates: [RTCIceCandidate]) {}
+    /// When ICE picked its path (2026-11-14), to tell ICE's share of `ice:checking` → `pc:connected` (~3.1 s) from DTLS's.
+    func peerConnection(_ peerConnection: RTCPeerConnection, didChangeLocalCandidate local: RTCIceCandidate, remoteCandidate remote: RTCIceCandidate, lastReceivedMs: Int32, changeReason reason: String) {
+        let parts = local.sdp.components(separatedBy: " ")
+        let type = parts.firstIndex(of: "typ").flatMap { $0 + 1 < parts.count ? parts[$0 + 1] : nil } ?? "?"
+        let proto = parts.count > 2 ? parts[2].lowercased() : "?"
+        DispatchQueue.main.async { self.linkListener?("pair:\(type) \(proto)") }
+    }
     func peerConnection(_ peerConnection: RTCPeerConnection, didOpen dataChannel: RTCDataChannel) {}
 }
 

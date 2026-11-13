@@ -48,9 +48,8 @@ private class FakeRemote : CallsRemote {
     var current = call(people = arrayOf(person("me", "INVITED"), person("mum", "INVITED")))
     var startResult: AppResult<CallDto>? = null
     var pullOffer: String? = "sfu-offer"
-    /** What CL3 pulls with the join (2026-11-13), and whether each join asked for it. */
-    var joinPull: PullResponse? = null
-    val joinPulls = mutableListOf<Boolean>()
+    /** Pulls that fail (the SFU's 425 when our connection wasn't up within its 5 s), in order; then they succeed. */
+    var pullFailures = 0
     override suspend fun start(chatId: String, video: Boolean, key: String): AppResult<CallDto> { calls += "start"; return startResult ?: AppResult.Success(current) }
     override suspend fun get(callId: String) = AppResult.Success(current).also { calls += "get" }
     override suspend fun forChat(chatId: String) = AppResult.Success(current).also { calls += "forChat" }
@@ -58,13 +57,13 @@ private class FakeRemote : CallsRemote {
         calls += "join:" + request.tracks.joinToString { it.trackName }
         current = current.copy(participants = current.participants.map { if (it.userId == "me") person("me", "JOINED") else it })
         if (current.participants.count { it.state == "JOINED" } >= 2) current = current.copy(state = "ACTIVE")
-        joinPulls += request.pull
-        return AppResult.Success(JoinCallResponse("s-me", "sfu-answer", current, joinPull))
+        return AppResult.Success(JoinCallResponse("s-me", "sfu-answer", current))
     }
     /** Track names the SFU turns down once (no mid, as Cloudflare's `empty_track_error` for a video with no media). */
     val refuseOnce = mutableSetOf<String>()
     override suspend fun pull(callId: String, request: PullRequest): AppResult<PullResponse> {
         calls += "pull:" + request.tracks.joinToString { it.userId + "/" + it.trackName }
+        if (pullFailures > 0) { pullFailures--; return AppResult.Failure(com.circaso.core.common.AppError.Network) }
         return AppResult.Success(PullResponse(pullOffer, pullOffer != null, request.tracks.mapIndexed { i, t ->
             PulledTrackDto(t.userId, t.trackName, if (refuseOnce.remove(t.trackName)) null else "${i + 2}")
         }))
@@ -187,6 +186,8 @@ class CallControllerTest {
         remote.current = call("ACTIVE", person("me", "JOINED"), person("mum", "JOINED").copy(video = true))
         cc.onFrame("call.updated", frame("call.updated", remote.current))
         advanceUntilIdle()
+        // Asked again a second later (2026-11-14: a backoff, not at once).
+        advanceTimeBy(1_100); runCurrent()
         // Only the video is asked for again, never the audio that already plays.
         assertEquals(listOf("pull:mum/audio-mum, mum/video-mum", "pull:mum/video-mum"), remote.calls.filter { it.startsWith("pull") })
         assertEquals("2", cc.state.value!!.people.single().videoMid)
@@ -955,7 +956,8 @@ class CallControllerTest {
         assertEquals(false, cc.state.value!!.people.single().dropped, "never blamed on Mum")
         advanceTimeBy(1_000); runCurrent()
         assertEquals(joins + 1, remote.calls.count { it.startsWith("join") }, "rejoined at once, no 2.5 s wait and no 20 s stall")
-        assertTrue(remote.joinPulls.last(), "the rejoin pulls everyone connected with it")
+        assertEquals("pull:mum/audio-mum, mum/video-mum", remote.calls.last { it.startsWith("pull") }, "the rejoin pulls Mum again at once")
+        assertTrue(remote.calls.indexOfLast { it.startsWith("join") } < remote.calls.indexOfLast { it.startsWith("pull") })
     }
 
     @Test fun aDirectCallWhoseOtherSideNeverComesBackEndsAsPeerLost() = runTest(UnconfinedTestDispatcher()) {
@@ -1009,16 +1011,50 @@ class CallControllerTest {
         assertTrue("close" in engine.events)
     }
 
-    @Test fun joiningAnswersThePullThatCameWithItWithoutAskingAgain() = runTest(UnconfinedTestDispatcher()) {
+    @Test fun answeringPullsTheConnectedCallerRightAfterTheJoinWithoutWaitingForItsOwnConnection() = runTest(UnconfinedTestDispatcher()) {
+        // 2026-11-14: a pull inside CL3 held the Redmi's join 11.5 s. Now CL3 carries no pull, and the caller (connected)
+        // is pulled with CL4 the moment the answer is set, while this phone's own connection is still coming up.
         remote.current = call("RINGING", person("me", "INVITED"), person("mum", "JOINED").copy(connected = true)).copy(startedBy = "mum")
-        remote.joinPull = PullResponse("sfu-offer", true, listOf(PulledTrackDto("mum", "audio-mum", "2"), PulledTrackDto("mum", "video-mum", "3")))
-        val cc = controller()
+        val cc = liveController()
         cc.onFrame("call.ringing", buildJsonObject { put("callId", "c1") })
         cc.accept()
-        advanceUntilIdle()
-        assertTrue(remote.joinPulls.single())
-        assertTrue("renegotiate:my-answer" in remote.calls)
-        assertTrue(remote.calls.none { it.startsWith("pull") }, "Mum came with the join")
+        runCurrent()
+        assertEquals(null, engine.link.value, "our connection isn't up yet")
+        val after = remote.calls.dropWhile { !it.startsWith("join") }
+        assertEquals("pull:mum/audio-mum, mum/video-mum", after.firstOrNull { it.startsWith("pull") })
+        assertTrue("renegotiate:my-answer" in after)
         assertEquals("3", cc.state.value!!.people.single().videoMid)
+    }
+
+    @Test fun someoneStillConnectingIsNeverPolledAndIsPulledTheMomentTheySayConnected() = runTest(UnconfinedTestDispatcher()) {
+        // 2026-11-13: the iPhone pulled the Redmi three times (each ~1 s, `not_found_track_error`) while it connected.
+        val cc = liveController()
+        cc.start("chat1", video = false)
+        advanceUntilIdle()
+        engine.link.value = true
+        remote.current = call("ACTIVE", person("me", "JOINED"), person("mum", "JOINED"))
+        cc.onFrame("call.updated", frame("call.updated", remote.current))
+        advanceTimeBy(2_900); runCurrent()
+        assertTrue(remote.calls.none { it.startsWith("pull") }, "not before she says she is connected")
+        remote.current = remote.current.copy(participants = remote.current.participants.map { if (it.userId == "mum") it.copy(connected = true) else it })
+        cc.onFrame("call.updated", frame("call.updated", remote.current))
+        runCurrent()
+        assertEquals(1, remote.calls.count { it.startsWith("pull") })
+    }
+
+    @Test fun aPullRefusedBeforeOurConnectionIsAskedAgainWhenItComesUp() = runTest(UnconfinedTestDispatcher()) {
+        remote.current = call("RINGING", person("me", "INVITED"), person("mum", "JOINED").copy(connected = true)).copy(startedBy = "mum")
+        remote.pullFailures = 1
+        val cc = liveController()
+        cc.onFrame("call.ringing", buildJsonObject { put("callId", "c1") })
+        cc.accept()
+        runCurrent()
+        assertEquals(1, remote.calls.count { it.startsWith("pull") })
+        engine.link.value = true
+        runCurrent()
+        assertEquals(2, remote.calls.count { it.startsWith("pull") }, "our connection up: pulled again at once")
+        assertEquals("3", cc.state.value!!.people.single().videoMid)
+        advanceTimeBy(10_000); runCurrent()
+        assertEquals(2, remote.calls.count { it.startsWith("pull") }, "and not again after that")
     }
 }
