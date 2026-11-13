@@ -150,12 +150,12 @@ fun MomentForwardScreen(viewModel: MomentForwardViewModel, media: ForwardMedia, 
         }
     }
     val close = { viewModel.reset(); onClose() }
-    LaunchedEffect(state.error) { state.error?.let { toast.show(it, problem = true); viewModel.errorShown() } }
+    LaunchedEffect(state.error) { state.error?.let { toast.show(it, com.circaso.designsystem.chrome.ToastKind.Problem); viewModel.errorShown() } }
     androidx.compose.ui.backhandler.BackHandler(onBack = close)
     CircasoScaffold(
         Modifier.fillMaxSize().background(c.bg),
         topBar = { CircasoNavBar(forwardTitle(media), onBack = close) },
-        toast = { ToastHost(toast, Modifier.align(Alignment.TopCenter).padding(top = CircasoSpacing.s4)) },
+        toast = { ToastHost(toast) },
         bottomBar = {
             Row(
                 Modifier.fillMaxWidth().padding(horizontal = CircasoSpacing.s4, vertical = CircasoSpacing.s3),

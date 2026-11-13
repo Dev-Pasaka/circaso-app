@@ -13,6 +13,9 @@ object CircasoSpring {
     /** Things moving to a new place in a layout that changed (call tiles reflowing): UIKit's push speed, no bounce. */
     fun reflow(): SpringSpec<IntOffset> = spring(dampingRatio = Spring.DampingRatioNoBouncy, stiffness = 420f, visibilityThreshold = IntOffset(1, 1))
 
+    /** A floating notice dropping in under the top bar: settles without a visible bounce, like iOS's own banners. */
+    fun <T> notice(): SpringSpec<T> = spring(dampingRatio = 0.85f, stiffness = Spring.StiffnessMediumLow)
+
     /** A size settling after the screen turned (the call self-view). */
     fun <T> resize(): SpringSpec<T> = spring(dampingRatio = Spring.DampingRatioNoBouncy, stiffness = 420f)
 

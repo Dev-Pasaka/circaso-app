@@ -351,7 +351,7 @@ fun ThreadContent(
     val toast = rememberToastState()
     val quoteScope = androidx.compose.runtime.rememberCoroutineScope()
     LaunchedEffect(state.message) { state.message?.let { toast.show(it); onMessageShown() } }
-    LaunchedEffect(toastPayError) { toastPayError?.let { toast.show(it, problem = true); toastPayError = null } }
+    LaunchedEffect(toastPayError) { toastPayError?.let { toast.show(it, com.circaso.designsystem.chrome.ToastKind.Problem); toastPayError = null } }
     val listState = rememberLazyListState()
     val rows = state.messages.size + state.openRequests.size
     // Opened at one message (a search result, a notification's card or call): scroll there once; otherwise follow the
@@ -492,7 +492,7 @@ fun ThreadContent(
                 },
             )
         },
-        toast = { ToastHost(toast, Modifier.align(Alignment.TopCenter).padding(top = 8.dp)) },
+        toast = { ToastHost(toast) },
         overlay = {
             // Who reacted to a group message (2026-11-11), from the chat's members.
             // Kept through the sheet's exit, so it doesn't empty while it slides away.

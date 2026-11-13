@@ -145,7 +145,7 @@ fun MediaComposeStage(
             val toast = rememberToastState()
             // The stage is dark in every theme: the status bar's icons go light while it is up.
             com.circaso.core.platform.StatusBarIcons(light = true)
-            LaunchedEffect(state.error) { state.error?.let { toast.show(it, problem = true); composer.errorShown() } }
+            LaunchedEffect(state.error) { state.error?.let { toast.show(it, com.circaso.designsystem.chrome.ToastKind.Problem); composer.errorShown() } }
             Box(Modifier.fillMaxSize().background(c.bg)) {
                 val capture = state.capture
                 when {

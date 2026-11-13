@@ -94,7 +94,7 @@ fun TransferContent(state: TransferUiState, onBack: () -> Unit) {
     val shareLinks = com.circaso.feature.share.presentation.LocalShareLinks.current
     CircasoScaffold(
         topBar = { CircasoNavBar(title = "Payment", onBack = onBack, trailing = { if (transfer != null) CircasoIconButton(CircasoIcon.Share, "Share receipt", { shareLinks?.share(receiptTarget(transfer, state.fiat)) }) }) },
-        toast = { ToastHost(toast, Modifier.align(Alignment.TopCenter).padding(top = 8.dp)) },
+        toast = { ToastHost(toast) },
     ) { padding ->
         if (transfer == null) {
             if (state.error != null) {
@@ -183,7 +183,7 @@ fun TransferContent(state: TransferUiState, onBack: () -> Unit) {
                                 label, sub = shortAddress(value),
                                 modifier = Modifier.semantics { contentDescription = "Copy ${label.lowercase()}" },
                                 trailing = { CircasoIconImage(CircasoIcon.Copy, c.inkSecondary, Modifier.size(18.dp)) },
-                                onClick = { clipboard.setText(androidx.compose.ui.text.AnnotatedString(value)); scope.launch { toast.show("Copied") } },
+                                onClick = { clipboard.setText(androidx.compose.ui.text.AnnotatedString(value)); scope.launch { toast.show("Copied", com.circaso.designsystem.chrome.ToastKind.Done) } },
                             )
                         }
                         explorerUrl(transfer.blockchain, transfer.txHash)?.let { url ->
@@ -471,8 +471,8 @@ fun NetworksScreen(viewModel: NetworksViewModel, onBack: () -> Unit) {
     val c = CircasoTheme.colors
     val t = CircasoTheme.typography
     val toast = rememberToastState()
-    LaunchedEffect(state.notice, state.error) { (state.notice ?: state.error)?.let { toast.show(it, problem = state.notice == null); viewModel.onNoticeShown() } }
-    CircasoScaffold(topBar = { CircasoNavBar(title = "Networks", onBack = onBack) }, toast = { ToastHost(toast, Modifier.align(Alignment.TopCenter).padding(top = 8.dp)) }) { padding ->
+    LaunchedEffect(state.notice, state.error) { (state.notice ?: state.error)?.let { toast.show(it, if (state.notice == null) com.circaso.designsystem.chrome.ToastKind.Problem else com.circaso.designsystem.chrome.ToastKind.Info); viewModel.onNoticeShown() } }
+    CircasoScaffold(topBar = { CircasoNavBar(title = "Networks", onBack = onBack) }, toast = { ToastHost(toast) }) { padding ->
         val chains = state.chains
         LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = padding.calculateBottomPadding() + CircasoSpacing.s4)) {
             item { BasicText("Your wallet has its own address on each network. USDC sent on a network you're not on can't reach you.", style = t.footnote.copy(color = c.inkSecondary), modifier = Modifier.padding(CircasoSpacing.s4)) }

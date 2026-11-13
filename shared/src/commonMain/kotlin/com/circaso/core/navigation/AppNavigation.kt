@@ -248,7 +248,7 @@ fun AppNavigation(forceUpdate: Boolean, home: @Composable () -> Unit) {
         online = shareUi.online,
     )
     LaunchedEffect(Unit) {
-        announcements.sentAfterOffline.collect { n -> toast.show("Back online · $n ${if (n == 1) "change" else "changes"} sent") }
+        announcements.sentAfterOffline.collect { n -> toast.show("Back online · $n ${if (n == 1) "change" else "changes"} sent", com.circaso.designsystem.chrome.ToastKind.Done) }
     }
     CompositionLocalProvider(
         LocalAshaLauncher provides asha,

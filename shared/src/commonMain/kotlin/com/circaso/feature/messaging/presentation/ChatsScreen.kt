@@ -1,5 +1,6 @@
 package com.circaso.feature.messaging.presentation
 
+import androidx.compose.foundation.layout.statusBarsPadding
 import com.circaso.feature.status.presentation.arcs
 import com.circaso.designsystem.motion.pressable
 import com.circaso.feature.status.presentation.momentRing
@@ -105,7 +106,7 @@ fun androidx.compose.foundation.layout.BoxScope.ChatsOverlay(viewModel: ChatsVie
     // A declined invite, or one no longer open, leaves the list: said here so the card's leaving is never silent.
     val toast = com.circaso.designsystem.chrome.rememberToastState()
     androidx.compose.runtime.LaunchedEffect(state.notice) { state.notice?.let { toast.show(it); viewModel.onNoticeShown() } }
-    com.circaso.designsystem.chrome.ToastHost(toast, Modifier.align(Alignment.TopCenter).padding(top = CircasoSpacing.s2))
+    com.circaso.designsystem.chrome.ToastHost(toast, Modifier.align(Alignment.TopCenter).statusBarsPadding())
     val preview = state.previewing
     InvitePreviewSheet(
         preview, viewModel.inviteActions, state.online,

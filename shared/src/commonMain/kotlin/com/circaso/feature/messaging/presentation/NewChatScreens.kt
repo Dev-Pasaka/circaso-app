@@ -115,7 +115,7 @@ fun NewChatContent(state: NewChatUiState, actions: NewChatActions, onMessageShow
     CircasoScaffold(
         topBar = { CircasoNavBar(title = "New Chat", onBack = actions.onBack) },
         banner = { ConnectionBanner(showing = "You can start a chat when you're back online") },
-        toast = { ToastHost(toast, Modifier.align(Alignment.TopCenter).padding(top = 8.dp)) },
+        toast = { ToastHost(toast) },
     ) { padding ->
         LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = padding.calculateBottomPadding() + CircasoSpacing.s6)) {
             item(key = "search") {

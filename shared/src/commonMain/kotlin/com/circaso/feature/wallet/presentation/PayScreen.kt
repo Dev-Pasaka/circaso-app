@@ -125,7 +125,7 @@ fun PayContent(
     val c = CircasoTheme.colors
     val t = CircasoTheme.typography
     val toast = rememberToastState()
-    LaunchedEffect(state.error) { state.error?.let { toast.show(it, problem = true); onErrorShown() } }
+    LaunchedEffect(state.error) { state.error?.let { toast.show(it, com.circaso.designsystem.chrome.ToastKind.Problem); onErrorShown() } }
     val title = when {
         // Group wallets (GW9, GW9c, GW9d): the review says what kind of money this is.
         state.toGroup -> if (state.step == PayStep.Done) "Added" else "Contribute"
@@ -150,7 +150,7 @@ fun PayContent(
                 trailing = { if (state.step == PayStep.Pick && onScan != null) CircasoIconButton(CircasoIcon.Scan, "Scan a Circaso code", onScan) },
             )
         },
-        toast = { ToastHost(toast, Modifier.align(Alignment.TopCenter).padding(top = 8.dp)) },
+        toast = { ToastHost(toast) },
         overlay = {
             CircasoSheet(visible = state.choosing, onDismiss = { onChoosing(false) }, label = "Pay from") {
                 PayFromSheetContent(state.choices, state.payingFrom.walletId, state.balances, state.online, state.asOf, onPick = onPayFrom, onClose = { onChoosing(false) })

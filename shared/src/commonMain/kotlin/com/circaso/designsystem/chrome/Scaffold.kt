@@ -24,6 +24,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.width
+import androidx.compose.ui.layout.onPlaced
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
@@ -78,7 +79,9 @@ fun CircasoScaffold(
     val topBarOnSide = topBar != null && com.circaso.designsystem.adaptive.LocalWindowLayout.current.short
     var bottomBarHeight by remember { mutableStateOf(0.dp) }
     var sideBarWidth by remember { mutableStateOf(0.dp) }
-    var topBarHeight by remember { mutableStateOf(0.dp) }
+    // Where the content starts inside this scaffold (under the top bar and the strip): toasts drop in from there.
+    var frame by remember { mutableStateOf<androidx.compose.ui.layout.LayoutCoordinates?>(null) }
+    var contentArea by remember { mutableStateOf(androidx.compose.ui.unit.DpRect(0.dp, 0.dp, 0.dp, 0.dp)) }
     val sideInsets = WindowInsets.displayCutout.union(WindowInsets.navigationBars).only(WindowInsetsSides.Horizontal)
     // Some devices report no navigation inset; keep the floating bar off the screen edge anyway.
     val navInset = maxOf(WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding(), 16.dp)
@@ -89,7 +92,7 @@ fun CircasoScaffold(
     if (outer != null && backdrop != null) HostedBackdrop(backdrop)
     // Inside another scaffold (a tab inside Home) the outer one paints the page and the backdrop, edge to edge;
     // painting here too would box the backdrop in.
-    Box(modifier.fillMaxSize().let { if (outer == null) it.background(if (grouped) c.bgGrouped else c.bg) else it }) {
+    Box(modifier.fillMaxSize().onPlaced { frame = it }.let { if (outer == null) it.background(if (grouped) c.bgGrouped else c.bg) else it }) {
         if (outer == null) {
             backdrop?.invoke(this)
             host.content?.invoke(this)
@@ -105,11 +108,24 @@ fun CircasoScaffold(
             },
         ) {
             androidx.compose.runtime.CompositionLocalProvider(LocalBackdropHost provides host) {
-            if (!topBarOnSide && topBar != null) {
-                Box(Modifier.fillMaxWidth().onSizeChanged { topBarHeight = with(density) { it.height.toDp() } }) { topBar() }
-            }
+            if (!topBarOnSide) topBar?.invoke()
             strip()
-            Box(Modifier.weight(1f).let { if (keepReadable) it.readableWidth(maxContentWidth) else it }) { content(PaddingValues(bottom = if (bottomBar != null) bottomBarHeight + navInset else 0.dp)) }
+            Box(
+                Modifier.weight(1f).let { if (keepReadable) it.readableWidth(maxContentWidth) else it }
+                    .onPlaced { placed ->
+                        frame?.let { f ->
+                            val at = f.localPositionOf(placed, androidx.compose.ui.geometry.Offset.Zero)
+                            contentArea = with(density) {
+                                androidx.compose.ui.unit.DpRect(at.x.toDp(), at.y.toDp(), (at.x + placed.size.width).toDp(), (at.y + placed.size.height).toDp())
+                            }
+                        }
+                    },
+            ) {
+                content(PaddingValues(bottom = if (bottomBar != null) bottomBarHeight + navInset else 0.dp))
+                // Notices float at the top of the content, under the top bar and the strip, centred in the same
+                // readable frame: the content stays put when one comes or goes (Pasaka, 2026-11-13).
+                Box(Modifier.align(Alignment.TopCenter).fillMaxWidth(), contentAlignment = Alignment.TopCenter) { banner() }
+            }
             }
         }
         if (bottomBar != null && topBarOnSide) {
@@ -159,20 +175,10 @@ fun CircasoScaffold(
                     .onSizeChanged { sideBarWidth = with(density) { it.width.toDp() } + 12.dp + 8.dp },
             ) { sideBar() }
         }
-        // Notices float under the top bar, over the content, within the same readable frame; the content stays put.
-        Box(
-            Modifier.align(Alignment.TopCenter).fillMaxWidth()
-                .windowInsetsPadding(WindowInsets.statusBars).windowInsetsPadding(sideInsets)
-                .padding(
-                    start = (if (sideBar != null) sideBarWidth else 0.dp) + (if (topBarOnSide) WindowLayout.SideTopBarWidth else 0.dp),
-                    top = if (topBar != null && !topBarOnSide) topBarHeight else 0.dp,
-                ),
-            contentAlignment = Alignment.TopCenter,
-        ) {
-            Box(if (keepReadable) Modifier.readableWidth(maxContentWidth) else Modifier.fillMaxWidth()) { banner() }
-        }
         overlay()
-        toast()
+        // Toasts drop in where the content starts, above any sheet, so every screen places them the same way.
+        // Centred on the content column, not the window, so a side rail or a side top bar never pulls it off centre.
+        Box(Modifier.padding(start = contentArea.left, top = contentArea.top).width(contentArea.right - contentArea.left).fillMaxHeight()) { toast() }
     }
 }
 

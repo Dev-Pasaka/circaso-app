@@ -4,8 +4,13 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import kotlinx.coroutines.delay
+import com.circaso.designsystem.theme.CircasoSpacing
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.unit.dp
 import com.circaso.core.platform.ConnectionStatus
 import com.circaso.designsystem.chrome.FloatingNotice
 import com.circaso.designsystem.chrome.FloatingNoticeHost
@@ -26,16 +31,29 @@ fun ConnectionBanner(
 ) {
     val state: ConnectionState = koinInject()
     val status by state.status.collectAsState()
-    FloatingNoticeHost(status == ConnectionStatus.Offline, modifier) {
+    val offline = status == ConnectionStatus.Offline
+    // Offline can last minutes: after a few seconds the notice settles into a small "Offline" capsule so it stops
+    // covering the top of the screen; a tap opens the full notice again for a few seconds.
+    var expanded by remember { mutableStateOf(true) }
+    LaunchedEffect(offline, expanded) {
+        if (!offline) expanded = true
+        else if (expanded) { delay(ExpandedMs); expanded = false }
+    }
+    FloatingNoticeHost(offline, modifier) {
+        val icon = if (waitingCount > 0) CircasoIcon.Clock else CircasoIcon.Offline
         FloatingNotice(
-            title = "You’re offline",
-            detail = connectionBannerDetail(showing, waitingCount),
-            icon = if (waitingCount > 0) CircasoIcon.Clock else CircasoIcon.Offline,
-            modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 8.dp),
+            title = if (expanded) "You’re offline" else "Offline",
+            detail = if (expanded) connectionBannerDetail(showing, waitingCount) else null,
+            icon = icon,
+            modifier = Modifier.padding(horizontal = CircasoSpacing.s4, vertical = CircasoSpacing.s2),
             spoken = connectionBannerText(showing, waitingCount),
+            onTap = { expanded = !expanded },
         )
     }
 }
+
+/** How long the full offline notice stays open before it settles into the small capsule. */
+private const val ExpandedMs = 4_000L
 
 /** The notice's second line: what is waiting, or what the screen is showing meanwhile. */
 internal fun connectionBannerDetail(showing: String, waitingCount: Int): String = when {
