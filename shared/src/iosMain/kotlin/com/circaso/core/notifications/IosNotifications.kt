@@ -2,11 +2,14 @@
 
 package com.circaso.core.notifications
 
+import com.circaso.core.crypto.toByteArray
 import com.circaso.core.platform.ChatNotifications
 import kotlinx.cinterop.addressOf
 import kotlinx.cinterop.usePinned
+import kotlinx.cinterop.useContents
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlin.time.Duration.Companion.milliseconds
 import okio.FileSystem
 import okio.Path.Companion.toPath
 import org.koin.mp.KoinPlatform
@@ -96,35 +99,61 @@ class IosNotificationSnapshotFile : NotificationSnapshotFile {
         runCatching { FileSystem.SYSTEM.read(path.toPath()) { readByteArray() } }.getOrNull()
     }
 
+    /**
+     * Each photo from the image cache, where the app keeps every photo it has shown, keyed by its link without the
+     * query as Avatar keys it. A photo the app never drew (2026-11-14: iPhone notifications showed initials because
+     * most senders' photos had never been on screen) is downloaded once now, into the same cache, at most
+     * [MaxFetches] per write and within [FetchMillis] in all, so the extension can show it from the next push.
+     */
     override suspend fun photos(sources: Map<String, String>): Map<String, String> = withContext(Dispatchers.Default) {
         val root = appGroupPath() ?: return@withContext emptyMap()
         val dir = "$root/${NotificationSnapshot.PhotosDir}"
         val fs = FileSystem.SYSTEM
         fs.createDirectories(dir.toPath())
-        val cache = runCatching { coil3.SingletonImageLoader.get(coil3.PlatformContext.INSTANCE).diskCache }.getOrNull()
+        val loader = runCatching { coil3.SingletonImageLoader.get(coil3.PlatformContext.INSTANCE) }.getOrNull()
+        val cache = loader?.diskCache
         val kept = mutableMapOf<String, String>()
+        var reused = 0
+        var cached = 0
+        var fetched = 0
+        var missing = 0
+        val fetchUntil = kotlin.time.TimeSource.Monotonic.markNow() + FetchMillis.milliseconds
+        suspend fun fromCache(key: String): ByteArray? = cache?.openSnapshot(key)?.use { fs.read(it.data) { readByteArray() } }
         sources.forEach { (id, source) ->
             // A profile photo's link is pre-signed and changes hourly: its path is the cache key, as Avatar keys it.
             val key = source.substringBefore('?')
             val name = "${id.replace(':', '-')}-${key.hashCode().toUInt().toString(16)}.img"
             val target = "$dir/$name".toPath()
-            if (fs.exists(target)) { kept[id] = name; return@forEach }
-            runCatching {
+            if (fs.exists(target)) { kept[id] = name; reused++; return@forEach }
+            val bytes = runCatching {
                 val local = key.removePrefix("file://").takeIf { it.startsWith("/") }?.toPath()
-                val bytes = if (local != null) {
-                    fs.read(local) { readByteArray() }
-                } else {
-                    val snapshot = cache?.openSnapshot(key) ?: return@forEach
-                    snapshot.use { fs.read(it.data) { readByteArray() } }
+                when {
+                    local != null -> fs.read(local) { readByteArray() }.also { cached++ }
+                    else -> fromCache(key)?.also { cached++ } ?: run {
+                        if (loader == null || fetched >= MaxFetches || fetchUntil.hasPassedNow()) return@run null
+                        fetched++
+                        // Into the disk cache under the same key (small decode only; the file keeps the original).
+                        kotlinx.coroutines.withTimeoutOrNull(OneFetchMillis) {
+                            loader.execute(
+                                coil3.request.ImageRequest.Builder(coil3.PlatformContext.INSTANCE).data(source).diskCacheKey(key)
+                                    .memoryCachePolicy(coil3.request.CachePolicy.DISABLED).size(64).build(),
+                            )
+                        }
+                        fromCache(key)
+                    }
                 }
-                // Profile photos are small; anything big is left out rather than weigh on the extension.
-                if (bytes.isEmpty() || bytes.size > MaxPhotoBytes) return@forEach
-                fs.write(target) { write(bytes) }
-                kept[id] = name
-            }
+            }.getOrNull()
+            // A profile photo is often the camera's full picture (several MB, 2026-11-14: these were left out, so the
+            // iPhone drew initials): stored as a small square JPEG, which also keeps the extension's memory low.
+            val small = bytes?.takeIf { it.isNotEmpty() && it.size <= MaxSourceBytes }?.let { notificationThumb(it) ?: it.takeIf { b -> b.size <= MaxPhotoBytes } }
+            if (small == null) { missing++; return@forEach }
+            runCatching { fs.write(target) { write(small) } }.onSuccess { kept[id] = name }.onFailure { missing++ }
         }
         // Photos no longer used (changed, or the person left every chat) go.
         runCatching { fs.list(dir.toPath()).filter { it.name !in kept.values }.forEach { fs.delete(it) } }
+        com.circaso.core.common.Diagnostics.note(
+            "notification snapshot: photos ${kept.size}/${sources.size} (kept $reused, cached $cached, fetched $fetched, missing $missing)",
+        )
         kept
     }
 
@@ -143,8 +172,33 @@ class IosNotificationSnapshotFile : NotificationSnapshotFile {
         }
     }
 
+    /** The centre square at [ThumbSide] px as JPEG; UIKit applies the rotation. Null when UIKit can't read it. */
+    private fun notificationThumb(bytes: ByteArray): ByteArray? = runCatching {
+        val image = platform.UIKit.UIImage(data = bytes.toNSData()) ?: return null
+        val (w, h) = image.size.useContents { width to height }
+        val short = kotlin.math.min(w, h)
+        if (short <= 0.0) return null
+        val side = kotlin.math.min(short, ThumbSide)
+        val k = side / short
+        val format = platform.UIKit.UIGraphicsImageRendererFormat.defaultFormat().apply { setScale(1.0) }
+        val square = platform.UIKit.UIGraphicsImageRenderer(size = platform.CoreGraphics.CGSizeMake(side, side), format = format).imageWithActions {
+            image.drawInRect(platform.CoreGraphics.CGRectMake(-(w - short) / 2 * k, -(h - short) / 2 * k, w * k, h * k))
+        }
+        val jpeg = platform.UIKit.UIImageJPEGRepresentation(square, 0.85) ?: return null
+        jpeg.toByteArray()
+    }.getOrNull()
+
     private companion object {
         const val MaxPhotoBytes = 2 * 1024 * 1024
+        /** A source photo bigger than this isn't read at all. */
+        const val MaxSourceBytes = 25 * 1024 * 1024
+        /** The stored square's side: the extension shows it at most 256 px. */
+        const val ThumbSide = 256.0
+        /** Photos downloaded per snapshot: the rest come on later writes (each one leaving Circaso). */
+        const val MaxFetches = 24
+        /** All downloads together, inside the seconds iOS gives after Circaso leaves the screen. */
+        const val FetchMillis = 12_000L
+        const val OneFetchMillis = 5_000L
     }
 }
 

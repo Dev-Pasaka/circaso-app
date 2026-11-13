@@ -45,10 +45,19 @@ data class Notice(
     val group: Boolean = false,
     /** Money's words beside [from]'s name and photo, without the name ("Sent you KES 2,000", "Added KES 1,000"). */
     val fromLine: String? = null,
+    /**
+     * A notice about a person that isn't money (a reaction on my moment, a missed call, a contact who joined;
+     * 2026-11-14): shown like a chat message, [from]'s photo as the icon and [fromLine] beside their name. Notices with
+     * the same [key] gather in one notification, one line per person ([thread] titles it once two or more are in it).
+     */
+    val thread: String? = null,
 )
 
-/** A person on a notification: the name as this phone shows it (a saved name first) and their photo's link. */
-data class NoticePerson(val userId: String?, val name: String, val photo: String?)
+/**
+ * A person on a notification: the name as this phone shows it (a saved name first) and their photo's link.
+ * [directChatId] is my chat with them, when there is one, so their notification shares the chat's conversation.
+ */
+data class NoticePerson(val userId: String?, val name: String, val photo: String?, val directChatId: String? = null)
 
 /**
  * One message in a conversation notification. [title] is the group's name (null for a direct chat, which is titled by
@@ -85,6 +94,8 @@ class PushNotices(
     private val invites: com.circaso.feature.messaging.domain.GroupInvitesRepository? = null,
     /** Names I saved for people: a notice the phone words itself uses them (the server's own pushes can't). */
     private val names: com.circaso.feature.names.domain.PeopleNames = com.circaso.feature.names.domain.PeopleNames.None,
+    /** My contacts (saved names applied): who a person is when no chat of mine names them (2026-11-14). */
+    private val contacts: com.circaso.feature.contacts.domain.ContactsRepository? = null,
 ) {
     suspend fun privacyOn(): Boolean = prefs.flag(AppPreferences.NotificationPrivacy).first()
 
@@ -101,7 +112,9 @@ class PushNotices(
             kind == "payment.received" -> moneyReceived(data)
             kind == "chama.contribution" && chatId != null -> contribution(chatId, data["userId"])
             kind?.startsWith("chama.request") == true && chatId != null -> payoutRequest(chatId, kind, data["requestId"])
-            kind == "call.missed" || kind == "call.ended" -> missedCall(chatId, data["callId"], data["callerName"], data["callKind"] == "VIDEO")
+            kind == "call.missed" || kind == "call.ended" -> missedCall(chatId, data["callId"], data["callerName"], data["callKind"] == "VIDEO", data["userId"])
+            kind == MomentReactionKind -> momentReaction(data)
+            kind == "contact.joined" || kind == "connection.added" -> newPerson(kind, data)
             kind != null && kind.startsWith("space.") -> null // Spaces is archived (2026-11-05)
             chatId != null && data["messageId"] == null && kind == null -> addedToGroup(chatId)
             chatId != null && data["messageId"] != null -> message(chatId, data["messageId"]!!)
@@ -150,10 +163,78 @@ class PushNotices(
         val id = userId ?: chat?.takeIf { it.kind == com.circaso.feature.messaging.domain.ChatKind.Direct }?.peerId
         val member = id?.let { i -> chat?.members?.firstOrNull { it.userId == i } }
         if (member != null) return NoticePerson(member.userId, member.displayName, member.avatarUrl)
-        val name = senderName(chatId, userId) ?: return null
+        // Not in this chat on this phone yet (a reply to my moment that opened a new chat): my contacts know them.
+        val name = senderName(chatId, userId) ?: return personById(userId)
         val raw = userId?.let { id -> chats.members(chatId).firstOrNull { it.userId == id } }
-        return NoticePerson(userId, name, raw?.avatarUrl)
+        return NoticePerson(userId, name, raw?.avatarUrl ?: personById(userId)?.photo)
     }
+
+    /**
+     * Who [userId] is on this phone with no chat to go by (2026-11-14: a reaction on my moment, a contact who joined):
+     * my contact first (the name I saved for them, else theirs), else a member of one of my chats; with my direct
+     * chat with them, so the notification shares its conversation. Null when unknown here, and with privacy on.
+     */
+    private suspend fun personById(userId: String?): NoticePerson? {
+        userId ?: return null
+        if (privacyOn()) return null
+        val direct = withTimeoutOrNull(LookupMillis) { directChatWith(userId) }
+        val contact = contacts?.let { repo -> withTimeoutOrNull(LookupMillis) { repo.contacts.first() } }?.firstOrNull { it.person.userId == userId }?.person
+        if (contact != null) return NoticePerson(userId, contact.displayName, contact.avatarUrl, direct)
+        val member = withTimeoutOrNull(LookupMillis) { chats.observeAllMembers().first() }?.filter { it.userId == userId }?.let { rows ->
+            rows.firstOrNull { it.chatId == direct } ?: rows.firstOrNull { it.avatarUrl != null } ?: rows.firstOrNull()
+        } ?: return null
+        return NoticePerson(userId, names.of(userId, member.displayName), member.avatarUrl, direct)
+    }
+
+    /** My direct chat with [userId], when I have one I haven't left. */
+    private suspend fun directChatWith(userId: String): String? {
+        val mine = chats.observeAllMembers().first().filter { it.userId == userId }.map { it.chatId }.toSet()
+        if (mine.isEmpty()) return null
+        return chats.chats().firstOrNull { it.chatId in mine && it.kind != "GROUP" && !it.left }?.chatId
+    }
+
+    /**
+     * `moment.loved` (2026-11-14: data-only, with `userId`, `momentId` and `reaction`): "Amina reacted ❤️ to your
+     * moment" beside Amina's photo. One notification per moment gathers everyone's reactions, one line each; the tap
+     * opens the moment, where its viewers and their reactions are. An older server sent only its own words.
+     */
+    private suspend fun momentReaction(data: Map<String, String>): Notice {
+        val userId = data["userId"]?.takeIf { it.isNotBlank() }
+        val momentId = data["momentId"]?.takeIf { it.isNotBlank() }
+        val emoji = data["reaction"]?.let(NotificationText::emojiOrNull)
+        val found = personById(userId)
+        val name = found?.name ?: userId?.let { names.saved.value[it] } ?: nameBefore(data["body"], " reacted ")
+        // Someone this phone doesn't know still joins the moment's thread (initials, the server's name or "Someone"),
+        // so they never replace the lines already gathered there.
+        val who = found ?: if (privacyOn()) null else NoticePerson(userId, name ?: "Someone", null)
+        val event = NotificationEvent.MomentReaction(name, emoji)
+        return Notice(
+            compose(event), NoticeChannel.Message, "moment:${momentId ?: "mine"}", NotificationDestination.Moment(null, momentId),
+            from = who, fromLine = NotificationText.personLine(event), thread = MomentThread,
+        )
+    }
+
+    /** `contact.joined` and `connection.added` (data-only since 2026-11-14): the person as I know them, with their photo. */
+    private suspend fun newPerson(kind: String, data: Map<String, String>): Notice {
+        val userId = data["userId"]?.takeIf { it.isNotBlank() }
+        val joined = kind == "contact.joined"
+        // A contact who just joined may not be in my list yet: fetch it once, briefly.
+        if (joined && userId != null && !privacyOn() && contacts?.let { r -> withTimeoutOrNull(LookupMillis) { r.contacts.first() } }?.none { it.person.userId == userId } == true) {
+            withTimeoutOrNull(ContactsLoadMillis) { contacts.refreshContacts() }
+        }
+        val who = personById(userId)
+        val serverName = nameBefore(data["body"], if (joined) " is on Circaso" else " connected with you")
+        val name = who?.name ?: userId?.let { names.saved.value[it] } ?: serverName
+        val event = if (joined) NotificationEvent.ContactJoined(name) else NotificationEvent.ConnectionAdded(name)
+        return Notice(
+            compose(event), NoticeChannel.Message, "person:$kind:${userId ?: data["body"].hashCode()}", NotificationDestination.Contacts,
+            from = who, fromLine = NotificationText.personLine(event),
+        )
+    }
+
+    /** The name at the start of the server's own words ("Amina reacted 😂 to your moment"), if they start with one. */
+    private fun nameBefore(body: String?, marker: String): String? =
+        body?.substringBefore(marker, "")?.takeIf { it.isNotBlank() && it != "Someone" && it != "Someone you know" }
 
     /**
      * A group's name as the chat list shows it: its own name, or its members' names while this phone can't read it
@@ -298,13 +379,23 @@ class PushNotices(
         return Notice(compose(event), NoticeChannel.Money, "request:${requestId ?: chatId}", destination, chatId)
     }
 
-    private suspend fun missedCall(chatId: String?, callId: String?, callerName: String?, video: Boolean): Notice {
+    private suspend fun missedCall(chatId: String?, callId: String?, callerName: String?, video: Boolean, callerId: String? = null): Notice {
         val chat = chatId?.let { chats.chat(it) }
+        val group = chat?.kind == "GROUP"
         // A direct call: the name I saved for them first, over the server's.
-        val saved = chat?.takeIf { it.kind != "GROUP" }?.let { c -> chats.members(c.chatId).firstNotNullOfOrNull { names.saved.value[it.userId] } }
-        val caller = saved ?: callerName ?: chat?.takeIf { it.kind != "GROUP" }?.name ?: chat?.name
-        val content = compose(NotificationEvent.MissedCall(caller, video))
-        return Notice(content, NoticeChannel.Message, "call:${callId ?: chatId}", NotificationDestination.MissedCall(chatId, callId), chatId)
+        val saved = chat?.takeIf { !group }?.let { c -> chats.members(c.chatId).firstNotNullOfOrNull { names.saved.value[it.userId] } }
+        // Who called, with their photo (2026-11-14): the caller's id from the push, else a direct chat's other person.
+        val who = (if (chatId != null) person(chatId, callerId) else personById(callerId))?.let { if (!group && chatId != null) it.copy(directChatId = chatId) else it }
+        val caller = saved ?: who?.name ?: callerName ?: chat?.takeIf { !group }?.name ?: chat?.name
+        val event = NotificationEvent.MissedCall(caller, video)
+        val content = compose(event)
+        return Notice(
+            content, NoticeChannel.Message, "call:${callId ?: chatId}", NotificationDestination.MissedCall(chatId, callId), chatId,
+            from = who, fromLine = who?.let { NotificationText.personLine(event) },
+            // A group call: titled by the group, with its photo, on the group's conversation.
+            groupPhoto = if (group && who != null && chatId != null) groupPhoto(chatId) else null, group = group,
+            thread = if (group && chatId != null) groupTitle(chatId, chat?.name) ?: "Group" else null,
+        )
     }
 
     /** A ringing call's words, with privacy: "Incoming call" and nothing more. */
@@ -320,6 +411,12 @@ class PushNotices(
         const val InviteKind = "chat.invite"
         /** How long an invite push waits for the invites to load before it words itself without the group's name. */
         const val InviteLoadMillis = 4_000L
+        /** How long a contact who just joined waits for my contacts to load, for their photo. */
+        const val ContactsLoadMillis = 3_000L
+        /** The push kind for a reaction on my moment (named for the first reaction, a heart). */
+        const val MomentReactionKind = "moment.loved"
+        /** A moment's notification once two or more people reacted to it. */
+        const val MomentThread = "Your moment"
     }
 }
 

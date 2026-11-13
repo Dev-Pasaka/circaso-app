@@ -37,6 +37,15 @@ sealed interface NotificationEvent {
     data class IncomingCall(val callerName: String?, val video: Boolean) : NotificationEvent
 
     data class MissedCall(val callerName: String?, val video: Boolean = false) : NotificationEvent
+
+    /** Someone reacted to my moment (2026-11-14): "Amina reacted ❤️ to your moment". */
+    data class MomentReaction(val who: String?, val emoji: String?) : NotificationEvent
+
+    /** Someone from my phone book joined Circaso, named as I saved them. */
+    data class ContactJoined(val who: String?) : NotificationEvent
+
+    /** Someone connected with me (by handle, QR or invite link). */
+    data class ConnectionAdded(val who: String?) : NotificationEvent
 }
 
 /** The pushes the group wallet's payout requests send (`chama.request.*`), from the reader's side. */
@@ -66,6 +75,24 @@ object NotificationText {
     const val PrivateMissedCall = "Missed call"
     const val PrivateGroupInvite = "You have a new group invite"
     const val GroupInviteTitle = "Group invite"
+    const val PrivateMomentReaction = "Someone reacted to your moment"
+    const val PrivateContactJoined = "Someone you know joined Circaso"
+    const val PrivateConnection = "You have a new connection"
+
+    /**
+     * What a person did, without their name, for a notification that shows them beside it with their photo ("Reacted
+     * ❤️ to your moment", "Missed video call"). iOS's extension mirrors these (Wording.swift).
+     */
+    /** A reaction as it may show: one emoji (a few code units at most, no letters or digits), else null. */
+    fun emojiOrNull(text: String): String? = text.trim().takeIf { it.isNotEmpty() && it.length <= 16 && it.none { c -> c.isLetterOrDigit() || c.isWhitespace() } }
+
+    fun personLine(event: NotificationEvent): String? = when (event) {
+        is NotificationEvent.MomentReaction -> "Reacted ${event.emoji?.let(::emojiOrNull) ?: "❤️"} to your moment"
+        is NotificationEvent.ContactJoined -> "Joined Circaso. Say hi 👋"
+        is NotificationEvent.ConnectionAdded -> "Connected with you"
+        is NotificationEvent.MissedCall -> if (event.video) "Missed video call" else "Missed voice call"
+        else -> null
+    }
 
     /**
      * What a chat message says, without who said it (a conversation notification names the sender beside it): its
@@ -155,6 +182,17 @@ object NotificationText {
 
             is NotificationEvent.MissedCall -> if (private) NotificationContent(AppName, PrivateMissedCall)
             else NotificationContent(PrivateMissedCall, event.callerName?.let { "Missed ${if (event.video) "video call" else "call"} from $it" } ?: "You missed a call")
+
+            is NotificationEvent.MomentReaction -> if (private) NotificationContent(AppName, PrivateMomentReaction)
+            else NotificationContent(event.who ?: AppName, if (event.who != null) personLine(event)!! else "Someone ${personLine(event)!!.replaceFirstChar { it.lowercase() }}")
+
+            is NotificationEvent.ContactJoined -> if (private) NotificationContent(AppName, PrivateContactJoined)
+            else if (event.who != null) NotificationContent(event.who, personLine(event)!!)
+            else NotificationContent(AppName, PrivateContactJoined)
+
+            is NotificationEvent.ConnectionAdded -> if (private) NotificationContent(AppName, PrivateConnection)
+            else if (event.who != null) NotificationContent(event.who, personLine(event)!!)
+            else NotificationContent(AppName, PrivateConnection)
         }
     }
 }

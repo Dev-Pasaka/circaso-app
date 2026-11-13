@@ -120,10 +120,19 @@ class CircasoMessagingService : FirebaseMessagingService() {
                 withTimeoutOrNull(SyncWindowMillis) {
                     // A push with its own alert ("Payment sent", "Name is on Circaso"…) reaches here only while Circaso is
                     // on screen, where the system doesn't show it: show its words with its tap, so it can still be opened.
+                    // A data-only push of a kind this version doesn't word (a newer server's) carries its words in
+                    // `title` and `body`: shown as they are rather than nothing; "New notification" with privacy on.
+                    val worded = message.notification?.let { it.title to it.body }
+                        ?: message.data["body"]?.takeIf { body ->
+                            val kind = message.data["kind"]
+                            body.isNotBlank() && kind != null && !kind.startsWith("space.") && !kind.startsWith("call.")
+                        }?.let {
+                            if (notices.privacyOn()) "Circaso" to "New notification" else message.data["title"] to it
+                        }
                     val notice = notices.forPush(message.data)
-                        ?: message.notification?.takeIf { message.data["kind"] != "session.revoked" }?.let { alert ->
+                        ?: worded?.takeIf { message.data["kind"] != "session.revoked" }?.let { (title, body) ->
                             com.circaso.core.notifications.Notice(
-                                com.circaso.core.notifications.NotificationContent(alert.title ?: "Circaso", alert.body.orEmpty()),
+                                com.circaso.core.notifications.NotificationContent(title ?: "Circaso", body.orEmpty()),
                                 com.circaso.core.notifications.NoticeChannel.Message,
                                 "push:${message.messageId}",
                                 com.circaso.core.notifications.NotificationDestination.fromPush(message.data)

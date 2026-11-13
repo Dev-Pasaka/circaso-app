@@ -12,6 +12,9 @@ import com.circaso.core.realtime.RealtimeCursors
 import com.circaso.core.realtime.SocketFactory
 import com.circaso.core.sync.Outbox
 import com.circaso.feature.chama.domain.ChamaRepository
+import com.circaso.feature.contacts.domain.Contact
+import com.circaso.feature.contacts.domain.ContactsRepository
+import com.circaso.feature.contacts.domain.Person
 import com.circaso.feature.messaging.data.keys.KeysRepositoryImpl
 import com.circaso.feature.messaging.data.keys.SignedKeyUpload
 import com.circaso.feature.messaging.data.local.ChatEntity
@@ -73,7 +76,18 @@ class PushNoticesTest {
     private val inbox = InboxProcessor(messagesDao, chatsDao, messagesRemote, sessions, groupKeys, realtime, { chats.refreshChat(it) })
     private val messages = MessagesRepositoryImpl(messagesDao, chatsDao, messagesRemote, inbox, Outbox(FakeOutboxDao(), { me }), {}, realtime, json, { me })
     private val prefs = AppPreferences(MemoryPreferences())
-    private val notices = PushNotices(chatsDao, messagesDao, chats, messages, inbox, stub<WalletRepository>(), stub<ChamaRepository>(), prefs, names = names)
+    /** My contacts as the repository gives them: saved names already applied. */
+    private val contactList = MutableStateFlow(
+        listOf(Contact(Person(amina, "Mum", null, "https://cdn/x/amina.jpg?sig=2", null, profileName = "Amina Wanjiku"), "phonebook", "t")),
+    )
+    private val contacts = Proxy.newProxyInstance(ContactsRepository::class.java.classLoader, arrayOf(ContactsRepository::class.java)) { _, method, _ ->
+        when (method.name) {
+            "getContacts" -> contactList
+            "getBlocks" -> flowOf(emptyList<Person>())
+            else -> null
+        }
+    } as ContactsRepository
+    private val notices = PushNotices(chatsDao, messagesDao, chats, messages, inbox, stub<WalletRepository>(), stub<ChamaRepository>(), prefs, names = names, contacts = contacts)
 
     private object NoCursors : RealtimeCursors {
         override suspend fun lastSeq(module: String) = 0L
@@ -181,5 +195,70 @@ class PushNoticesTest {
         val direct = assertNotNull(notices.forPush(push("c1", "m3")))
         assertEquals(NotificationContent("Circaso", "You received money"), direct.content)
         assertNull(direct.from)
+    }
+
+    private fun reaction(userId: String, emoji: String = "😂", momentId: String = "mo1") = mapOf(
+        "kind" to "moment.loved", "userId" to userId, "momentId" to momentId, "reaction" to emoji,
+        "title" to "Circaso", "body" to "Amina Wanjiku reacted $emoji to your moment",
+    )
+
+    @Test fun aReactionOnMyMomentShowsTheReactorAsSavedWithTheirPhotoOnTheirChat() = runBlocking {
+        directChat()
+        val notice = assertNotNull(notices.forPush(reaction(amina)))
+        assertEquals(NotificationContent("Mum", "Reacted 😂 to your moment"), notice.content)
+        assertEquals(NoticePerson(amina, "Mum", "https://cdn/x/amina.jpg?sig=2", directChatId = "c1"), notice.from)
+        assertEquals("Reacted 😂 to your moment", notice.fromLine)
+        assertEquals("moment:mo1", notice.key, "one notification per moment gathers its reactions")
+        assertEquals("Your moment", notice.thread)
+        assertEquals(NotificationDestination.Moment(null, "mo1"), notice.destination)
+        assertEquals(NoticeChannel.Message, notice.channel)
+    }
+
+    @Test fun aReactionFromSomeoneOnlyInAGroupUsesTheirGroupPhotoAndNoChat() = runBlocking {
+        group()
+        chatsDao.insertMembers(listOf(member("g1", otieno, "Otieno", "https://cdn/x/otieno.jpg")))
+        val notice = assertNotNull(notices.forPush(reaction(otieno, "🔥")))
+        assertEquals(NotificationContent("Otieno", "Reacted 🔥 to your moment"), notice.content)
+        assertEquals(NoticePerson(otieno, "Otieno", "https://cdn/x/otieno.jpg", directChatId = null), notice.from)
+    }
+
+    @Test fun aReactionFromSomeoneUnknownHereKeepsTheServersNameAndNoPhoto() = runBlocking {
+        val notice = assertNotNull(notices.forPush(reaction("stranger")))
+        assertEquals(NotificationContent("Amina Wanjiku", "Reacted 😂 to your moment"), notice.content)
+        assertEquals(NoticePerson("stranger", "Amina Wanjiku", null), notice.from, "initials, still in the moment's thread")
+        val odd = assertNotNull(notices.forPush(reaction("stranger", emoji = "click here")))
+        assertEquals("Reacted ❤️ to your moment", odd.fromLine, "only an emoji ever shows")
+    }
+
+    @Test fun withPrivacyOnAReactionNamesNobodyAndShowsNoPhoto() = runBlocking {
+        directChat()
+        prefs.setFlag(AppPreferences.NotificationPrivacy, true)
+        val notice = assertNotNull(notices.forPush(reaction(amina)))
+        assertEquals(NotificationContent("Circaso", "Someone reacted to your moment"), notice.content)
+        assertNull(notice.from)
+        val joined = assertNotNull(notices.forPush(mapOf("kind" to "contact.joined", "userId" to amina, "body" to "Amina Wanjiku is on Circaso")))
+        assertEquals(NotificationContent("Circaso", "Someone you know joined Circaso"), joined.content)
+        assertNull(joined.from)
+        directChat()
+        val missed = assertNotNull(notices.forPush(mapOf("kind" to "call.missed", "chatId" to "c1", "callId" to "k1", "userId" to amina)))
+        assertEquals(NotificationContent("Circaso", "Missed call"), missed.content)
+        assertNull(missed.from)
+    }
+
+    @Test fun aContactWhoJoinedIsNamedAsSavedWithTheirPhoto() = runBlocking {
+        val notice = assertNotNull(notices.forPush(mapOf("kind" to "contact.joined", "userId" to amina, "body" to "Amina Wanjiku is on Circaso")))
+        assertEquals(NotificationContent("Mum", "Joined Circaso. Say hi 👋"), notice.content)
+        assertEquals("Mum", notice.from?.name)
+        assertEquals("Joined Circaso. Say hi 👋", notice.fromLine)
+        assertEquals(NotificationDestination.Contacts, notice.destination)
+    }
+
+    @Test fun aMissedCallShowsTheCallersPhotoOnTheirChat() = runBlocking {
+        directChat()
+        val notice = assertNotNull(notices.forPush(mapOf("kind" to "call.missed", "chatId" to "c1", "callId" to "k1", "userId" to amina, "callKind" to "VIDEO")))
+        assertEquals(NotificationContent("Missed call", "Missed video call from Mum"), notice.content)
+        assertEquals(NoticePerson(amina, "Mum", "https://cdn/x/amina.jpg?sig=1", directChatId = "c1"), notice.from)
+        assertEquals("Missed video call", notice.fromLine)
+        assertNull(notice.thread)
     }
 }

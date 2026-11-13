@@ -1,5 +1,6 @@
 import ImageIO
 import Intents
+import os
 import UIKit
 import UserNotifications
 
@@ -25,24 +26,47 @@ final class NotificationService: UNNotificationServiceExtension {
         let content = (request.content.mutableCopy() as? UNMutableNotificationContent) ?? UNMutableNotificationContent()
         let info = Info(content.userInfo)
         if let chatId = info.chatId { content.threadIdentifier = chatId }
+        // One moment's reactions stack together, apart from the chats.
+        if info.kind == Info.momentReaction { content.threadIdentifier = "moment:\(info.string("momentId") ?? "mine")" }
         let privacy = UserDefaults(suiteName: Snapshot.appGroup)?.bool(forKey: "notificationPrivacy") ?? false
         // A chat message, 1:1 or group: Reply and Mark as Read (ChatNotificationActions.swift in the app). With privacy
         // on too, as on Android; that Reply asks for Face ID or the passcode first. Money cards opened below lose it;
         // under privacy, or out of time, one can't be told from words, so it keeps it (a reply is just a message).
         if info.isChatMessage { content.categoryIdentifier = privacy ? Info.privateChatCategory : Info.chatCategory }
         fallback = content.copy() as? UNNotificationContent
-        if privacy {
-            if let words = Wording.privateWords(kind: info.kind, hasMessage: info.messageId != nil) {
-                content.title = words.0
-                content.subtitle = ""
-                content.body = words.1
-            }
-            finish(content)
-            return
-        }
         Task {
+            // One moment buzzes at most once a minute, privacy on or off, words opened or not.
+            if info.kind == Info.momentReaction { await Self.quietMoment(content, info: info) }
+            if privacy {
+                if let words = Wording.privateWords(kind: info.kind, hasMessage: info.messageId != nil) {
+                    content.title = words.0
+                    content.subtitle = ""
+                    content.body = words.1
+                }
+                self.finish(content)
+                return
+            }
             let worded = await Worder(content: content, info: info).word()
             self.finish(worded)
+        }
+    }
+
+    /// A reaction on my moment: the same person's earlier one goes (they changed it) and this one makes no sound, as
+    /// does any reaction within a minute of the moment's last notification.
+    private static func quietMoment(_ content: UNMutableNotificationContent, info: Info) async {
+        let center = UNUserNotificationCenter.current()
+        let earlier = await center.deliveredNotifications().filter { $0.request.content.threadIdentifier == content.threadIdentifier }
+        var quiet = earlier.contains { $0.date > Date().addingTimeInterval(-60) }
+        if let userId = info.string("userId") {
+            let mine = earlier.filter { $0.request.content.userInfo["userId"] as? String == userId }.map(\.request.identifier)
+            if !mine.isEmpty {
+                quiet = true
+                center.removeDeliveredNotifications(withIdentifiers: mine)
+            }
+        }
+        if quiet {
+            content.sound = nil
+            content.interruptionLevel = .passive
         }
     }
 
@@ -72,6 +96,7 @@ struct Info {
     var isChatMessage: Bool { kind == nil && chatId != nil && messageId != nil }
 
     /// The app's categories (ChatNotificationActions.swift), registered at its launch.
+    static let momentReaction = "moment.loved"
     static let chatCategory = "CHAT_MESSAGE"
     static let privateChatCategory = "CHAT_MESSAGE_PRIVATE"
 }
@@ -81,12 +106,17 @@ private struct Worder {
     let info: Info
 
     func word() async -> UNNotificationContent {
-        guard let snapshot = Snapshot.load() else { return content }
+        guard let snapshot = Snapshot.load() else {
+            Trace.note("\(info.kind ?? "message"): no snapshot (none yet, or locked since restart)")
+            return content
+        }
         switch info.kind {
         case nil where info.messageId != nil && info.chatId != nil: return await message(snapshot)
         case "payment.received": return await moneyReceived(snapshot)
         case "chama.contribution": return await contribution(snapshot)
         case "call.missed", "call.ended": return missedCall(snapshot)
+        case Info.momentReaction: return momentReaction(snapshot)
+        case "contact.joined", "connection.added": return newPerson(snapshot)
         default: return content
         }
     }
@@ -149,7 +179,10 @@ private struct Worder {
                 content.body = line
             }
         }
-        guard let sender else { return content }
+        guard let sender else {
+            Trace.note("message: sender not in snapshot")
+            return content
+        }
         return communication(s, chat: chat, sender: sender) ?? content
     }
 
@@ -237,27 +270,58 @@ private struct Worder {
         content.interruptionLevel = .passive
     }
 
-    /// The caller as this person saved them.
+    /// The caller as this person saved them, with their photo (2026-11-14: the push names the caller's `userId`).
     private func missedCall(_ s: Snapshot) -> UNNotificationContent {
-        guard let chat = s.chat(info.chatId) else { return content }
+        let chat = s.chat(info.chatId)
         let video = info.string("callKind") == "VIDEO"
-        let name = chat.group ? (s.person(info.string("callerId"))?.name ?? info.string("callerName") ?? chat.title) : s.peer(of: chat)?.name
+        let callerId = info.string("userId") ?? info.string("callerId")
+        let caller = s.person(callerId) ?? chat.flatMap { s.peer(of: $0) }
+        let name = caller?.name ?? info.string("callerName") ?? chat?.title
         guard let name else { return content }
         content.title = Wording.privateMissedCall
         content.body = "Missed \(video ? "video call" : "call") from \(name)"
-        return content
+        guard let caller else { return content }
+        // Beside their name and photo, as Android: "Missed video call".
+        let plain = content.copy() as? UNNotificationContent
+        content.title = caller.name
+        content.body = Wording.missedCallLine(video: video)
+        return communication(s, chat: chat, sender: caller) ?? plain ?? content
+    }
+
+    /// "Amina reacted ❤️ to your moment" beside Amina's photo, as Android words it (the sound was settled before).
+    private func momentReaction(_ s: Snapshot) -> UNNotificationContent {
+        let userId = info.string("userId")
+        let emoji = info.string("reaction")
+        let thread = content.threadIdentifier
+        // Not known on this phone: the server's own words ("Amina reacted 😂 to your moment").
+        guard let who = s.person(userId) else { return content }
+        content.title = who.name
+        content.body = Wording.momentReactionLine(emoji: emoji)
+        return communication(s, chat: nil, sender: who, conversation: thread) ?? content
+    }
+
+    /// A contact who joined, someone who connected with me: named as I saved them, with their photo.
+    private func newPerson(_ s: Snapshot) -> UNNotificationContent {
+        guard let who = s.person(info.string("userId")) else { return content }
+        let joined = info.kind == "contact.joined"
+        let plain = content.copy() as? UNNotificationContent
+        content.title = who.name
+        content.body = joined ? Wording.joinedLine : Wording.connectedLine
+        return communication(s, chat: nil, sender: who, conversation: "person:\(who.id)") ?? plain ?? content
     }
 
     // MARK: communication notifications
 
     /// The same words as a communication notification: the sender's photo (initials when there's none) as the
     /// notification's icon, the group's name and photo for a group. Nil when iOS refuses it; the plain words stay.
-    private func communication(_ s: Snapshot, chat: Snapshot.Chat?, sender: Snapshot.Person) -> UNNotificationContent? {
+    private func communication(_ s: Snapshot, chat: Snapshot.Chat?, sender: Snapshot.Person, conversation: String? = nil) -> UNNotificationContent? {
         let group = chat?.group == true
         let handle = INPersonHandle(value: sender.id, type: .unknown)
+        let photo = image(s.photoURL(sender.photo))
+        let hasPhoto = photo != nil
         let person = INPerson(
             personHandle: handle, nameComponents: PersonNameComponentsFormatter().personNameComponents(from: sender.name), displayName: sender.name,
-            image: image(s.photoURL(sender.photo)) ?? Initials.image(sender.name), contactIdentifier: nil, customIdentifier: sender.id
+            image: photo ?? Initials.image(sender.name), contactIdentifier: nil, customIdentifier: sender.id
         )
         let me = INPerson(
             personHandle: INPersonHandle(value: s.me ?? "me", type: .unknown), nameComponents: nil, displayName: nil,
@@ -268,7 +332,7 @@ private struct Worder {
             outgoingMessageType: .outgoingMessageText,
             content: content.body,
             speakableGroupName: group ? INSpeakableString(spokenPhrase: chat?.title ?? "Group") : nil,
-            conversationIdentifier: chat?.id ?? info.chatId,
+            conversationIdentifier: conversation ?? chat?.id ?? info.chatId,
             serviceName: nil,
             sender: person,
             attachments: nil
@@ -279,7 +343,14 @@ private struct Worder {
         let interaction = INInteraction(intent: intent, response: nil)
         interaction.direction = .incoming
         interaction.donate(completion: nil)
-        return try? content.updating(from: intent)
+        do {
+            let updated = try content.updating(from: intent)
+            Trace.note("\(info.kind ?? "message"): communication ok, photo \(hasPhoto ? "found" : (sender.photo == nil ? "none in snapshot" : "file unreadable"))")
+            return updated
+        } catch {
+            Trace.note("\(info.kind ?? "message"): updating failed (\((error as NSError).domain) \((error as NSError).code))")
+            return nil
+        }
     }
 
     /// Up to two other members, so iOS draws the notification as a group's.
@@ -311,5 +382,25 @@ private struct Worder {
     private func removeDelivered(_ matches: (UNNotification) -> Bool) async {
         let ids = await UNUserNotificationCenter.current().deliveredNotifications().filter(matches).map(\.request.identifier)
         if !ids.isEmpty { UNUserNotificationCenter.current().removeDeliveredNotifications(withIdentifiers: ids) }
+    }
+}
+
+/// What the extension did with a push, without names, ids or words (2026-11-14: "why initials, not the photo?"): to the
+/// unified log, and the last lines in the App Group's Library/Caches/notification-service.log, which can be copied off
+/// the phone (`devicectl device copy from --domain-type appGroupDataContainer`).
+enum Trace {
+    private static let log = Logger(subsystem: "com.circaso.app.NotificationService", category: "push")
+    private static let maxBytes = 64 * 1024
+
+    static func note(_ line: String) {
+        log.info("\(line, privacy: .public)")
+        guard let dir = Snapshot.container?.appendingPathComponent("Library/Caches", isDirectory: true) else { return }
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let url = dir.appendingPathComponent("notification-service.log")
+        let stamp = ISO8601DateFormatter().string(from: Date())
+        var text = (try? String(contentsOf: url, encoding: .utf8)) ?? ""
+        text += "\(stamp) \(line)\n"
+        if text.utf8.count > maxBytes { text = String(text.suffix(maxBytes / 2)) }
+        try? text.write(to: url, atomically: true, encoding: .utf8)
     }
 }

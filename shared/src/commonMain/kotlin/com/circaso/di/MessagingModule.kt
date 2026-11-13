@@ -137,10 +137,10 @@ val messagingModule = module {
         com.circaso.core.notifications.NotificationSnapshotWriter(
             signal = get(), chats = get(), chatsRepo = get(), names = get(), wallet = get(), sealer = get(), crypto = get(), storage = get(),
             file = getOrNull<com.circaso.core.notifications.NotificationSnapshotFile>() ?: com.circaso.core.notifications.NoNotificationSnapshotFile,
-            ownUserId = get(named("ownUserId")), scope = get(),
+            ownUserId = get(named("ownUserId")), scope = get(), contacts = get(),
         )
     }
-    single { com.circaso.core.notifications.PushNotices(get(), get(), get(), get(), get(), get(), get(), get(), invites = get(), names = get()) }
+    single { com.circaso.core.notifications.PushNotices(get(), get(), get(), get(), get(), get(), get(), get(), invites = get(), names = get(), contacts = get()) }
     // A message that arrives over the socket is notified at once (2026-11-13); one notification per message either way.
     single { com.circaso.core.notifications.PostedMessages() }
     single {

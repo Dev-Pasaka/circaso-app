@@ -147,6 +147,11 @@ class NotificationSnapshotWriter(
     private val file: NotificationSnapshotFile,
     private val ownUserId: suspend () -> String?,
     private val scope: CoroutineScope,
+    /**
+     * My contacts (saved names applied), so a push about someone I have no chat with (a reaction on my moment, a
+     * contact who joined) still shows their name and photo (2026-11-14).
+     */
+    private val contacts: com.circaso.feature.contacts.domain.ContactsRepository? = null,
 ) {
     private var running: Job? = null
 
@@ -199,9 +204,12 @@ class NotificationSnapshotWriter(
     }
 
     private suspend fun write() {
-        val snapshot = build() ?: return file.write(null)
+        val snapshot = build() ?: return file.write(null).also { com.circaso.core.common.Diagnostics.note("notification snapshot: none (no identity)") }
         val plain = NotificationSnapshot.json.encodeToString(NotificationSnapshot.serializer(), snapshot).encodeToByteArray()
         file.write(crypto.aesGcmSeal(key(), plain, NotificationSnapshot.Label.encodeToByteArray()))
+        com.circaso.core.common.Diagnostics.note(
+            "notification snapshot: written, ${snapshot.chats.size} chats, ${snapshot.people.size} people, ${snapshot.people.count { it.photo != null }} with photos, ${plain.size / 1024} KB",
+        )
     }
 
     /** The snapshot's own key, made once; the extension reads it from the shared Keychain item. */
@@ -232,6 +240,12 @@ class NotificationSnapshotWriter(
             shown?.avatarUrl?.let { photoSources["g:${chat.chatId}"] = it }
             NotificationSnapshot.Chat(chat.chatId, group, if (group) chat.name ?: shown?.title else null, members = members.map { it.userId })
         }
+        // People in no chat of mine: my contacts, up to [MaxContacts] (their photos are read from the image cache only).
+        val known = contacts?.let { repo -> withTimeoutOrNull(LookupMillis) { repo.contacts.first() } }.orEmpty()
+        known.asSequence().filter { it.person.userId !in people }.take(MaxContacts).forEach { c ->
+            people[c.person.userId] = NotificationSnapshot.Person(c.person.userId, c.person.displayName)
+            c.person.avatarUrl?.takeIf { photoSources.size < MaxPhotos }?.let { photoSources[c.person.userId] = it }
+        }
         val photos = runCatching { file.photos(photoSources) }.getOrDefault(emptyMap())
         val fiat = withTimeoutOrNull(LookupMillis) { wallet.wallet.first()?.fiat }
         return NotificationSnapshot(
@@ -252,5 +266,9 @@ class NotificationSnapshotWriter(
 
     private companion object {
         const val LookupMillis = 1_000L
+        /** Enough for anyone's contacts; keeps the snapshot well inside the extension's memory. */
+        const val MaxContacts = 500
+        /** Contacts' photos stop at this many in all (people in my chats come first), to keep the App Group small. */
+        const val MaxPhotos = 200
     }
 }
