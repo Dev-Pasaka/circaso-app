@@ -57,6 +57,9 @@ import kotlin.native.Platform
 fun initKoinIos() {
     // Debug breadcrumbs (outcomes only, never tokens or accounts) go to the console of the run.
     if (Platform.isDebugBinary) com.circaso.core.common.Diagnostics.sink = { println("CircasoNet: $it") }
+    // Every build keeps a rolling, scrubbed diagnostic log in Application Support (You → Help → Send diagnostic log).
+    com.circaso.core.common.Diagnostics.log = com.circaso.core.common.DiagnosticsLog(okio.FileSystem.SYSTEM, okio.Path.Companion.run { applicationSupportPath("diagnostics").toPath() })
+    com.circaso.core.common.Diagnostics.note("app: started iOS ${platform.UIKit.UIDevice.currentDevice.systemVersion}")
     initKoin(
     module {
         single<ClientInfo> { IosClientInfo() }

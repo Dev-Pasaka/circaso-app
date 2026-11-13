@@ -54,8 +54,8 @@ class PushTokenRegistrar(
         val person = userId() ?: return@withLock
         if (lastSent == person to token) return@withLock
         when (send(token)) {
-            is AppResult.Success -> { lastSent = person to token; Diagnostics.note("push token: registered") }
-            is AppResult.Failure -> Diagnostics.note("push token: not registered yet")
+            is AppResult.Success -> { lastSent = person to token; Diagnostics.note("push: token registered") }
+            is AppResult.Failure -> Diagnostics.note("push: token not registered yet")
         }
     }
 }

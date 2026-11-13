@@ -45,7 +45,14 @@ class OutboxProcessor(
     /** True while a drain is sending (in this process): a second runner has nothing to add. */
     val busy: Boolean get() = lock.isLocked
 
-    suspend fun drain(): DrainResult = lock.withLock {
+    suspend fun drain(): DrainResult = lock.withLock { drainLocked().also { r ->
+        when (r) {
+            is DrainResult.Drained -> if (r.sent > 0) com.circaso.core.common.Diagnostics.note("sync: outbox sent ${r.sent}")
+            is DrainResult.Paused -> com.circaso.core.common.Diagnostics.note("sync: outbox paused after ${r.sent} (${r.reason})")
+        }
+    } }
+
+    private suspend fun drainLocked(): DrainResult {
         // Under the lock nothing in this process is sending, so a row still marked `sending` was cut off (the
         // process died mid-upload, or the runner was stopped): back in line with its own key, before anything else.
         outbox.requeueInterrupted()

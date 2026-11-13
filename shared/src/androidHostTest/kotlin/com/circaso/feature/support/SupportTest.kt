@@ -32,6 +32,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runTest
+import com.circaso.feature.support.presentation.LogSheet
 import kotlinx.coroutines.test.setMain
 import java.lang.reflect.Proxy
 import kotlin.test.AfterTest
@@ -145,5 +146,35 @@ class SupportTest {
         vm.onSend()
         assertNull(vm.state.value.caseNumber)
         assertEquals("We can't start a recovery for that number.", vm.state.value.error)
+    }
+
+    // ---- "Send diagnostic log" (2026-11-13) ----
+
+    private fun helpWithLog(upload: suspend () -> AppResult<DiagnosticLogReceipt>) =
+        HelpViewModel(ObserveChatsUseCase(chatsRepo), FindByHandleUseCase(profiles), OpenDirectChatUseCase(chatsRepo), SendMessageUseCase(messages), connection, myUserId = { "me" }, sendLog = upload)
+
+    @Test fun aLogIsSentOnceConfirmedAndShowsItsCode() = runTest(dispatcher) {
+        val gate = kotlinx.coroutines.CompletableDeferred<Unit>()
+        var uploads = 0
+        val vm = helpWithLog { uploads++; gate.await(); AppResult.Success(DiagnosticLogReceipt("DL-7K3QX9")) }
+        backgroundScope.launch(dispatcher) { vm.state.collect { } }
+        vm.onSendLog()
+        assertEquals(LogSheet.Confirm, vm.state.value.logSheet)
+        vm.onSendLogConfirmed()
+        vm.onSendLogConfirmed() // a double tap
+        vm.onLogSheetClosed() // held open while sending
+        assertEquals(LogSheet.Sending, vm.state.value.logSheet)
+        gate.complete(Unit)
+        assertEquals(LogSheet.Sent("DL-7K3QX9"), vm.state.value.logSheet)
+        assertEquals(1, uploads)
+    }
+
+    @Test fun aRateLimitedLogSaysWhenToTryWithItsReference() = runTest(dispatcher) {
+        val vm = helpWithLog { AppResult.Failure(AppError.Api("support.log_rate_limited", 429, "req-1", 3600, emptyMap())) }
+        backgroundScope.launch(dispatcher) { vm.state.collect { } }
+        vm.onSendLog(); vm.onSendLogConfirmed()
+        val failed = vm.state.value.logSheet as LogSheet.Failed
+        assertTrue(failed.message.contains("an hour"), failed.message)
+        assertEquals("Ref req-1", failed.reference)
     }
 }

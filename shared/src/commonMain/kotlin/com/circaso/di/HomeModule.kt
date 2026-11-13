@@ -16,7 +16,8 @@ val homeModule = module {
     // Support (SP01, SP06): a chat with Circaso's own account, and the lost-access case.
     viewModel {
         val auth = get<com.circaso.core.session.AuthManager>()
-        com.circaso.feature.support.presentation.HelpViewModel(get(), get(), get(), get(), get(), myUserId = { auth.userId })
+        val logs = com.circaso.feature.support.DiagnosticLogs(get(), get())
+        com.circaso.feature.support.presentation.HelpViewModel(get(), get(), get(), get(), get(), myUserId = { auth.userId }, sendLog = logs::send)
     }
     viewModel { (phone: String?) -> com.circaso.feature.support.presentation.LostAccessViewModel(phone, get()) }
     viewModel { YouViewModel(get(), get(), get(), get(), get(), get(), kickOutbox = get(named("kickOutbox")), prefs = get()) }
