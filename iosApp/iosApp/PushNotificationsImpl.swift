@@ -16,7 +16,7 @@ final class PushNotificationsImpl: NSObject, IosPushApi, MessagingDelegate {
     /// Called from AppDelegate's didFinishLaunching, before anything asks for a token.
     static func install() {
         guard Bundle.main.path(forResource: "GoogleService-Info", ofType: "plist") != nil else { return }
-        FirebaseApp.configure()
+        if FirebaseApp.app() == nil { FirebaseApp.configure() } // crash reporting may have configured it first
         Messaging.messaging().delegate = shared
         IosPushBridge.shared.api = shared
         // Already allowed earlier: register at every launch, so APNs and Firebase are ready before the first token ask.

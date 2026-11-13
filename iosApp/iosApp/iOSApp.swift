@@ -8,6 +8,7 @@ struct iOSApp: App {
     @Environment(\.scenePhase) private var scenePhase
 
     init() {
+        CrashReporterImpl.install() // first, so a crash while the rest starts is reported; see CrashReporting.kt
         GoogleSignInBridge.shared.provider = GoogleSignInImpl()
         PasskeyBridge.shared.provider = PasskeyImpl() // the PIN Vault's PRF passkeys; see IosPasskeyPrf.kt
         SignalBridge.shared.api = SignalCryptoImpl() // libsignal for encrypted chats; see SignalBridge.kt
