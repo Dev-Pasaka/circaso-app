@@ -446,7 +446,7 @@ private fun DuoStage(call: CallUi, them: CallPerson?, mine: Boolean, meBig: Bool
                 Modifier.tileMotion(themMotion, still, spec, if (themSmall) radiusPx else 0f, SelfViewHairline, hairlinePx).smallPicture(themSmall, themMotion, "Show yourself big", onSwap, release)
                     .semantics { if (themSmall) { contentDescription = "$them1's video" } },
             ) {
-                androidx.compose.foundation.layout.BoxWithConstraints(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                TileVideoClip(themMotion) { androidx.compose.foundation.layout.BoxWithConstraints(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                     val theirMid = them?.videoMid
                     // While their connection is dropped their picture would freeze on its last frame: their photo,
                     // faded, says they're away instead (2026-11-13).
@@ -460,7 +460,7 @@ private fun DuoStage(call: CallUi, them: CallPerson?, mine: Boolean, meBig: Bool
                     } else {
                         Avatar(call.title, Modifier.graphicsLayer { alpha = faded }, size = if (maxWidth < 200.dp) CircasoSizes.avatarLg else 120.dp, imageUrl = them?.photoUrl ?: call.photoUrl)
                     }
-                }
+                } }
             }
             Box(Modifier.fillMaxSize()) {
                 Box(Modifier.fillMaxWidth().height(180.dp).background(Brush.verticalGradient(listOf(Color.Black.copy(alpha = 0.55f), Color.Transparent))))
@@ -473,7 +473,7 @@ private fun DuoStage(call: CallUi, them: CallPerson?, mine: Boolean, meBig: Bool
                 ) {
                     // Mirrored like a mirror when it's the front camera.
                     if (call.screen) ScreenPlaceholder()
-                    else CallVideo(VideoSource.Local, Modifier.fillMaxSize(), mirror = call.frontCamera)
+                    else TileVideoClip(meMotion) { CallVideo(VideoSource.Local, Modifier.fillMaxSize(), mirror = call.frontCamera) }
                 }
             }
         },
@@ -826,7 +826,7 @@ private fun FittedTiles(
                                 if (onTap == null) Modifier
                                 else Modifier.pressable(role = Role.Button, onClickLabel = tapLabel(id)) { onTap(id) },
                             ),
-                        ) { tile(id) }
+                        ) { TileVideoClip(motion) { tile(id) } }
                     }
                 }
             },

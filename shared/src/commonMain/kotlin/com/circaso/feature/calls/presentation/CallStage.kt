@@ -3,7 +3,10 @@ package com.circaso.feature.calls.presentation
 import androidx.compose.animation.core.AnimationSpec
 import androidx.compose.animation.core.VectorConverter
 import androidx.compose.animation.core.animate
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.Stable
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -27,6 +30,8 @@ import androidx.compose.ui.layout.positionInParent
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.toSize
+import com.circaso.core.calls.LocalVideoClip
+import com.circaso.core.calls.VideoClip
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
@@ -186,6 +191,16 @@ internal class TileMotion(private val scope: CoroutineScope) {
     }
 
     internal class Frame(val scale: Float, val shift: Offset, val clip: Rect, val radius: Float)
+}
+
+/**
+ * Hands the tile's rounded crop (the one [tileMotion] draws) to the video inside it, so a native video view is cut to
+ * the same shape, at rest and through a swap (see [LocalVideoClip]).
+ */
+@Composable
+internal fun TileVideoClip(motion: TileMotion, content: @Composable () -> Unit) {
+    val clip = remember(motion) { { motion.frame()?.let { VideoClip(it.clip, it.radius) } } }
+    CompositionLocalProvider(LocalVideoClip provides clip, content = content)
 }
 
 /**

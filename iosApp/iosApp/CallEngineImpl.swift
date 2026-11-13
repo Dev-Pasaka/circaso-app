@@ -337,7 +337,7 @@ final class CallEngineImpl: NSObject, CallEngineProvider, RTCPeerConnectionDeleg
         }
     }
 
-    private func startCapture(_ cap: RTCCameraVideoCapturer) {
+    private func startCapture(_ cap: RTCCameraVideoCapturer, started: (() -> Void)? = nil) {
         let position: AVCaptureDevice.Position = front ? .front : .back
         guard let device = RTCCameraVideoCapturer.captureDevices().first(where: { $0.position == position }) ?? RTCCameraVideoCapturer.captureDevices().first else { return }
         // The 720p format closest to what the SFU forwards well, at 30 fps.
@@ -345,12 +345,21 @@ final class CallEngineImpl: NSObject, CallEngineProvider, RTCPeerConnectionDeleg
         let format = formats.min(by: { abs(Int(CMVideoFormatDescriptionGetDimensions($0.formatDescription).width) - 1280) < abs(Int(CMVideoFormatDescriptionGetDimensions($1.formatDescription).width) - 1280) }) ?? formats.first
         guard let format else { return }
         let fps = format.videoSupportedFrameRateRanges.map { $0.maxFrameRate }.max().map { min($0, 30) } ?? 30
-        cap.startCapture(with: device, format: format, fps: Int(fps))
+        cap.startCapture(with: device, format: format, fps: Int(fps)) { _ in
+            if let started { DispatchQueue.main.async(execute: started) }
+        }
     }
 
     func flipCamera() {
         front.toggle()
-        if let cap = capturer { cap.stopCapture { DispatchQueue.main.async { self.startCapture(cap) } } }
+        // The self-view stays blurred over the last frame until the other camera is capturing (IosCallEngine's tile).
+        if let cap = capturer {
+            cap.stopCapture {
+                DispatchQueue.main.async {
+                    self.startCapture(cap) { NotificationCenter.default.post(name: Notification.Name("CircasoCallCameraStarted"), object: nil) }
+                }
+            }
+        }
     }
 
     func setSpeaker(on: Bool) { configureAudio(speaker: on) }
@@ -442,11 +451,15 @@ final class CallEngineImpl: NSObject, CallEngineProvider, RTCPeerConnectionDeleg
     }
 
     func videoView(source: String, mirror: Bool, fill: Bool) -> UIView {
-        let view = RTCMTLVideoView(frame: .zero)
+        let view = CallVideoView(frame: .zero)
         view.videoContentMode = fill ? .scaleAspectFill : .scaleAspectFit
         view.clipsToBounds = true
+        // No backdrop of its own: the tile around it is rounded, and anything square here would show at its corners.
+        view.backgroundColor = .clear
+        view.isOpaque = false
         if mirror { view.transform = CGAffineTransform(scaleX: -1, y: 1) }
         let track = source == "local" ? localVideo : remote[source]
+        view.track = track
         track?.add(view)
         return view
     }
@@ -519,4 +532,15 @@ final class CallEngineImpl: NSObject, CallEngineProvider, RTCPeerConnectionDeleg
     }
     func peerConnection(_ peerConnection: RTCPeerConnection, didRemove candidates: [RTCIceCandidate]) {}
     func peerConnection(_ peerConnection: RTCPeerConnection, didOpen dataChannel: RTCDataChannel) {}
+}
+
+/// A call tile's renderer. It takes frames from its track only while it is on screen, so a tile Compose has let go of
+/// stops drawing instead of rendering every frame into nowhere until the call ends.
+private final class CallVideoView: RTCMTLVideoView {
+    weak var track: RTCVideoTrack?
+
+    override func didMoveToWindow() {
+        super.didMoveToWindow()
+        if window == nil { track?.remove(self) } else { track?.add(self) }
+    }
 }

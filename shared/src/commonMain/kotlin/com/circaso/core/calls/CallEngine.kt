@@ -1,7 +1,9 @@
 package com.circaso.core.calls
 
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Rect
 import kotlinx.coroutines.flow.StateFlow
 
 /** A STUN or TURN server for the peer connection, as the backend hands them out (guide CL1). */
@@ -149,3 +151,14 @@ sealed interface VideoSource {
  */
 @Composable
 expect fun CallVideo(source: VideoSource, modifier: Modifier = Modifier, mirror: Boolean = false, fill: Boolean = true)
+
+/** The rounded rectangle a video tile is seen through, in the tile's own pixels (before any scale drawn on it). */
+class VideoClip(val rect: Rect, val radius: Float)
+
+/**
+ * What a [CallVideo] inside a rounded, moving tile is seen through, for a platform whose video is a native view that
+ * Compose's clip doesn't reach: on iOS a UIKit view is only ever cut to its bounding rectangle, so without this its
+ * square corners showed around the self-view (2026-11-13). Read while drawing, so a tile on the move is followed frame
+ * by frame. Android's video is a texture Compose clips itself and ignores it. Null: the tile's bounds.
+ */
+val LocalVideoClip = staticCompositionLocalOf<(() -> VideoClip?)?> { null }
