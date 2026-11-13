@@ -452,7 +452,7 @@ class ChatSealer(
             when (val sealed = sessions.seal(peer.userId, plaintext)) {
                 is AppResult.Failure -> sealed
                 is AppResult.Success -> {
-                    if (sealed.value.identityChanged) insertSystemRow(dao, chat.chatId, peer.userId, "${peer.displayName}'s security code changed", now())
+                    if (sealed.value.identityChanged) insertSystemRow(dao, chat.chatId, peer.userId, "${peer.displayName}${com.circaso.feature.messaging.domain.SecurityCodeChangedSuffix}", now())
                     AppResult.Success(SendChatMessageRequest(clientMessageId, MessagingWire.KindMessage, recipients = listOf(RecipientDto(peer.userId, Base64.encode(sealed.value.wire))), pushable = pushable))
                 }
             }
@@ -577,7 +577,7 @@ class InboxProcessor(
                     is Opened.Duplicate -> true
                     is Opened.Unreadable -> unreadable(dto, opened.reason)
                     is Opened.Plain -> {
-                        if (opened.identityChanged && chatKnown) insertSystemRow(dao, dto.chatId, dto.senderId, "${senderName(dto)}'s security code changed", now())
+                        if (opened.identityChanged && chatKnown) insertSystemRow(dao, dto.chatId, dto.senderId, "${senderName(dto)}${com.circaso.feature.messaging.domain.SecurityCodeChangedSuffix}", now())
                         deliver(dto, opened.bytes)
                     }
                 }
@@ -770,7 +770,7 @@ class MessagingFrameHandler(
                 sessions.reset(userId)
                 for (chat in chatsDao.chats()) {
                     val member = chatsDao.members(chat.chatId).firstOrNull { it.userId == userId } ?: continue
-                    insertSystemRow(messagesDao, chat.chatId, userId, "${member.displayName}'s security code changed", now())
+                    insertSystemRow(messagesDao, chat.chatId, userId, "${member.displayName}${com.circaso.feature.messaging.domain.SecurityCodeChangedSuffix}", now())
                 }
             }
             "member.added" -> chats.onMemberAdded(
@@ -807,7 +807,7 @@ internal fun MessageEntity.toDomain(members: List<ChatMemberEntity>, me: String?
     val member = members.firstOrNull { it.userId == senderId }
     val name = saved[senderId].takeIf { senderId != me } ?: member?.displayName ?: if (senderId == me) "You" else "Someone"
     return when {
-        kind == MessageKind.System -> Message.System(localId, chatId, orderAt, sentAt, systemText(text.orEmpty(), member?.displayName, saved[senderId]))
+        kind == MessageKind.System -> Message.System(localId, chatId, orderAt, sentAt, systemText(text.orEmpty(), member?.displayName, saved[senderId]), securityNotice = text.orEmpty().endsWith(com.circaso.feature.messaging.domain.SecurityCodeChangedSuffix))
         status == MessageStatus.Deleted -> Message.Deleted(localId, chatId, orderAt, sentAt, outgoing)
         isMediaKind(kind) -> {
             val d = MediaDetails.read(text) ?: MediaDetails(MediaDetails.Location)

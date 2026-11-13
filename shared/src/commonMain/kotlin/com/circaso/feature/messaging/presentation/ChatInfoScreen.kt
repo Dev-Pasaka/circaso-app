@@ -5,6 +5,7 @@ import com.circaso.feature.names.presentation.EditNameSheet
 import com.circaso.feature.names.presentation.ProfileNameLine
 import androidx.compose.foundation.layout.height
 import androidx.compose.runtime.setValue
+import kotlinx.coroutines.flow.first
 import androidx.compose.foundation.layout.Box
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.contentDescription
@@ -82,9 +83,21 @@ fun ChatInfoScreen(
     /** The group wallet's owner (2026-11-06): pay from it, or send it to an outside address. */
     onPayFromWallet: ((walletId: String) -> Unit)? = null,
     onSendToWallet: ((walletId: String) -> Unit)? = null,
+    /** Opened from a chat's "security code changed" notice: start at the security code card. */
+    showSecurityCode: Boolean = false,
 ) {
     var viewing by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf<ByteArray?>(null) }
     val state by viewModel.state.collectAsState()
+    val list = androidx.compose.foundation.lazy.rememberLazyListState()
+    // Once the direct chat has loaded, and only on the first visit. The card is a direct chat's last item: keep it last,
+    // or jump by its key's index here.
+    var jumped by androidx.compose.runtime.saveable.rememberSaveable { androidx.compose.runtime.mutableStateOf(!showSecurityCode) }
+    LaunchedEffect(jumped, state.chat != null) {
+        if (jumped || state.chat == null || state.isGroup) return@LaunchedEffect
+        androidx.compose.runtime.snapshotFlow { list.layoutInfo.totalItemsCount }.first { it > 0 }
+        list.scrollToItem(list.layoutInfo.totalItemsCount - 1)
+        jumped = true
+    }
     val names = viewModel.editName
     val editing by (names?.state ?: androidx.compose.runtime.remember { kotlinx.coroutines.flow.MutableStateFlow<EditName?>(null) }).collectAsState()
     val c = CircasoTheme.colors
@@ -241,7 +254,7 @@ fun ChatInfoScreen(
             }
         },
     ) { padding ->
-        LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = padding.calculateBottomPadding() + CircasoSpacing.s6)) {
+        LazyColumn(Modifier.fillMaxSize(), state = list, contentPadding = PaddingValues(bottom = padding.calculateBottomPadding() + CircasoSpacing.s6)) {
             item {
                 Column(Modifier.fillMaxWidth().padding(vertical = CircasoSpacing.s6), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(CircasoSpacing.s2)) {
                     if (state.isGroup && state.amAdmin && state.photosAvailable) {
@@ -262,7 +275,7 @@ fun ChatInfoScreen(
                     }
                 }
             }
-            if (!state.isGroup) {
+            if (!state.isGroup && chat != null) {
                 item { ProfileActions(onCall = onCall, onPay = onPay, onSearch = { viewModel.onSearch(true) }, online = state.online) }
                 val peer = chat?.members?.firstOrNull { it.userId == chat.peerId }
                 if (names != null && peer != null && EditName.allowedFor(peer.userId)) {
@@ -342,20 +355,20 @@ fun ChatInfoScreen(
                         CircasoButton("Leave Group", { viewModel.onAction(InfoAction.Leave) }, style = ButtonStyle.Destructive, size = ButtonSize.Large, block = true, enabled = state.canChange)
                     }
                 }
-            } else {
-                item {
+            } else if (chat != null) {
+                item(key = SecurityCodeKey) {
                     SectionHeader("Encryption", Modifier.padding(top = CircasoSpacing.s4))
-                    Column(Modifier.padding(horizontal = CircasoSpacing.s4, vertical = CircasoSpacing.s3), verticalArrangement = Arrangement.spacedBy(CircasoSpacing.s2)) {
-                        val code = state.securityCode
-                        if (code == null) {
-                            BasicText("Appears after your first message to each other.", style = t.body.copy(color = c.inkSecondary))
-                        } else {
-                            code.groups.chunked(4).forEach { line ->
-                                BasicText(line.joinToString("   "), style = t.headline.copy(color = c.ink, textAlign = TextAlign.Center), modifier = Modifier.fillMaxWidth())
-                            }
-                            BasicText("Compare these numbers in person or on a call. If they match, your messages with ${chat?.title} are end-to-end encrypted and nobody is in between.", style = t.footnote.copy(color = c.inkSecondary))
-                        }
-                    }
+                    // The security code on the vault's metal (2026-11-13), with how to check it and Mark as Verified.
+                    val me = chat?.members?.firstOrNull { it.userId == state.myUserId }
+                    val peer = chat?.members?.firstOrNull { it.userId == chat.peerId }
+                    SecurityCodeSection(
+                        code = state.securityCode, verified = state.codeVerified, loaded = state.securityCodeLoaded,
+                        changedSinceVerified = state.codeChangedSinceVerified,
+                        myName = me?.displayName ?: "You", myPhoto = me?.avatarUrl,
+                        peerName = chat.title.ifBlank { peer?.displayName.orEmpty() }, peerPhoto = chat.avatarUrl ?: peer?.avatarUrl,
+                        onVerified = viewModel::onVerified,
+                        modifier = Modifier.padding(top = CircasoSpacing.s1, bottom = CircasoSpacing.s3),
+                    )
                 }
             }
         }
@@ -463,3 +476,6 @@ private fun SharedMediaStrip(media: List<Message.Media>, loader: ThreadMedia?, o
         }
     }
 }
+
+/** The security code card's item, which a "security code changed" notice opens at. */
+private const val SecurityCodeKey = "security-code"

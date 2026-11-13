@@ -62,13 +62,13 @@ import kotlin.math.sin
  */
 
 /** The metal: the money cards' gradient, lit at the top-left and bottom-right corners. */
-private fun metal(c: CircasoColors) = Brush.linearGradient(
+internal fun metal(c: CircasoColors) = Brush.linearGradient(
     0f to c.moneyCardSheen, 0.38f to c.moneyCard, 0.72f to c.moneyCard, 1f to c.moneyCardSheen,
     start = Offset.Zero, end = Offset.Infinite,
 )
 
 /** Secondary ink on the metal: full strength in the high-contrast themes, as the money cards do. */
-private fun softOnMetal(c: CircasoColors) = if (c.isHighContrast) c.onMoney else c.onMoney.copy(alpha = 0.72f)
+internal fun softOnMetal(c: CircasoColors) = if (c.isHighContrast) c.onMoney else c.onMoney.copy(alpha = 0.72f)
 
 /** The icon for how the vault opens. */
 internal fun unlockIcon(unlock: String) = when (unlock) {

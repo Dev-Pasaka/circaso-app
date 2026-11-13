@@ -48,6 +48,10 @@ data class ChatInfoUiState(
     val online: Boolean = true,
     val busy: Boolean = false,
     val securityCode: SecurityCode? = null,
+    /** The code this phone last marked as verified with the other person; [codeVerified] compares it to today's. */
+    val verifiedDigits: String? = null,
+    /** The code has been worked out (it may still be null: no session yet), so "appears after your first message" is true. */
+    val securityCodeLoaded: Boolean = false,
     val selected: ChatMember? = null,
     val pending: InfoAction? = null,
     val renaming: Boolean = false,
@@ -107,6 +111,10 @@ data class ChatInfoUiState(
         get() = if (query.isBlank()) emptyList()
         else messages.filterIsInstance<Message.Text>().filter { it.text.contains(query.trim(), ignoreCase = true) }.reversed()
     val isGroup get() = chat?.kind == ChatKind.Group
+    /** Verified only for the very code it was checked against: a changed code is not verified. */
+    val codeVerified get() = securityCode != null && securityCode.digits == verifiedDigits
+    /** Checked once, and the code has changed since (they signed in again): the moment to check again. */
+    val codeChangedSinceVerified get() = securityCode != null && verifiedDigits != null && securityCode.digits != verifiedDigits
     val amAdmin get() = chat?.myRole == MemberRole.Admin || chat?.myRole == MemberRole.Owner
     val amOwner get() = chat?.myRole == MemberRole.Owner
     val canAdd get() = online && !busy && (amAdmin || chat?.membersCanAdd == true)
@@ -142,6 +150,8 @@ class ChatInfoViewModel(
     private val invites: com.circaso.feature.messaging.domain.GroupInvitesRepository? = null,
     /** Edit name (saved names, 2026-11-12): for the other person in a direct chat, or any member; null in previews. */
     val editName: com.circaso.feature.names.presentation.EditNameController? = null,
+    /** Which security codes this phone has checked (2026-11-13); null in previews and tests. */
+    private val verifiedCodes: com.circaso.feature.messaging.domain.VerifiedCodes? = null,
 ) : ViewModel() {
     private val _state = MutableStateFlow(
         ChatInfoUiState(myUserId = myUserId, photosAvailable = setGroupPhoto != null && sources != null && encoder !== com.circaso.core.platform.NoGroupPhotoEncoder),
@@ -214,7 +224,13 @@ class ChatInfoViewModel(
             observeChat(chatId).collect { chat ->
                 _state.update { it.copy(chat = chat) }
                 val peerId = chat?.peerId
-                if (chat?.kind == ChatKind.Direct && peerId != null) _state.update { it.copy(securityCode = securityCodeFor(peerId)) }
+                if (chat?.kind == ChatKind.Direct && peerId != null) { val code = securityCodeFor(peerId); _state.update { it.copy(securityCode = code, securityCodeLoaded = true) } }
+            }
+        }
+        verifiedCodes?.let { store ->
+            viewModelScope.launch {
+                val peerId = observeChat(chatId).first { it != null }?.takeIf { it.kind == ChatKind.Direct }?.peerId ?: return@launch
+                store.verifiedCode(peerId).collect { digits -> _state.update { it.copy(verifiedDigits = digits) } }
             }
         }
         viewModelScope.launch { observeContacts().collect { list -> _state.update { it.copy(contacts = list) } } }
@@ -268,6 +284,15 @@ class ChatInfoViewModel(
     }
 
     fun onSelect(member: ChatMember?) = _state.update { it.copy(selected = member) }
+    /** Mark as Verified / Clear Verification: this phone's note, so it works offline. */
+    fun onVerified(verified: Boolean) {
+        val store = verifiedCodes ?: return
+        val peerId = _state.value.chat?.peerId ?: return
+        val digits = _state.value.securityCode?.digits ?: return
+        _state.update { it.copy(verifiedDigits = if (verified) digits else null) }
+        viewModelScope.launch { store.setVerifiedCode(peerId, if (verified) digits else null) }
+    }
+
     fun onSearch(open: Boolean) = _state.update { it.copy(searching = open, query = if (open) it.query else "") }
     fun onQuery(text: String) = _state.update { it.copy(query = text) }
     fun onAction(action: InfoAction?) {
