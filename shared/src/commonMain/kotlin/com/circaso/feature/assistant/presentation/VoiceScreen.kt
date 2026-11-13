@@ -113,7 +113,7 @@ fun VoiceContent(
                 Spacer(Modifier.width(com.circaso.designsystem.theme.CircasoSizes.iconButton))
             }
         },
-        toast = { ToastHost(toast, Modifier.align(Alignment.TopCenter).padding(top = 8.dp)) },
+        toast = { ToastHost(toast) },
     ) { padding ->
         val ending: @Composable () -> Unit = {
             if (hasTranscript && (state.phase == VoicePhase.Ended || state.phase == VoicePhase.Reconnecting)) {

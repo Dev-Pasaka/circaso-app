@@ -87,7 +87,7 @@ fun SharedLinkContent(state: SharedLinkUiState, onBack: () -> Unit, onRetry: () 
         topBar = { CircasoNavBar(title = navTitle(link), onBack = onBack) },
         // The offline body already says it; the banner is for a link that's open when the connection drops.
         banner = { if (state.load != SharedLinkLoad.Offline) ConnectionBanner(showing = "Some actions need a connection") },
-        toast = { ToastHost(toast, Modifier.align(Alignment.TopCenter).padding(top = 8.dp)) },
+        toast = { ToastHost(toast) },
         bottomBar = link?.let { l -> actionLabel(l)?.let { label -> { BottomAction(label, state.opening, enabled = state.online || !state.actionNeedsConnection, onOpen) } } },
     ) { padding ->
         when (val load = state.load) {
@@ -329,7 +329,7 @@ fun SharedLinksContent(
         grouped = true,
         topBar = { CircasoNavBar(title = "Shared links", onBack = onBack) },
         banner = { ConnectionBanner(showing = "Your links need a connection to load") },
-        toast = { ToastHost(toast, Modifier.align(Alignment.TopCenter).padding(top = 8.dp)) },
+        toast = { ToastHost(toast) },
         overlay = {
             ConfirmSheet(
                 visible = confirm != null,

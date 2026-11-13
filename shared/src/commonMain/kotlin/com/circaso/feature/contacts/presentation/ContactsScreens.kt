@@ -142,7 +142,7 @@ fun ContactsContent(state: ContactsUiState, actions: ContactsActions, editing: E
             })
         },
         banner = { ConnectionBanner(showing = "Adding people needs a connection") },
-        toast = { ToastHost(toast, Modifier.align(Alignment.TopCenter).padding(top = 8.dp)) },
+        toast = { ToastHost(toast) },
         overlay = {
             ContactsSheets(state, actions)
             EditNameSheet(editing, actions.onNameDraft, actions.onNameSave, actions.onUseTheirName, actions.onNameDismissed)

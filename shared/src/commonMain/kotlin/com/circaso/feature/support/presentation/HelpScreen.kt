@@ -66,12 +66,12 @@ fun HelpContent(
     val c = CircasoTheme.colors
     val t = CircasoTheme.typography
     val toast = rememberToastState()
-    LaunchedEffect(state.error) { state.error?.let { toast.show(it); onErrorShown() } }
+    LaunchedEffect(state.error) { state.error?.let { toast.show(it, com.circaso.designsystem.chrome.ToastKind.Problem); onErrorShown() } }
     val now = nowMillis()
     CircasoScaffold(
         grouped = true,
         topBar = { CircasoNavBar(title = "Help", onBack = onBack) },
-        toast = { ToastHost(toast, Modifier.align(Alignment.TopCenter).padding(top = 8.dp)) },
+        toast = { ToastHost(toast) },
     ) { padding ->
         LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(start = CircasoSpacing.s4, end = CircasoSpacing.s4, top = CircasoSpacing.s2, bottom = padding.calculateBottomPadding() + CircasoSpacing.s6), verticalArrangement = Arrangement.spacedBy(CircasoSpacing.s5)) {
             item {

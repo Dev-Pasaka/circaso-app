@@ -110,7 +110,7 @@ fun ChatInfoScreen(
         grouped = true,
         topBar = { CircasoNavBar(title = if (state.isGroup) "Group Info" else "Contact Info", onBack = onBack) },
         banner = { ConnectionBanner(showing = "Changes need a connection") },
-        toast = { ToastHost(toast, Modifier.align(Alignment.TopCenter).padding(top = 8.dp)) },
+        toast = { ToastHost(toast) },
         overlay = {
             ImageViewer(viewing) { viewing = null }
             val photos = viewModel.photos

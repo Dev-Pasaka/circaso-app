@@ -186,12 +186,12 @@ fun ShareTargetScreen(viewModel: ShareTargetViewModel, onClose: () -> Unit, onGo
     val t = CircasoTheme.typography
     val toast = rememberToastState()
     LaunchedEffect(state.go) { state.go?.let { viewModel.went(); onGo(it) } }
-    LaunchedEffect(state.error) { state.error?.let { toast.show(it); viewModel.errorShown() } }
+    LaunchedEffect(state.error) { state.error?.let { toast.show(it, com.circaso.designsystem.chrome.ToastKind.Problem); viewModel.errorShown() } }
     androidx.compose.ui.backhandler.BackHandler(onBack = onClose)
     CircasoScaffold(
         Modifier.fillMaxSize().background(c.bg),
         topBar = { CircasoNavBar("Send to", onBack = onClose) },
-        toast = { ToastHost(toast, Modifier.align(Alignment.TopCenter).padding(top = CircasoSpacing.s4)) },
+        toast = { ToastHost(toast) },
         bottomBar = {
             Row(
                 Modifier.fillMaxWidth().padding(horizontal = CircasoSpacing.s4, vertical = CircasoSpacing.s3),

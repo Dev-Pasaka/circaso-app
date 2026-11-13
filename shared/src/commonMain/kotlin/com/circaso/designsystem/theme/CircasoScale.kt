@@ -38,6 +38,8 @@ object CircasoSizes {
     val controlMd = 44.dp
     val controlSm = 34.dp
     val iconButton = 36.dp
+    /** A floating notice's tinted icon badge. */
+    val noticeBadge = 30.dp
     /** The Circaso mark at small size: the wallet cards and the Chats masthead. */
     val brandMarkSm = 30.dp
     val avatarSm = 28.dp

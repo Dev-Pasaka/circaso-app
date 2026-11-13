@@ -128,7 +128,7 @@ fun EditProfileContent(
             })
         },
         banner = { ConnectionBanner() },
-        toast = { com.circaso.designsystem.chrome.ToastHost(toast, Modifier.align(Alignment.TopCenter).padding(top = 8.dp)) },
+        toast = { com.circaso.designsystem.chrome.ToastHost(toast) },
         overlay = {
             ConfirmSheet(
                 visible = confirmDiscard, title = "Discard changes?", message = "What you changed here hasn't been saved.",

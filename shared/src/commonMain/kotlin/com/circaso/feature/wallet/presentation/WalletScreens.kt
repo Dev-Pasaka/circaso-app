@@ -1,5 +1,6 @@
 package com.circaso.feature.wallet.presentation
 
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.Box
 import androidx.compose.ui.semantics.semantics
@@ -309,10 +310,12 @@ fun WalletContent(
 ) {
     val c = CircasoTheme.colors
     val t = CircasoTheme.typography
-    val toast = rememberToastState()
+    // Inside Home the tab's toast is Home's, placed by its scaffold; on its own (previews) a local one.
+    val screenToast = com.circaso.designsystem.chrome.LocalScreenToast.current
+    val toast = screenToast ?: com.circaso.designsystem.chrome.rememberToastState()
     val g = state.group
     // The create screen shows its error inline; an active wallet shows a passing toast instead.
-    LaunchedEffect(state.error, g == null) { if (g == null) state.error?.let { if (state.active) { toast.show(it); onErrorShown() } } }
+    LaunchedEffect(state.error, g == null) { if (g == null) state.error?.let { if (state.active) { toast.show(it, com.circaso.designsystem.chrome.ToastKind.Problem); onErrorShown() } } }
     LaunchedEffect(g?.message) { g?.message?.let { toast.show(it); group?.onMessageShown?.invoke() } }
     val wallet = g?.wallet ?: state.wallet.takeIf { g == null }
     val bottom = bottomPadding.calculateBottomPadding() + CircasoSpacing.s4
@@ -337,7 +340,7 @@ fun WalletContent(
         }
         }
       }
-        ToastHost(toast, Modifier.align(Alignment.TopCenter).padding(top = 8.dp))
+        if (screenToast == null) com.circaso.designsystem.chrome.ToastHost(toast, Modifier.align(Alignment.TopCenter).statusBarsPadding())
         if (sheets) WalletSheets(state, actions, onReceive, onComing)
     }
 }

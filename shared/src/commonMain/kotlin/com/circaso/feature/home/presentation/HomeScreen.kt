@@ -47,6 +47,8 @@ fun HomeScreen(
     chats: @Composable (bottomPadding: PaddingValues) -> Unit,
     chatsActions: @Composable androidx.compose.foundation.layout.RowScope.() -> Unit,
     chatsBanner: @Composable () -> Unit,
+    /** Bars that stay on Chats until dealt with (a wallet hold, restoring group names): part of the layout, not floating. */
+    chatsStrip: @Composable () -> Unit = {},
     wallet: @Composable (bottomPadding: PaddingValues) -> Unit,
     walletActions: @Composable androidx.compose.foundation.layout.RowScope.() -> Unit,
     /** Each tab's sheets: drawn in the scaffold's overlay so they cover the floating tab bar, as `cx-sheet` does. */
@@ -89,76 +91,82 @@ fun HomeScreen(
     // A rail on a phone on its side, a wide window, and in a tablet's list pane: one place for the tabs on a tablet,
     // whichever tab is showing.
     val rail = layout.short || layout.widthClass != com.circaso.designsystem.adaptive.WidthClass.Compact || com.circaso.designsystem.adaptive.LocalTabsAsRail.current
-    CircasoScaffold(
-        grouped = tab == Tab.You,
-        // On its side, Wallet and You are laid out in two columns: a wider frame for them; Chats stays one column.
-        maxContentWidth = if (layout.short && tab != Tab.Chats) com.circaso.designsystem.adaptive.WindowLayout.WideContentWidth else com.circaso.designsystem.adaptive.WindowLayout.ReadableWidth,
-        // No title bar on the tabs (Pasaka, 2026-10-30): the tab bar already says where you are, and each screen's
-        // actions live in it (the Chats button, the eye on the wallet card).
-        banner = { when (tab) { Tab.Chats -> chatsBanner(); Tab.Wallet -> ConnectionBanner(); Tab.You -> Unit } },
-        // On its side, with room to spare, or in a tablet's list pane, the tabs move to the left edge (Material's
-        // rail, iPad's sidebar), in the same place on every tab; a phone upright keeps them at the bottom.
-        bottomBar = if (rail) null else {
-            {
-                CircasoTabBar(
-                    items = Tab.entries.map { TabItem(it.label, it.icon) },
-                    selectedIndex = tab.ordinal,
-                    onSelect = { select(it) },
+    // One toast for the tabs, placed by this scaffold (under the strip and the offline notice).
+    val tabToast = com.circaso.designsystem.chrome.rememberToastState()
+    androidx.compose.runtime.CompositionLocalProvider(com.circaso.designsystem.chrome.LocalScreenToast provides tabToast) {
+        CircasoScaffold(
+            grouped = tab == Tab.You,
+            toast = { com.circaso.designsystem.chrome.ToastHost(tabToast) },
+            // On its side, Wallet and You are laid out in two columns: a wider frame for them; Chats stays one column.
+            maxContentWidth = if (layout.short && tab != Tab.Chats) com.circaso.designsystem.adaptive.WindowLayout.WideContentWidth else com.circaso.designsystem.adaptive.WindowLayout.ReadableWidth,
+            // No title bar on the tabs (Pasaka, 2026-10-30): the tab bar already says where you are, and each screen's
+            // actions live in it (the Chats button, the eye on the wallet card).
+            banner = { when (tab) { Tab.Chats -> chatsBanner(); Tab.Wallet -> ConnectionBanner(); Tab.You -> Unit } },
+            strip = { if (tab == Tab.Chats) chatsStrip() },
+            // On its side, with room to spare, or in a tablet's list pane, the tabs move to the left edge (Material's
+            // rail, iPad's sidebar), in the same place on every tab; a phone upright keeps them at the bottom.
+            bottomBar = if (rail) null else {
+                {
+                    CircasoTabBar(
+                        items = Tab.entries.map { TabItem(it.label, it.icon) },
+                        selectedIndex = tab.ordinal,
+                        onSelect = { select(it) },
+                    )
+                }
+            },
+            sideBar = if (!rail) null else {
+                {
+                    CircasoTabBar(
+                        items = Tab.entries.map { TabItem(it.label, it.icon) },
+                        selectedIndex = tab.ordinal,
+                        onSelect = { select(it) },
+                        vertical = true,
+                    )
+                }
+            },
+            overlay = {
+                when (tab) { Tab.Chats -> chatsOverlay(); Tab.Wallet -> walletOverlay(); Tab.You -> Unit }
+                ConfirmSheet(
+                    visible = confirmExit,
+                    title = "Leave Circaso?",
+                    message = "Messages and money keep arriving while you're away; you'll get a notification.",
+                    confirmLabel = "Leave",
+                    onConfirm = { confirmExit = false; com.circaso.core.platform.exitApp() },
+                    onDismiss = { confirmExit = false },
+                    cancelLabel = "Stay",
                 )
-            }
-        },
-        sideBar = if (!rail) null else {
-            {
-                CircasoTabBar(
-                    items = Tab.entries.map { TabItem(it.label, it.icon) },
-                    selectedIndex = tab.ordinal,
-                    onSelect = { select(it) },
-                    vertical = true,
-                )
-            }
-        },
-        overlay = {
-            when (tab) { Tab.Chats -> chatsOverlay(); Tab.Wallet -> walletOverlay(); Tab.You -> Unit }
-            ConfirmSheet(
-                visible = confirmExit,
-                title = "Leave Circaso?",
-                message = "Messages and money keep arriving while you're away; you'll get a notification.",
-                confirmLabel = "Leave",
-                onConfirm = { confirmExit = false; com.circaso.core.platform.exitApp() },
-                onDismiss = { confirmExit = false },
-                cancelLabel = "Stay",
-            )
-        },
-    ) { padding ->
-        // Each tab, once visited, stays composed and is only revealed (Pasaka, 2026-11-07: switching felt slow because
-        // every tap tore the tab down and built it again; Wallet is heavy). The others sit underneath, invisible,
-        // untouchable and silent to screen readers; a short crossfade hands one to the next.
-        val visited = androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(setOf(tab.ordinal)) }
-        if (tab.ordinal !in visited.value) visited.value = visited.value + tab.ordinal
-        // Bumped each time a tab comes to the front, so a tab's own arrival motion can play again.
-        val arrivals = androidx.compose.runtime.remember { mutableStateOf(0) }
-        androidx.compose.runtime.LaunchedEffect(tab) { arrivals.value++ }
-        val still = CircasoTheme.reduceMotion
-        androidx.compose.foundation.layout.Box(Modifier.fillMaxSize()) {
-            Tab.entries.filter { it.ordinal in visited.value }.forEach { t ->
-                val front = t == tab
-                androidx.compose.runtime.key(t) {
-                val alpha by androidx.compose.animation.core.animateFloatAsState(
-                    if (front) 1f else 0f, androidx.compose.animation.core.tween(if (still) 0 else TabFadeMs), label = "tab",
-                )
-                    androidx.compose.foundation.layout.Box(
-                        Modifier.fillMaxSize()
-                            .then(if (front) Modifier.zIndex(1f) else Modifier.zIndex(0f))
-                            .graphicsLayer { this.alpha = alpha }
-                            .then(if (front) Modifier else Modifier.clearAndSetSemantics {}.pointerInput(Unit) {
-                                awaitPointerEventScope { while (true) awaitPointerEvent(androidx.compose.ui.input.pointer.PointerEventPass.Initial).changes.forEach { it.consume() } }
-                            }),
-                    ) {
-                        androidx.compose.runtime.CompositionLocalProvider(LocalTabArrival provides if (front) arrivals.value else -1, com.circaso.designsystem.chrome.LocalInFront provides front) {
-                            when (t) {
-                                Tab.You -> you(padding)
-                                Tab.Chats -> chats(padding)
-                                Tab.Wallet -> wallet(padding)
+            },
+        ) { padding ->
+            // Each tab, once visited, stays composed and is only revealed (Pasaka, 2026-11-07: switching felt slow because
+            // every tap tore the tab down and built it again; Wallet is heavy). The others sit underneath, invisible,
+            // untouchable and silent to screen readers; a short crossfade hands one to the next.
+            val visited = androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(setOf(tab.ordinal)) }
+            if (tab.ordinal !in visited.value) visited.value = visited.value + tab.ordinal
+            // Bumped each time a tab comes to the front, so a tab's own arrival motion can play again.
+            val arrivals = androidx.compose.runtime.remember { mutableStateOf(0) }
+            androidx.compose.runtime.LaunchedEffect(tab) { arrivals.value++ }
+            val still = CircasoTheme.reduceMotion
+            androidx.compose.foundation.layout.Box(Modifier.fillMaxSize()) {
+                Tab.entries.filter { it.ordinal in visited.value }.forEach { t ->
+                    val front = t == tab
+                    androidx.compose.runtime.key(t) {
+                    val alpha by androidx.compose.animation.core.animateFloatAsState(
+                        if (front) 1f else 0f, androidx.compose.animation.core.tween(if (still) 0 else TabFadeMs), label = "tab",
+                    )
+                        androidx.compose.foundation.layout.Box(
+                            Modifier.fillMaxSize()
+                                .then(if (front) Modifier.zIndex(1f) else Modifier.zIndex(0f))
+                                .graphicsLayer { this.alpha = alpha }
+                                .then(if (front) Modifier else Modifier.clearAndSetSemantics {}.pointerInput(Unit) {
+                                    awaitPointerEventScope { while (true) awaitPointerEvent(androidx.compose.ui.input.pointer.PointerEventPass.Initial).changes.forEach { it.consume() } }
+                                }),
+                        ) {
+                            androidx.compose.runtime.CompositionLocalProvider(LocalTabArrival provides if (front) arrivals.value else -1, com.circaso.designsystem.chrome.LocalInFront provides front) {
+                                when (t) {
+                                    Tab.You -> you(padding)
+                                    Tab.Chats -> chats(padding)
+                                    Tab.Wallet -> wallet(padding)
+                                }
                             }
                         }
                     }

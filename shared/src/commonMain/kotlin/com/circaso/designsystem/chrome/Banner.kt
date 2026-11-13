@@ -20,7 +20,7 @@ import com.circaso.designsystem.theme.CircasoTheme
 
 enum class BannerTone { Neutral, Warning, Critical }
 
-/** Inline glass card (design `cx-banner`): icon and one line of text, announced politely to screen readers. */
+/** Inline glass card (design `cx-banner`): icon and one line of text, announced politely. A notice that comes and goes over the screen is a [FloatingNotice]. */
 @Composable
 fun Banner(text: String, icon: CircasoIcon, modifier: Modifier = Modifier, tone: BannerTone = BannerTone.Neutral) {
     val c = CircasoTheme.colors

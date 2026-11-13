@@ -248,7 +248,7 @@ fun AppNavigation(forceUpdate: Boolean, home: @Composable () -> Unit) {
         online = shareUi.online,
     )
     LaunchedEffect(Unit) {
-        announcements.sentAfterOffline.collect { n -> toast.show("Back online · $n ${if (n == 1) "change" else "changes"} sent") }
+        announcements.sentAfterOffline.collect { n -> toast.show("Back online · $n ${if (n == 1) "change" else "changes"} sent", com.circaso.designsystem.chrome.ToastKind.Done) }
     }
     CompositionLocalProvider(
         LocalAshaLauncher provides asha,
@@ -337,10 +337,12 @@ fun AppNavigation(forceUpdate: Boolean, home: @Composable () -> Unit) {
                     chatsActions = {},
                     chatsBanner = {
                         val s by chatsViewModel.state.collectAsState()
+                        ChatsBanner(s)
+                    },
+                    chatsStrip = {
                         val w by walletViewModel.state.collectAsState()
                         androidx.compose.foundation.layout.Column {
                             HoldBanner(w.wallet?.holdUntil, onNotMe = { backStack.add(SecurityRoute) }, reason = w.wallet?.holdReason)
-                            ChatsBanner(s)
                             val bio: com.circaso.core.platform.Biometrics = koinInject()
                             com.circaso.feature.keybackup.presentation.RestoreGroupNamesCard(koinViewModel(), unlock = if (bio.available()) bio.name else "Screen Lock")
                         }

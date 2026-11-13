@@ -53,6 +53,8 @@ data class WindowLayout(val width: Dp, val height: Dp) {
         val RailRoom = 96.dp
         /** Text and forms never run wider than this (Apple's readable content guide, Material's body width). */
         val ReadableWidth = 680.dp
+        /** A floating notice never grows wider than this: it reads as a capsule, not a bar, on a tablet. */
+        val NoticeMaxWidth = 420.dp
         /** Buttons and short forms on a tablet (sign-in, a single field and its button): about iPadOS's sheet content. */
         val FormWidth = 440.dp
         /** A sheet on a tablet: iPadOS's form sheet is 540 pt wide. */
