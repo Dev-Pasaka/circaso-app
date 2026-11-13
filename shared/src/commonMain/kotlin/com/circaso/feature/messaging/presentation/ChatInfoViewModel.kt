@@ -339,6 +339,8 @@ class ChatInfoViewModel(
 
     fun onConfirm() {
         val action = _state.value.pending ?: return
+        // The sheet greys its button offline; a tap racing the connection dropping still never fires blind.
+        if (!_state.value.canChange) return
         _state.update { it.copy(pending = null, busy = true, message = null) }
         viewModelScope.launch {
             val result: AppResult<*> = when (action) {

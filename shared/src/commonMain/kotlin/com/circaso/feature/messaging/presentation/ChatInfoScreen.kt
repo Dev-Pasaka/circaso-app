@@ -173,6 +173,8 @@ fun ChatInfoScreen(
                 confirmLabel = "Cancel Invite",
                 destructive = true,
                 icon = com.circaso.designsystem.components.CircasoIcon.Mail,
+                enabled = state.online,
+                note = if (!state.online) "Cancelling an invite needs a connection." else null,
                 cancelLabel = "Keep Invite",
                 onConfirm = viewModel::onCancelInviteConfirm,
                 onDismiss = { viewModel.onCancelInvite(null) },
@@ -189,19 +191,19 @@ fun ChatInfoScreen(
                     null -> ""
                 },
                 message = when (action) {
-                    is InfoAction.Remove -> "They won't see anything sent after this. Everyone's keys turn over."
+                    is InfoAction.Remove -> "They won't see anything sent after this; the group gets new keys."
                     is InfoAction.MakeAdmin -> "Admins can add and remove people and change the group."
                     is InfoAction.MakeMember -> "They can still chat, but no longer change the group."
-                    is InfoAction.HandOver -> "You become an admin. Only the owner can hand the group on."
+                    is InfoAction.HandOver -> "You become an admin. Only ${action.member.displayName} can give it back."
                     InfoAction.Leave -> "You won't see new messages. If you own the group, it passes to the longest-serving admin."
                     null -> ""
                 },
                 confirmLabel = when (action) {
-                    is InfoAction.Remove -> "Remove"
+                    is InfoAction.Remove -> "Remove from Group"
                     InfoAction.Leave -> "Leave Group"
                     is InfoAction.MakeAdmin -> "Make Admin"
                     is InfoAction.MakeMember -> "Make Member"
-                    is InfoAction.HandOver -> "Hand Over"
+                    is InfoAction.HandOver -> "Hand Over Ownership"
                     null -> "Confirm"
                 },
                 destructive = action is InfoAction.Remove || action == InfoAction.Leave,
@@ -210,10 +212,18 @@ fun ChatInfoScreen(
                     is InfoAction.Remove -> com.circaso.designsystem.components.CircasoIcon.UserMinus
                     is InfoAction.MakeAdmin -> com.circaso.designsystem.components.CircasoIcon.Shield
                     is InfoAction.MakeMember -> com.circaso.designsystem.components.CircasoIcon.Person
-                    is InfoAction.HandOver -> com.circaso.designsystem.components.CircasoIcon.People
+                    is InfoAction.HandOver -> com.circaso.designsystem.components.CircasoIcon.Forward
                     InfoAction.Leave -> com.circaso.designsystem.components.CircasoIcon.SignOut
                     null -> com.circaso.designsystem.components.CircasoIcon.Info
                 },
+                // Handing over can't be taken back by me: amber, not the plain grey of a role change.
+                tone = when (action) {
+                    is InfoAction.Remove, InfoAction.Leave -> com.circaso.designsystem.chrome.SheetTone.Critical
+                    is InfoAction.HandOver -> com.circaso.designsystem.chrome.SheetTone.Warning
+                    else -> com.circaso.designsystem.chrome.SheetTone.Neutral
+                },
+                enabled = state.online,
+                note = if (!state.online) (if (action == InfoAction.Leave) "Leaving needs a connection." else "Changing the group needs a connection.") else null,
                 onConfirm = viewModel::onConfirm,
                 onDismiss = { viewModel.onAction(null) },
             )
@@ -229,7 +239,7 @@ fun ChatInfoScreen(
                     else -> null
                 }
                 com.circaso.designsystem.chrome.SheetMessage(
-                    if (state.namingForPhoto) "Name the group" else "Rename group",
+                    if (state.namingForPhoto || state.nameUnknown) "Name the group" else "Rename group",
                     why ?: "Everyone in the group sees the new name.",
                     if (state.nameUnknown || state.namingForPhoto) com.circaso.designsystem.components.CircasoIcon.Lock else com.circaso.designsystem.components.CircasoIcon.Pencil,
                     tone = if (state.nameUnknown || state.namingForPhoto) com.circaso.designsystem.chrome.SheetTone.Warning else com.circaso.designsystem.chrome.SheetTone.Neutral,
@@ -247,7 +257,7 @@ fun ChatInfoScreen(
             CircasoSheet(visible = sheet == MoneySheet.TargetNeedsWallet, onDismiss = { viewModel.onMoneySheet(null) }, label = "A target needs a group wallet") {
                 TargetNeedsWalletContent(chat, onSetUp = { viewModel.onMoneySheet(null); onSetUpWallet(true) }, onNotNow = { viewModel.onMoneySheet(null) })
             }
-            CircasoSheet(visible = sheet == MoneySheet.Approvals, onDismiss = { viewModel.onMoneySheet(null) }, label = "Who approves payouts") {
+            CircasoSheet(visible = sheet == MoneySheet.Approvals, onDismiss = { if (!state.busy) viewModel.onMoneySheet(null) }, label = "Who approves payouts") {
                 ApprovalPolicyContent(
                     current = state.money.money?.approvalPolicy ?: com.circaso.feature.chama.domain.ApprovalPolicy.TwoAdmins, choice = state.policyChoice,
                     busy = state.busy, online = state.online, onChoose = viewModel::onPolicyChoice, onSave = viewModel::onSavePolicy, onCancel = { viewModel.onMoneySheet(null) },

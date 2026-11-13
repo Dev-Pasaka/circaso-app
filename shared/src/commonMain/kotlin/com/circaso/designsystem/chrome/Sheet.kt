@@ -201,20 +201,10 @@ fun SheetBadge(icon: CircasoIcon, tone: SheetTone = SheetTone.Neutral, modifier:
     val ink = when (tone) { SheetTone.Neutral -> c.ink; SheetTone.Warning -> c.warning; SheetTone.Critical -> c.critical }
     // A tint of the tone on the sheet (the canvas's banner tints); grey for plain information, as `.big-ico` has it.
     val ground = when (tone) { SheetTone.Neutral -> c.fill; else -> ink.copy(alpha = if (c.isDark) 0.22f else 0.12f) }
-    val reduce = CircasoTheme.reduceMotion
-    val settle = remember { Animatable(if (reduce) 1f else 0f) }
-    androidx.compose.runtime.LaunchedEffect(Unit) {
-        if (!reduce) settle.animateTo(1f, CircasoSpring.settle())
-    }
     Box(
         modifier
             .size(com.circaso.designsystem.theme.CircasoSizes.sheetBadge)
-            .graphicsLayer {
-                val v = settle.value
-                alpha = v.coerceIn(0f, 1f)
-                scaleX = 0.82f + 0.18f * v
-                scaleY = 0.82f + 0.18f * v
-            }
+            .settleIn()
             .clip(CircasoShapes.pill)
             .background(ground)
             // High contrast: a hairline in the badge's own colour, so a red or amber badge isn't ringed in grey.
@@ -236,18 +226,22 @@ fun SheetMessage(
     icon: CircasoIcon?,
     modifier: Modifier = Modifier,
     tone: SheetTone = SheetTone.Neutral,
-    /** Centred even with no badge: the caller draws its own face above (a group's wallet avatar). */
-    centred: Boolean = icon != null,
+    /**
+     * In place of the badge: the face of what the sheet is about (a group's wallet, GW7). Same place, spacing and
+     * settle as the badge, and the canvas's quieter 15/20 paragraph for these sheets.
+     */
+    face: (@Composable () -> Unit)? = null,
 ) {
     val c = CircasoTheme.colors
     val t = CircasoTheme.typography
+    val centred = icon != null || face != null
     val align = if (centred) TextAlign.Center else TextAlign.Start
     Column(
-        modifier.fillMaxWidth().padding(top = if (icon != null) CircasoSpacing.s2 else 0.dp),
+        modifier.fillMaxWidth().padding(top = if (centred) CircasoSpacing.s2 else 0.dp),
         horizontalAlignment = if (centred) Alignment.CenterHorizontally else Alignment.Start,
         verticalArrangement = Arrangement.spacedBy(CircasoSpacing.s4),
     ) {
-        if (icon != null) SheetBadge(icon, tone)
+        if (face != null) Box(Modifier.settleIn()) { face() } else if (icon != null) SheetBadge(icon, tone)
         Column(
             Modifier.fillMaxWidth().padding(horizontal = if (centred) CircasoSpacing.s2 else 0.dp),
             horizontalAlignment = if (centred) Alignment.CenterHorizontally else Alignment.Start,
@@ -255,7 +249,7 @@ fun SheetMessage(
             verticalArrangement = Arrangement.spacedBy(6.dp),
         ) {
             BasicText(title, Modifier.semantics { heading() }, style = t.title2.copy(color = c.ink, textAlign = align))
-            if (!message.isNullOrBlank()) BasicText(message, style = t.body.copy(color = c.inkSecondary, textAlign = align))
+            if (!message.isNullOrBlank()) BasicText(message, style = (if (face != null) t.subhead else t.body).copy(color = c.inkSecondary, textAlign = align))
         }
     }
 }
@@ -336,3 +330,19 @@ private data class ConfirmLook(
     val title: String, val message: String, val confirmLabel: String, val cancelLabel: String,
     val icon: CircasoIcon?, val tone: SheetTone, val destructive: Boolean,
 )
+
+/** A sheet's badge or face settling in as the sheet opens: from slightly smaller, on the settle spring; still with reduced motion. */
+@Composable
+private fun Modifier.settleIn(): Modifier {
+    val reduce = CircasoTheme.reduceMotion
+    val settle = remember { Animatable(if (reduce) 1f else 0f) }
+    androidx.compose.runtime.LaunchedEffect(Unit) {
+        if (!reduce) settle.animateTo(1f, CircasoSpring.settle())
+    }
+    return graphicsLayer {
+        val v = settle.value
+        alpha = v.coerceIn(0f, 1f)
+        scaleX = 0.82f + 0.18f * v
+        scaleY = 0.82f + 0.18f * v
+    }
+}
