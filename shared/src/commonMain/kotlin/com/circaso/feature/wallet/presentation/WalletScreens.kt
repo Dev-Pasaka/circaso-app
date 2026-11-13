@@ -310,7 +310,9 @@ fun WalletContent(
 ) {
     val c = CircasoTheme.colors
     val t = CircasoTheme.typography
-    val toast = rememberToastState()
+    // Inside Home the tab's toast is Home's, placed by its scaffold; on its own (previews) a local one.
+    val screenToast = com.circaso.designsystem.chrome.LocalScreenToast.current
+    val toast = screenToast ?: com.circaso.designsystem.chrome.rememberToastState()
     val g = state.group
     // The create screen shows its error inline; an active wallet shows a passing toast instead.
     LaunchedEffect(state.error, g == null) { if (g == null) state.error?.let { if (state.active) { toast.show(it, com.circaso.designsystem.chrome.ToastKind.Problem); onErrorShown() } } }
@@ -338,7 +340,7 @@ fun WalletContent(
         }
         }
       }
-        ToastHost(toast, Modifier.align(Alignment.TopCenter).statusBarsPadding())
+        if (screenToast == null) com.circaso.designsystem.chrome.ToastHost(toast, Modifier.align(Alignment.TopCenter).statusBarsPadding())
         if (sheets) WalletSheets(state, actions, onReceive, onComing)
     }
 }

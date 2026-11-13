@@ -24,6 +24,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.width
+import androidx.compose.ui.layout.layout
 import androidx.compose.ui.layout.onPlaced
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
@@ -80,8 +81,15 @@ fun CircasoScaffold(
     var bottomBarHeight by remember { mutableStateOf(0.dp) }
     var sideBarWidth by remember { mutableStateOf(0.dp) }
     // Where the content starts inside this scaffold (under the top bar and the strip): toasts drop in from there.
+    // Read only while placing the toast (layout phase), never in composition: the keyboard resizing the content
+    // re-places the toast without recomposing the screen. Pixels; written only when they change.
     var frame by remember { mutableStateOf<androidx.compose.ui.layout.LayoutCoordinates?>(null) }
-    var contentArea by remember { mutableStateOf(androidx.compose.ui.unit.DpRect(0.dp, 0.dp, 0.dp, 0.dp)) }
+    val contentLeft = remember { androidx.compose.runtime.mutableIntStateOf(0) }
+    val contentTop = remember { androidx.compose.runtime.mutableIntStateOf(0) }
+    val contentWidth = remember { androidx.compose.runtime.mutableIntStateOf(0) }
+    // The floating banner's height: a toast stacks under it instead of landing on it, and moves up as it collapses.
+    var bannerHeight by remember { androidx.compose.runtime.mutableIntStateOf(0) }
+    val toastShift = androidx.compose.animation.core.animateIntAsState(bannerHeight, com.circaso.designsystem.motion.CircasoSpring.notice(), label = "toast under banner")
     val sideInsets = WindowInsets.displayCutout.union(WindowInsets.navigationBars).only(WindowInsetsSides.Horizontal)
     // Some devices report no navigation inset; keep the floating bar off the screen edge anyway.
     val navInset = maxOf(WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding(), 16.dp)
@@ -115,16 +123,19 @@ fun CircasoScaffold(
                     .onPlaced { placed ->
                         frame?.let { f ->
                             val at = f.localPositionOf(placed, androidx.compose.ui.geometry.Offset.Zero)
-                            contentArea = with(density) {
-                                androidx.compose.ui.unit.DpRect(at.x.toDp(), at.y.toDp(), (at.x + placed.size.width).toDp(), (at.y + placed.size.height).toDp())
-                            }
+                            contentLeft.intValue = at.x.toInt()
+                            contentTop.intValue = at.y.toInt()
+                            contentWidth.intValue = placed.size.width
                         }
                     },
             ) {
                 content(PaddingValues(bottom = if (bottomBar != null) bottomBarHeight + navInset else 0.dp))
                 // Notices float at the top of the content, under the top bar and the strip, centred in the same
                 // readable frame: the content stays put when one comes or goes (Pasaka, 2026-11-13).
-                Box(Modifier.align(Alignment.TopCenter).fillMaxWidth(), contentAlignment = Alignment.TopCenter) { banner() }
+                Box(
+                    Modifier.align(Alignment.TopCenter).fillMaxWidth().onSizeChanged { bannerHeight = it.height },
+                    contentAlignment = Alignment.TopCenter,
+                ) { banner() }
             }
             }
         }
@@ -178,7 +189,14 @@ fun CircasoScaffold(
         overlay()
         // Toasts drop in where the content starts, above any sheet, so every screen places them the same way.
         // Centred on the content column, not the window, so a side rail or a side top bar never pulls it off centre.
-        Box(Modifier.padding(start = contentArea.left, top = contentArea.top).width(contentArea.right - contentArea.left).fillMaxHeight()) { toast() }
+        Box(
+            Modifier.layout { measurable, constraints ->
+                val width = contentWidth.intValue.takeIf { it > 0 } ?: constraints.maxWidth
+                val top = contentTop.intValue + toastShift.value
+                val placeable = measurable.measure(androidx.compose.ui.unit.Constraints(maxWidth = width, maxHeight = (constraints.maxHeight - top).coerceAtLeast(0)))
+                layout(constraints.maxWidth, constraints.maxHeight) { placeable.place(contentLeft.intValue, top) }
+            },
+        ) { toast() }
     }
 }
 

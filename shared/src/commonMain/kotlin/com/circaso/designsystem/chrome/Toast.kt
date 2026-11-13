@@ -52,6 +52,12 @@ class ToastState {
 fun rememberToastState() = remember { ToastState() }
 
 /**
+ * The toast of the screen a tab sits in (Home): a tab shows its toasts through it, so they land where the screen's
+ * scaffold places them (under the strip and any notice) rather than on the status bar. Null outside one.
+ */
+val LocalScreenToast = androidx.compose.runtime.staticCompositionLocalOf<ToastState?> { null }
+
+/**
  * A floating notice for the current toast. In the scaffold's `toast` slot the scaffold places it, centred under the top
  * bar and the strip; pass no placement. Elsewhere (a full-screen viewer) [modifier] places it.
  */
