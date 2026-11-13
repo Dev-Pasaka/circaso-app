@@ -102,6 +102,8 @@ object ErrorMessages {
         "wallet.support_account_has_no_wallet" to "Support accounts don't have wallets.",
         // chamas
         "chama.not_a_member" to "You're not in this group.",
+        "support.log_rate_limited" to "You've sent a few logs already. Try again in an hour, or chat with us.",
+        "support.log_invalid" to "This log couldn't be sent. Chat with us instead.",
         "calls.not_found" to "That call has ended.",
         "calls.call_ended" to "That call has ended.",
         "calls.not_a_member" to "You can only call people you chat with.",

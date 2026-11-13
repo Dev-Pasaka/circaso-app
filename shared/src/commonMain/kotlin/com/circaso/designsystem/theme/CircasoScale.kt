@@ -38,6 +38,8 @@ object CircasoSizes {
     val controlMd = 44.dp
     val controlSm = 34.dp
     val iconButton = 36.dp
+    /** A floating notice's tinted icon badge. */
+    val noticeBadge = 30.dp
     /** The Circaso mark at small size: the wallet cards and the Chats masthead. */
     val brandMarkSm = 30.dp
     val avatarSm = 28.dp
@@ -45,6 +47,10 @@ object CircasoSizes {
     /** The Moments list's photos (2026-11-06): a step above a chat row's, as the rings are what that list is about. */
     val avatarMl = 52.dp
     val avatarLg = 64.dp
+    /** The round icon at the top of a message or confirm sheet (the canvas's `.big-ico` on ID-23). */
+    val sheetBadge = 64.dp
+    /** The glyph inside [sheetBadge]: 30 px on the canvas. */
+    val sheetBadgeIcon = 30.dp
     val avatarXl = 96.dp
     /** The You tab's centred photo. */
     val avatarHero = 112.dp

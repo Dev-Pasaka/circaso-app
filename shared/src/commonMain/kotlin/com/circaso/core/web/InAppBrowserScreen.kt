@@ -158,7 +158,7 @@ fun InAppBrowserScreen(url: String, onClose: () -> Unit, webViewReady: Boolean =
     CircasoScaffold(
         readable = false,
         topBar = { BrowserBar(state, domain, onClose, onMore = { menu = true }) },
-        toast = { ToastHost(toast, Modifier.align(Alignment.TopCenter).statusBarsPadding().padding(top = 56.dp)) },
+        toast = { ToastHost(toast) },
         overlay = {
             CircasoSheet(menu, { menu = false }, label = "Page options") {
                 BrowserMenu(
@@ -168,7 +168,7 @@ fun InAppBrowserScreen(url: String, onClose: () -> Unit, webViewReady: Boolean =
                     onCopy = {
                         menu = false
                         clipboard.setText(AnnotatedString(state.url))
-                        scope.launch { toast.show("Link copied") }
+                        scope.launch { toast.show("Link copied", com.circaso.designsystem.chrome.ToastKind.Done) }
                     },
                     onShare = { menu = false; shareText(state.url, state.title) },
                 )

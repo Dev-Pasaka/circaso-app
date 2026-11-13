@@ -80,7 +80,7 @@ fun ThemeGallery(darkTheme: Boolean, highContrast: Boolean, onToggleDark: () -> 
                         if (waiting == 0) repeat(2) { outbox.enqueue(OutboxType.ChatMessage, "demo") } else outbox.discardAll()
                     }
                 })
-                CircasoIconButton(CircasoIcon.Check, "Show the back online toast", { scope.launch { toast.show("Back online · 2 messages sent") } }, emphasised = true)
+                CircasoIconButton(CircasoIcon.Check, "Show the back online toast", { scope.launch { toast.show("Back online · 2 messages sent", com.circaso.designsystem.chrome.ToastKind.Done) } }, emphasised = true)
             }
         },
         banner = { ConnectionBanner(showing = "Showing the gallery", waitingCount = waiting) },
@@ -91,13 +91,14 @@ fun ThemeGallery(darkTheme: Boolean, highContrast: Boolean, onToggleDark: () -> 
                 onSelect = { tab = it },
             )
         },
-        toast = { ToastHost(toast, Modifier.align(Alignment.TopCenter).windowInsetsPadding(WindowInsets.statusBars).padding(top = 56.dp)) },
+        toast = { ToastHost(toast) },
         overlay = {
             ConfirmSheet(
                 visible = confirm,
                 title = "Sign out of Circaso?",
                 message = "You can sign back in with Google or Apple. Your chats and money stay safe, and this phone stays yours.",
                 confirmLabel = "Sign Out",
+                icon = com.circaso.designsystem.components.CircasoIcon.SignOut,
                 onConfirm = { confirm = false; scope.launch { signOut() } },
                 onDismiss = { confirm = false },
             )

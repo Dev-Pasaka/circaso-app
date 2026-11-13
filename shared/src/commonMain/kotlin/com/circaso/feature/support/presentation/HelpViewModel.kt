@@ -30,7 +30,18 @@ data class HelpUiState(
     val online: Boolean = true,
     val opening: Boolean = false,
     val error: String? = null,
+    /** "Send diagnostic log" (2026-11-13): its sheet, while open. */
+    val logSheet: LogSheet? = null,
 )
+
+/** The "Send diagnostic log" sheet: asking first, sending, the code to give support, or what went wrong. */
+sealed interface LogSheet {
+    data object Confirm : LogSheet
+    data object Sending : LogSheet
+    data class Sent(val code: String) : LogSheet
+    /** [reference]: the request id (and an unknown code) for support, on its own line. */
+    data class Failed(val message: String, val reference: String? = null) : LogSheet
+}
 
 /** Design SP01: chat with a person (calls arrive with calls), what it's about, and the conversation so far. */
 class HelpViewModel(
@@ -41,7 +52,10 @@ class HelpViewModel(
     connection: ConnectionState,
     /** The signed-in person. */
     private val myUserId: () -> String?,
+    /** Uploads the diagnostic log and answers its code; null hides the row. */
+    private val sendLog: (suspend () -> AppResult<com.circaso.feature.support.DiagnosticLogReceipt>)? = null,
 ) : ViewModel() {
+    val canSendLog: Boolean get() = sendLog != null
     private val local = MutableStateFlow(HelpUiState())
     private val _opened = MutableSharedFlow<String>(extraBufferCapacity = 1)
     /** The support chat to open. */
@@ -97,4 +111,27 @@ class HelpViewModel(
     }
 
     fun onErrorShown() = local.update { it.copy(error = null) }
+
+    /** You → Help → "Send diagnostic log": asks first, so nothing leaves the phone on a stray tap. */
+    fun onSendLog() { if (sendLog != null) local.update { it.copy(logSheet = LogSheet.Confirm) } }
+
+    fun onSendLogConfirmed() {
+        val upload = sendLog ?: return
+        if (state.value.logSheet == LogSheet.Sending) return
+        // The buttons are off without a connection; this only backs them up.
+        if (!state.value.online) return
+        local.update { it.copy(logSheet = LogSheet.Sending) }
+        viewModelScope.launch {
+            val next = when (val r = upload()) {
+                is AppResult.Success -> LogSheet.Sent(r.value.code)
+                is AppResult.Failure -> LogSheet.Failed(
+                    ErrorMessages.forError(r.error),
+                    ErrorMessages.reference(r.error)?.let { "Ref $it" },
+                )
+            }
+            local.update { if (it.logSheet == LogSheet.Sending) it.copy(logSheet = next) else it }
+        }
+    }
+
+    fun onLogSheetClosed() = local.update { if (it.logSheet == LogSheet.Sending) it else it.copy(logSheet = null) }
 }

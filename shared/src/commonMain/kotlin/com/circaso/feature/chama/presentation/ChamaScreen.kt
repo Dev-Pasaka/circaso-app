@@ -109,7 +109,7 @@ fun ChamaContent(
     val c = CircasoTheme.colors
     val t = CircasoTheme.typography
     val toast = rememberToastState()
-    LaunchedEffect(state.notice, state.error) { (state.notice ?: state.error)?.let { toast.show(it); onNoticeShown() } }
+    LaunchedEffect(state.notice, state.error) { (state.notice ?: state.error)?.let { toast.show(it, if (state.notice == null) com.circaso.designsystem.chrome.ToastKind.Problem else com.circaso.designsystem.chrome.ToastKind.Info); onNoticeShown() } }
     val chama = state.chama
     val chat = state.chat
     val amAdmin = chat?.myRole == MemberRole.Admin || chat?.myRole == MemberRole.Owner
@@ -125,7 +125,7 @@ fun ChamaContent(
                 },
             )
         },
-        toast = { ToastHost(toast, Modifier.align(Alignment.TopCenter).padding(top = 8.dp)) },
+        toast = { ToastHost(toast) },
         bottomBar = if (chama != null) ({
             Column(Modifier.fillMaxWidth().padding(horizontal = CircasoSpacing.s4, vertical = CircasoSpacing.s2), verticalArrangement = Arrangement.spacedBy(CircasoSpacing.s2)) {
                 CircasoButton("Make a Payment", { onDraft(true) }, size = ButtonSize.Large, block = true, enabled = state.online && !state.busy)

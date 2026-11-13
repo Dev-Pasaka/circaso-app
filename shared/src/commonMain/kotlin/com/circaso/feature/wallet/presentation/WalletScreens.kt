@@ -1,5 +1,6 @@
 package com.circaso.feature.wallet.presentation
 
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.Box
 import androidx.compose.ui.semantics.semantics
@@ -252,22 +253,17 @@ fun androidx.compose.foundation.layout.BoxScope.WalletOverlay(
 /** After wallet setup: approve payments with Face ID / Touch ID / fingerprint instead of typing the PIN. Stateless for previews. */
 @Composable
 fun BiometricOfferContent(bio: com.circaso.feature.account.presentation.BiometricApprovalState, onTurnOn: () -> Unit, onNotNow: () -> Unit) {
-    val c = CircasoTheme.colors
-    val t = CircasoTheme.typography
     val what = bio.inSentence
-    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        BasicText("Approve payments with $what?", Modifier.semantics { heading() }, style = t.title2.copy(color = c.ink))
-        BasicText(
-            "Confirm payments without typing your PIN. You'll enter your PIN once to set it up, and it's always there if $what doesn't work. Circaso never sees your PIN.",
-            style = t.body.copy(color = c.inkSecondary),
-        )
-        if (!bio.online) BasicText("Turning this on needs a connection. You can do it later in You → Security.", style = t.footnote.copy(color = c.inkSecondary))
-    }
-    Column(verticalArrangement = Arrangement.spacedBy(CircasoSpacing.s2)) {
-        CircasoButton("Turn On ${bio.label}", onTurnOn, size = ButtonSize.Large, block = true, enabled = bio.online, busy = bio.busy)
-        CircasoButton("Not Now", onNotNow, style = ButtonStyle.Plain, size = ButtonSize.Large, block = true, enabled = !bio.busy)
-        bio.error?.let { BasicText(it, style = t.footnote.copy(color = c.critical)) }
-    }
+    com.circaso.designsystem.chrome.SheetMessage(
+        "Approve payments with $what?",
+        "Confirm payments without typing your PIN. You'll enter your PIN once to set it up, and it's always there if $what doesn't work. Circaso never sees your PIN.",
+        if (bio.label.startsWith("Face")) CircasoIcon.FaceId else CircasoIcon.Fingerprint,
+    )
+    com.circaso.designsystem.chrome.SheetActions(
+        "Turn On ${bio.label}", onTurnOn, "Not Now", onNotNow, enabled = bio.online, busy = bio.busy,
+        note = bio.error ?: if (!bio.online) "Turning this on needs a connection. You can do it later in You → Security." else null,
+        noteIsError = bio.error != null,
+    )
 }
 
 /** Receive (E4, or the group's addresses) and the coming sheets, for whichever wallet is on screen. */
@@ -278,7 +274,17 @@ fun androidx.compose.foundation.layout.BoxScope.WalletSheets(state: WalletUiStat
         if (group != null) GroupReceiveContent(group, onClose = { onReceive(false) })
         else ReceiveSheetContent(state.wallet, state.handle, onClose = { onReceive(false) })
     }
-    CircasoSheet(state.coming != null, { onComing(null) }, label = "Coming soon") { state.coming?.let { ComingSheetContent(it, onSendToWallet = { onComing(null); actions.onSendToWallet() }) } }
+    // Hold the last flow while the sheet slides away, so its card doesn't empty to a grabber on the way out.
+    val lastComing = remember { androidx.compose.runtime.mutableStateOf(state.coming) }
+    state.coming?.let { lastComing.value = it }
+    CircasoSheet(state.coming != null, { onComing(null) }, label = "Coming soon") {
+        lastComing.value?.let {
+            ComingSheetContent(
+                it, onSendToWallet = { onComing(null); actions.onSendToWallet() }, onClose = { onComing(null) },
+                onShowAddress = { onComing(null); onReceive(true) },
+            )
+        }
+    }
 }
 
 /** Design E1, plus the states before a wallet exists. Stateless so it can be previewed. */
@@ -309,10 +315,12 @@ fun WalletContent(
 ) {
     val c = CircasoTheme.colors
     val t = CircasoTheme.typography
-    val toast = rememberToastState()
+    // Inside Home the tab's toast is Home's, placed by its scaffold; on its own (previews) a local one.
+    val screenToast = com.circaso.designsystem.chrome.LocalScreenToast.current
+    val toast = screenToast ?: com.circaso.designsystem.chrome.rememberToastState()
     val g = state.group
     // The create screen shows its error inline; an active wallet shows a passing toast instead.
-    LaunchedEffect(state.error, g == null) { if (g == null) state.error?.let { if (state.active) { toast.show(it); onErrorShown() } } }
+    LaunchedEffect(state.error, g == null) { if (g == null) state.error?.let { if (state.active) { toast.show(it, com.circaso.designsystem.chrome.ToastKind.Problem); onErrorShown() } } }
     LaunchedEffect(g?.message) { g?.message?.let { toast.show(it); group?.onMessageShown?.invoke() } }
     val wallet = g?.wallet ?: state.wallet.takeIf { g == null }
     val bottom = bottomPadding.calculateBottomPadding() + CircasoSpacing.s4
@@ -337,7 +345,7 @@ fun WalletContent(
         }
         }
       }
-        ToastHost(toast, Modifier.align(Alignment.TopCenter).padding(top = 8.dp))
+        if (screenToast == null) com.circaso.designsystem.chrome.ToastHost(toast, Modifier.align(Alignment.TopCenter).statusBarsPadding())
         if (sheets) WalletSheets(state, actions, onReceive, onComing)
     }
 }
@@ -808,20 +816,25 @@ private fun ReceiveSheetContent(wallet: Wallet?, handle: String?, onClose: () ->
 
 /** Designs E2 and E6, honestly: the flows exist on paper, the rails don't yet. */
 @Composable
-private fun ComingSheetContent(flow: ComingFlow, onSendToWallet: () -> Unit) {
-    val c = CircasoTheme.colors
-    val t = CircasoTheme.typography
-    Column(verticalArrangement = Arrangement.spacedBy(CircasoSpacing.s3)) {
-        when (flow) {
-            ComingFlow.AddMoney -> {
-                BasicText("Adding money is coming", style = t.title2.copy(color = c.ink))
-                BasicText("Topping up from M-Pesa or a card needs a licensed partner, and we'd rather do it properly than quickly. Until then, send USDC to your address from any wallet or exchange.", style = t.body.copy(color = c.inkSecondary))
-            }
-            ComingFlow.CashOut -> {
-                BasicText("Cash out is coming", style = t.title2.copy(color = c.ink))
-                BasicText("We're waiting on regulatory approval to let you move money from Circaso straight to M-Pesa or your bank. Until then, you can send your USDC to an exchange and withdraw from there.", style = t.body.copy(color = c.inkSecondary))
-                CircasoButton("Send to an Exchange", onSendToWallet, size = ButtonSize.Large, block = true)
-            }
+private fun ComingSheetContent(flow: ComingFlow, onSendToWallet: () -> Unit, onClose: () -> Unit, onShowAddress: () -> Unit) {
+    // E2/E6 as a sheet: the canvas's round icon (the bank for cash out, money arriving for add money), the honest
+    // "coming" line, and a clear way out, so it reads as a considered answer rather than a dead end.
+    when (flow) {
+        ComingFlow.AddMoney -> {
+            com.circaso.designsystem.chrome.SheetMessage(
+                "Adding money is coming",
+                "Topping up from M-Pesa or a card needs a licensed partner, and we'd rather do it properly than quickly. Until then, send USDC to your address from any wallet or exchange.",
+                CircasoIcon.ArrowDown,
+            )
+            com.circaso.designsystem.chrome.SheetActions("Show My Address", onShowAddress, "Not Now", onClose)
+        }
+        ComingFlow.CashOut -> {
+            com.circaso.designsystem.chrome.SheetMessage(
+                "Cash out is coming",
+                "We're waiting on regulatory approval to let you move money from Circaso straight to M-Pesa or your bank. Until then, you can send your USDC to an exchange and withdraw from there.",
+                CircasoIcon.Bank,
+            )
+            com.circaso.designsystem.chrome.SheetActions("Send to an Exchange", onSendToWallet, "Not Now", onClose)
         }
     }
 }

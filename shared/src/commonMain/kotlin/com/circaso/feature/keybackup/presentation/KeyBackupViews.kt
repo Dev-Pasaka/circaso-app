@@ -139,7 +139,8 @@ fun GroupBackupSection(viewModel: KeyBackupViewModel, unlock: String) {
                 visible = s.confirmOff,
                 title = "Turn off group names backup?",
                 message = "Your backed-up group keys are deleted from Circaso, for every phone. Group names on this phone stay. After you sign out or change phones, groups show members' names until someone in the group is online.",
-                confirmLabel = "Turn Off", destructive = true, onConfirm = viewModel::onTurnOff, onDismiss = viewModel::onTurnOffDismissed,
+                confirmLabel = "Turn Off", destructive = true, icon = com.circaso.designsystem.components.CircasoIcon.Shield,
+                enabled = s.online, note = if (!s.online) "Turning this off needs a connection." else null, onConfirm = viewModel::onTurnOff, onDismiss = viewModel::onTurnOffDismissed,
             )
         }
     }

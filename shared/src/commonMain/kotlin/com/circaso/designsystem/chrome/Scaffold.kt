@@ -24,6 +24,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.width
+import androidx.compose.ui.layout.layout
+import androidx.compose.ui.layout.onPlaced
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
@@ -38,7 +40,9 @@ import com.circaso.designsystem.adaptive.readableWidth
 import com.circaso.designsystem.theme.CircasoTheme
 
 /**
- * Screen frame. Order, top to bottom: top bar, banner (the connection banner), content.
+ * Screen frame. Order, top to bottom: top bar, [strip] (bars that belong to the screen: an ongoing call, a chama goal),
+ * content. [banner] (the connection banner and other notices that come and go) floats over the content just under the
+ * top bar, so nothing below it moves when it appears (Pasaka, 2026-11-13).
  * The floating [bottomBar] sits over the content; [content] receives the bottom padding it needs so
  * nothing hides behind it. [overlay] (sheets) draws above everything but the [toast].
  */
@@ -48,7 +52,10 @@ fun CircasoScaffold(
     grouped: Boolean = false,
     /** Across the top; down the left side when the phone is on its side, with everything in it stacked. */
     topBar: (@Composable () -> Unit)? = null,
+    /** Floats over the content under the top bar; appearing never pushes the screen down. */
     banner: @Composable () -> Unit = {},
+    /** Part of the layout under the top bar: bars that stay while something is on (an ongoing call, a goal). */
+    strip: @Composable () -> Unit = {},
     bottomBar: (@Composable () -> Unit)? = null,
     /** In place of [bottomBar] on a wide or short screen: the tabs float down the left side. */
     sideBar: (@Composable () -> Unit)? = null,
@@ -73,6 +80,16 @@ fun CircasoScaffold(
     val topBarOnSide = topBar != null && com.circaso.designsystem.adaptive.LocalWindowLayout.current.short
     var bottomBarHeight by remember { mutableStateOf(0.dp) }
     var sideBarWidth by remember { mutableStateOf(0.dp) }
+    // Where the content starts inside this scaffold (under the top bar and the strip): toasts drop in from there.
+    // Read only while placing the toast (layout phase), never in composition: the keyboard resizing the content
+    // re-places the toast without recomposing the screen. Pixels; written only when they change.
+    var frame by remember { mutableStateOf<androidx.compose.ui.layout.LayoutCoordinates?>(null) }
+    val contentLeft = remember { androidx.compose.runtime.mutableIntStateOf(0) }
+    val contentTop = remember { androidx.compose.runtime.mutableIntStateOf(0) }
+    val contentWidth = remember { androidx.compose.runtime.mutableIntStateOf(0) }
+    // The floating banner's height: a toast stacks under it instead of landing on it, and moves up as it collapses.
+    var bannerHeight by remember { androidx.compose.runtime.mutableIntStateOf(0) }
+    val toastShift = androidx.compose.animation.core.animateIntAsState(bannerHeight, com.circaso.designsystem.motion.CircasoSpring.notice(), label = "toast under banner")
     val sideInsets = WindowInsets.displayCutout.union(WindowInsets.navigationBars).only(WindowInsetsSides.Horizontal)
     // Some devices report no navigation inset; keep the floating bar off the screen edge anyway.
     val navInset = maxOf(WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding(), 16.dp)
@@ -83,7 +100,7 @@ fun CircasoScaffold(
     if (outer != null && backdrop != null) HostedBackdrop(backdrop)
     // Inside another scaffold (a tab inside Home) the outer one paints the page and the backdrop, edge to edge;
     // painting here too would box the backdrop in.
-    Box(modifier.fillMaxSize().let { if (outer == null) it.background(if (grouped) c.bgGrouped else c.bg) else it }) {
+    Box(modifier.fillMaxSize().onPlaced { frame = it }.let { if (outer == null) it.background(if (grouped) c.bgGrouped else c.bg) else it }) {
         if (outer == null) {
             backdrop?.invoke(this)
             host.content?.invoke(this)
@@ -100,8 +117,26 @@ fun CircasoScaffold(
         ) {
             androidx.compose.runtime.CompositionLocalProvider(LocalBackdropHost provides host) {
             if (!topBarOnSide) topBar?.invoke()
-            banner()
-            Box(Modifier.weight(1f).let { if (keepReadable) it.readableWidth(maxContentWidth) else it }) { content(PaddingValues(bottom = if (bottomBar != null) bottomBarHeight + navInset else 0.dp)) }
+            strip()
+            Box(
+                Modifier.weight(1f).let { if (keepReadable) it.readableWidth(maxContentWidth) else it }
+                    .onPlaced { placed ->
+                        frame?.let { f ->
+                            val at = f.localPositionOf(placed, androidx.compose.ui.geometry.Offset.Zero)
+                            contentLeft.intValue = at.x.toInt()
+                            contentTop.intValue = at.y.toInt()
+                            contentWidth.intValue = placed.size.width
+                        }
+                    },
+            ) {
+                content(PaddingValues(bottom = if (bottomBar != null) bottomBarHeight + navInset else 0.dp))
+                // Notices float at the top of the content, under the top bar and the strip, centred in the same
+                // readable frame: the content stays put when one comes or goes (Pasaka, 2026-11-13).
+                Box(
+                    Modifier.align(Alignment.TopCenter).fillMaxWidth().onSizeChanged { bannerHeight = it.height },
+                    contentAlignment = Alignment.TopCenter,
+                ) { banner() }
+            }
             }
         }
         if (bottomBar != null && topBarOnSide) {
@@ -152,7 +187,16 @@ fun CircasoScaffold(
             ) { sideBar() }
         }
         overlay()
-        toast()
+        // Toasts drop in where the content starts, above any sheet, so every screen places them the same way.
+        // Centred on the content column, not the window, so a side rail or a side top bar never pulls it off centre.
+        Box(
+            Modifier.layout { measurable, constraints ->
+                val width = contentWidth.intValue.takeIf { it > 0 } ?: constraints.maxWidth
+                val top = contentTop.intValue + toastShift.value
+                val placeable = measurable.measure(androidx.compose.ui.unit.Constraints(maxWidth = width, maxHeight = (constraints.maxHeight - top).coerceAtLeast(0)))
+                layout(constraints.maxWidth, constraints.maxHeight) { placeable.place(contentLeft.intValue, top) }
+            },
+        ) { toast() }
     }
 }
 

@@ -248,7 +248,7 @@ fun AppNavigation(forceUpdate: Boolean, home: @Composable () -> Unit) {
         online = shareUi.online,
     )
     LaunchedEffect(Unit) {
-        announcements.sentAfterOffline.collect { n -> toast.show("Back online · $n ${if (n == 1) "change" else "changes"} sent") }
+        announcements.sentAfterOffline.collect { n -> toast.show("Back online · $n ${if (n == 1) "change" else "changes"} sent", com.circaso.designsystem.chrome.ToastKind.Done) }
     }
     CompositionLocalProvider(
         LocalAshaLauncher provides asha,
@@ -337,10 +337,12 @@ fun AppNavigation(forceUpdate: Boolean, home: @Composable () -> Unit) {
                     chatsActions = {},
                     chatsBanner = {
                         val s by chatsViewModel.state.collectAsState()
+                        ChatsBanner(s)
+                    },
+                    chatsStrip = {
                         val w by walletViewModel.state.collectAsState()
                         androidx.compose.foundation.layout.Column {
                             HoldBanner(w.wallet?.holdUntil, onNotMe = { backStack.add(SecurityRoute) }, reason = w.wallet?.holdReason)
-                            ChatsBanner(s)
                             val bio: com.circaso.core.platform.Biometrics = koinInject()
                             com.circaso.feature.keybackup.presentation.RestoreGroupNamesCard(koinViewModel(), unlock = if (bio.available()) bio.name else "Screen Lock")
                         }
@@ -498,6 +500,7 @@ fun AppNavigation(forceUpdate: Boolean, home: @Composable () -> Unit) {
                     onBack = ::pop,
                     onOpenMoment = { posterId, momentId -> backStack.add(MomentViewerRoute(posterId, momentId)) },
                     onInfo = { backStack.add(ChatInfoRoute(route.chatId)) },
+                    onSecurityCode = { backStack.add(ChatInfoRoute(route.chatId, security = true)) },
                     onAsha = { if (backStack.lastOrNull() != AshaRoute) backStack.add(AshaRoute) },
                     onPay = if (peer != null) ({ amount -> backStack.add(PayRoute(userId = peer, chatId = route.chatId, displayName = thread.chat?.title, amount = amount)) }) else null,
                     onOpenTransfer = { id -> backStack.add(TransferRoute(id)) },
@@ -579,7 +582,7 @@ fun AppNavigation(forceUpdate: Boolean, home: @Composable () -> Unit) {
                 val info by infoViewModel.state.collectAsState()
                 val peer = info.chat?.peerId
                 ChatInfoScreen(
-                    infoViewModel, onBack = ::pop, onLeft = { pop(); pop() }, onGroupWallet = { backStack.add(if (info.money.enabled) GroupWalletRoute(route.chatId) else ChamaRoute(route.chatId)) },
+                    infoViewModel, showSecurityCode = route.security, onBack = ::pop, onLeft = { pop(); pop() }, onGroupWallet = { backStack.add(if (info.money.enabled) GroupWalletRoute(route.chatId) else ChamaRoute(route.chatId)) },
                     onSetUpWallet = { thenTarget -> backStack.add(GroupWalletSetupRoute(route.chatId, thenTarget = thenTarget)) },
                     onTarget = { backStack.add(TargetRoute(route.chatId)) },
                     onPayFromWallet = { wid -> backStack.add(PayRoute(fromWalletId = wid)) },

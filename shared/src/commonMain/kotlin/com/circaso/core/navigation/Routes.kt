@@ -113,7 +113,7 @@ data object NewChatRoute : Route
 data object NewGroupRoute : Route
 
 @Serializable
-data class ChatInfoRoute(val chatId: String) : Route
+data class ChatInfoRoute(val chatId: String, val security: Boolean = false) : Route
 
 /**
  * Pay a person (design C4/C5): [userId] null means pick one first; [chatId] when paying from that chat. Group wallets

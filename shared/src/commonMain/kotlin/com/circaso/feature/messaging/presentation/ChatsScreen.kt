@@ -1,5 +1,6 @@
 package com.circaso.feature.messaging.presentation
 
+import androidx.compose.foundation.layout.statusBarsPadding
 import com.circaso.feature.status.presentation.arcs
 import com.circaso.designsystem.motion.pressable
 import com.circaso.feature.status.presentation.momentRing
@@ -103,9 +104,11 @@ fun androidx.compose.foundation.layout.BoxScope.ChatsOverlay(viewModel: ChatsVie
     val state by viewModel.state.collectAsState()
     MeetAshaSheet(visible = state.meetAsha && state.loaded, firstName = state.firstName, onTry = onAsha, onVoice = onVoice, onDismiss = viewModel::onMeetAshaDone)
     // A declined invite, or one no longer open, leaves the list: said here so the card's leaving is never silent.
-    val toast = com.circaso.designsystem.chrome.rememberToastState()
+    // Inside Home the tab's toast is Home's, placed by its scaffold; on its own (previews) a local one.
+    val screenToast = com.circaso.designsystem.chrome.LocalScreenToast.current
+    val toast = screenToast ?: com.circaso.designsystem.chrome.rememberToastState()
     androidx.compose.runtime.LaunchedEffect(state.notice) { state.notice?.let { toast.show(it); viewModel.onNoticeShown() } }
-    com.circaso.designsystem.chrome.ToastHost(toast, Modifier.align(Alignment.TopCenter).padding(top = CircasoSpacing.s2))
+    if (screenToast == null) com.circaso.designsystem.chrome.ToastHost(toast, Modifier.align(Alignment.TopCenter).statusBarsPadding())
     val preview = state.previewing
     InvitePreviewSheet(
         preview, viewModel.inviteActions, state.online,

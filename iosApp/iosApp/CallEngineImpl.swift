@@ -23,6 +23,7 @@ final class CallEngineImpl: NSObject, CallEngineProvider, RTCPeerConnectionDeleg
     private var remoteListener: (([String]) -> Void)?
     private var connectionListener: ((KotlinInt) -> Void)?
     private var receivingListener: (([String]) -> Void)?
+    private var linkListener: ((String) -> Void)?
     /// Pulled mids whose packets have arrived; see `CallEngine.receivingMids`.
     private var receiving: Set<String> = []
     private var statsTimer: Timer?
@@ -163,6 +164,57 @@ final class CallEngineImpl: NSObject, CallEngineProvider, RTCPeerConnectionDeleg
                 total += (stat.values["packetsReceived"] as? NSNumber)?.int64Value ?? 0
             }
             DispatchQueue.main.async { completion(KotlinLong(value: total)) }
+        }
+    }
+
+    /// One stats reading for the call report (2026-11-13), as JSON: RTT from the nominated candidate pair, jitter and
+    /// running totals from inbound RTP. nil without a connection.
+    func stats(completion: @escaping (String?) -> Void) {
+        guard let connection = pc else { completion(nil); return }
+        connection.statistics { report in
+            let all = Array(report.statistics.values)
+            func num(_ s: RTCStatistics, _ key: String) -> NSNumber? { s.values[key] as? NSNumber }
+            var out: [String: Any] = [:]
+            let pair = all.first { $0.type == "candidate-pair" && (num($0, "nominated")?.boolValue ?? false) && ($0.values["state"] as? String) == "succeeded" }
+            if let rtt = pair.flatMap({ num($0, "currentRoundTripTime") })?.doubleValue
+                ?? all.first(where: { $0.type == "remote-inbound-rtp" }).flatMap({ num($0, "roundTripTime") })?.doubleValue {
+                out["rttMs"] = rtt * 1000
+            }
+            let inbound = all.filter { $0.type == "inbound-rtp" }
+            let audioIn = inbound.filter { ($0.values["kind"] as? String) == "audio" }
+            if let jitter = audioIn.compactMap({ num($0, "jitter")?.doubleValue }).max() { out["jitterMs"] = jitter * 1000 }
+            out["packetsReceived"] = audioIn.reduce(Int64(0)) { $0 + (num($1, "packetsReceived")?.int64Value ?? 0) }
+            out["packetsLost"] = audioIn.reduce(Int64(0)) { $0 + (num($1, "packetsLost")?.int64Value ?? 0) }
+            out["bytesReceived"] = inbound.reduce(Int64(0)) { $0 + (num($1, "bytesReceived")?.int64Value ?? 0) }
+            let json = (try? JSONSerialization.data(withJSONObject: out)).flatMap { String(data: $0, encoding: .utf8) }
+            DispatchQueue.main.async { completion(json) }
+        }
+    }
+
+    func setLinkListener(listener: @escaping (String) -> Void) { linkListener = listener }
+
+    private static func name(_ s: RTCIceConnectionState) -> String {
+        switch s {
+        case .new: "new"
+        case .checking: "checking"
+        case .connected: "connected"
+        case .completed: "completed"
+        case .failed: "failed"
+        case .disconnected: "disconnected"
+        case .closed: "closed"
+        default: "unknown"
+        }
+    }
+
+    private static func name(_ s: RTCPeerConnectionState) -> String {
+        switch s {
+        case .new: "new"
+        case .connecting: "connecting"
+        case .connected: "connected"
+        case .disconnected: "disconnected"
+        case .failed: "failed"
+        case .closed: "closed"
+        default: "unknown"
         }
     }
 
@@ -351,7 +403,13 @@ final class CallEngineImpl: NSObject, CallEngineProvider, RTCPeerConnectionDeleg
     func peerConnection(_ peerConnection: RTCPeerConnection, didAdd stream: RTCMediaStream) {}
     func peerConnection(_ peerConnection: RTCPeerConnection, didRemove stream: RTCMediaStream) {}
     func peerConnectionShouldNegotiate(_ peerConnection: RTCPeerConnection) {}
+    func peerConnection(_ peerConnection: RTCPeerConnection, didChange newState: RTCPeerConnectionState) {
+        let state = Self.name(newState)
+        DispatchQueue.main.async { self.linkListener?("pc:" + state) }
+    }
     func peerConnection(_ peerConnection: RTCPeerConnection, didChange newState: RTCIceConnectionState) {
+        let state = Self.name(newState)
+        DispatchQueue.main.async { self.linkListener?("ice:" + state) }
         let up: Int32? = switch newState {
         case .connected, .completed: 1
         case .disconnected, .failed: 0

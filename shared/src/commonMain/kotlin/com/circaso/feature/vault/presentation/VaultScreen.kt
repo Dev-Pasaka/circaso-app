@@ -140,13 +140,13 @@ fun VaultContent(state: VaultUiState, onBack: () -> Unit, actions: VaultActions)
                 visible = state.confirmOpen,
                 title = "Open your vault?",
                 message = "Opening pauses sending from your wallet for 24 hours. Your PIN shows for one minute, and we'll let you know it was opened, in case it wasn't you.",
-                confirmLabel = "Open With ${state.unlock}", onConfirm = actions.onOpen, onDismiss = actions.onOpenDismissed,
+                confirmLabel = "Open With ${state.unlock}", icon = com.circaso.designsystem.components.CircasoIcon.Lock, tone = com.circaso.designsystem.chrome.SheetTone.Warning, onConfirm = actions.onOpen, onDismiss = actions.onOpenDismissed,
             )
             ConfirmSheet(
                 visible = state.confirmRemove,
                 title = "Remove your vault?",
                 message = "Your backed-up PIN and answers are deleted. If you forget your PIN after this, only your wallet's security questions can reset it.",
-                confirmLabel = "Remove Vault", destructive = true, onConfirm = actions.onRemove, onDismiss = actions.onRemoveDismissed,
+                confirmLabel = "Remove Vault", destructive = true, icon = com.circaso.designsystem.components.CircasoIcon.Trash, onConfirm = actions.onRemove, onDismiss = actions.onRemoveDismissed,
             )
         },
     ) {

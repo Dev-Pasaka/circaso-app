@@ -73,7 +73,10 @@ class RealtimeClient(
                 val watchdog = launch {
                     while (true) {
                         kotlinx.coroutines.delay(IdleCheckMillis)
-                        if (com.circaso.core.sync.nowMillis() - lastFrame > IdleLimitMillis) throw StaleSocket()
+                        if (com.circaso.core.sync.nowMillis() - lastFrame > IdleLimitMillis) {
+                            Diagnostics.note("socket: no frame for ${IdleLimitMillis}ms, giving it up")
+                            throw StaleSocket()
+                        }
                     }
                 }
                 socket.incoming.collect { text -> lastFrame = com.circaso.core.sync.nowMillis(); handle(text) }

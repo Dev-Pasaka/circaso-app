@@ -149,6 +149,8 @@ fun ThreadScreen(
     onOpenMoment: (posterId: String?, momentId: String) -> Unit = { _, _ -> },
     /** Photos, videos and documents go through the moment composer's screens (2026-11-07): Camera, Gallery or Files. */
     onComposeMedia: (ChatComposeStart) -> Unit = {},
+    /** A "security code changed" notice was tapped (direct chats): Contact Info at the security code. */
+    onSecurityCode: (() -> Unit)? = null,
 ) {
     val state by viewModel.state.collectAsState()
     val pay = rememberQuickPay(quickPay)
@@ -171,7 +173,7 @@ fun ThreadScreen(
         payout = paying, onPayoutClose = onPayoutClose, moneyPrompt = moneyPrompt, onMoneyPromptHandled = onMoneyPromptHandled,
         notice = if (payoutBusy) "This payout is already on its way." else null, onNoticeShown = { payoutBusy = false },
         onLoadOlder = viewModel::onLoadOlder, onSavePeer = viewModel::onSavePeer, onOpenMoment = onOpenMoment, onReactTo = viewModel::onReactTo,
-        onReply = viewModel::onReply, onCancelReply = viewModel::onCancelReply,
+        onReply = viewModel::onReply, onCancelReply = viewModel::onCancelReply, onSecurityCode = onSecurityCode,
         media = viewModel.media?.let { m ->
             ThreadMediaActions(
                 canShareLocation = m.canShareLocation, onCompose = onComposeMedia, uploading = m.progress, downloading = m.downloading, onLocation = viewModel::onSendLocation,
@@ -244,6 +246,8 @@ fun ThreadContent(
     /** Swipe to reply (2026-11-11): answer a message, and stop answering it. */
     onReply: (Message) -> Unit = {},
     onCancelReply: () -> Unit = {},
+    /** A "security code changed" notice was tapped (direct chats): Contact Info at the security code. */
+    onSecurityCode: (() -> Unit)? = null,
 ) {
     val c = CircasoTheme.colors
     var toastPayError by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf<String?>(null) }
@@ -347,7 +351,7 @@ fun ThreadContent(
     val toast = rememberToastState()
     val quoteScope = androidx.compose.runtime.rememberCoroutineScope()
     LaunchedEffect(state.message) { state.message?.let { toast.show(it); onMessageShown() } }
-    LaunchedEffect(toastPayError) { toastPayError?.let { toast.show(it); toastPayError = null } }
+    LaunchedEffect(toastPayError) { toastPayError?.let { toast.show(it, com.circaso.designsystem.chrome.ToastKind.Problem); toastPayError = null } }
     val listState = rememberLazyListState()
     val rows = state.messages.size + state.openRequests.size
     // Opened at one message (a search result, a notification's card or call): scroll there once; otherwise follow the
@@ -399,7 +403,7 @@ fun ThreadContent(
     // Location tiles draw the server's map picture when there is one (MAP1).
     androidx.compose.runtime.CompositionLocalProvider(LocalMapPicture provides media?.mapPicture, LocalOpenDocument provides media?.openDocument, LocalDownloading provides downloading) {
     CircasoScaffold(
-        banner = {
+        strip = {
             // Someone I chat with but haven't saved: one tap saves them (moments need both sides saved).
             if (state.peerUnsaved && state.chat?.members?.any { it.userId == state.chat.peerId && it.handle != null } == true) {
                 Row(
@@ -488,7 +492,7 @@ fun ThreadContent(
                 },
             )
         },
-        toast = { ToastHost(toast, Modifier.align(Alignment.TopCenter).padding(top = 8.dp)) },
+        toast = { ToastHost(toast) },
         overlay = {
             // Who reacted to a group message (2026-11-11), from the chat's members.
             // Kept through the sheet's exit, so it doesn't empty while it slides away.
@@ -662,9 +666,11 @@ fun ThreadContent(
                         if (reduce) { pulse.animateTo(0.55f, tween(CircasoMotion.QuickMs)); pulse.animateTo(1f, tween(CircasoMotion.BaseMs)) }
                         else { pulse.animateTo(1.04f, tween(CircasoMotion.QuickMs)); pulse.animateTo(1f, androidx.compose.animation.core.spring(dampingRatio = 0.5f)) }
                     }
-                    Box(Modifier.fillMaxWidth().graphicsLayer { if (reduce) alpha = pulse.value else { scaleX = pulse.value; scaleY = pulse.value } }) {
+                    // A Column, not a Box: the day label sits above the row, never drawn over it (a notice opening a day collided with "Today").
+                    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(CircasoSpacing.s2)) {
                     val previous = state.messages.getOrNull(index - 1)
                     if (previous == null || localDayIndex(previous.orderAt) != localDayIndex(m.orderAt)) DayLabel(threadDayLabel(m.orderAt, now))
+                    Box(Modifier.fillMaxWidth().graphicsLayer { if (reduce) alpha = pulse.value else { scaleX = pulse.value; scaleY = pulse.value } }) {
                     when (m) {
                         is Message.Text -> {
                             val firstOfRun = previous !is Message.Text || previous.senderId != m.senderId || previous.outgoing != m.outgoing
@@ -684,7 +690,11 @@ fun ThreadContent(
                             onRetry = if (m.outgoing && payable && !groupPayoutCard(m, state.groupMoney)) ({ retryCard(m) }) else null) }
                         is Message.Deleted -> MessageColumn(m.outgoing) { ChatBubble("This message was deleted", m.outgoing, quiet = true) }
                         is Message.Unreadable -> MessageColumn(false) { ChatBubble("A message from ${m.senderName} this phone can't show", false, quiet = true) }
-                        is Message.System -> SystemLine(m.text)
+                        // A centred pill; a security code notice has a shield and, in a direct chat, opens the code.
+                        is Message.System -> SystemLine(
+                            m.text, icon = if (m.securityNotice) CircasoIcon.Shield else null,
+                            onClick = onSecurityCode?.takeIf { m.securityNotice && !state.isGroup }, onClickLabel = "View security code",
+                        )
                         is Message.Call -> CallRow(m, onCallBack = onCall?.let { call -> { call(m.video) } })
                         is Message.Media -> if (row is ThreadRow.Album) {
                             val firstOfRun = !(previous is Message.Media && previous.senderId == m.senderId && previous.outgoing == m.outgoing) &&
@@ -712,6 +722,7 @@ fun ThreadContent(
                             )
                             }
                         }
+                    }
                     }
                     }
                 }

@@ -49,14 +49,12 @@ fun HoldBanner(holdUntil: String?, reason: String? = null, onNotMe: () -> Unit) 
 
 @Composable
 fun androidx.compose.foundation.layout.BoxScope.HoldSheet(visible: Boolean, hours: Long, onDismiss: () -> Unit, onNotMe: () -> Unit, reason: String? = null) {
-    val c = CircasoTheme.colors
-    val t = CircasoTheme.typography
     CircasoSheet(visible, onDismiss, label = "Sending is paused") {
-        BasicText("Sending resumes in $hours h", style = t.title2.copy(color = c.ink))
         val body = if (reason == VaultOpenedHold) "Your PIN Vault was opened on this phone, so sending is paused for 24 hours to keep your money safe. You can still chat and receive money."
         else "Your account was recovered on this phone, so sending is paused for 48 hours to keep your money safe. You can still chat and receive money."
-        BasicText(body, style = t.body.copy(color = c.inkSecondary))
-        CircasoButton("OK", onDismiss, size = ButtonSize.Large, block = true)
-        CircasoButton("This Wasn't Me", { onDismiss(); onNotMe() }, style = ButtonStyle.Plain, size = ButtonSize.Large, block = true)
+        // Design ID-23: the clock in its grey round badge, the countdown as the title, OK, and the way to say it wasn't
+        // you. "This Wasn't Me" is a full-width plain button like every other sheet's way out (the frame's is compact).
+        com.circaso.designsystem.chrome.SheetMessage("Sending resumes in $hours h", body, CircasoIcon.Clock)
+        com.circaso.designsystem.chrome.SheetActions("OK", onDismiss, "This Wasn't Me", { onDismiss(); onNotMe() })
     }
 }

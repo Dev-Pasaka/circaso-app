@@ -1,3 +1,5 @@
+@file:OptIn(kotlinx.coroutines.FlowPreview::class)
+
 package com.circaso.feature.status.presentation
 
 import androidx.lifecycle.ViewModel
@@ -14,11 +16,13 @@ import com.circaso.feature.status.domain.MomentMediaLoad
 import com.circaso.feature.status.domain.MomentRing
 import com.circaso.feature.status.domain.MomentViewer
 import com.circaso.feature.status.domain.MomentsRepository
+import com.circaso.feature.status.domain.SeenReactions
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
@@ -57,7 +61,10 @@ data class MomentViewerUiState(
     val online: Boolean = true,
     val closed: Boolean = false,
     val notice: String? = null,
+    /** On my moment: reactions to splash, the first playing and at most one more waiting (later ones merge into it). */
+    val bursts: List<ReactionBurst> = emptyList(),
 ) {
+    val burst: ReactionBurst? get() = bursts.firstOrNull()
     val current: MomentRing? get() = rings.getOrNull(ring)
     val moment: Moment? get() = current?.moments?.getOrNull(index)
     val mine: Boolean get() = moment?.mine == true
@@ -75,11 +82,20 @@ class MomentViewerViewModel(
     private val startAt: String? = null,
     /** Blocked people (2026-11-10): their Moments can't be opened or swiped to. */
     private val observeBlocks: com.circaso.feature.contacts.domain.ObserveBlocksUseCase? = null,
+    /** Reactions on my moments already splashed on this phone, so each plays once. */
+    private val seenReactions: SeenReactions = SeenReactions.InMemory(),
 ) : ViewModel() {
     private val _state = MutableStateFlow(MomentViewerUiState())
     val state: StateFlow<MomentViewerUiState> = _state.asStateFlow()
     private var load: Job? = null
     private var started = false
+    // Declared before init: the first emission may run inside it.
+    private var lastCounts: Pair<String, Int>? = null
+    /** Asks to look for new reactions; asks landing together (a frame and the refresh it caused) make one fetch. */
+    private val checkAsks = kotlinx.coroutines.flow.MutableSharedFlow<Unit>(extraBufferCapacity = 1, onBufferOverflow = kotlinx.coroutines.channels.BufferOverflow.DROP_OLDEST)
+    private var reactionsJob: Job? = null
+    private var reactionsAgain = false
+    private var burstIds = 0L
 
     init {
         viewModelScope.launch {
@@ -118,9 +134,18 @@ class MomentViewerViewModel(
                     }
                 }
                 showCurrent()
+                // My moment's reaction count moved (a refresh after reconnecting, say): look for reactions that came meanwhile.
+                _state.value.moment?.takeIf { it.mine }?.let { m ->
+                    val counts = m.momentId to m.reactionCount
+                    if (counts != lastCounts) { lastCounts = counts; checkAsks.tryEmit(Unit) }
+                }
             }
         }
         viewModelScope.launch { connection.status.collect { st -> _state.update { it.copy(online = st == ConnectionStatus.Online) } } }
+        // Someone viewed or reacted to the moment of mine on screen, live.
+        // (A changed emoji leaves the counts alone, so the frame itself asks too.)
+        viewModelScope.launch { repository.viewedFrames.collect { id -> if (_state.value.moment?.let { it.mine && it.momentId == id } == true) checkAsks.tryEmit(Unit) } }
+        viewModelScope.launch { checkAsks.debounce(com.circaso.designsystem.theme.CircasoMotion.BaseMs.toLong()).collect { checkReactions() } }
     }
 
     private var shownId: String? = null
@@ -131,7 +156,7 @@ class MomentViewerViewModel(
         if (shownId == m.momentId) return
         shownId = m.momentId
         // A half-typed reply belongs to the moment it was typed on, never the next one.
-        _state.update { it.copy(reply = "", paused = false, picking = false) }
+        _state.update { it.copy(reply = "", paused = false, picking = false, bursts = emptyList()) }
         load?.cancel()
         if (m.media == null || m.kind == MomentKind.Text) {
             _state.update { it.copy(media = ViewerMedia.None) }
@@ -147,6 +172,7 @@ class MomentViewerViewModel(
             }
         }
         if (!m.mine && !m.viewed) viewModelScope.launch { repository.markViewed(m.momentId) }
+        if (m.mine) { lastCounts = m.momentId to m.reactionCount; checkReactions() }
         // Fetch and decrypt the next one while this plays, so tapping on rarely stops at Loading.
         upNext()?.takeIf { it.media != null && _state.value.online }?.let { next -> viewModelScope.launch { repository.media(next) } }
     }
@@ -253,15 +279,74 @@ class MomentViewerViewModel(
 
     // ---- my own moments (V4)
 
+    /**
+     * Reactions on my moment on screen that this phone hasn't shown yet splash over it; with Seen by open, its list
+     * takes them in instead (each new row's emoji pops there). One look at a time: asked again while one is running,
+     * it looks once more when that one ends. Needs the server; offline it waits for the next frame or reconnect.
+     */
+    private fun checkReactions() {
+        if (reactionsJob?.isActive == true) { reactionsAgain = true; return }
+        reactionsJob = viewModelScope.launch {
+            do {
+                reactionsAgain = false
+                val m = _state.value.moment?.takeIf { it.mine } ?: break
+                if (!_state.value.online) break
+                val views = (repository.viewers(m.momentId) as? AppResult.Success)?.value ?: break
+                // Moved on while asking: these belong to another moment.
+                if (_state.value.moment?.momentId != m.momentId) continue
+                // Waiting to splash already counts as shown here, so a second look doesn't queue them twice.
+                val pending = _state.value.bursts.flatMap { it.keys }.toSet()
+                val fresh = unseenReactions(views, seenReactions.seen(m.momentId) + pending)
+                val rows = rowsOf(views)
+                // With Seen by open the list shows them now; otherwise they count as seen once their splash has played.
+                if (_state.value.viewersOpen) markSeen(m.momentId, views)
+                val names = fresh.map { v -> rows.first { it.viewer.userId == v.userId }.name.firstName() }
+                _state.update { s ->
+                    when {
+                        s.moment?.momentId != m.momentId -> s
+                        // The list is on screen: it shows them, each new row's emoji popping in.
+                        s.viewersOpen -> if (s.viewers != null) s.copy(viewers = rows) else s
+                        fresh.isEmpty() -> s
+                        else -> s.copy(bursts = s.bursts.queue(ReactionBurst(++burstIds, fresh.mapNotNull { it.reaction }, names, who = fresh.map { it.userId }, keys = fresh.mapNotNull(::reactionKey).toSet(), momentId = m.momentId)))
+                    }
+                }
+            } while (reactionsAgain)
+        }
+    }
+
+    private suspend fun markSeen(momentId: String, views: List<MomentViewer>) = markSeen(momentId, views.mapNotNull(::reactionKey).toSet())
+
+    private suspend fun markSeen(momentId: String, keys: Set<String>) {
+        val live = _state.value.rings.flatMap { it.moments }.filter { it.mine }.map { it.momentId }.toSet()
+        seenReactions.markSeen(momentId, keys, live)
+    }
+
+    private suspend fun rowsOf(views: List<MomentViewer>): List<ViewerRow> {
+        val people = observeContacts().first().associateBy { it.person.userId }
+        return views.map { v -> ViewerRow(v, people[v.userId]?.person?.displayName ?: "Someone not in your contacts", people[v.userId]?.person?.avatarUrl) }
+    }
+
+    /**
+     * The splash [id] has played: its reactions count as seen, and the next one, if any, plays. One cut short (I moved
+     * on, the app went away) never gets here, so it plays again the next time I look.
+     */
+    fun splashDone(id: Long) {
+        val played = _state.value.burst?.takeIf { it.id == id } ?: return
+        _state.update { s -> if (s.burst?.id == id) s.copy(bursts = s.bursts.drop(1)) else s }
+        if (played.momentId.isNotEmpty() && played.keys.isNotEmpty()) viewModelScope.launch { markSeen(played.momentId, played.keys) }
+    }
+
     fun openViewers(open: Boolean) {
-        _state.update { it.copy(viewersOpen = open, paused = open, viewers = if (open) it.viewers else null, viewersError = null) }
+        // Opening Seen by cuts a splash short: the list shows the same reactions, popping in.
+        _state.update { it.copy(viewersOpen = open, paused = open, viewers = if (open) it.viewers else null, viewersError = null, bursts = if (open) emptyList() else it.bursts) }
         val m = _state.value.moment ?: return
         if (!open) return
         viewModelScope.launch {
             when (val r = repository.viewers(m.momentId)) {
                 is AppResult.Success -> {
-                    val people = observeContacts().first().associateBy { it.person.userId }
-                    _state.update { it.copy(viewers = r.value.map { v -> ViewerRow(v, people[v.userId]?.person?.displayName ?: "Someone not in your contacts", people[v.userId]?.person?.avatarUrl) }) }
+                    markSeen(m.momentId, r.value)
+                    val rows = rowsOf(r.value)
+                    _state.update { it.copy(viewers = rows) }
                 }
                 is AppResult.Failure -> _state.update { it.copy(viewersError = if (r.error is AppError.Network) "Viewers show when you’re online." else "Viewers didn’t load.") }
             }
@@ -287,3 +372,11 @@ class MomentViewerViewModel(
         }
     }
 }
+
+/** [b] after these: plays next if nothing is waiting, or joins the one already waiting (so the queue stays short). */
+internal fun List<ReactionBurst>.queue(b: ReactionBurst): List<ReactionBurst> = when (size) {
+    0, 1 -> this + b
+    else -> take(1) + drop(1).reduce { a, c -> a.merge(c) }.merge(b)
+}
+
+private fun String.firstName() = trim().substringBefore(' ').ifBlank { "Someone" }

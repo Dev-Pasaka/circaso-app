@@ -343,6 +343,8 @@ fun ChatMediaComposerScreen(viewModel: ChatMediaComposerViewModel, onClose: () -
             onConfirm = viewModel::leaveOutConfirmed,
             onDismiss = viewModel::leaveOutCancelled,
             cancelLabel = "Go Back",
+            icon = com.circaso.designsystem.components.CircasoIcon.Warning,
+            tone = com.circaso.designsystem.chrome.SheetTone.Warning,
         )
 
     }

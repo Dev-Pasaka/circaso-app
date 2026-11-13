@@ -5,6 +5,7 @@ plugins {
     alias(libs.plugins.androidApplication)
     alias(libs.plugins.composeCompiler)
     alias(libs.plugins.googleServices)
+    alias(libs.plugins.crashlytics) // crash reports; release builds upload their R8 mapping
 }
 
 // Java 17, not 11: AGP 9 only desugars Java records in debug builds when the language level is above 14, and

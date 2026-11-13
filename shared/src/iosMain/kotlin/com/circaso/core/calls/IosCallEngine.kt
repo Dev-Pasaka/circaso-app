@@ -41,6 +41,13 @@ interface CallEngineProvider {
     fun setReceivingListener(listener: (List<String>) -> Unit)
     /** [completion]: audio packets received over every pulled track so far, or -1 when there is no connection. */
     fun receivedPackets(completion: (Long) -> Unit)
+    /**
+     * [completion]: one stats reading for the call report as JSON (`rttMs`, `jitterMs`, `packetsReceived`,
+     * `packetsLost`, `bytesReceived`, each optional), or null without a connection.
+     */
+    fun stats(completion: (String?) -> Unit)
+    /** Kotlin sets this to hear every ICE and peer connection state change, as `ice:<state>` / `pc:<state>`. */
+    fun setLinkListener(listener: (String) -> Unit)
 }
 
 object CallEngineBridge {
@@ -72,6 +79,7 @@ object ScreenShareBridge {
 @Serializable private data class WireIce(val urls: List<String>, val username: String? = null, val credential: String? = null)
 @Serializable private data class WireTrack(val mid: String, val trackName: String, val kind: String)
 @Serializable private data class WireOffer(val sdp: String, val tracks: List<WireTrack>)
+@Serializable private data class WireStats(val rttMs: Double? = null, val jitterMs: Double? = null, val packetsReceived: Long? = null, val packetsLost: Long? = null, val bytesReceived: Long? = null)
 
 class IosCallEngine : CallEngine {
     private val json = Json { ignoreUnknownKeys = true }
@@ -81,6 +89,8 @@ class IosCallEngine : CallEngine {
     override val connected: StateFlow<Boolean?> = _connected
     private val _receiving = MutableStateFlow<Set<String>>(emptySet())
     override val receivingMids: StateFlow<Set<String>> = _receiving
+    private val _links = kotlinx.coroutines.flow.MutableSharedFlow<String>(extraBufferCapacity = 64)
+    override val linkStates: kotlinx.coroutines.flow.Flow<String> = _links
     override val available: Boolean get() = CallEngineBridge.provider != null
     private val p get() = CallEngineBridge.provider ?: throw CallEngineException("unavailable")
 
@@ -89,6 +99,7 @@ class IosCallEngine : CallEngine {
         provider.setRemoteVideoListener { _mids.value = it.toSet() }
         provider.setConnectionListener { _connected.value = it == 1 }
         provider.setReceivingListener { _receiving.value = it.toSet() }
+        provider.setLinkListener { _links.tryEmit(it) }
         val ice = json.encodeToString(kotlinx.serialization.builtins.ListSerializer(WireIce.serializer()), iceServers.map { WireIce(it.urls, it.username, it.credential) })
         val raw = suspendCancellableCoroutine<String> { cont ->
             provider.start(ice, video, userId) { offer, error ->
@@ -132,6 +143,13 @@ class IosCallEngine : CallEngine {
     override suspend fun receivedPackets(): Long? {
         val p = CallEngineBridge.provider ?: return null
         return suspendCancellableCoroutine { cont -> p.receivedPackets { n -> if (cont.isActive) cont.resume(n.takeIf { it >= 0 }) } }
+    }
+
+    override suspend fun stats(): CallStats? {
+        val p = CallEngineBridge.provider ?: return null
+        val raw = suspendCancellableCoroutine<String?> { cont -> p.stats { s -> if (cont.isActive) cont.resume(s) } } ?: return null
+        val w = runCatching { json.decodeFromString(WireStats.serializer(), raw) }.getOrNull() ?: return null
+        return CallStats(w.rttMs, w.jitterMs, w.packetsReceived, w.packetsLost, w.bytesReceived)
     }
 
     override fun close() {

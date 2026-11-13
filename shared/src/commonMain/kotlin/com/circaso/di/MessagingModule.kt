@@ -224,6 +224,7 @@ val messagingModule = module {
             encoder = getOrNull<com.circaso.core.platform.GroupPhotoEncoder>() ?: com.circaso.core.platform.NoGroupPhotoEncoder,
             sources = getOrNull(),
             editName = com.circaso.feature.names.presentation.EditNameController(get(), get()),
+            verifiedCodes = com.circaso.feature.messaging.data.local.VerifiedCodesStore(get()),
         )
     }
 }

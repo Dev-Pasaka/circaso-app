@@ -88,6 +88,8 @@ class AndroidCallEngine(private val context: Context) : CallEngine {
     private val _receiving = MutableStateFlow<Set<String>>(emptySet())
     override val receivingMids: StateFlow<Set<String>> = _receiving
     private val statsScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    private val _links = kotlinx.coroutines.flow.MutableSharedFlow<String>(extraBufferCapacity = 64)
+    override val linkStates: kotlinx.coroutines.flow.Flow<String> = _links
     private var statsJob: Job? = null
     private var previousMode = AudioManager.MODE_NORMAL
 
@@ -202,6 +204,36 @@ class AndroidCallEngine(private val context: Context) : CallEngine {
                             .filter { it.type == "inbound-rtp" && it.members["kind"] == "audio" }
                             .sumOf { (it.members["packetsReceived"] as? Number)?.toLong() ?: 0L }
                         if (cont.isActive) cont.resume(packets)
+                    }
+                }
+            }.isSuccess
+            if (!ok && cont.isActive) cont.resume(null)
+        }
+    }
+
+    /** One reading for the call report: RTT from the nominated candidate pair, jitter and totals from inbound RTP. */
+    override suspend fun stats(): CallStats? {
+        val connection = synchronized(guard) { pc } ?: return null
+        return suspendCancellableCoroutine { cont ->
+            val ok = runCatching {
+                synchronized(guard) {
+                    if (pc !== connection) throw CallEngineException("closed")
+                    connection.getStats { report ->
+                        val all = report.statsMap.values
+                        fun num(s: org.webrtc.RTCStats, key: String) = (s.members[key] as? Number)
+                        val pair = all.firstOrNull { it.type == "candidate-pair" && it.members["nominated"] == true && it.members["state"] == "succeeded" }
+                        val rtt = pair?.let { num(it, "currentRoundTripTime")?.toDouble() }
+                            ?: all.firstOrNull { it.type == "remote-inbound-rtp" }?.let { num(it, "roundTripTime")?.toDouble() }
+                        val inbound = all.filter { it.type == "inbound-rtp" }
+                        val audioIn = inbound.filter { it.members["kind"] == "audio" }
+                        val stats = CallStats(
+                            rttMs = rtt?.times(1000),
+                            jitterMs = audioIn.mapNotNull { num(it, "jitter")?.toDouble() }.maxOrNull()?.times(1000),
+                            packetsReceived = audioIn.sumOf { num(it, "packetsReceived")?.toLong() ?: 0L },
+                            packetsLost = audioIn.sumOf { num(it, "packetsLost")?.toLong() ?: 0L },
+                            bytesReceived = inbound.sumOf { num(it, "bytesReceived")?.toLong() ?: 0L },
+                        )
+                        if (cont.isActive) cont.resume(stats)
                     }
                 }
             }.isSuccess
@@ -415,7 +447,11 @@ class AndroidCallEngine(private val context: Context) : CallEngine {
             _remoteMids.value = remote.keys.toSet()
         }
         override fun onSignalingChange(state: PeerConnection.SignalingState?) = Unit
+        override fun onConnectionChange(newState: PeerConnection.PeerConnectionState?) {
+            newState?.let { _links.tryEmit("pc:" + it.name.lowercase()) }
+        }
         override fun onIceConnectionChange(state: PeerConnection.IceConnectionState?) {
+            state?.let { _links.tryEmit("ice:" + it.name.lowercase()) }
             _connected.value = when (state) {
                 PeerConnection.IceConnectionState.CONNECTED, PeerConnection.IceConnectionState.COMPLETED -> true
                 PeerConnection.IceConnectionState.DISCONNECTED, PeerConnection.IceConnectionState.FAILED -> false

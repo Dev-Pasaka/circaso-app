@@ -104,8 +104,11 @@ sealed interface Message {
     /** A message this phone could not open (it was meant for another phone, or its keys are gone). */
     data class Unreadable(override val localId: Long, override val chatId: String, override val orderAt: Long, override val sentAt: String?, val senderName: String) : Message
 
-    /** A notice the phone wrote itself, such as a changed security code. */
-    data class System(override val localId: Long, override val chatId: String, override val orderAt: Long, override val sentAt: String?, val text: String) : Message
+    /**
+     * A notice the phone wrote itself, such as a changed security code. [securityNotice]: it is about someone's security
+     * code, so the thread shows it with a shield and (in a direct chat) it opens the code.
+     */
+    data class System(override val localId: Long, override val chatId: String, override val orderAt: Long, override val sentAt: String?, val text: String, val securityNotice: Boolean = false) : Message
 
     /**
      * A photo, voice note or shared location (WhatsApp-style). [details] says which and holds what's needed to show
@@ -153,6 +156,20 @@ data class SecurityCode(val digits: String) {
     /** Twelve groups of five, as Signal shows it. */
     val groups: List<String> get() = digits.chunked(5)
 }
+
+/**
+ * Which security codes this phone has checked (2026-11-13), Signal's model: kept with the code itself, so when the
+ * other person's keys change (they sign in again) the new code is not verified until it's checked again. On this phone
+ * only; nothing goes to the server.
+ */
+interface VerifiedCodes {
+    /** The code last verified with [peerId], or null. */
+    fun verifiedCode(peerId: String): kotlinx.coroutines.flow.Flow<String?>
+    suspend fun setVerifiedCode(peerId: String, digits: String?)
+}
+
+/** How every "‹Name›'s security code changed" notice ends; the thread knows such a notice by it. */
+const val SecurityCodeChangedSuffix = "'s security code changed"
 
 class GroupDraft(val name: String, val memberIds: List<String>)
 

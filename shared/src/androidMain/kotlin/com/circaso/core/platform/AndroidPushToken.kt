@@ -34,6 +34,7 @@ class CircasoMessagingService : FirebaseMessagingService() {
     }
 
     override fun onMessageReceived(message: RemoteMessage) {
+        com.circaso.core.common.Diagnostics.note("push: received ${message.data["kind"] ?: "notice"} (priority ${message.priority})")
         // Spaces is archived (2026-11-05): an older server's space.* pushes have nothing to open here, so say nothing.
         if (message.data["kind"]?.startsWith("space.") == true) return
         // Someone's new phone can't open my moments (silent, 2026-11-08): seal fresh copies for it now, showing nothing.

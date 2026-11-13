@@ -69,8 +69,14 @@ private class FakeRemote : CallsRemote {
     override suspend fun decline(callId: String) = AppResult.Success(current).also { calls += "decline" }
     /** How long CL7 takes to answer (Cloudflare made it 6-12 s on 2026-11-09). */
     var leaveMillis = 0L
-    override suspend fun leave(callId: String): AppResult<CallDto> {
+    /** How many CL7s fail as if the network were down before one gets through. */
+    var leaveFailures = 0
+    /** Each CL7's cause and Idempotency-Key. */
+    val leaves = mutableListOf<Pair<String?, String>>()
+    override suspend fun leave(callId: String, cause: String?, key: String): AppResult<CallDto> {
         calls += "leave"
+        leaves += cause to key
+        if (leaveFailures > 0) { leaveFailures--; return AppResult.Failure(AppError.Network) }
         val answer = current
         if (leaveMillis > 0) kotlinx.coroutines.delay(leaveMillis)
         return AppResult.Success(answer)
@@ -109,6 +115,8 @@ private class FakeEngine : CallEngine {
     override fun close() { events += "close" }
     var packets: Long? = null
     override suspend fun receivedPackets(): Long? = packets
+    var stats: com.circaso.core.calls.CallStats? = null
+    override suspend fun stats(): com.circaso.core.calls.CallStats? = stats
     var screenSupported = true
     override val canShareScreen get() = screenSupported
     /** What the system's consent says; false is the person saying no. */
@@ -408,6 +416,9 @@ class CallControllerTest {
         runCurrent()
         assertEquals(joins + 1, remote.calls.count { it.startsWith("join") }, "rejoined with a fresh session")
         assertEquals(pulls + 1, remote.calls.count { it.startsWith("pull") }, "pulled everyone again")
+        assertEquals(CallPhase.Reconnecting, cc.state.value!!.phase, "until the fresh connection is up")
+        engine.link.value = true
+        runCurrent()
         assertEquals(CallPhase.Active, cc.state.value!!.phase)
     }
 
@@ -674,7 +685,7 @@ class CallControllerTest {
         assertEquals(1, remote.calls.count { it.startsWith("pull") })
     }
 
-    @Test fun aCallThatHearsNothingFor20SecondsHangsUp() = runTest(UnconfinedTestDispatcher()) {
+    @Test fun aCallThatHearsNothingFor20SecondsReconnectsAndEndsOnlyIfNothingComesBack() = runTest(UnconfinedTestDispatcher()) {
         engine.receiving = MutableStateFlow(emptySet())
         val cc = liveController()
         cc.start("chat1", video = false)
@@ -691,10 +702,188 @@ class CallControllerTest {
         engine.packets = 900
         advanceTimeBy(5_000); runCurrent()
         assertTrue("leave" !in remote.calls, "packets still arriving")
-        // Mum's phone is gone: nothing more arrives, and the server still says ACTIVE (her leave was lost).
+        // Nothing more arrives, and the server still says ACTIVE: the media path is rebuilt, not hung up (2026-11-13).
+        val joins = remote.calls.count { it.startsWith("join") }
         advanceTimeBy(20_500); runCurrent()
-        assertTrue("leave" in remote.calls, "hung up 20 s after the last packet")
-        assertEquals(CallPhase.Ended, cc.state.value!!.phase)
+        assertTrue("leave" !in remote.calls, "a stall alone no longer hangs up")
+        assertEquals(CallPhase.Reconnecting, cc.state.value!!.phase)
+        advanceTimeBy(2_600); runCurrent()
+        assertEquals(joins + 1, remote.calls.count { it.startsWith("join") }, "a fresh session, even though ICE says it's up")
+        assertEquals(CallPhase.Active, cc.state.value!!.phase)
+        // Mum's phone is really gone: still nothing after the rejoin, so the call ends, once.
+        advanceTimeBy(30_000); runCurrent()
+        assertEquals(1, remote.calls.count { it == "leave" })
+        assertEquals("STALL", remote.leaves.single().first)
+        assertTrue(cc.state.value?.phase.let { it == null || it == CallPhase.Ended })
         assertTrue("close" in engine.events)
+    }
+
+    @Test fun packetsAfterAStallReconnectMeanTheNextStallReconnectsAgain() = runTest(UnconfinedTestDispatcher()) {
+        engine.receiving = MutableStateFlow(emptySet())
+        val cc = liveController()
+        cc.start("chat1", video = false)
+        advanceUntilIdle()
+        engine.link.value = true
+        remote.current = call("ACTIVE", person("me", "JOINED"), person("mum", "JOINED").copy(connected = true))
+        cc.onFrame("call.updated", frame("call.updated", remote.current))
+        engine.receiving!!.value = setOf("2", "3")
+        runCurrent()
+        engine.packets = 100
+        advanceTimeBy(5_001); runCurrent()
+        advanceTimeBy(25_000); runCurrent() // stall → reconnect → rejoined
+        assertEquals(CallPhase.Active, cc.state.value!!.phase)
+        engine.packets = 50 // the new connection's counter
+        advanceTimeBy(5_000); runCurrent()
+        engine.packets = 400 // audio is back
+        advanceTimeBy(5_000); runCurrent()
+        advanceTimeBy(25_000); runCurrent() // a later stall: reconnect again, not the end
+        assertTrue("leave" !in remote.calls)
+    }
+
+    @Test fun aNetworkBlipWhileTheMediaIsUpNeverEndsTheCall() = runTest(UnconfinedTestDispatcher()) {
+        val net = MutableStateFlow(true)
+        val cc = CallController(remote, engine, myUserId = { "me" }, scope = backgroundScope, names = { "Mum" to false }, online = net, reconnectGiveUpMillis = 40_000)
+        cc.start("chat1", video = false)
+        advanceUntilIdle()
+        remote.current = call("ACTIVE", person("me", "JOINED"), person("mum", "JOINED"))
+        cc.onFrame("call.updated", frame("call.updated", remote.current))
+        engine.link.value = true
+        runCurrent()
+        // The OS flaps (the 2026-11-13 Redmi call), but ICE keeps the audio going the whole time.
+        net.value = false
+        advanceTimeBy(60_000); runCurrent()
+        assertTrue("leave" !in remote.calls)
+        assertEquals(CallPhase.Active, cc.state.value!!.phase)
+    }
+
+    @Test fun aDropThatIcesOwnRecoveryFixesGoesOnWithoutARejoin() = runTest(UnconfinedTestDispatcher()) {
+        val net = MutableStateFlow(true)
+        val cc = CallController(remote, engine, myUserId = { "me" }, scope = backgroundScope, names = { "Mum" to false }, online = net)
+        cc.start("chat1", video = false)
+        advanceUntilIdle()
+        remote.current = call("ACTIVE", person("me", "JOINED"), person("mum", "JOINED"))
+        cc.onFrame("call.updated", frame("call.updated", remote.current))
+        engine.link.value = true
+        val joins = remote.calls.count { it.startsWith("join") }
+        engine.link.value = false
+        runCurrent()
+        assertEquals(CallPhase.Reconnecting, cc.state.value!!.phase)
+        engine.link.value = true
+        advanceTimeBy(2_600); runCurrent()
+        assertEquals(CallPhase.Active, cc.state.value!!.phase)
+        assertEquals(joins, remote.calls.count { it.startsWith("join") })
+    }
+
+    @Test fun oneLeavePerCallHoweverManyWaysItEnds() = runTest(UnconfinedTestDispatcher()) {
+        val cc = controller()
+        cc.start("chat1", video = false)
+        advanceUntilIdle()
+        cc.leave()
+        cc.leave()
+        cc.leave(CallEndCause.ReconnectGaveUp)
+        advanceUntilIdle()
+        assertEquals(1, remote.calls.count { it == "leave" })
+        assertEquals("USER_HANGUP", remote.leaves.single().first)
+    }
+
+    @Test fun aLeaveTheNetworkLostIsSentAgainWithTheSameKey() = runTest(UnconfinedTestDispatcher()) {
+        val cc = controller()
+        cc.start("chat1", video = false)
+        advanceUntilIdle()
+        remote.leaveFailures = 2
+        cc.leave()
+        advanceTimeBy(30_000); runCurrent()
+        assertEquals(3, remote.leaves.size)
+        assertEquals(1, remote.leaves.map { it.second }.toSet().size, "one Idempotency-Key for every try")
+    }
+
+    @Test fun aCallThatCantReconnectEndsAsDropped() = runTest(UnconfinedTestDispatcher()) {
+        val net = MutableStateFlow(true)
+        val cc = CallController(remote, engine, myUserId = { "me" }, scope = backgroundScope, names = { "Mum" to false }, online = net, reconnectGiveUpMillis = 10_000)
+        cc.start("chat1", video = false)
+        advanceUntilIdle()
+        engine.link.value = false
+        runCurrent()
+        advanceTimeBy(11_000)
+        runCurrent()
+        assertTrue(remote.calls.count { it.startsWith("join") } >= 2, "it tried a fresh session")
+        assertEquals("RECONNECT_GAVE_UP", remote.leaves.single().first)
+        assertEquals("DROPPED", cc.state.value!!.endReason)
+    }
+
+    // ---- 2026-11-13: why did this call end ----
+
+    private class MemoryTimeline : CallTimelineStore {
+        var saved: String? = null
+        override suspend fun save(snapshot: String) { saved = snapshot }
+        override suspend fun load() = saved
+        override suspend fun clear() { saved = null }
+    }
+
+    private fun TestScope.recorder(reports: MutableList<QueuedCallReport>, store: CallTimelineStore? = null, socket: MutableStateFlow<String>? = null) = CallRecorder(
+        backgroundScope, engine, device = { CallReportDevice("android", "1.0 (1)", "14", "Xiaomi Redmi") },
+        submit = { reports += it }, store = store, socket = socket, clock = { currentTime },
+    )
+
+    @Test fun anEndedCallSendsItsTimelineAndCause() = runTest(UnconfinedTestDispatcher()) {
+        val reports = mutableListOf<QueuedCallReport>()
+        val socket = MutableStateFlow("up")
+        engine.stats = com.circaso.core.calls.CallStats(rttMs = 80.0, jitterMs = 4.0, packetsReceived = 100, packetsLost = 0, bytesReceived = 9_000)
+        val cc = CallController(remote, engine, myUserId = { "me" }, scope = backgroundScope, names = { "Mum" to false }, recorder = recorder(reports, socket = socket))
+        cc.start("chat1", video = false)
+        advanceUntilIdle()
+        remote.current = call("ACTIVE", person("me", "JOINED"), person("mum", "JOINED"))
+        cc.onFrame("call.updated", frame("call.updated", remote.current))
+        advanceTimeBy(5_001); runCurrent()
+        engine.stats = engine.stats!!.copy(rttMs = 120.0, packetsReceived = 290, packetsLost = 10, bytesReceived = 25_000)
+        socket.value = "down"
+        cc.toggleMic()
+        advanceTimeBy(5_000); runCurrent()
+        cc.leave()
+        advanceUntilIdle()
+        val r = reports.single()
+        assertEquals("c1", r.callId)
+        assertEquals("USER_HANGUP", r.report.endCause)
+        assertEquals(true, r.report.outgoing)
+        assertEquals("Xiaomi Redmi", r.report.deviceModel)
+        val types = r.report.events.map { it.type + ":" + it.detail }
+        assertTrue("socket:down" in types, "$types")
+        assertTrue("mic:off" in types, "$types")
+        assertTrue("phase:Active" in types || "phase:Connecting" in types, "$types")
+        assertEquals("end:USER_HANGUP", types.last())
+        assertEquals(2, r.report.samples.size)
+        assertEquals(5.0, r.report.samples.last().lossPct) // 10 lost of 190 + 10
+        assertEquals(100.0, r.report.summary.avgRttMs)
+        assertEquals(120.0, r.report.summary.maxRttMs)
+        assertEquals(190L, r.report.summary.packetsReceived)
+    }
+
+    @Test fun aRingIDeclinedIsNotReported() = runTest(UnconfinedTestDispatcher()) {
+        val reports = mutableListOf<QueuedCallReport>()
+        val cc = CallController(remote, engine, myUserId = { "me" }, scope = backgroundScope, names = { "Mum" to false }, recorder = recorder(reports))
+        remote.current = call("RINGING", person("me", "INVITED"), person("mum", "JOINED")).copy(startedBy = "mum")
+        cc.onFrame("call.ringing", buildJsonObject { put("callId", "c1") })
+        cc.decline()
+        advanceUntilIdle()
+        assertTrue(reports.isEmpty())
+    }
+
+    @Test fun aCallTheAppDidntLiveToEndIsReportedAtTheNextLaunch() = runTest(UnconfinedTestDispatcher()) {
+        val reports = mutableListOf<QueuedCallReport>()
+        val store = MemoryTimeline()
+        val first = recorder(reports, store)
+        first.begin("c9", video = true, outgoing = false)
+        first.joined()
+        advanceTimeBy(6_000); runCurrent()
+        first.event("net", "offline")
+        runCurrent()
+        assertTrue(store.saved != null, "the running call is kept on the phone")
+        // The process dies here; at the next launch a new recorder finds it.
+        val next = recorder(reports, store)
+        next.recoverInterrupted()
+        advanceUntilIdle()
+        assertEquals("APP_KILLED", reports.single().report.endCause)
+        assertEquals("c9", reports.single().callId)
+        assertNull(store.saved)
     }
 }

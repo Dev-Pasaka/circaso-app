@@ -167,6 +167,32 @@ interface MomentsRepository {
     suspend fun setPrivacy(privacy: MomentPrivacy)
     suspend fun setMuted(userId: String, muted: Boolean)
 
+    /**
+     * The id of my moment each time a `status.viewed` frame tells of a view or a reaction on it (after the phone's
+     * copy is refreshed), so an open viewer can show a new reaction as it lands.
+     */
+    val viewedFrames: Flow<String> get() = kotlinx.coroutines.flow.emptyFlow()
+
     /** A `status.*` frame from the realtime socket; [requesterId] comes with `status.key_requested`. */
     suspend fun onFrame(type: String, momentId: String?, posterId: String?, requesterId: String? = null)
+}
+
+/**
+ * Which reactions on my moments this phone has already shown (keys from `reactionKey`: who and which emoji), so each
+ * one splashes over my moment once, the first time I'm looking when it's there. Kept for live moments only.
+ */
+interface SeenReactions {
+    suspend fun seen(momentId: String): Set<String>
+    /** [keys] are shown on [momentId]; anything kept for a moment not in [live] is forgotten. */
+    suspend fun markSeen(momentId: String, keys: Set<String>, live: Set<String>)
+
+    /** For tests and previews: forgotten when the process ends. */
+    class InMemory : SeenReactions {
+        private val byMoment = mutableMapOf<String, Set<String>>()
+        override suspend fun seen(momentId: String): Set<String> = byMoment[momentId].orEmpty()
+        override suspend fun markSeen(momentId: String, keys: Set<String>, live: Set<String>) {
+            byMoment[momentId] = byMoment[momentId].orEmpty() + keys
+            byMoment.keys.retainAll(live + momentId)
+        }
+    }
 }

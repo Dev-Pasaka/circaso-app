@@ -51,11 +51,14 @@ class RealtimeSupervisor(
         while (true) {
             val startedAt = com.circaso.core.sync.nowMillis()
             val end = client.run()
+            val lived = com.circaso.core.sync.nowMillis() - startedAt
             // A connection that lived a while was healthy: start the backoff over.
-            attempt = if (com.circaso.core.sync.nowMillis() - startedAt > HealthyMillis) 0 else attempt + 1
+            attempt = if (lived > HealthyMillis) 0 else attempt + 1
             // No token right now (a refresh that failed offline): try again with backoff. Signing out cancels this loop,
             // so retrying never outlives the session; returning here left the socket closed for good.
-            wait(backoffMillis(attempt))
+            val pause = backoffMillis(attempt)
+            com.circaso.core.common.Diagnostics.note("socket: ended $end after ${lived / 1000}s, retry ${attempt} in ${pause}ms")
+            wait(pause)
         }
     }
 

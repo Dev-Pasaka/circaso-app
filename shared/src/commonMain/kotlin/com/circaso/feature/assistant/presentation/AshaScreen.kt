@@ -139,7 +139,7 @@ fun AshaContent(
             ConfirmSheet(
                 visible = state.confirmClear, title = "Delete all conversations?",
                 message = "Every conversation with Asha is deleted from this phone and from Circaso.",
-                confirmLabel = "Delete All", destructive = true, onConfirm = onClearConfirmed, onDismiss = onClearDismissed,
+                confirmLabel = "Delete All", destructive = true, icon = com.circaso.designsystem.components.CircasoIcon.Trash, onConfirm = onClearConfirmed, onDismiss = onClearDismissed,
             )
         },
     ) {

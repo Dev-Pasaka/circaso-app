@@ -176,13 +176,32 @@ fun DayLabel(text: String, modifier: Modifier = Modifier) {
     }
 }
 
-/** A line the phone itself says in a thread ("Amina's security code changed"). */
+/**
+ * A line the phone itself says in a thread ("Amina's security code changed"), as a centred pill on its own row: the
+ * day label's type in a quiet `fill` chip, so it reads as the app speaking, not as a message, and never sits on a
+ * bubble's time. With [onClick] it opens what it's about (the security code), shown by a chevron, at a full touch
+ * target; the pill itself stays small.
+ */
 @Composable
-fun SystemLine(text: String, modifier: Modifier = Modifier) {
+fun SystemLine(text: String, modifier: Modifier = Modifier, icon: CircasoIcon? = null, onClick: (() -> Unit)? = null, onClickLabel: String? = null) {
     val c = CircasoTheme.colors
     val t = CircasoTheme.typography
-    Box(modifier.fillMaxWidth().padding(vertical = 4.dp), contentAlignment = Alignment.Center) {
-        BasicText(text, style = t.caption1.copy(color = c.inkSecondary, textAlign = TextAlign.Center), modifier = Modifier.padding(horizontal = 24.dp))
+    Box(modifier.fillMaxWidth().padding(vertical = CircasoSpacing.s1), contentAlignment = Alignment.Center) {
+        Row(
+            Modifier.padding(horizontal = CircasoSpacing.s6)
+                .then(if (onClick != null) Modifier.minimumInteractiveComponentSize() else Modifier)
+                .clip(CircasoShapes.pill)
+                .background(c.fill)
+                .then(if (c.isHighContrast) Modifier.border(1.dp, c.separator, CircasoShapes.pill) else Modifier)
+                .then(if (onClick != null) Modifier.pressable(role = Role.Button, onClickLabel = onClickLabel, onClick = onClick) else Modifier)
+                .padding(horizontal = CircasoSpacing.s3, vertical = 6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            if (icon != null) CircasoIconImage(icon, c.inkSecondary, Modifier.size(12.dp))
+            BasicText(text, style = t.caption1.copy(color = c.inkSecondary, fontWeight = FontWeight.Medium, textAlign = TextAlign.Center), modifier = Modifier.weight(1f, fill = false))
+            if (onClick != null) CircasoIconImage(CircasoIcon.ChevronRight, c.inkTertiary, Modifier.size(10.dp))
+        }
     }
 }
 
