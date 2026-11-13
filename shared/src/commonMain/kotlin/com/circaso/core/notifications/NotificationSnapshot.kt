@@ -204,9 +204,12 @@ class NotificationSnapshotWriter(
     }
 
     private suspend fun write() {
-        val snapshot = build() ?: return file.write(null)
+        val snapshot = build() ?: return file.write(null).also { com.circaso.core.common.Diagnostics.note("notification snapshot: none (no identity)") }
         val plain = NotificationSnapshot.json.encodeToString(NotificationSnapshot.serializer(), snapshot).encodeToByteArray()
         file.write(crypto.aesGcmSeal(key(), plain, NotificationSnapshot.Label.encodeToByteArray()))
+        com.circaso.core.common.Diagnostics.note(
+            "notification snapshot: written, ${snapshot.chats.size} chats, ${snapshot.people.size} people, ${snapshot.people.count { it.photo != null }} with photos, ${plain.size / 1024} KB",
+        )
     }
 
     /** The snapshot's own key, made once; the extension reads it from the shared Keychain item. */
@@ -241,7 +244,7 @@ class NotificationSnapshotWriter(
         val known = contacts?.let { repo -> withTimeoutOrNull(LookupMillis) { repo.contacts.first() } }.orEmpty()
         known.asSequence().filter { it.person.userId !in people }.take(MaxContacts).forEach { c ->
             people[c.person.userId] = NotificationSnapshot.Person(c.person.userId, c.person.displayName)
-            c.person.avatarUrl?.let { photoSources[c.person.userId] = it }
+            c.person.avatarUrl?.takeIf { photoSources.size < MaxPhotos }?.let { photoSources[c.person.userId] = it }
         }
         val photos = runCatching { file.photos(photoSources) }.getOrDefault(emptyMap())
         val fiat = withTimeoutOrNull(LookupMillis) { wallet.wallet.first()?.fiat }
@@ -265,5 +268,7 @@ class NotificationSnapshotWriter(
         const val LookupMillis = 1_000L
         /** Enough for anyone's contacts; keeps the snapshot well inside the extension's memory. */
         const val MaxContacts = 500
+        /** Contacts' photos stop at this many in all (people in my chats come first), to keep the App Group small. */
+        const val MaxPhotos = 200
     }
 }

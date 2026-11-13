@@ -1,5 +1,6 @@
 import ImageIO
 import Intents
+import os
 import UIKit
 import UserNotifications
 
@@ -105,7 +106,10 @@ private struct Worder {
     let info: Info
 
     func word() async -> UNNotificationContent {
-        guard let snapshot = Snapshot.load() else { return content }
+        guard let snapshot = Snapshot.load() else {
+            Trace.note("\(info.kind ?? "message"): no snapshot (none yet, or locked since restart)")
+            return content
+        }
         switch info.kind {
         case nil where info.messageId != nil && info.chatId != nil: return await message(snapshot)
         case "payment.received": return await moneyReceived(snapshot)
@@ -175,7 +179,10 @@ private struct Worder {
                 content.body = line
             }
         }
-        guard let sender else { return content }
+        guard let sender else {
+            Trace.note("message: sender not in snapshot")
+            return content
+        }
         return communication(s, chat: chat, sender: sender) ?? content
     }
 
@@ -310,9 +317,11 @@ private struct Worder {
     private func communication(_ s: Snapshot, chat: Snapshot.Chat?, sender: Snapshot.Person, conversation: String? = nil) -> UNNotificationContent? {
         let group = chat?.group == true
         let handle = INPersonHandle(value: sender.id, type: .unknown)
+        let photo = image(s.photoURL(sender.photo))
+        let hasPhoto = photo != nil
         let person = INPerson(
             personHandle: handle, nameComponents: PersonNameComponentsFormatter().personNameComponents(from: sender.name), displayName: sender.name,
-            image: image(s.photoURL(sender.photo)) ?? Initials.image(sender.name), contactIdentifier: nil, customIdentifier: sender.id
+            image: photo ?? Initials.image(sender.name), contactIdentifier: nil, customIdentifier: sender.id
         )
         let me = INPerson(
             personHandle: INPersonHandle(value: s.me ?? "me", type: .unknown), nameComponents: nil, displayName: nil,
@@ -334,7 +343,14 @@ private struct Worder {
         let interaction = INInteraction(intent: intent, response: nil)
         interaction.direction = .incoming
         interaction.donate(completion: nil)
-        return try? content.updating(from: intent)
+        do {
+            let updated = try content.updating(from: intent)
+            Trace.note("\(info.kind ?? "message"): communication ok, photo \(hasPhoto ? "found" : (sender.photo == nil ? "none in snapshot" : "file unreadable"))")
+            return updated
+        } catch {
+            Trace.note("\(info.kind ?? "message"): updating failed (\((error as NSError).domain) \((error as NSError).code))")
+            return nil
+        }
     }
 
     /// Up to two other members, so iOS draws the notification as a group's.
@@ -366,5 +382,25 @@ private struct Worder {
     private func removeDelivered(_ matches: (UNNotification) -> Bool) async {
         let ids = await UNUserNotificationCenter.current().deliveredNotifications().filter(matches).map(\.request.identifier)
         if !ids.isEmpty { UNUserNotificationCenter.current().removeDeliveredNotifications(withIdentifiers: ids) }
+    }
+}
+
+/// What the extension did with a push, without names, ids or words (2026-11-14: "why initials, not the photo?"): to the
+/// unified log, and the last lines in the App Group's Library/Caches/notification-service.log, which can be copied off
+/// the phone (`devicectl device copy from --domain-type appGroupDataContainer`).
+enum Trace {
+    private static let log = Logger(subsystem: "com.circaso.app.NotificationService", category: "push")
+    private static let maxBytes = 64 * 1024
+
+    static func note(_ line: String) {
+        log.info("\(line, privacy: .public)")
+        guard let dir = Snapshot.container?.appendingPathComponent("Library/Caches", isDirectory: true) else { return }
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let url = dir.appendingPathComponent("notification-service.log")
+        let stamp = ISO8601DateFormatter().string(from: Date())
+        var text = (try? String(contentsOf: url, encoding: .utf8)) ?? ""
+        text += "\(stamp) \(line)\n"
+        if text.utf8.count > maxBytes { text = String(text.suffix(maxBytes / 2)) }
+        try? text.write(to: url, atomically: true, encoding: .utf8)
     }
 }
