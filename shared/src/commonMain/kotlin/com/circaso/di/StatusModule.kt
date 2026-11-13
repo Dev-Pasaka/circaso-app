@@ -62,7 +62,7 @@ val statusModule = module {
             enabled = get<com.circaso.core.platform.ClientInfo>().debugBuild, now = { com.circaso.core.sync.nowMillis() },
         )
     } bind OutboxHandler::class
-    viewModel { com.circaso.feature.status.presentation.MomentsViewModel(get(), get(), get(), get(), get()) }
+    viewModel { com.circaso.feature.status.presentation.MomentsViewModel(get(), get(), get(), get(), get(), observeBlocks = get()) }
     viewModel { params ->
         com.circaso.feature.status.presentation.MomentComposerViewModel(get(), get(), get(), get(), get(), get(), get(), get(),
             uploads = getOrNull<com.circaso.core.platform.BackgroundUploads>() ?: com.circaso.core.platform.NoBackgroundUploads,
@@ -94,6 +94,7 @@ val statusModule = module {
         com.circaso.feature.status.presentation.MomentViewerViewModel(
             params.getOrNull<String>(), get(), get(), get(), get(),
             startAt = params.values.getOrNull(1) as? String,
+            observeBlocks = get(),
             replyInChat = { posterId, text, moment ->
                 // The 1:1 chat on this phone if there is one (so a reply waits offline like any message), else open it.
                 val existing = chats.chats.first().firstOrNull { it.chat.peerId == posterId && it.chat.viaSpaceId == null }?.chat?.chatId

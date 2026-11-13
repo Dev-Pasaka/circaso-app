@@ -21,6 +21,7 @@ import com.circaso.feature.contacts.domain.Person
 import com.circaso.feature.contacts.domain.SyncMatch
 import com.circaso.feature.contacts.domain.SyncSummary
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.map
 
 class ContactsRepositoryImpl(
@@ -32,10 +33,14 @@ class ContactsRepositoryImpl(
     private val kickOutbox: () -> Unit,
 ) : ContactsRepository {
 
+    /** Saved contacts minus the people I've blocked (2026-11-10): a block hides them everywhere until it's lifted. */
     override val contacts: Flow<List<Contact>> =
-        kotlinx.coroutines.flow.combine(dao.observeContacts(), names.saved) { rows, saved -> rows.map { it.toDomain().let { c -> c.copy(person = c.person.named(saved)) } } }
+        combine(dao.observeContacts(), dao.observeBlocked(), names.saved) { rows, blocked, saved ->
+            val hidden = blocked.mapTo(HashSet()) { it.userId }
+            rows.filter { it.userId !in hidden }.map { it.toDomain().let { c -> c.copy(person = c.person.named(saved)) } }
+        }
     override val blocks: Flow<List<Person>> =
-        kotlinx.coroutines.flow.combine(dao.observeBlocked(), names.saved) { rows, saved -> rows.map { it.toDomain().named(saved) } }
+        combine(dao.observeBlocked(), names.saved) { rows, saved -> rows.map { it.toDomain().named(saved) } }
 
     override suspend fun refreshContacts(): AppResult<Unit> {
         val all = mutableListOf<com.circaso.feature.contacts.data.remote.ContactDto>()

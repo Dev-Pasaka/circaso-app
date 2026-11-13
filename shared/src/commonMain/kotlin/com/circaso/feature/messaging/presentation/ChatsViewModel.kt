@@ -62,11 +62,14 @@ data class ChatsUiState(
      * leaving is never silent.
      */
     val notice: String? = null,
+    /** People I've blocked (2026-11-10): their direct chats leave the list until they're unblocked. Groups stay. */
+    val blocked: Set<String> = emptySet(),
 ) {
     /** Invites show on All and Groups, above the chats, while nothing is being searched. */
     val showInvites: Boolean get() = invites.isNotEmpty() && query.isBlank() && (filter == ChatFilter.All || filter == ChatFilter.Groups)
 
     val shown: List<ChatSummary> get() = chats
+        .filter { s -> s.chat.peerId == null || s.chat.peerId !in blocked }
         .filter { s -> when (filter) { ChatFilter.All -> true; ChatFilter.Unread -> s.unread > 0; ChatFilter.Groups -> s.chat.kind == com.circaso.feature.messaging.domain.ChatKind.Group; ChatFilter.Moments -> true } }
         .let { list -> if (query.isBlank()) list else list.filter { it.chat.title.contains(query.trim(), ignoreCase = true) } }
 }
@@ -82,6 +85,8 @@ class ChatsViewModel(
     observeWallet: com.circaso.feature.wallet.domain.ObserveWalletUseCase? = null,
     /** Group invites (2026-11-09); null in previews and tests that don't need them. */
     private val invites: GroupInvitesRepository? = null,
+    /** Blocked people, whose direct chats are hidden; null in previews and tests that don't need them. */
+    observeBlocks: com.circaso.feature.contacts.domain.ObserveBlocksUseCase? = null,
 ) : ViewModel() {
     private val _state = MutableStateFlow(ChatsUiState())
     val state: StateFlow<ChatsUiState> = _state.asStateFlow()
@@ -98,6 +103,7 @@ class ChatsViewModel(
 
     init {
         viewModelScope.launch { observeChats().collect { list -> _state.update { it.copy(chats = list, loaded = true) } } }
+        observeBlocks?.let { blocks -> viewModelScope.launch { blocks().collect { people -> _state.update { it.copy(blocked = people.mapTo(HashSet()) { p -> p.userId }) } } } }
         viewModelScope.launch { connection.status.collect { s -> _state.update { it.copy(online = s == ConnectionStatus.Online) } } }
         viewModelScope.launch { outbox.waitingMessages.collect { n -> _state.update { it.copy(waitingToSend = n) } } }
         viewModelScope.launch { refreshChats() }

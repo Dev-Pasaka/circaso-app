@@ -114,13 +114,15 @@ class MomentsViewModel(
     observeProfile: ObserveProfileUseCase,
     connection: ConnectionState,
     private val refreshContacts: com.circaso.feature.contacts.domain.RefreshContactsUseCase? = null,
+    /** Blocked people (2026-11-10): their Moments never show; null in previews and tests that don't need them. */
+    observeBlocks: com.circaso.feature.contacts.domain.ObserveBlocksUseCase? = null,
 ) : ViewModel() {
     private val _state = MutableStateFlow(MomentsUiState())
     val state: StateFlow<MomentsUiState> = _state.asStateFlow()
 
     init {
         viewModelScope.launch {
-            combine(moments.moments, observeContacts(), moments.muted, observeProfile(), moments.locked) { all, contacts, muted, me, locked ->
+            combine(moments.moments, observeContacts().withoutBlocked(observeBlocks), moments.muted, observeProfile(), moments.locked) { all, contacts, muted, me, locked ->
                 Triple(all, contacts, muted) to (me to locked)
             }.collect { (data, extra) ->
                 val (all, contacts, muted) = data
@@ -199,4 +201,14 @@ class MomentsViewModel(
             )
         }.sortedWith(compareBy<MomentRing> { it.muted }.thenBy { !it.unseen }.thenByDescending { it.latestAt })
     }
+}
+
+/**
+ * Contacts minus the people I've blocked (2026-11-10). A Moment only shows for a poster in my contacts, so this is
+ * what keeps a blocked person's Moments out of the list, the chat list's rings and the viewer.
+ */
+internal fun kotlinx.coroutines.flow.Flow<List<Contact>>.withoutBlocked(
+    blocks: com.circaso.feature.contacts.domain.ObserveBlocksUseCase?,
+): kotlinx.coroutines.flow.Flow<List<Contact>> = if (blocks == null) this else combine(blocks()) { contacts, blocked ->
+    if (blocked.isEmpty()) contacts else blocked.mapTo(HashSet()) { it.userId }.let { ids -> contacts.filterNot { it.person.userId in ids } }
 }
