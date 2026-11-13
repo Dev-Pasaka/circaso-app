@@ -7,6 +7,9 @@ enum class ConnectionStatus { Online, Offline }
 /** What the operating system says about the network. Whether our server is reachable is judged in `core/sync`. */
 interface ConnectivityMonitor {
     val osStatus: StateFlow<ConnectionStatus>
+
+    /** What carries the network: `wifi`, `cellular`, `ethernet`, `other` or `none`; for the call report. Null: can't tell. */
+    val transport: StateFlow<String>? get() = null
 }
 
 /** Who and what this build is. Filled in per platform. */

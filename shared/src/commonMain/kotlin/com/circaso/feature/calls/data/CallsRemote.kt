@@ -43,6 +43,9 @@ import kotlinx.serialization.json.JsonObject
 @Serializable data class MediaRequest(val audio: Boolean, val video: Boolean, val screen: Boolean = false)
 @Serializable data class RingRequest(val userIds: List<String> = emptyList())
 @Serializable data class ConnectedRequest(val sessionId: String)
+/** CL7's body: why this phone hung up (2026-11-13); an older server ignores it. */
+@Serializable data class LeaveRequest(val cause: String)
+@Serializable data class ReportReceived(val received: Boolean = true)
 
 interface CallsRemote {
     suspend fun start(chatId: String, video: Boolean, key: String): AppResult<CallDto>
@@ -54,7 +57,11 @@ interface CallsRemote {
     suspend fun pull(callId: String, request: PullRequest): AppResult<PullResponse>
     suspend fun renegotiate(callId: String, request: RenegotiateRequest): AppResult<JsonObject>
     suspend fun decline(callId: String): AppResult<CallDto>
-    suspend fun leave(callId: String): AppResult<CallDto>
+    /** CL7. [cause] is a [com.circaso.feature.calls.CallEndCause] wire name; [key] is the same on every retry. */
+    suspend fun leave(callId: String, cause: String? = null, key: String = newIdempotencyKey()): AppResult<CallDto>
+    /** CL10: how the call went on this phone, for "why did this call end" (2026-11-13). */
+    suspend fun report(callId: String, report: com.circaso.feature.calls.CallReportRequest, key: String): AppResult<ReportReceived> =
+        AppResult.Failure(com.circaso.core.common.AppError.Unexpected(501))
     /** CL8. [screen]: the video track carries the screen (an older server ignores it; its viewers see a camera). */
     suspend fun media(callId: String, audio: Boolean, video: Boolean, screen: Boolean = false): AppResult<JsonObject>
     /** CL9: ring members who aren't on a group call again; empty is everyone not on it. */
@@ -80,7 +87,13 @@ class KtorCallsRemote(private val api: CircasoApi) : CallsRemote {
         method = HttpMethod.Post; url("/v1/calls/$callId/renegotiate"); idempotencyKey(newIdempotencyKey()); contentType(ContentType.Application.Json); setBody(request)
     }
     override suspend fun decline(callId: String) = api.call<CallDto> { method = HttpMethod.Post; url("/v1/calls/$callId/decline"); idempotencyKey(newIdempotencyKey()) }
-    override suspend fun leave(callId: String) = api.call<CallDto> { method = HttpMethod.Post; url("/v1/calls/$callId/leave"); idempotencyKey(newIdempotencyKey()) }
+    override suspend fun leave(callId: String, cause: String?, key: String) = api.call<CallDto> {
+        method = HttpMethod.Post; url("/v1/calls/$callId/leave"); idempotencyKey(key)
+        if (cause != null) { contentType(ContentType.Application.Json); setBody(LeaveRequest(cause)) }
+    }
+    override suspend fun report(callId: String, report: com.circaso.feature.calls.CallReportRequest, key: String) = api.call<ReportReceived> {
+        method = HttpMethod.Post; url("/v1/calls/$callId/report"); idempotencyKey(key); contentType(ContentType.Application.Json); setBody(report)
+    }
     override suspend fun ring(callId: String, userIds: List<String>) = api.call<CallDto> {
         method = HttpMethod.Post; url("/v1/calls/$callId/ring"); idempotencyKey(newIdempotencyKey()); contentType(ContentType.Application.Json); setBody(RingRequest(userIds))
     }
