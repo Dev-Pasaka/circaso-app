@@ -1,5 +1,7 @@
 package com.circaso.feature.chama.presentation
 
+import com.circaso.designsystem.chrome.SheetActions
+import com.circaso.designsystem.chrome.SheetMessage
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -284,16 +286,14 @@ fun ColumnScope.GroupMoneyRows(info: GroupInfoMoney, chat: Chat?, myUserId: Stri
 /** GW7: a target needs a wallet; the owner goes straight into the set-up, then on to the target form. */
 @Composable
 fun ColumnScope.TargetNeedsWalletContent(chat: Chat?, onSetUp: () -> Unit, onNotNow: () -> Unit) {
-    val c = CircasoTheme.colors
-    val t = CircasoTheme.typography
     val name = chat?.title ?: "the group"
-    Column(Modifier.fillMaxWidth().padding(horizontal = CircasoSpacing.s2, vertical = CircasoSpacing.s2), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        WalletAvatar(name, chat?.avatarUrl, group = true)
-        BasicText("A target needs a group wallet", Modifier.semantics { heading() }, style = t.title2.copy(color = c.ink, textAlign = TextAlign.Center))
-        BasicText("Contributions to the target go into $name’s own wallet, not anyone’s personal one. Set it up first; it takes a minute.", style = t.subhead.copy(color = c.inkSecondary, textAlign = TextAlign.Center))
-    }
-    CircasoButton("Set Up Group Wallet", onSetUp, size = ButtonSize.Large, block = true)
-    CircasoButton("Not Now", onNotNow, style = ButtonStyle.Plain, size = ButtonSize.Large, block = true)
+    // The group's own wallet face stands in for the badge: it is this group's money the sheet is about.
+    SheetMessage(
+        "A target needs a group wallet",
+        "Contributions to the target go into $name’s own wallet, not anyone’s personal one. Set it up first; it takes a minute.",
+        icon = null, face = { WalletAvatar(name, chat?.avatarUrl, group = true) },
+    )
+    SheetActions("Set Up Group Wallet", onSetUp, "Not Now", onNotNow)
 }
 
 /** CH9 from group info: the owner picks who approves payouts; every member is told (`group.updated`). */
@@ -301,18 +301,19 @@ fun ColumnScope.TargetNeedsWalletContent(chat: Chat?, onSetUp: () -> Unit, onNot
 fun ColumnScope.ApprovalPolicyContent(current: ApprovalPolicy, choice: ApprovalPolicy, busy: Boolean, online: Boolean, onChoose: (ApprovalPolicy) -> Unit, onSave: () -> Unit, onCancel: () -> Unit) {
     val c = CircasoTheme.colors
     val t = CircasoTheme.typography
-    BasicText("Who approves payouts", Modifier.semantics { heading() }, style = t.title2.copy(color = c.ink))
+    SheetMessage("Who approves payouts", "Choose how many admins sign off each payout.", CircasoIcon.Shield)
     val policies = ApprovalPolicy.entries
     SegmentedControl(listOf("2 admins", "Any admin"), policies.indexOf(choice), { onChoose(policies[it]) })
     BasicText(
-        if (choice == ApprovalPolicy.AnyAdmin) "One admin’s approval is enough, and an admin’s own request is approved at once. Everyone in the group is told about the change."
-        else "Two admins approve each payout (every admin when there are fewer); the admin who asks counts as one. Everyone in the group is told about the change.",
-        style = t.subhead.copy(color = c.inkSecondary),
+        if (choice == ApprovalPolicy.AnyAdmin) "One admin’s approval is enough, and an admin’s own request is approved at once."
+        else "Two admins approve each payout (every admin when there are fewer); the admin who asks counts as one.",
+        style = t.subhead.copy(color = c.ink),
     )
-    BasicText("Requests already made keep the rule they were made under.", style = t.footnote.copy(color = c.inkSecondary))
-    CircasoButton("Save", onSave, size = ButtonSize.Large, block = true, enabled = online && choice != current, busy = busy)
-    if (!online) BasicText("Needs a connection", Modifier.fillMaxWidth(), style = t.footnote.copy(color = c.inkSecondary, textAlign = TextAlign.Center))
-    CircasoButton("Cancel", onCancel, style = ButtonStyle.Plain, size = ButtonSize.Large, block = true)
+    BasicText("Everyone in the group is told about the change. Requests already made keep the rule they were made under.", style = t.footnote.copy(color = c.inkSecondary))
+    SheetActions(
+        "Save", onSave, "Cancel", onCancel, enabled = online && choice != current, busy = busy,
+        note = if (!online) "Changing who approves needs a connection." else null,
+    )
 }
 
 /**
@@ -324,29 +325,23 @@ fun ColumnScope.LeaveBlockedContent(chat: Chat?, balance: String?, onPayout: () 
     val c = CircasoTheme.colors
     val t = CircasoTheme.typography
     val name = chat?.title ?: "the group"
-    Column(Modifier.fillMaxWidth().padding(horizontal = CircasoSpacing.s2, vertical = CircasoSpacing.s2), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        WalletAvatar(name, chat?.avatarUrl, group = true)
-        BasicText("You can’t leave yet", Modifier.semantics { heading() }, style = t.title2.copy(color = c.ink, textAlign = TextAlign.Center))
-        BasicText(
-            "$name’s wallet holds ${balance ?: "money"}, and only you can send from it. If you left, nobody could move that money until you came back.",
-            style = t.subhead.copy(color = c.inkSecondary, textAlign = TextAlign.Center),
-        )
-        BasicText(
-            if (com.circaso.core.flags.GroupPayoutApprovals.Enabled) "Pay it out first: ask for a payout, and once the admins approve it, pay it with the wallet’s PIN. Handing the wallet to someone else is coming."
-            else "Pay it out first, to members, to yourself or to an outside wallet, with the wallet’s PIN. Handing the wallet to someone else is coming.",
-            style = t.footnote.copy(color = c.inkSecondary, textAlign = TextAlign.Center),
-        )
-    }
-    CircasoButton("Open the Group Wallet", onPayout, size = ButtonSize.Large, block = true)
-    CircasoButton("Not Now", onClose, style = ButtonStyle.Plain, size = ButtonSize.Large, block = true)
+    SheetMessage(
+        "You can’t leave yet",
+        "$name’s wallet holds ${balance ?: "money"}, and only you can send from it. If you left, nobody could move that money until you came back.",
+        icon = null, face = { WalletAvatar(name, chat?.avatarUrl, group = true) },
+    )
+    BasicText(
+        if (com.circaso.core.flags.GroupPayoutApprovals.Enabled) "Pay it out first: ask for a payout, and once the admins approve it, pay it with the wallet’s PIN. Handing the wallet to someone else is coming."
+        else "Pay it out first, to members, to yourself or to an outside wallet, with the wallet’s PIN. Handing the wallet to someone else is coming.",
+        Modifier.fillMaxWidth().padding(horizontal = CircasoSpacing.s2),
+        style = t.footnote.copy(color = c.inkSecondary, textAlign = TextAlign.Center),
+    )
+    SheetActions("Open the Group Wallet", onPayout, "Not Now", onClose)
 }
 
 /** Change PIN for a group wallet: Circle can do it, but the server has no route for it yet (W8). Honest, no fake flow. */
 @Composable
 fun ColumnScope.ChangePinComingContent(name: String, onClose: () -> Unit) {
-    val c = CircasoTheme.colors
-    val t = CircasoTheme.typography
-    BasicText("Changing $name’s PIN is coming", Modifier.semantics { heading() }, style = t.title2.copy(color = c.ink))
-    BasicText("For now the PIN you set stays.", style = t.subhead.copy(color = c.inkSecondary))
-    CircasoButton("OK", onClose, size = ButtonSize.Large, block = true)
+    SheetMessage("Changing $name’s PIN is coming", "For now the PIN you set stays. Nobody can send from the wallet without it.", CircasoIcon.Lock)
+    SheetActions("OK", onClose, secondaryLabel = null)
 }
