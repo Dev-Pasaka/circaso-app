@@ -98,6 +98,9 @@ struct Info {
     /// The app's categories (ChatNotificationActions.swift), registered at its launch.
     static let momentReaction = "moment.loved"
     static let chatCategory = "CHAT_MESSAGE"
+    /// The coins chime the app puts in its Library/Sounds (IosNotificationSound.kt), or takes away when the person
+    /// turned it off (You → Money sound): iOS then plays the usual sound.
+    static let moneySound = UNNotificationSound(named: UNNotificationSoundName("money_received.wav"))
     static let privateChatCategory = "CHAT_MESSAGE_PRIVATE"
 }
 
@@ -134,7 +137,10 @@ private struct Worder {
         if let messageId = info.messageId, let copy = Snapshot.arrived(messageId) {
             content.title = copy.title
             content.body = copy.body
-            if copy.money == true { content.categoryIdentifier = "" } // money: no Reply, as on Android
+            if copy.money == true {
+                content.categoryIdentifier = "" // money: no Reply, as on Android
+                content.sound = Info.moneySound
+            }
             if copy.money == true, let transferId = copy.transferId {
                 var extra = content.userInfo
                 extra["transferId"] = transferId
@@ -190,6 +196,9 @@ private struct Worder {
     private func paymentCard(_ s: Snapshot, chat: Snapshot.Chat?, sender: Snapshot.Person?, payload p: Payload, minor: String) async -> UNNotificationContent {
         let sum = Wording.amount(minor: minor, asset: p.asset ?? "USDC", fiat: s.fiat)
         content.categoryIdentifier = "" // money: no Reply, as on Android
+        // The coins chime (2026-11-14): the card's push is a message's, with the usual sound, and the wallet's
+        // `payment.received` that brings the chime arrives after it and stays quiet, so the chime must be here.
+        content.sound = Info.moneySound
         let note = p.text?.trimmingCharacters(in: .whitespacesAndNewlines).nonEmpty.flatMap { $0.hasPrefix("Paid from") ? nil : " · \($0)" } ?? ""
         let name = sender?.name
         if chat?.group == true {
