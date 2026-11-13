@@ -107,7 +107,8 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
 
     /// On screen: still show it (the app decides what to post; a chat on screen never posts one).
     func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification, withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void) {
-        completionHandler([.banner, .list, .sound])
+        // Not for the chat on screen: its messages are already in front of the person.
+        completionHandler(IosNotificationsKt.shouldPresent(userInfo: notification.request.content.userInfo) ? [.banner, .list, .sound] : [])
     }
 
     func application(_ application: UIApplication, handleEventsForBackgroundURLSession identifier: String, completionHandler: @escaping () -> Void) {

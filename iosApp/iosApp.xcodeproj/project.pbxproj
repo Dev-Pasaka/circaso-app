@@ -11,12 +11,40 @@
 		C0A1B2C3D4E5F60718293B01 /* LibSignalClient in Frameworks */ = {isa = PBXBuildFile; productRef = C0A1B2C3D4E5F60718293B02 /* LibSignalClient */; };
 		C0A1B2C3D4E5F60718293B11 /* LibSignalFfi in Frameworks */ = {isa = PBXBuildFile; productRef = C0A1B2C3D4E5F60718293B12 /* LibSignalFfi */; };
 		C0A1B2C3D4E5F60718293C01 /* WebRTC in Frameworks */ = {isa = PBXBuildFile; productRef = C0A1B2C3D4E5F60718293C02 /* WebRTC */; };
+		D1A2B3C4D5E6F70809100002 /* NotificationService.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = D1A2B3C4D5E6F70809100001 /* NotificationService.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		D1A2B3C4D5E6F70809100011 /* LibSignalClient in Frameworks */ = {isa = PBXBuildFile; productRef = D1A2B3C4D5E6F7080910000F /* LibSignalClient */; };
+		D1A2B3C4D5E6F70809100012 /* LibSignalFfi in Frameworks */ = {isa = PBXBuildFile; productRef = D1A2B3C4D5E6F70809100010 /* LibSignalFfi */; };
 /* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		D1A2B3C4D5E6F7080910000D /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 274EEED39E4333E85E738954 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = D1A2B3C4D5E6F70809100005;
+			remoteInfo = NotificationService;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		D1A2B3C4D5E6F7080910000C /* Embed Foundation Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				D1A2B3C4D5E6F70809100002 /* NotificationService.appex in Embed Foundation Extensions */,
+			);
+			name = "Embed Foundation Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
 		2ED7103617D9FC651546AA6B /* Pods-iosApp.release.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-iosApp.release.xcconfig"; path = "Target Support Files/Pods-iosApp/Pods-iosApp.release.xcconfig"; sourceTree = "<group>"; };
 		585BCC99B560791C6E2BA1AD /* Pods-iosApp.debug.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-iosApp.debug.xcconfig"; path = "Target Support Files/Pods-iosApp/Pods-iosApp.debug.xcconfig"; sourceTree = "<group>"; };
 		A989B60CBCD9B518FC11BE8E /* Circaso.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Circaso.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		D1A2B3C4D5E6F70809100001 /* NotificationService.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = NotificationService.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		EE8E3232086D7281D8C81E55 /* Pods_iosApp.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; includeInIndex = 0; path = Pods_iosApp.framework; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
@@ -28,11 +56,20 @@
 			);
 			target = EA432938796E1C22D496DEC0 /* iosApp */;
 		};
+		D1A2B3C4D5E6F70809100004 /* Exceptions for "NotificationService" folder in "NotificationService" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = D1A2B3C4D5E6F70809100005 /* NotificationService */;
+		};
 /* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		70D42C2AAA3287D0869A8B13 /* Configuration */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+			);
 			path = Configuration;
 			sourceTree = "<group>";
 		};
@@ -42,6 +79,14 @@
 				29B2AB646C934E2CB8C09285 /* Exceptions for "iosApp" folder in "iosApp" target */,
 			);
 			path = iosApp;
+			sourceTree = "<group>";
+		};
+		D1A2B3C4D5E6F70809100003 /* NotificationService */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				D1A2B3C4D5E6F70809100004 /* Exceptions for "NotificationService" folder in "NotificationService" target */,
+			);
+			path = NotificationService;
 			sourceTree = "<group>";
 		};
 /* End PBXFileSystemSynchronizedRootGroup section */
@@ -55,6 +100,15 @@
 				C0A1B2C3D4E5F60718293C01 /* WebRTC in Frameworks */,
 				C0A1B2C3D4E5F60718293B11 /* LibSignalFfi in Frameworks */,
 				55038463E913CD1A325EC074 /* Pods_iosApp.framework in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		D1A2B3C4D5E6F70809100007 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				D1A2B3C4D5E6F70809100011 /* LibSignalClient in Frameworks */,
+				D1A2B3C4D5E6F70809100012 /* LibSignalFfi in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -73,6 +127,7 @@
 			isa = PBXGroup;
 			children = (
 				A989B60CBCD9B518FC11BE8E /* Circaso.app */,
+				D1A2B3C4D5E6F70809100001 /* NotificationService.appex */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -91,6 +146,7 @@
 			children = (
 				70D42C2AAA3287D0869A8B13 /* Configuration */,
 				9B88C160B10BDB4EAC8557CB /* iosApp */,
+				D1A2B3C4D5E6F70809100003 /* NotificationService */,
 				77477D273AB4BF57A6AFB595 /* Products */,
 				9189950B4E6741216A6AA629 /* Pods */,
 				1582D20F8240A1F74022C41A /* Frameworks */,
@@ -100,6 +156,30 @@
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
+		D1A2B3C4D5E6F70809100005 /* NotificationService */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = D1A2B3C4D5E6F70809100009 /* Build configuration list for PBXNativeTarget "NotificationService" */;
+			buildPhases = (
+				D1A2B3C4D5E6F70809100006 /* Sources */,
+				D1A2B3C4D5E6F70809100007 /* Frameworks */,
+				D1A2B3C4D5E6F70809100008 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				D1A2B3C4D5E6F70809100003 /* NotificationService */,
+			);
+			name = NotificationService;
+			packageProductDependencies = (
+				D1A2B3C4D5E6F7080910000F /* LibSignalClient */,
+				D1A2B3C4D5E6F70809100010 /* LibSignalFfi */,
+			);
+			productName = NotificationService;
+			productReference = D1A2B3C4D5E6F70809100001 /* NotificationService.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
 		EA432938796E1C22D496DEC0 /* iosApp */ = {
 			isa = PBXNativeTarget;
 			buildConfigurationList = EBFD96228DC712FE85769A74 /* Build configuration list for PBXNativeTarget "iosApp" */;
@@ -112,10 +192,12 @@
 				3D0BC7F3C54C3683829A0A91 /* [CP] Embed Pods Frameworks */,
 				C94A0A1AAE27171DA6AA7684 /* [CP] Copy Pods Resources */,
 				F1C2A3B4D5E6F70812345678 /* Upload dSYMs to Crashlytics */,
+				D1A2B3C4D5E6F7080910000C /* Embed Foundation Extensions */,
 			);
 			buildRules = (
 			);
 			dependencies = (
+				D1A2B3C4D5E6F7080910000E /* PBXTargetDependency */,
 			);
 			fileSystemSynchronizedGroups = (
 				9B88C160B10BDB4EAC8557CB /* iosApp */,
@@ -140,6 +222,9 @@
 				LastSwiftUpdateCheck = 1620;
 				LastUpgradeCheck = 2660;
 				TargetAttributes = {
+					D1A2B3C4D5E6F70809100005 = {
+						CreatedOnToolsVersion = 26.0;
+					};
 					EA432938796E1C22D496DEC0 = {
 						CreatedOnToolsVersion = 16.2;
 					};
@@ -156,8 +241,8 @@
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
 				C0A1B2C3D4E5F60718293B03 /* XCRemoteSwiftPackageReference "libsignal" */,
-				C0A1B2C3D4E5F60718293C03 /* XCLocalSwiftPackageReference "Packages/WebRTC" */,
-				C0A1B2C3D4E5F60718293B13 /* XCLocalSwiftPackageReference "Packages/LibSignalFfi" */,
+				C0A1B2C3D4E5F60718293C03 /* XCLocalSwiftPackageReference "WebRTC" */,
+				C0A1B2C3D4E5F60718293B13 /* XCLocalSwiftPackageReference "LibSignalFfi" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 77477D273AB4BF57A6AFB595 /* Products */;
@@ -165,12 +250,20 @@
 			projectRoot = "";
 			targets = (
 				EA432938796E1C22D496DEC0 /* iosApp */,
+				D1A2B3C4D5E6F70809100005 /* NotificationService */,
 			);
 		};
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
 		5DF128E009D582F2669FAE84 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		D1A2B3C4D5E6F70809100008 /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -188,13 +281,9 @@
 			inputFileListPaths = (
 				"${PODS_ROOT}/Target Support Files/Pods-iosApp/Pods-iosApp-frameworks-${CONFIGURATION}-input-files.xcfilelist",
 			);
-			inputPaths = (
-			);
 			name = "[CP] Embed Pods Frameworks";
 			outputFileListPaths = (
 				"${PODS_ROOT}/Target Support Files/Pods-iosApp/Pods-iosApp-frameworks-${CONFIGURATION}-output-files.xcfilelist",
-			);
-			outputPaths = (
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
@@ -250,13 +339,9 @@
 			inputFileListPaths = (
 				"${PODS_ROOT}/Target Support Files/Pods-iosApp/Pods-iosApp-resources-${CONFIGURATION}-input-files.xcfilelist",
 			);
-			inputPaths = (
-			);
 			name = "[CP] Copy Pods Resources";
 			outputFileListPaths = (
 				"${PODS_ROOT}/Target Support Files/Pods-iosApp/Pods-iosApp-resources-${CONFIGURATION}-output-files.xcfilelist",
-			);
-			outputPaths = (
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
@@ -293,7 +378,22 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		D1A2B3C4D5E6F70809100006 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		D1A2B3C4D5E6F7080910000E /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = D1A2B3C4D5E6F70809100005 /* NotificationService */;
+			targetProxy = D1A2B3C4D5E6F7080910000D /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
 		24026477BB66D1F766F10A97 /* Release */ = {
@@ -421,6 +521,58 @@
 			};
 			name = Debug;
 		};
+		D1A2B3C4D5E6F7080910000A /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = NotificationService/NotificationService.entitlements;
+				CODE_SIGN_IDENTITY = "Apple Development";
+				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = "${TEAM_ID}";
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = NotificationService/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = Circaso;
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				IPHONEOS_DEPLOYMENT_TARGET = 18.2;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.circaso.app.NotificationService;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		D1A2B3C4D5E6F7080910000B /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = NotificationService/NotificationService.entitlements;
+				CODE_SIGN_IDENTITY = "Apple Development";
+				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = 985W5Z7984;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = NotificationService/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = Circaso;
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				IPHONEOS_DEPLOYMENT_TARGET = 18.2;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.circaso.app.NotificationService;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
 		ED7A5798C99464C53BC44205 /* Release */ = {
 			isa = XCBuildConfiguration;
 			baseConfigurationReferenceAnchor = 70D42C2AAA3287D0869A8B13 /* Configuration */;
@@ -492,6 +644,15 @@
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Debug;
 		};
+		D1A2B3C4D5E6F70809100009 /* Build configuration list for PBXNativeTarget "NotificationService" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				D1A2B3C4D5E6F7080910000A /* Debug */,
+				D1A2B3C4D5E6F7080910000B /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
 		EBFD96228DC712FE85769A74 /* Build configuration list for PBXNativeTarget "iosApp" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
@@ -504,11 +665,11 @@
 /* End XCConfigurationList section */
 
 /* Begin XCLocalSwiftPackageReference section */
-		C0A1B2C3D4E5F60718293B13 /* XCLocalSwiftPackageReference "Packages/LibSignalFfi" */ = {
+		C0A1B2C3D4E5F60718293B13 /* XCLocalSwiftPackageReference "LibSignalFfi" */ = {
 			isa = XCLocalSwiftPackageReference;
 			relativePath = Packages/LibSignalFfi;
 		};
-		C0A1B2C3D4E5F60718293C03 /* XCLocalSwiftPackageReference "Packages/WebRTC" */ = {
+		C0A1B2C3D4E5F60718293C03 /* XCLocalSwiftPackageReference "WebRTC" */ = {
 			isa = XCLocalSwiftPackageReference;
 			relativePath = Packages/WebRTC;
 		};
@@ -533,13 +694,23 @@
 		};
 		C0A1B2C3D4E5F60718293B12 /* LibSignalFfi */ = {
 			isa = XCSwiftPackageProductDependency;
-			package = C0A1B2C3D4E5F60718293B13 /* XCLocalSwiftPackageReference "Packages/LibSignalFfi" */;
+			package = C0A1B2C3D4E5F60718293B13 /* XCLocalSwiftPackageReference "LibSignalFfi" */;
 			productName = LibSignalFfi;
 		};
 		C0A1B2C3D4E5F60718293C02 /* WebRTC */ = {
 			isa = XCSwiftPackageProductDependency;
-			package = C0A1B2C3D4E5F60718293C03 /* XCLocalSwiftPackageReference "Packages/WebRTC" */;
+			package = C0A1B2C3D4E5F60718293C03 /* XCLocalSwiftPackageReference "WebRTC" */;
 			productName = WebRTC;
+		};
+		D1A2B3C4D5E6F7080910000F /* LibSignalClient */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = C0A1B2C3D4E5F60718293B03 /* XCRemoteSwiftPackageReference "libsignal" */;
+			productName = LibSignalClient;
+		};
+		D1A2B3C4D5E6F70809100010 /* LibSignalFfi */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = C0A1B2C3D4E5F60718293B13 /* XCLocalSwiftPackageReference "LibSignalFfi" */;
+			productName = LibSignalFfi;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

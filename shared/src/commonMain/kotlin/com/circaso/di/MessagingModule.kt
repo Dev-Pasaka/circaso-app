@@ -129,6 +129,14 @@ val messagingModule = module {
     } bind com.circaso.feature.messaging.domain.GroupInvitesRepository::class
     single { MessagingFrameHandler(get(), get(), get(), get(), get(), get(), invites = get()) }
     // Notifications (2026-11-06): pushes worded on the phone with privacy, and where a tap lands.
+    // iOS's notification extension words pushes from this snapshot (2026-11-13); Android words them in the app.
+    single {
+        com.circaso.core.notifications.NotificationSnapshotWriter(
+            signal = get(), chats = get(), chatsRepo = get(), names = get(), wallet = get(), sealer = get(), crypto = get(), storage = get(),
+            file = getOrNull<com.circaso.core.notifications.NotificationSnapshotFile>() ?: com.circaso.core.notifications.NoNotificationSnapshotFile,
+            ownUserId = get(named("ownUserId")), scope = get(),
+        )
+    }
     single { com.circaso.core.notifications.PushNotices(get(), get(), get(), get(), get(), get(), get(), get(), invites = get(), names = get()) }
     // A message that arrives over the socket is notified at once (2026-11-13); one notification per message either way.
     single { com.circaso.core.notifications.PostedMessages() }

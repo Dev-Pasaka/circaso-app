@@ -34,6 +34,9 @@ class PostedMessages(private val keep: Int = Keep) {
 /** Shows a [Notice] the way the platform does (Android: its channels and the coins chime). */
 fun interface NoticePoster {
     suspend fun post(notice: Notice)
+
+    /** [notice] for the message [messageId] that came over the socket (iOS keeps a copy for its push, see [NotificationSnapshotWriter.remember]). */
+    suspend fun post(notice: Notice, messageId: String) = post(notice)
 }
 
 /** iOS until its own local notifications: APNs shows the push, which the server now sends while Circaso is away. */
@@ -79,7 +82,7 @@ class LiveMessageNotices(
             if (inFront && notifications.activeChatId == message.chatId) return@launch
             val notice = runCatching { word(message.chatId, message.messageId) }.getOrNull() ?: return@launch
             if (!posted.claim(message.messageId)) return@launch
-            poster.post(notice)
+            poster.post(notice, message.messageId)
             val done = now()
             val sent = message.sentAt?.let { isoMillis(it) }?.let { " ${done - it} ms after sent," }.orEmpty()
             Diagnostics.note("notify: socket message posted ${done - arrivedAt} ms after the frame,$sent ${if (inFront) "in app" else "in background"}")

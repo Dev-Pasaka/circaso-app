@@ -3,7 +3,7 @@ package com.circaso.core.notifications
 import com.circaso.core.notifications.NotificationDestination.Companion.toExtras
 import platform.Foundation.NSUserDefaults
 
-/** The App Group Circaso shares with its Notification Service Extension (to be added with APNs; see the M7 note). */
+/** The App Group Circaso shares with its Notification Service Extension (iosApp/NotificationService). */
 const val AppGroupId = "group.com.circaso.app"
 
 /** The key, in [AppGroupId]'s defaults, the extension reads: true means word every push privately. */
@@ -19,8 +19,8 @@ actual fun mirrorNotificationPrivacy(on: Boolean) {
     NSUserDefaults.standardUserDefaults.setBool(on, forKey = NotificationPrivacyDefaultsKey)
 }
 
-/** False until the Notification Service Extension that reads [NotificationPrivacyDefaultsKey] ships. */
-actual val notificationPrivacySupported: Boolean = false
+/** The Notification Service Extension (2026-11-13) reads [NotificationPrivacyDefaultsKey] from the App Group. */
+actual val notificationPrivacySupported: Boolean = true
 
 /** A local notification's `userInfo`: where its tap lands. */
 fun NotificationDestination.toUserInfo(): Map<Any?, Any?> = toExtras().mapKeys { it.key as Any? }

@@ -111,6 +111,13 @@ interface SignalDao {
     suspend fun deletePreKeysCreatedBefore(before: Long)
 
     // ---- sessions and peers
+    /** Every session, still sealed: iOS's notification snapshot copies them (NotificationSnapshot). */
+    @Query("SELECT * FROM signal_session")
+    suspend fun sessions(): List<SessionEntity>
+
+    @Query("SELECT * FROM signal_sender_key")
+    suspend fun senderKeys(): List<SenderKeyEntity>
+
     @Query("SELECT * FROM signal_session WHERE userId = :userId")
     suspend fun session(userId: String): SessionEntity?
 

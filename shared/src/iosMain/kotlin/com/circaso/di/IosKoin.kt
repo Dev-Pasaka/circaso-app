@@ -41,7 +41,6 @@ import com.circaso.core.platform.IosLocalSealer
 import com.circaso.core.platform.IosSecureStorage
 import com.circaso.core.platform.ChatNotifications
 import com.circaso.core.platform.LocalSealer
-import com.circaso.core.platform.NoChatNotifications
 import com.circaso.core.platform.IosSocialSignIn
 import com.circaso.feature.auth.domain.SocialSignIn
 import com.circaso.core.platform.IosStoreLauncher
@@ -73,7 +72,19 @@ fun initKoinIos() {
         single<DeviceKeyStore> { IosDeviceKeyStore() }
         single<SignalCrypto> { IosSignalCrypto() } // libsignal lives on the Swift side; see SignalBridge
         single<LocalSealer> { IosLocalSealer(get(), get()) }
-        single<ChatNotifications> { NoChatNotifications } // the server's APNs alert shows as is until the Notification Service Extension (M7)
+        // Pushes are shown by iOS, worded by the Notification Service Extension from the snapshot the app writes to the
+        // App Group (NotificationSnapshot.kt, iosApp/NotificationService).
+        single<ChatNotifications> { com.circaso.core.notifications.IosChatNotifications() }
+        single<com.circaso.core.notifications.NotificationSnapshotFile> { com.circaso.core.notifications.IosNotificationSnapshotFile() }
+        // A message opened from the socket while Circaso is away: iOS shows its push, worded by the extension from
+        // the copy kept here (the extension can't open a message the app already opened).
+        single<com.circaso.core.notifications.NoticePoster> {
+            val writer = get<com.circaso.core.notifications.NotificationSnapshotWriter>()
+            object : com.circaso.core.notifications.NoticePoster {
+                override suspend fun post(notice: com.circaso.core.notifications.Notice) {}
+                override suspend fun post(notice: com.circaso.core.notifications.Notice, messageId: String) = writer.remember(notice, messageId)
+            }
+        }
         single<AudioRecorder> { IosAudioRecorder() }
         single<AudioPlayer> { IosAudioPlayer() }
         single<com.circaso.core.qr.QrScanner> { com.circaso.core.qr.IosQrScanner() }
