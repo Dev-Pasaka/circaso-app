@@ -87,6 +87,8 @@ kotlin {
             implementation(libs.googleid)
             implementation(project.dependencies.platform(libs.firebase.bom))
             implementation(libs.firebase.messaging)
+            // Crash reports (approved 2026-11-13): crashes plus the app's scrubbed Diagnostics notes as breadcrumbs.
+            implementation(libs.firebase.crashlytics)
             implementation(libs.compose.uiToolingPreview)
             implementation(libs.compose.uiTooling)
             // Signal protocol (X3DH, double ratchet, sender keys). Android needs both artifacts; the JVM one also
