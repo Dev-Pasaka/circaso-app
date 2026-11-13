@@ -84,6 +84,8 @@ class MessagesRepositoryImpl(
     private val paymentCards: ChatPaymentCards? = null,
     /** Names I saved for people: senders, typing and notices about someone use them. */
     private val names: com.circaso.feature.names.domain.PeopleNames = com.circaso.feature.names.domain.PeopleNames.None,
+    /** Read receipts that waited for the socket (a chat marked read from a notification with Circaso closed). */
+    private val pendingReads: PendingReads? = null,
 ) : MessagesRepository {
     /** messageId -> each person's reaction (userId to emoji), oldest first. */
     override fun reactions(chatId: String): kotlinx.coroutines.flow.Flow<Map<String, List<Pair<String, String>>>> =
@@ -232,9 +234,21 @@ class MessagesRepositoryImpl(
         // The read receipt names the newest message the server knows.
         val newest = dao.newestIncoming(chatId) ?: return
         if (chat.readUpToOrderAt < newest.orderAt) {
-            realtime.send("messaging", "read", buildJsonObject { put("chatId", chatId); put("upToMessageId", newest.messageId!!) })
+            val upTo = newest.messageId!!
+            val sent = sendRead(chatId, upTo)
+            // No socket (Mark as read on a notification, Circaso closed): it goes when the socket next connects.
+            val me = ownUserId() ?: return
+            if (sent) pendingReads?.remove(me, chatId) else pendingReads?.put(me, chatId, upTo)
         }
     }
+
+    override suspend fun flushReads() {
+        val me = ownUserId() ?: return
+        pendingReads?.flush(me) { chatId, upTo -> sendRead(chatId, upTo) }
+    }
+
+    private suspend fun sendRead(chatId: String, upTo: String) =
+        realtime.send("messaging", "read", buildJsonObject { put("chatId", chatId); put("upToMessageId", upTo) })
 
     override suspend fun setTyping(chatId: String, typing: Boolean) {
         realtime.send("messaging", "typing", buildJsonObject { put("chatId", chatId); put("on", typing) })

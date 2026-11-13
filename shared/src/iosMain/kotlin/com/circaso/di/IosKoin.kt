@@ -51,9 +51,13 @@ import org.koin.dsl.module
 import kotlin.experimental.ExperimentalNativeApi
 import kotlin.native.Platform
 
-/** Called once from `MainViewController` before any UI is created. */
+/**
+ * Called from `MainViewController` before any UI is created, and by work iOS launches Circaso in the background for
+ * (a notification's Reply, NotificationActions.ios.kt) before any screen exists. Once only: later calls do nothing.
+ */
 @OptIn(ExperimentalNativeApi::class)
 fun initKoinIos() {
+    if (org.koin.mp.KoinPlatformTools.defaultContext().getOrNull() != null) return
     // Debug breadcrumbs (outcomes only, never tokens or accounts) go to the console of the run.
     if (Platform.isDebugBinary) com.circaso.core.common.Diagnostics.sink = { println("CircasoNet: $it") }
     // Every build keeps a rolling, scrubbed diagnostic log in Application Support (You → Help → Send diagnostic log).

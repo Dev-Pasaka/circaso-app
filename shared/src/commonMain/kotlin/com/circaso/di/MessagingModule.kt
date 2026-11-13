@@ -107,7 +107,10 @@ val messagingModule = module {
             onLiveMessage = { m -> get<com.circaso.core.notifications.LiveMessageNotices>().onArrived(m) },
         )
     }
-    single { MessagesRepositoryImpl(get(), get(), get(), get(), get(), get(named("kickOutbox")), get<RealtimeClient>(), get(), get(named("ownUserId")), reactionsDao = get(), paymentCards = get(), names = get()) } bind MessagesRepository::class
+    single { MessagesRepositoryImpl(get(), get(), get(), get(), get(), get(named("kickOutbox")), get<RealtimeClient>(), get(), get(named("ownUserId")), reactionsDao = get(), paymentCards = get(), names = get(), pendingReads = get()) } bind MessagesRepository::class
+    single { com.circaso.feature.messaging.data.repository.PendingReads(get()) }
+    // Reply and Mark as read on a chat notification, Android and iPhone alike (2026-11-13).
+    single { val auth = get<AuthManager>(); com.circaso.core.notifications.NotificationReplies(get(), get(), get(), get(), auth.state, { auth.userId }) }
     single { ChatSendHandler(get(), get(), get(), get(), get(), get(), get(named("ownUserId")), { id -> get<ChatsRepositoryImpl>().refreshChat(id) },
             uploadMedia = { id -> get<com.circaso.feature.messaging.data.repository.MediaMessages>().uploadPending(id) },
             uploads = getOrNull<com.circaso.core.platform.BackgroundUploads>() ?: com.circaso.core.platform.NoBackgroundUploads, names = get()) } bind OutboxHandler::class

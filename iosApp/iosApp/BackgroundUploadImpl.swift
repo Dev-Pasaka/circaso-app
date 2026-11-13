@@ -84,6 +84,7 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
     /// Set before launch finishes, so a tap that started Circaso (cold) is delivered too.
     func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil) -> Bool {
         UNUserNotificationCenter.current().delegate = self
+        ChatNotificationActions.register() // Reply and Mark as Read on chat messages
         PushNotificationsImpl.install() // message, payment and missed-call pushes through FCM; see PushNotificationsImpl.swift
         return true
     }
@@ -98,7 +99,9 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
     }
 
     /// Tapped, cold, in the background or on screen: open where it points (NotificationTaps → the navigation).
+    /// Reply and Mark as Read on a chat message are handled without opening Circaso (ChatNotificationActions).
     func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse, withCompletionHandler completionHandler: @escaping () -> Void) {
+        if ChatNotificationActions.handle(response, completionHandler: completionHandler) { return }
         if response.actionIdentifier == UNNotificationDefaultActionIdentifier {
             _ = NotificationTaps_iosKt.openNotification(userInfo: response.notification.request.content.userInfo)
         }
