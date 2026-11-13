@@ -38,8 +38,20 @@ final class LiveAudioImpl: NSObject, LiveAudioBridgeApi {
     /// When what is scheduled on the player finishes (CACurrentMediaTime), so the next buffer's start is known.
     private var queuedUntil: CFTimeInterval = 0
     private var playerVolume: Float = 1
+    /// The first chunk of her voice since the speaker started or was flushed: when it came, and whether it was heard.
+    private var firstChunkAt: CFTimeInterval?
+    private var firstHeard = false
+    /// When the engine was last rewired, so a run of configuration changes can't loop forever.
+    private var rewires: [CFTimeInterval] = []
+    private var engineObservers: [NSObjectProtocol] = []
+    private var lastOutputs = ""
 
     private static let frame = 320 // 20 ms at 16 kHz: one Opus packet
+
+    override init() {
+        super.init()
+        observeEngine()
+    }
 
     var opusSupported: Bool {
         guard let opus = opusFormat else { return false }
@@ -67,29 +79,46 @@ final class LiveAudioImpl: NSObject, LiveAudioBridgeApi {
         do {
             try prepareEngine()
         } catch {
+            note("microphone: session failed (\((error as NSError).code))")
             return completion(3)
         }
+        work.sync {
+            self.encoder = encoder
+            self.onPacket = onPacket
+            self.onMicLevel = { onLevel(KotlinFloat(value: $0)) }
+        }
+        guard installMicTap() else { return completion(3) }
+        micRunning = true
+        do {
+            if !engine.isRunning { try engine.start() }
+            // The engine may have been stopped under the speaker (a configuration change): its player plays again.
+            if speakerRunning && !player.isPlaying { player.play() }
+        } catch {
+            engine.inputNode.removeTap(onBus: 0)
+            micRunning = false
+            note("microphone: engine failed (\((error as NSError).code))")
+            return completion(3)
+        }
+        completion(0)
+    }
+
+    /// The tap on the (echo-cancelled) input in the format it has now, and a resampler from that format to 16 kHz.
+    private func installMicTap() -> Bool {
         let input = engine.inputNode
         let tapFormat = input.outputFormat(forBus: 0)
-        guard tapFormat.sampleRate > 0, let resampler = AVAudioConverter(from: tapFormat, to: pcm16k) else { return completion(3) }
-        self.encoder = encoder
-        self.resampler = resampler
-        self.onPacket = onPacket
-        self.onMicLevel = { onLevel(KotlinFloat(value: $0)) }
-        pending.removeAll()
+        guard tapFormat.sampleRate > 0, let resampler = AVAudioConverter(from: tapFormat, to: pcm16k) else {
+            note("microphone: no usable input format (\(tapFormat.sampleRate) Hz)")
+            return false
+        }
+        work.sync {
+            self.resampler = resampler
+            self.pending.removeAll()
+        }
         input.removeTap(onBus: 0)
         input.installTap(onBus: 0, bufferSize: 1_024, format: tapFormat) { [weak self] buffer, _ in
             self?.work.async { self?.capture(buffer) }
         }
-        micRunning = true
-        do {
-            if !engine.isRunning { try engine.start() }
-        } catch {
-            input.removeTap(onBus: 0)
-            micRunning = false
-            return completion(3)
-        }
-        completion(0)
+        return true
     }
 
     /// Resamples what the microphone gives to 16 kHz, cuts it into 20 ms frames and encodes each one.
@@ -167,6 +196,7 @@ final class LiveAudioImpl: NSObject, LiveAudioBridgeApi {
         do {
             try prepareEngine()
         } catch {
+            note("speaker: session failed (\((error as NSError).code))")
             return false
         }
         if player.engine == nil { engine.attach(player) }
@@ -177,15 +207,20 @@ final class LiveAudioImpl: NSObject, LiveAudioBridgeApi {
         self.onVoiceLevel = { onLevel(KotlinFloat(value: $0)) }
         queued = 0
         queuedUntil = 0
+        firstChunkAt = nil
+        firstHeard = false
         player.volume = 1
         playerVolume = 1
         do {
             if !engine.isRunning { try engine.start() }
         } catch {
+            note("speaker: engine failed (\((error as NSError).code))")
             return false
         }
         player.play()
         speakerRunning = true
+        lastOutputs = AVAudioSession.sharedInstance().currentRoute.outputs.map { $0.portType.rawValue }.joined(separator: "+")
+        note("speaker on, \(sampleRate) Hz: \(describe())")
         return true
     }
 
@@ -221,6 +256,18 @@ final class LiveAudioImpl: NSObject, LiveAudioBridgeApi {
         }
         let duration = Double(count) / format.sampleRate
         work.async {
+            let first = self.firstChunkAt == nil
+            if first {
+                let at = CACurrentMediaTime()
+                self.firstChunkAt = at
+                self.note("her first chunk in: \(self.describe())")
+                // Scheduled but never heard is the silent failure: say so, and wire the engine up again.
+                self.work.asyncAfter(deadline: .now() + 1.5) {
+                    guard self.speakerRunning, self.firstChunkAt == at, !self.firstHeard else { return }
+                    self.note("her first chunk not heard after 1.5 s (\(self.queued) queued): \(self.describe())")
+                    DispatchQueue.main.async { self.rewire("nothing heard") }
+                }
+            }
             if let onBlock = self.onBlock {
                 let now = CACurrentMediaTime()
                 let session = AVAudioSession.sharedInstance()
@@ -237,6 +284,10 @@ final class LiveAudioImpl: NSObject, LiveAudioBridgeApi {
             self.player.scheduleBuffer(buffer, completionCallbackType: .dataPlayedBack) { [weak self] _ in
                 self?.work.async {
                     guard let self = self else { return }
+                    if first, !self.firstHeard, let at = self.firstChunkAt {
+                        self.firstHeard = true
+                        self.note("her first chunk heard after \(Int((CACurrentMediaTime() - at) * 1_000)) ms")
+                    }
                     self.queued = max(0, self.queued - 1)
                     if self.queued == 0 { self.onPlaying?(false); self.onVoiceLevel?(0) }
                 }
@@ -250,6 +301,8 @@ final class LiveAudioImpl: NSObject, LiveAudioBridgeApi {
             self.player.stop()
             self.queued = 0
             self.queuedUntil = 0
+            self.firstChunkAt = nil // the next reply's first chunk is reported again
+            self.firstHeard = false
             self.onPlaying?(false)
             self.onVoiceLevel?(0)
             self.player.play()
@@ -322,6 +375,85 @@ final class LiveAudioImpl: NSObject, LiveAudioBridgeApi {
         guard !micRunning, !speakerRunning else { return }
         engine.stop()
         try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+    }
+
+    /// What the next live test needs to explain itself: the session, the route and the engine, no personal data.
+    private func describe() -> String {
+        let session = AVAudioSession.sharedInstance()
+        let outputs = session.currentRoute.outputs.map { $0.portType.rawValue }.joined(separator: "+")
+        let category = session.category.rawValue.replacingOccurrences(of: "AVAudioSessionCategory", with: "")
+        let mode = session.mode.rawValue.replacingOccurrences(of: "AVAudioSessionMode", with: "")
+        let out = engine.outputNode.outputFormat(forBus: 0)
+        return "\(category)/\(mode) route=\(outputs) hw=\(Int(session.sampleRate)) Hz engine=\(engine.isRunning ? "on" : "off") player=\(player.isPlaying ? "on" : "off") out=\(Int(out.sampleRate)) Hz/\(out.channelCount) ch"
+    }
+
+    private func note(_ message: String) {
+        Diagnostics.shared.note(message: "voice audio: \(message)")
+    }
+
+    /// A configuration change (the hardware format, voice processing coming on, a route with another sample rate) stops
+    /// the engine and every player on it, and nothing scheduled after is ever heard. It happens on the very first
+    /// start: the engine is made at launch while the session is still SoloAmbient at 44.1 kHz, and voice processing
+    /// brings the hardware up at 48 kHz (seen on the iPhone SE, iOS 26.5, 2026-11-14). An interruption that ends (a
+    /// phone call, Siri) and a media services reset need the same: wire the engine up again and carry on.
+    private func observeEngine() {
+        let center = NotificationCenter.default
+        engineObservers = [
+            center.addObserver(forName: .AVAudioEngineConfigurationChange, object: engine, queue: .main) { [weak self] _ in
+                self?.rewire("configuration changed")
+            },
+            center.addObserver(forName: AVAudioSession.interruptionNotification, object: nil, queue: .main) { [weak self] n in
+                guard let self, self.micRunning || self.speakerRunning else { return }
+                let type = (n.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt).flatMap(AVAudioSession.InterruptionType.init)
+                if type == .began { self.note("interrupted") } else { self.rewire("interruption ended") }
+            },
+            center.addObserver(forName: AVAudioSession.mediaServicesWereResetNotification, object: nil, queue: .main) { [weak self] _ in
+                self?.rewire("media services reset")
+            },
+            center.addObserver(forName: AVAudioSession.routeChangeNotification, object: nil, queue: .main) { [weak self] n in
+                guard let self, self.micRunning || self.speakerRunning else { return }
+                // only a different set of outputs (AirPods connected, the receiver): category changes repeat a lot
+                let outputs = AVAudioSession.sharedInstance().currentRoute.outputs.map { $0.portType.rawValue }.joined(separator: "+")
+                guard outputs != self.lastOutputs else { return }
+                self.lastOutputs = outputs
+                let reason = (n.userInfo?[AVAudioSessionRouteChangeReasonKey] as? UInt) ?? 0
+                self.note("route changed (reason \(reason)): \(self.describe())")
+            },
+        ]
+    }
+
+    /// Stops the engine, connects the output chain, her player and the microphone's tap in the formats the hardware
+    /// has now, and starts it all again. On the main thread, like the starts. What was queued of her voice is dropped.
+    private func rewire(_ reason: String) {
+        guard micRunning || speakerRunning else { return }
+        let now = CACurrentMediaTime()
+        rewires = rewires.filter { now - $0 < 10 } + [now]
+        guard rewires.count <= 5 else { return note("\(reason): not rewired, too many changes in 10 s") }
+        engine.stop()
+        do {
+            try prepareEngine()
+            engine.disconnectNodeInput(engine.outputNode)
+            engine.connect(engine.mainMixerNode, to: engine.outputNode, format: nil)
+            if speakerRunning, let format = speakerFormat {
+                engine.disconnectNodeOutput(player)
+                engine.connect(player, to: engine.mainMixerNode, format: format)
+            }
+            if micRunning, !installMicTap() { micRunning = false }
+            engine.prepare()
+            try engine.start()
+            if speakerRunning { player.play() }
+            work.async {
+                self.queued = 0
+                self.queuedUntil = 0
+                self.firstChunkAt = nil
+                self.firstHeard = false
+                self.onPlaying?(false)
+                self.onVoiceLevel?(0)
+            }
+            note("\(reason), engine rewired: \(describe())")
+        } catch {
+            note("\(reason), rewiring failed (\((error as NSError).code)): \(describe())")
+        }
     }
 
     private static func level(_ samples: [Float]) -> Float {
