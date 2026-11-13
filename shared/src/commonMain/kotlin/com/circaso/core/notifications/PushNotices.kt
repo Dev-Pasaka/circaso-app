@@ -109,6 +109,13 @@ class PushNotices(
         }
     }
 
+    /**
+     * A message that just arrived over the socket and is already decrypted and saved (2026-11-13): worded exactly as
+     * its push would be, under the same key, without pulling the inbox first. Null for a control message, a taken-back
+     * reaction, or one of my own.
+     */
+    suspend fun forArrived(chatId: String, messageId: String): Notice? = message(chatId, messageId, sync = false)
+
     private suspend fun addedToGroup(chatId: String): Notice {
         chatsRepo.refreshChat(chatId)
         val content = compose(NotificationEvent.AddedToGroup(chats.chat(chatId)?.name))
@@ -168,8 +175,8 @@ class PushNotices(
         )
     }
 
-    private suspend fun message(chatId: String, messageId: String): Notice? {
-        messages.syncInbox()
+    private suspend fun message(chatId: String, messageId: String, sync: Boolean = true): Notice? {
+        if (sync) messages.syncInbox()
         val chat = chats.chat(chatId)
         val group = chat?.kind == "GROUP"
         val chatName = if (group) groupTitle(chatId, chat?.name) else chat?.name
@@ -184,6 +191,7 @@ class PushNotices(
             return Notice(content, NoticeChannel.Message, "chat:$chatId", NotificationDestination.Chat(chatId, r.targetMessageId), chatId, conversation)
         }
         val row = messagesDao.byMessageId(messageId) ?: return null // a control message: nothing to show
+        if (row.outgoing) return null
         val who = person(chatId, row.senderId)
         val sender = who?.name ?: senderName(chatId, row.senderId)
         if (row.kind == MessageKind.Payment && row.transferId != null) return paymentCard(chatId, chatName, group, sender, row, who)

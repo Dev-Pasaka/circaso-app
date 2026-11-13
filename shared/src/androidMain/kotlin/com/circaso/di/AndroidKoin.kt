@@ -98,6 +98,7 @@ fun initKoinAndroid(context: Context) {
             single<SignalCrypto> { AndroidSignalCrypto() }
             single<LocalSealer> { AndroidLocalSealer() }
             single<ChatNotifications> { AndroidChatNotifications(app) }
+            single<com.circaso.core.notifications.NoticePoster> { com.circaso.core.platform.AndroidNoticePoster(get(), get()) }
             single<RoomDatabase.Builder<CircasoDatabase>> {
                 Room.databaseBuilder<CircasoDatabase>(app, app.getDatabasePath(DatabaseName).absolutePath)
             }
