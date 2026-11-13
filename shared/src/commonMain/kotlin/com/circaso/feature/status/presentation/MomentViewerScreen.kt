@@ -151,6 +151,8 @@ class MomentViewerActions(
     val askDelete: (Boolean) -> Unit,
     val delete: () -> Unit,
     val noticeShown: () -> Unit,
+    /** A reaction splash over my moment finished (or was cut short). */
+    val splashDone: (Long) -> Unit = {},
 ) {
     companion object {
         val None = MomentViewerActions({}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {})
@@ -161,7 +163,7 @@ private fun MomentViewerViewModel.actions() = MomentViewerActions(
     next = ::next, previous = ::previous, nextRing = ::nextRing, setPaused = ::setPaused, toggleMute = ::toggleMute,
     retryMedia = ::retryMedia, openPicker = ::openPicker, closePicker = ::closePicker, react = ::react, onReply = ::onReply,
     onReplyFocus = ::onReplyFocus, sendReply = ::sendReply, openMore = ::openMore, mute = ::mute, openViewers = ::openViewers,
-    askDelete = ::askDelete, delete = ::delete, noticeShown = ::noticeShown,
+    askDelete = ::askDelete, delete = ::delete, noticeShown = ::noticeShown, splashDone = ::splashDone,
 )
 
 /** Past this share of the screen's height, letting go closes the viewer (a fast fling closes it from anywhere). */
@@ -390,6 +392,10 @@ private fun ViewerBody(state: MomentViewerUiState, vm: MomentViewerActions, onCl
             }
         }
 
+        // New reactions on my moment splash over it; it takes no touches, so the moment can be tapped through. Always
+        // composed, so moving on fades it out; held while a sheet or confirm covers the moment, then played.
+        ReactionSplash(state.burst?.takeIf { moment.mine && !state.moreOpen && !state.confirmDelete }, vm.splashDone)
+
         ToastHost(toast, Modifier.align(Alignment.TopCenter).statusBarsPadding().padding(top = 96.dp))
         MoreSheet(state.moreOpen, ring.name, onMute = vm.mute, onMessage = { vm.openMore(false); onMessage(ring.posterId) }, onDismiss = { vm.openMore(false) })
         val forwardable = remember(moment.momentId, state.media) { forwardOf(moment, state.media) }
@@ -612,16 +618,41 @@ private fun BoxScope.ViewersSheet(state: MomentViewerUiState, onDismiss: () -> U
             state.viewers == null -> Spinner(c.inkSecondary, Modifier.padding(CircasoSpacing.s4))
             state.viewers.isEmpty() -> BasicText("Nobody has seen it yet.", Modifier.padding(CircasoSpacing.s4), style = t.subhead.copy(color = c.inkSecondary))
             // Scrolls within the sheet, every viewer, never cut at a number (V4).
-            else -> androidx.compose.foundation.lazy.LazyColumn(Modifier.fillMaxWidth().heightIn(max = 420.dp).clip(CircasoShapes.md).background(c.surfaceRaised)) {
-                items(state.viewers.size) { i ->
-                    val row = state.viewers[i]
-                    ListRow(row.name, sub = formatLocalTime(row.viewer.viewedAt, LocalTimeStyle.Clock), leading = { Avatar(row.name, size = CircasoSizes.avatarMd, imageUrl = row.avatarUrl) },
-                        trailing = { row.viewer.reaction?.let { BasicText(it, style = t.title3) } })
+            else -> {
+                // Each reaction pops in as its row first shows, once per opening of the list: the rows there when it
+                // loads one after another, a row scrolled to later as it arrives, never again on scrolling back.
+                // Keyed on who and which emoji, so a reaction changed while the list is open pops again.
+                val popped = remember { mutableSetOf<String>() }
+                val shownAt = remember { nowMillis() }
+                androidx.compose.foundation.lazy.LazyColumn(Modifier.fillMaxWidth().heightIn(max = 420.dp).clip(CircasoShapes.md).background(c.surfaceRaised)) {
+                    items(state.viewers.size, key = { state.viewers[it].viewer.userId }) { i ->
+                        val row = state.viewers[i]
+                        ListRow(row.name, sub = formatLocalTime(row.viewer.viewedAt, LocalTimeStyle.Clock), leading = { Avatar(row.name, size = CircasoSizes.avatarMd, imageUrl = row.avatarUrl) },
+                            trailing = row.viewer.reaction?.let { emoji ->
+                                {
+                                    val id = "${row.viewer.userId}|$emoji"
+                                    androidx.compose.runtime.key(id) {
+                                        val play = remember { popped.add(id) }
+                                        val delay = remember { if (nowMillis() - shownAt < FirstRowsMillis) reactedBefore(state.viewers, i).coerceAtMost(MaxStaggered) * RowStaggerMillis + SheetSettleMillis else 0 }
+                                        ReactionPop(emoji, play, delay, t.title3)
+                                    }
+                                }
+                            })
+                    }
                 }
             }
         }
     }
 }
+
+/** How many rows above [i] have a reaction: only reactions take a place in the stagger. */
+private fun reactedBefore(rows: List<ViewerRow>, i: Int): Int = (0 until i).count { rows[it].viewer.reaction != null }
+
+/** Rows on screen when Seen by loads pop one after another, starting once the sheet has settled. */
+private const val FirstRowsMillis = 400L
+private const val RowStaggerMillis = 45
+private const val MaxStaggered = 8
+private const val SheetSettleMillis = 120
 
 /** My reaction to this moment: the emoji I chose, or a heart outline that opens the reaction picker. */
 @Composable
