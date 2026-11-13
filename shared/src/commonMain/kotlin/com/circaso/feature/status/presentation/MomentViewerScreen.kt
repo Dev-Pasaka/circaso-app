@@ -407,6 +407,7 @@ private fun ViewerBody(state: MomentViewerUiState, vm: MomentViewerActions, onCl
             visible = state.confirmDelete, title = "Delete this moment?",
             message = "People who haven’t seen it won’t be able to. This can’t be undone.",
             confirmLabel = "Delete Moment", onConfirm = vm.delete, onDismiss = { vm.askDelete(false) }, cancelLabel = "Cancel",
+            destructive = true,
         )
     }
 }

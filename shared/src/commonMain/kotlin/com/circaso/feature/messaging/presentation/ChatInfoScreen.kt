@@ -172,6 +172,7 @@ fun ChatInfoScreen(
                 message = "They won't be able to join with it. You can invite them again later.",
                 confirmLabel = "Cancel Invite",
                 destructive = true,
+                icon = com.circaso.designsystem.components.CircasoIcon.Mail,
                 cancelLabel = "Keep Invite",
                 onConfirm = viewModel::onCancelInviteConfirm,
                 onDismiss = { viewModel.onCancelInvite(null) },
@@ -195,8 +196,24 @@ fun ChatInfoScreen(
                     InfoAction.Leave -> "You won't see new messages. If you own the group, it passes to the longest-serving admin."
                     null -> ""
                 },
-                confirmLabel = when (action) { is InfoAction.Remove -> "Remove"; InfoAction.Leave -> "Leave"; else -> "Confirm" },
+                confirmLabel = when (action) {
+                    is InfoAction.Remove -> "Remove"
+                    InfoAction.Leave -> "Leave Group"
+                    is InfoAction.MakeAdmin -> "Make Admin"
+                    is InfoAction.MakeMember -> "Make Member"
+                    is InfoAction.HandOver -> "Hand Over"
+                    null -> "Confirm"
+                },
                 destructive = action is InfoAction.Remove || action == InfoAction.Leave,
+                // What kind of step it is, at a glance: a person leaving, a role, the group passing on, me walking out.
+                icon = when (action) {
+                    is InfoAction.Remove -> com.circaso.designsystem.components.CircasoIcon.UserMinus
+                    is InfoAction.MakeAdmin -> com.circaso.designsystem.components.CircasoIcon.Shield
+                    is InfoAction.MakeMember -> com.circaso.designsystem.components.CircasoIcon.Person
+                    is InfoAction.HandOver -> com.circaso.designsystem.components.CircasoIcon.People
+                    InfoAction.Leave -> com.circaso.designsystem.components.CircasoIcon.SignOut
+                    null -> com.circaso.designsystem.components.CircasoIcon.Info
+                },
                 onConfirm = viewModel::onConfirm,
                 onDismiss = { viewModel.onAction(null) },
             )
@@ -204,7 +221,6 @@ fun ChatInfoScreen(
                 editing, onDraft = { names?.onDraft(it) }, onSave = { names?.onSave() }, onUseTheirs = { names?.onUseTheirs() }, onDismiss = { names?.onDismiss() },
             )
             CircasoSheet(visible = state.renaming, onDismiss = { viewModel.onRename(false) }, label = if (state.namingForPhoto) "Name the group" else "Rename group") {
-                BasicText(if (state.namingForPhoto) "Name the group" else "Group name", style = t.title2.copy(color = c.ink))
                 // This phone can't read the name (its key is lost): say why it's asked for, and what a new key costs.
                 val why = when {
                     state.namingForPhoto && state.removingPhoto -> "This phone lost the group's key, so it can't read the name. Type it to remove the photo."
@@ -212,12 +228,19 @@ fun ChatInfoScreen(
                     state.nameUnknown -> "This phone lost the group's key, so it can't read the name. If the group gets a new key, its photo is removed too; you can add it again after."
                     else -> null
                 }
-                why?.let { BasicText(it, style = t.body.copy(color = c.inkSecondary)) }
+                com.circaso.designsystem.chrome.SheetMessage(
+                    if (state.namingForPhoto) "Name the group" else "Rename group",
+                    why ?: "Everyone in the group sees the new name.",
+                    if (state.nameUnknown || state.namingForPhoto) com.circaso.designsystem.components.CircasoIcon.Lock else com.circaso.designsystem.components.CircasoIcon.Pencil,
+                    tone = if (state.nameUnknown || state.namingForPhoto) com.circaso.designsystem.chrome.SheetTone.Warning else com.circaso.designsystem.chrome.SheetTone.Neutral,
+                )
                 CircasoTextField(value = state.nameDraft, onValueChange = viewModel::onNameDraft, label = "Group name")
-                if (!state.online) BasicText("Changing the group needs a connection.", style = t.footnote.copy(color = c.inkTertiary))
                 val save = when { !state.namingForPhoto -> "Save"; state.removingPhoto -> "Remove Photo"; else -> "Save Photo" }
-                CircasoButton(save, viewModel::onRenameConfirm, size = ButtonSize.Large, block = true, enabled = state.canChange && state.nameDraft.isNotBlank())
-                CircasoButton("Cancel", { viewModel.onRename(false) }, style = ButtonStyle.Plain, size = ButtonSize.Large, block = true)
+                com.circaso.designsystem.chrome.SheetActions(
+                    save, viewModel::onRenameConfirm, "Cancel", { viewModel.onRename(false) },
+                    enabled = state.canChange && state.nameDraft.isNotBlank(),
+                    note = if (!state.online) "Changing the group needs a connection." else null,
+                )
             }
             // Group wallets (GW7, CH9, §11.9, W8).
             val sheet = state.moneySheet

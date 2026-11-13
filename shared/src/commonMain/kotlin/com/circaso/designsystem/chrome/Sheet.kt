@@ -236,13 +236,14 @@ fun SheetMessage(
     icon: CircasoIcon?,
     modifier: Modifier = Modifier,
     tone: SheetTone = SheetTone.Neutral,
+    /** Centred even with no badge: the caller draws its own face above (a group's wallet avatar). */
+    centred: Boolean = icon != null,
 ) {
     val c = CircasoTheme.colors
     val t = CircasoTheme.typography
-    val centred = icon != null
     val align = if (centred) TextAlign.Center else TextAlign.Start
     Column(
-        modifier.fillMaxWidth().padding(top = if (centred) CircasoSpacing.s2 else 0.dp),
+        modifier.fillMaxWidth().padding(top = if (icon != null) CircasoSpacing.s2 else 0.dp),
         horizontalAlignment = if (centred) Alignment.CenterHorizontally else Alignment.Start,
         verticalArrangement = Arrangement.spacedBy(CircasoSpacing.s4),
     ) {
