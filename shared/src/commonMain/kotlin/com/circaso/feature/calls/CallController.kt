@@ -131,8 +131,11 @@ class CallController(
     /** The call's photos from this phone's store (never the network, so a ring is never held up). */
     private val photos: suspend (chatId: String) -> CallPhotos = { CallPhotos() },
     /**
-     * How long to wait for this phone's own connection, and for someone's `connected` (CL3b), before pulling them
-     * anyway: the SFU holds a pull of a publisher that isn't connected yet for ~9 s. 0 pulls at once (older servers).
+     * How long to wait for someone's `connected` (CL3b) before pulling them anyway, for an app that never says it (or a
+     * frame and the reads after it all lost). Someone not connected is never pulled before: the SFU answers that with
+     * `not_found_track_error`, which made the iPhone poll three times while the Redmi connected (2026-11-13). This
+     * phone's own connection is never waited for (2026-11-14): once CL3's answer is set, the SFU holds a pull until it
+     * is up (at most 5 s) and answers at once then. 0 pulls everyone joined at once (older servers).
      */
     private val pullGraceMillis: Long = 0,
     /** How often a live or ringing call is read again (CL2), so a lost `call.ended` can't strand it. 0: never. */
@@ -618,25 +621,23 @@ class CallController(
             val offer = engine.start(servers, c.kind == "VIDEO", me)
             val t1 = clock()
             note("offer", "${t1 - t0}ms")
-            when (val r = remote.join(c.callId, JoinCallRequest(offer.sdp, offer.tracks.map { LocalTrackDto(it.mid, it.trackName, it.kind) }, pull = true))) {
+            when (val r = remote.join(c.callId, JoinCallRequest(offer.sdp, offer.tracks.map { LocalTrackDto(it.mid, it.trackName, it.kind) }))) {
                 is AppResult.Success -> {
                     engine.acceptAnswer(r.value.answer)
                     sessionId = r.value.sessionId
                     joinedAtMillis = clock()
                     call = r.value.call
                     recorder?.joined()
-                    note("join", "ok ${joinedAtMillis - t1}ms" + (r.value.pull?.let { " pulled=${it.tracks.size}" } ?: ""))
+                    note("join", "ok ${joinedAtMillis - t1}ms")
                     val s = _state.value
                     engine.setMicrophone(s?.mic ?: true)
                     engine.setSpeaker(s?.speaker ?: false)
-                    // Everyone already connected came pulled with the join: answered now, while this phone's own
-                    // connection is still coming up, so they're heard the moment it does (2026-11-13).
-                    r.value.pull?.let { applyPull(r.value.call, r.value.sessionId, r.value.call.participants.filter { it.userId != me && it.connected }, emptyList(), it) }
                     watch()
-                    // Tell everyone the real state: a pushed video track isn't a camera that's on (CL8).
-                    remote.media(c.callId, s?.mic ?: true, s?.camera ?: false)
                     publish()
                     watchScreen()
+                    // Tell everyone the real state (a pushed video track isn't a camera that's on, CL8), beside the
+                    // pull below rather than before it: the person answering hears the caller ~0.1 s sooner.
+                    scope.launch { remote.media(c.callId, s?.mic ?: true, s?.camera ?: false) }
                 }
                 is AppResult.Failure -> { fail(r.error, cause = CallEndCause.JoinFailed); return@withLock }
             }
@@ -653,17 +654,15 @@ class CallController(
     private fun pullNew() { scope.launch { lock.withLock { pullNewLocked() } } }
 
     /**
-     * Pull [p] now? Cloudflare's order is publish, wait for `connected`, then subscribe: a pull before both
-     * connections are up is held ~9 s by the SFU (CL4 took 8.8 s every time, 2026-11-09). So wait for this phone's
-     * connection and their `connected` (CL3b), each at most [pullGraceMillis] (an older app never says it).
+     * Pull [p] now? Cloudflare's order is publish, wait for `connected`, then subscribe. Their side: only once they
+     * say `connected` (CL3b, in `call.updated`), or after [pullGraceMillis] for an app that never does; a pull before
+     * that is answered `not_found_track_error` (2026-11-13). Our side: never waited for (2026-11-14); this runs only
+     * once CL3's answer is set, and the SFU holds the pull until our connection is up, answering the moment it is.
      */
     private fun ready(p: com.circaso.feature.calls.data.ParticipantDto): Boolean {
-        if (pullGraceMillis <= 0) return true
-        val now = clock()
-        val mineUp = engine.connected.value == true || now - joinedAtMillis >= pullGraceMillis
-        val seen = firstSeen.getOrPut("${p.userId}/${p.connection}") { now }
-        val theirsUp = p.connected || now - seen >= pullGraceMillis
-        return mineUp && theirsUp
+        if (pullGraceMillis <= 0 || p.connected) return true
+        val seen = firstSeen.getOrPut("${p.userId}/${p.connection}") { clock() }
+        return clock() - seen >= pullGraceMillis
     }
 
     /** CL4 for everyone who has joined and isn't pulled yet, then the SFU's offer answered (CL5). */
@@ -684,11 +683,36 @@ class CallController(
         if (fresh.isEmpty()) return
         val asked = fresh.flatMap { p -> missing(p).map { PullTrackRequest(p.userId, it.trackName) } }
         val t0 = clock()
+        val mineUp = engine.connected.value == true
         val r = remote.pull(c.callId, PullRequest(session, asked))
-        val pull = (r as? AppResult.Success)?.value ?: return
-        note("pull", "${clock() - t0}ms tracks=${pull.tracks.count { it.mid != null }}")
+        val pull = (r as? AppResult.Success)?.value
+        if (pull == null) {
+            // Our own connection not up within the SFU's 5 s (425), or the request failed: our `connected` pulls again
+            // when it comes up; once it is up, a short backoff does.
+            note("pull", "failed ${clock() - t0}ms" + if (mineUp) "" else " early")
+            if (mineUp) retryPull(c)
+            return
+        }
+        // "early": sent before this phone's own connection was up, so the time includes the SFU's wait for it.
+        note("pull", "${clock() - t0}ms tracks=${pull.tracks.count { it.mid != null }}" + if (mineUp) "" else " early")
         applyPull(c, session, fresh, asked, pull)
     }
+
+    /**
+     * Asks again shortly (1, 2, 4, 8, 8 s; at most [MaxPullRetries] times a call) for what a pull didn't bring, but only
+     * from people who say they are connected: anyone else is pulled when their `connected` arrives, never polled.
+     */
+    private fun retryPull(c: CallDto, from: Set<String>? = null) {
+        if (pullRetries >= MaxPullRetries || retryJob?.isActive == true) return
+        val me = myUserId()
+        val anyoneReady = c.participants.any { it.userId != me && it.state == "JOINED" && (from == null || it.userId in from) && (it.connected || pullGraceMillis <= 0) }
+        if (!anyoneReady) return
+        val wait = PullRetryMillis.getOrElse(pullRetries) { PullRetryMillis.last() }
+        pullRetries++
+        retryJob = scope.launch { delay(wait); pullNew() }
+    }
+
+    private var retryJob: Job? = null
 
     /**
      * What a pull (CL4, or the one that came with the join) brought: each track's mid, the SFU's offer answered (CL5),
@@ -711,11 +735,8 @@ class CallController(
         pull.tracks.filter { it.mid != null }.forEach { t -> pulled["${t.userId}/${t.trackName}"] = connectionOf[t.userId] }
         // A track the SFU turned down is tried again shortly, not left out for the rest of the call.
         val wanted = asked.ifEmpty { pull.tracks.map { PullTrackRequest(it.userId, it.trackName) } }
-        val refused = wanted.count { a -> pull.tracks.none { it.userId == a.userId && it.trackName == a.trackName && it.mid != null } }
-        if (refused > 0 && pullRetries < MaxPullRetries) {
-            pullRetries++
-            if (deferredPull?.isActive != true) deferredPull = scope.launch { delay(pullGraceMillis); pullNew() }
-        }
+        val refused = wanted.filter { a -> pull.tracks.none { it.userId == a.userId && it.trackName == a.trackName && it.mid != null } }
+        if (refused.isNotEmpty()) retryPull(c, refused.map { it.userId }.toSet())
         publish()
     }
 
@@ -1057,7 +1078,7 @@ class CallController(
         val s = _state.value
         try {
             val offer = engine.start(ice.ifEmpty { listOf(IceServerSpec(listOf("stun:stun.cloudflare.com:3478"))) }, s?.camera == true, me)
-            when (val r = remote.join(c.callId, JoinCallRequest(offer.sdp, offer.tracks.map { LocalTrackDto(it.mid, it.trackName, it.kind) }, pull = true))) {
+            when (val r = remote.join(c.callId, JoinCallRequest(offer.sdp, offer.tracks.map { LocalTrackDto(it.mid, it.trackName, it.kind) }))) {
                 is AppResult.Success -> {
                     engine.acceptAnswer(r.value.answer)
                     sessionId = r.value.sessionId
@@ -1074,7 +1095,6 @@ class CallController(
                     midOf.clear()
                     mediaMids.clear()
                     resetLiveness()
-                    r.value.pull?.let { applyPull(r.value.call, r.value.sessionId, r.value.call.participants.filter { it.userId != me && it.connected }, emptyList(), it) }
                 }
                 is AppResult.Failure -> return@withLock false
             }
@@ -1098,6 +1118,7 @@ class CallController(
         reconcileJob?.cancel()
         connectedJob?.cancel()
         deferredPull?.cancel()
+        retryJob?.cancel()
         firstSeen.clear()
         reportedConnected = null
         joinedAtMillis = 0L
@@ -1124,6 +1145,9 @@ class CallController(
 /** How long the call waits on this phone's store for photos before it goes on without them. */
 /** How many times a call asks the SFU again for tracks it turned down. */
 private const val MaxPullRetries = 5
+
+/** How long apart those asks are: a video with no frames yet (`empty_track_error`) usually has them within a second. */
+private val PullRetryMillis = listOf(1_000L, 2_000L, 4_000L, 8_000L)
 
 private const val PhotoLookupMillis = 500L
 

@@ -80,10 +80,11 @@ val callsModule = module {
                 )
             },
             photos = { chatId -> callPhotos(chats.chat(chatId).first(), get(), get()) },
-            // 2026-11-09: pull someone once both connections are up (the SFU held earlier pulls ~9 s); re-read the
-            // call every 5 s and on every socket reconnect, so a lost call.ended can't strand a call; hang up a call
-            // that has received no audio for 20 s (2026-11-13: reconnect first, end only if it can't recover).
-            pullGraceMillis = 3_000,
+            // 2026-11-14: pull someone as soon as they say `connected` (their call.updated), without waiting for our own
+            // connection; someone who never says it is pulled after 8 s. Re-read the call every 5 s and on every socket
+            // reconnect, so a lost call.ended (or `connected`) can't strand a call; hang up a call that has received no
+            // audio for 20 s (2026-11-13: reconnect first, end only if it can't recover).
+            pullGraceMillis = 8_000,
             pollMillis = 5_000,
             socketUp = get<com.circaso.core.realtime.RealtimeClient>().connected,
             stallMillis = 20_000,

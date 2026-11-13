@@ -549,6 +549,16 @@ class AndroidCallEngine(private val context: Context) : CallEngine {
             }
         }
         override fun onIceConnectionReceivingChange(receiving: Boolean) = Unit
+        /**
+         * When ICE picked its path (2026-11-14): with `pc:connected` ~3.1 s after `ice:checking` on every call, this
+         * tells ICE's share from the DTLS handshake's (the SFU is ICE-lite and DTLS passive, so this phone retransmits).
+         */
+        override fun onSelectedCandidatePairChanged(event: org.webrtc.CandidatePairChangeEvent?) {
+            val sdp = event?.local?.sdp ?: return
+            val type = Regex(" typ (\\w+)").find(sdp)?.groupValues?.get(1) ?: "?"
+            val protocol = if (sdp.contains(" tcp ", ignoreCase = true)) "tcp" else "udp"
+            _links.tryEmit("pair:$type $protocol")
+        }
         override fun onIceGatheringChange(state: PeerConnection.IceGatheringState?) {
             if (state == PeerConnection.IceGatheringState.COMPLETE) gatheringDone?.complete("complete")
         }

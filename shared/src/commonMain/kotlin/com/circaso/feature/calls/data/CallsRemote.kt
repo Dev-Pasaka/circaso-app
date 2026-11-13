@@ -33,10 +33,9 @@ import kotlinx.serialization.json.JsonObject
 )
 @Serializable data class StartCallRequest(val chatId: String, val video: Boolean)
 @Serializable data class LocalTrackDto(val mid: String, val trackName: String, val kind: String)
-/** [pull]: also pull everyone already connected in the same request (2026-11-13); an older server ignores it. */
-@Serializable data class JoinCallRequest(val offer: String, val tracks: List<LocalTrackDto>, val pull: Boolean = false)
-/** [pull]: the server's pull of everyone already connected, when asked for and made; answer it with CL5 at once. */
-@Serializable data class JoinCallResponse(val sessionId: String, val answer: String, val call: CallDto, val pull: PullResponse? = null)
+/** CL3. Nothing is pulled with it (2026-11-14): the phone pulls with CL4 as soon as the answer is set. */
+@Serializable data class JoinCallRequest(val offer: String, val tracks: List<LocalTrackDto>)
+@Serializable data class JoinCallResponse(val sessionId: String, val answer: String, val call: CallDto)
 @Serializable data class PullTrackRequest(val userId: String, val trackName: String)
 @Serializable data class PullRequest(val sessionId: String, val tracks: List<PullTrackRequest>)
 @Serializable data class PulledTrackDto(val userId: String, val trackName: String, val mid: String? = null)
