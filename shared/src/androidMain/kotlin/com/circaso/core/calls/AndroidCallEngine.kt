@@ -105,17 +105,50 @@ class AndroidCallEngine(private val context: Context) : CallEngine {
 
     fun remoteTrack(mid: String): VideoTrack? = remote[mid]
 
+    /** A connection [prepare] built for this user and these ICE servers, with its offer; [start] takes it over. */
+    private class Prepared(val connection: PeerConnection, val userId: String, val ice: List<IceServerSpec>, val offer: LocalOffer)
+    private var prepared: Prepared? = null
+
+    override suspend fun prepare(iceServers: List<IceServerSpec>, video: Boolean, userId: String) {
+        if (!granted(Manifest.permission.RECORD_AUDIO)) return
+        val ready = synchronized(guard) { prepared }
+        if (ready != null && ready.userId == userId && ready.ice == iceServers && pc === ready.connection) return
+        runCatching { build(iceServers, userId) }
+            .onFailure { if (it is kotlinx.coroutines.CancellationException) throw it }
+    }
+
     override suspend fun start(iceServers: List<IceServerSpec>, video: Boolean, userId: String): LocalOffer {
         if (!granted(Manifest.permission.RECORD_AUDIO) && !PermissionBridge.request(Manifest.permission.RECORD_AUDIO)) throw CallEngineException("microphone")
         if (video && !granted(Manifest.permission.CAMERA)) PermissionBridge.request(Manifest.permission.CAMERA)
-        close()
+        val ready = synchronized(guard) { prepared?.takeIf { it.userId == userId && it.ice == iceServers && pc === it.connection } }
+        prepared = null
+        val offer = if (ready != null) {
+            _links.tryEmit("offer:prepared")
+            ready.offer
+        } else {
+            val t0 = System.nanoTime()
+            build(iceServers, userId).also { _links.tryEmit("offer:fresh ${(System.nanoTime() - t0) / 1_000_000}ms") }
+        }
+        // Only now, as the call really starts: the call's audio route and, for video, the camera.
         routeAudio(speaker = video)
+        if (video) cameraSwitch(granted(Manifest.permission.CAMERA))
+        return offer
+    }
+
+    /**
+     * A fresh connection with the microphone's and the camera's tracks (the camera off, the black keep-alive on), its
+     * offer set and its candidates gathered: nothing is captured or sent until the SFU's answer, and no audio route
+     * changes, so it is safe while a call is still ringing.
+     */
+    private suspend fun build(iceServers: List<IceServerSpec>, userId: String): LocalOffer {
+        close()
         val config = PeerConnection.RTCConfiguration(
             iceServers.map { s -> PeerConnection.IceServer.builder(s.urls).apply { s.username?.let(::setUsername); s.credential?.let(::setPassword) }.createIceServer() },
         ).apply {
             sdpSemantics = PeerConnection.SdpSemantics.UNIFIED_PLAN
             bundlePolicy = PeerConnection.BundlePolicy.MAXBUNDLE
         }
+        gatheringDone = kotlinx.coroutines.CompletableDeferred()
         val connection = factory.createPeerConnection(config, observer) ?: throw CallEngineException("connection")
         pc = connection
         val mic = factory.createAudioTrack("audio-$userId", factory.createAudioSource(MediaConstraints()))
@@ -127,16 +160,37 @@ class AndroidCallEngine(private val context: Context) : CallEngine {
         cam.setEnabled(false)
         localVideo = cam
         val videoT = connection.addTransceiver(cam, RtpTransceiver.RtpTransceiverInit(RtpTransceiver.RtpTransceiverDirection.SEND_ONLY))
-        if (video) cameraSwitch(granted(Manifest.permission.CAMERA))
         if (!cameraOn) keepVideoAlive(true)
 
         val offer = sdp { o -> live(connection) { connection.createOffer(o, MediaConstraints()) } }
         set { o -> live(connection) { connection.setLocalDescription(o, offer) } }
-        return LocalOffer(
-            connection.localDescription.description,
-            listOf(LocalTrackSpec(audioT.mid, "audio-$userId", "audio"), LocalTrackSpec(videoT.mid, "video-$userId", "video")),
-        )
+        awaitCandidates()
+        val local = synchronized(guard) {
+            if (pc !== connection) throw CallEngineException("closed")
+            LocalOffer(
+                connection.localDescription.description,
+                listOf(LocalTrackSpec(audioT.mid, "audio-$userId", "audio"), LocalTrackSpec(videoT.mid, "video-$userId", "video")),
+            )
+        }
+        synchronized(guard) { if (pc === connection) prepared = Prepared(connection, userId, iceServers, local) }
+        return local
     }
+
+    /**
+     * Cloudflare's order is to gather candidates before handing the offer over (its connection-patterns guide); the
+     * offer used to go with none, and every connection took ~3.1 s to come up (2026-11-13 reports). Waits until
+     * gathering completes or a server-reflexive candidate is in, at most [GatherMaxMillis]; the host candidates are
+     * there at once, so this never holds a call up for long.
+     */
+    private suspend fun awaitCandidates() {
+        val t0 = System.nanoTime()
+        val done = gatheringDone
+        val how = kotlinx.coroutines.withTimeoutOrNull(GatherMaxMillis) { done?.await() } ?: "timeout"
+        _links.tryEmit("gather:$how ${(System.nanoTime() - t0) / 1_000_000}ms")
+    }
+
+    /** Completes with why gathering may stop ("complete" or "srflx") for the connection being built. */
+    @Volatile private var gatheringDone: kotlinx.coroutines.CompletableDeferred<String>? = null
 
     override suspend fun acceptAnswer(sdp: String) {
         val connection = pc ?: return
@@ -234,6 +288,39 @@ class AndroidCallEngine(private val context: Context) : CallEngine {
                             bytesReceived = inbound.sumOf { num(it, "bytesReceived")?.toLong() ?: 0L },
                         )
                         if (cont.isActive) cont.resume(stats)
+                    }
+                }
+            }.isSuccess
+            if (!ok && cont.isActive) cont.resume(null)
+        }
+    }
+
+    /**
+     * The liveness reading (2026-11-13): RTP packets per pulled transceiver, and everything the connection has
+     * received (the transports' bytes, plus the ICE answers on every candidate pair, which keep coming from the SFU
+     * every few seconds even when nobody sends media).
+     */
+    override suspend fun link(): LinkReading? {
+        val connection = synchronized(guard) { pc } ?: return null
+        val midOfTrack = synchronized(guard) {
+            if (pc !== connection) return null
+            connection.transceivers.mapNotNull { t -> t.mid?.let { mid -> t.receiver.track()?.id()?.let { it to mid } } }.toMap()
+        }
+        return suspendCancellableCoroutine { cont ->
+            val ok = runCatching {
+                synchronized(guard) {
+                    if (pc !== connection) throw CallEngineException("closed")
+                    connection.getStats { report ->
+                        val all = report.statsMap.values
+                        val byMid = mutableMapOf<String, Long>()
+                        all.filter { it.type == "inbound-rtp" }.forEach { s ->
+                            val mid = (s.members["mid"] as? String) ?: midOfTrack[s.members["trackIdentifier"] as? String] ?: return@forEach
+                            byMid[mid] = (byMid[mid] ?: 0L) + ((s.members["packetsReceived"] as? Number)?.toLong() ?: 0L)
+                        }
+                        val transport = all.filter { it.type == "transport" }.mapNotNull { (it.members["bytesReceived"] as? Number)?.toLong() }
+                        val answers = all.filter { it.type == "candidate-pair" }.mapNotNull { (it.members["responsesReceived"] as? Number)?.toLong() }
+                        val received = if (transport.isEmpty() && answers.isEmpty()) null else transport.sum() + answers.sum()
+                        if (cont.isActive) cont.resume(LinkReading(byMid, received))
                     }
                 }
             }.isSuccess
@@ -399,6 +486,9 @@ class AndroidCallEngine(private val context: Context) : CallEngine {
     private val guard = Any()
 
     override fun close() = synchronized(guard) {
+        prepared = null
+        gatheringDone?.cancel()
+        gatheringDone = null
         stopScreen(restore = false)
         cameraSwitch(false)
         keepVideoAlive(false)
@@ -459,8 +549,12 @@ class AndroidCallEngine(private val context: Context) : CallEngine {
             }
         }
         override fun onIceConnectionReceivingChange(receiving: Boolean) = Unit
-        override fun onIceGatheringChange(state: PeerConnection.IceGatheringState?) = Unit
-        override fun onIceCandidate(candidate: IceCandidate?) = Unit
+        override fun onIceGatheringChange(state: PeerConnection.IceGatheringState?) {
+            if (state == PeerConnection.IceGatheringState.COMPLETE) gatheringDone?.complete("complete")
+        }
+        override fun onIceCandidate(candidate: IceCandidate?) {
+            if (candidate?.sdp?.contains(" typ srflx") == true) gatheringDone?.complete("srflx")
+        }
         override fun onIceCandidatesRemoved(candidates: Array<out IceCandidate>?) = Unit
         override fun onAddStream(stream: MediaStream?) = Unit
         override fun onRemoveStream(stream: MediaStream?) = Unit
@@ -525,6 +619,9 @@ actual fun CallVideo(source: VideoSource, modifier: Modifier, mirror: Boolean, f
 private const val KeepAliveWidth = 160
 private const val KeepAliveHeight = 90
 private const val KeepAliveFrameMillis = 500L
+
+/** The longest a new connection waits for its network candidates before its offer goes (see awaitCandidates). */
+private const val GatherMaxMillis = 500L
 
 /** A shared screen goes at about 720p and 15 frames a second: text stays sharp and the upload stays modest. */
 private const val ScreenLongSide = 1280

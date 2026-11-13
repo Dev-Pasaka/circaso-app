@@ -48,6 +48,13 @@ interface CallEngineProvider {
     fun stats(completion: (String?) -> Unit)
     /** Kotlin sets this to hear every ICE and peer connection state change, as `ice:<state>` / `pc:<state>`. */
     fun setLinkListener(listener: (String) -> Unit)
+    /**
+     * Builds the connection and its offer ahead of the call (see [CallEngine.prepare]): no audio session, camera or
+     * permission prompt. [completion] once done (null), or why not.
+     */
+    fun prepare(iceServersJson: String, video: Boolean, userId: String, completion: (String?) -> Unit)
+    /** [completion]: a liveness reading as JSON (`{"mids":{"2":123},"transport":456}`), or null without a connection. */
+    fun link(completion: (String?) -> Unit)
 }
 
 object CallEngineBridge {
@@ -79,6 +86,7 @@ object ScreenShareBridge {
 @Serializable private data class WireIce(val urls: List<String>, val username: String? = null, val credential: String? = null)
 @Serializable private data class WireTrack(val mid: String, val trackName: String, val kind: String)
 @Serializable private data class WireOffer(val sdp: String, val tracks: List<WireTrack>)
+@Serializable private data class WireLink(val mids: Map<String, Long> = emptyMap(), val transport: Long? = null)
 @Serializable private data class WireStats(val rttMs: Double? = null, val jitterMs: Double? = null, val packetsReceived: Long? = null, val packetsLost: Long? = null, val bytesReceived: Long? = null)
 
 class IosCallEngine : CallEngine {
@@ -94,13 +102,33 @@ class IosCallEngine : CallEngine {
     override val available: Boolean get() = CallEngineBridge.provider != null
     private val p get() = CallEngineBridge.provider ?: throw CallEngineException("unavailable")
 
-    override suspend fun start(iceServers: List<IceServerSpec>, video: Boolean, userId: String): LocalOffer {
-        val provider = p
+    private fun listen(provider: CallEngineProvider) {
         provider.setRemoteVideoListener { _mids.value = it.toSet() }
         provider.setConnectionListener { _connected.value = it == 1 }
         provider.setReceivingListener { _receiving.value = it.toSet() }
         provider.setLinkListener { _links.tryEmit(it) }
-        val ice = json.encodeToString(kotlinx.serialization.builtins.ListSerializer(WireIce.serializer()), iceServers.map { WireIce(it.urls, it.username, it.credential) })
+    }
+
+    private fun iceJson(iceServers: List<IceServerSpec>) =
+        json.encodeToString(kotlinx.serialization.builtins.ListSerializer(WireIce.serializer()), iceServers.map { WireIce(it.urls, it.username, it.credential) })
+
+    override suspend fun prepare(iceServers: List<IceServerSpec>, video: Boolean, userId: String) {
+        val provider = CallEngineBridge.provider ?: return
+        listen(provider)
+        suspendCancellableCoroutine<Unit> { cont -> provider.prepare(iceJson(iceServers), video, userId) { if (cont.isActive) cont.resume(Unit) } }
+    }
+
+    override suspend fun link(): LinkReading? {
+        val p = CallEngineBridge.provider ?: return null
+        val raw = suspendCancellableCoroutine<String?> { cont -> p.link { s -> if (cont.isActive) cont.resume(s) } } ?: return null
+        val w = runCatching { json.decodeFromString(WireLink.serializer(), raw) }.getOrNull() ?: return null
+        return LinkReading(w.mids, w.transport)
+    }
+
+    override suspend fun start(iceServers: List<IceServerSpec>, video: Boolean, userId: String): LocalOffer {
+        val provider = p
+        listen(provider)
+        val ice = iceJson(iceServers)
         val raw = suspendCancellableCoroutine<String> { cont ->
             provider.start(ice, video, userId) { offer, error ->
                 if (!cont.isActive) return@start

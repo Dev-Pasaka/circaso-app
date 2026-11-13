@@ -40,6 +40,8 @@ enum class CallEndCause(val wire: String) {
     Stall("STALL"),
     /** The network or the media connection dropped and 40 s of reconnecting failed. */
     ReconnectGaveUp("RECONNECT_GAVE_UP"),
+    /** The other person's phone went quiet (no media, no heartbeat) and didn't come back (2026-11-13). */
+    PeerLost("PEER_LOST"),
     /** The server refused or failed the join. */
     JoinFailed("JOIN_FAILED"),
     /** No microphone permission. */
@@ -52,7 +54,7 @@ enum class CallEndCause(val wire: String) {
     ;
 
     /** Ends the server should record as dropped rather than completed. */
-    val dropped: Boolean get() = this == Stall || this == ReconnectGaveUp
+    val dropped: Boolean get() = this == Stall || this == ReconnectGaveUp || this == PeerLost
 }
 
 @Serializable data class CallReportEvent(val t: Long, val type: String, val detail: String? = null)

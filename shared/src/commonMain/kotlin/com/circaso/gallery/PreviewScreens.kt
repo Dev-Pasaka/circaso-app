@@ -503,43 +503,6 @@ fun PreviewScreens(name: String) {
         "support-ended" -> ThreadContent(ThreadUiState(chat = supportChat, myUserId = "me", supportEnding = true, messages = listOf(text(1, "s1", "That's all, thank you.", true, 1))), {}, {}, null, {}, {}, {}, {}, {}, {}, {})
         "lost-access" -> com.circaso.feature.support.presentation.LostAccessContent(com.circaso.feature.support.presentation.LostAccessUiState(phone = "+254 712 345 678", email = "amina@example.com"), {}, {}, {}, {}, {})
         "lost-access-sent" -> com.circaso.feature.support.presentation.LostAccessContent(com.circaso.feature.support.presentation.LostAccessUiState(phone = "+254 712 345 678", email = "amina@example.com", caseNumber = "CX-48213"), {}, {}, {}, {}, {})
-        "call-incoming" -> CallPreview(com.circaso.feature.calls.CallUi("c1", "2", "Mum", false, false, com.circaso.feature.calls.CallPhase.Incoming, handle = "@mum", photoUrl = DemoPhotos.Mum), null)
-        // No photo: the initials, exactly where the photo would be.
-        "call-incoming-initials" -> CallPreview(com.circaso.feature.calls.CallUi("c1", "2", "Mum", false, false, com.circaso.feature.calls.CallPhase.Incoming, handle = "@mum"), null)
-        "call-incoming-group" -> CallPreview(com.circaso.feature.calls.CallUi("c2", "g1", "Holiday Fund", false, true, com.circaso.feature.calls.CallPhase.Incoming, caller = "Otieno Odhiambo", photoUrl = DemoPhotos.HolidayFund), null)
-        "call-connecting" -> CallPreview(com.circaso.feature.calls.CallUi("c1", "2", "Mum", false, false, com.circaso.feature.calls.CallPhase.Connecting, people = listOf(com.circaso.feature.calls.CallPerson("2", "Mum", true, true, false, false, null, live = false, photoUrl = DemoPhotos.Mum)), handle = "@mum", photoUrl = DemoPhotos.Mum), null)
-        "call-voice" -> CallPreview(com.circaso.feature.calls.CallUi("c1", "2", "Mum", false, false, com.circaso.feature.calls.CallPhase.Active, people = listOf(com.circaso.feature.calls.CallPerson("2", "Mum", true, true, false, false, null, photoUrl = DemoPhotos.Mum)), activeSince = now - 252_000, handle = "@mum", photoUrl = DemoPhotos.Mum), "You sent KES 500 · for lunch")
-        "call-video", "call-video-more" -> CallPreview(com.circaso.feature.calls.CallUi("c1", "2", "Mum", true, false, com.circaso.feature.calls.CallPhase.Active, camera = true, speaker = true, people = listOf(com.circaso.feature.calls.CallPerson("2", "Mum", true, true, true, false, null)), activeSince = now - 768_000), "Mum sent you KES 2,000 · for lunch", more = name == "call-video-more")
-        // Money to me on a 1:1 call (2026-11-10): "Mum sent you KES 2,000" splashes and settles into the money line.
-        "call-voice-received" -> CallPreview(com.circaso.feature.calls.CallUi("c1", "2", "Mum", false, false, com.circaso.feature.calls.CallPhase.Active, people = listOf(com.circaso.feature.calls.CallPerson("2", "Mum", true, true, false, false, null, photoUrl = DemoPhotos.Mum)), activeSince = now - 252_000, handle = "@mum", photoUrl = DemoPhotos.Mum), "Mum sent you KES 2,000 · for lunch", received = true)
-        "call-video-received" -> CallPreview(com.circaso.feature.calls.CallUi("c1", "2", "Mum", true, false, com.circaso.feature.calls.CallPhase.Active, camera = true, people = listOf(com.circaso.feature.calls.CallPerson("2", "Mum", true, true, true, false, null)), activeSince = now - 768_000), "Mum sent you KES 2,000 · for lunch", received = true)
-        // The More sheet on a voice call: share screen (Android), speaker, minimise, Ask Asha; no flip with the camera off.
-        "call-voice-more" -> CallPreview(com.circaso.feature.calls.CallUi("c1", "2", "Mum", false, false, com.circaso.feature.calls.CallPhase.Active, people = listOf(com.circaso.feature.calls.CallPerson("2", "Mum", true, true, false, false, null, photoUrl = DemoPhotos.Mum)), activeSince = now - 252_000, handle = "@mum", photoUrl = DemoPhotos.Mum), null, more = true)
-        "call-ended" -> CallPreview(com.circaso.feature.calls.CallUi("c1", "2", "Mum", false, false, com.circaso.feature.calls.CallPhase.Ended, endReason = "MISSED"), null)
-        "call-failed" -> CallPreview(com.circaso.feature.calls.CallUi("c1", "2", "Mum", false, false, com.circaso.feature.calls.CallPhase.Ended, endReason = "FAILED", error = "Calls aren't available right now. Try again in a moment."), null)
-        "call-minimised" -> CallPreview(com.circaso.feature.calls.CallUi("c1", "2", "Mum", false, false, com.circaso.feature.calls.CallPhase.Active, minimised = true, activeSince = now - 125_000, photoUrl = DemoPhotos.Mum), null)
-        // "call-group-more": its More sheet, with Add people for Juma, who missed the ring.
-        "call-group", "call-group-more" -> CallPreview(
-            com.circaso.feature.calls.CallUi("c2", "g1", "Holiday Fund", false, true, com.circaso.feature.calls.CallPhase.Active, activeSince = now - 1_100_000, photoUrl = DemoPhotos.HolidayFund, people = listOf(
-                com.circaso.feature.calls.CallPerson("4", "Otieno Odhiambo", true, true, false, false, null, photoUrl = DemoPhotos.Otieno),
-                com.circaso.feature.calls.CallPerson("3", "Wanjiru Kamau", true, false, false, false, null, photoUrl = DemoPhotos.Wanjiru),
-                com.circaso.feature.calls.CallPerson("5", "Achieng Akinyi", true, true, false, false, null, photoUrl = DemoPhotos.Achieng),
-                com.circaso.feature.calls.CallPerson("6", "Juma Kariuki", false, true, false, name != "call-group-more", null, photoUrl = DemoPhotos.Juma),
-            )),
-            null, sampleChama(), more = name == "call-group-more",
-        )
-        // The group call with contributions landing (2026-11-09): one, a coin, then three at once; again every few seconds.
-        "call-group-contributions", "call-group-contributions-row" -> CallPreview(
-            com.circaso.feature.calls.CallUi("c2", "g1", "Holiday Fund", false, true, com.circaso.feature.calls.CallPhase.Active, activeSince = now - 1_100_000, photoUrl = DemoPhotos.HolidayFund, people = listOf(
-                com.circaso.feature.calls.CallPerson("4", "Otieno Odhiambo", true, true, false, false, null, photoUrl = DemoPhotos.Otieno),
-                com.circaso.feature.calls.CallPerson("3", "Wanjiru Kamau", true, false, false, false, null, photoUrl = DemoPhotos.Wanjiru),
-                com.circaso.feature.calls.CallPerson("5", "Achieng Akinyi", true, true, false, false, null, photoUrl = DemoPhotos.Achieng),
-                com.circaso.feature.calls.CallPerson("6", "Juma Kariuki", true, true, false, false, null, photoUrl = DemoPhotos.Juma),
-            )),
-            null, sampleChama(),
-            contributions = if (name == "call-group-contributions") sampleContributions() else kotlinx.coroutines.flow.emptyFlow(),
-            preset = if (name == "call-group-contributions-row") presetContributions() else emptyList(),
-        )
         "transfer" -> TransferContent(TransferUiState(transfer = sampleTransfers().first(), fiat = sampleWallet().fiat), {})
         // Transactions (E7): the list, its shape while it is read, nothing yet, offline, a failed read, a date range.
         "activity", "activity-loading", "activity-empty", "activity-offline", "activity-error", "activity-range", "activity-group" -> {
@@ -558,7 +521,7 @@ fun PreviewScreens(name: String) {
             }
             com.circaso.feature.wallet.presentation.ActivityContent(state, {}, {}, {}, {})
         }
-        else -> if (!GroupWalletPreview(name) && !ChatMoneyPreview(name) && !MomentsChatsPreview(name) && !AshaPreview(name) && !VaultPreview(name) && !SavedNamesPreview(name) && !SecurityCodePreview(name) && !SheetsPreview(name) && !HelpLogPreview(name)) BasicText("Unknown preview: $name")
+        else -> if (!GroupWalletPreview(name) && !ChatMoneyPreview(name) && !MomentsChatsPreview(name) && !AshaPreview(name) && !VaultPreview(name) && !SavedNamesPreview(name) && !SecurityCodePreview(name) && !SheetsPreview(name) && !HelpLogPreview(name) && !CallPreviews(name)) BasicText("Unknown preview: $name")
     }
 }
 
@@ -763,5 +726,64 @@ private fun HelpLogPreview(name: String): Boolean {
     com.circaso.feature.support.presentation.HelpContent(
         com.circaso.feature.support.presentation.HelpUiState(online = !name.endsWith("offline"), logSheet = sheet), {}, {}, {}, {}, null, onSendLog = {},
     )
+    return true
+}
+
+/** The call screens (H1-H4), apart from [PreviewScreens] so its one method stays under the JVM's 64 KB. */
+@Composable
+private fun CallPreviews(name: String): Boolean {
+    when (name) {
+            "call-incoming" -> CallPreview(com.circaso.feature.calls.CallUi("c1", "2", "Mum", false, false, com.circaso.feature.calls.CallPhase.Incoming, handle = "@mum", photoUrl = DemoPhotos.Mum), null)
+            // No photo: the initials, exactly where the photo would be.
+            "call-incoming-initials" -> CallPreview(com.circaso.feature.calls.CallUi("c1", "2", "Mum", false, false, com.circaso.feature.calls.CallPhase.Incoming, handle = "@mum"), null)
+            "call-incoming-group" -> CallPreview(com.circaso.feature.calls.CallUi("c2", "g1", "Holiday Fund", false, true, com.circaso.feature.calls.CallPhase.Incoming, caller = "Otieno Odhiambo", photoUrl = DemoPhotos.HolidayFund), null)
+            "call-connecting" -> CallPreview(com.circaso.feature.calls.CallUi("c1", "2", "Mum", false, false, com.circaso.feature.calls.CallPhase.Connecting, people = listOf(com.circaso.feature.calls.CallPerson("2", "Mum", true, true, false, false, null, live = false, photoUrl = DemoPhotos.Mum)), handle = "@mum", photoUrl = DemoPhotos.Mum), null)
+            "call-voice" -> CallPreview(com.circaso.feature.calls.CallUi("c1", "2", "Mum", false, false, com.circaso.feature.calls.CallPhase.Active, people = listOf(com.circaso.feature.calls.CallPerson("2", "Mum", true, true, false, false, null, photoUrl = DemoPhotos.Mum)), activeSince = now - 252_000, handle = "@mum", photoUrl = DemoPhotos.Mum), "You sent KES 500 · for lunch")
+            "call-video", "call-video-more" -> CallPreview(com.circaso.feature.calls.CallUi("c1", "2", "Mum", true, false, com.circaso.feature.calls.CallPhase.Active, camera = true, speaker = true, people = listOf(com.circaso.feature.calls.CallPerson("2", "Mum", true, true, true, false, null)), activeSince = now - 768_000), "Mum sent you KES 2,000 · for lunch", more = name == "call-video-more")
+            // Money to me on a 1:1 call (2026-11-10): "Mum sent you KES 2,000" splashes and settles into the money line.
+            "call-voice-received" -> CallPreview(com.circaso.feature.calls.CallUi("c1", "2", "Mum", false, false, com.circaso.feature.calls.CallPhase.Active, people = listOf(com.circaso.feature.calls.CallPerson("2", "Mum", true, true, false, false, null, photoUrl = DemoPhotos.Mum)), activeSince = now - 252_000, handle = "@mum", photoUrl = DemoPhotos.Mum), "Mum sent you KES 2,000 · for lunch", received = true)
+            "call-video-received" -> CallPreview(com.circaso.feature.calls.CallUi("c1", "2", "Mum", true, false, com.circaso.feature.calls.CallPhase.Active, camera = true, people = listOf(com.circaso.feature.calls.CallPerson("2", "Mum", true, true, true, false, null)), activeSince = now - 768_000), "Mum sent you KES 2,000 · for lunch", received = true)
+            // The More sheet on a voice call: share screen (Android), speaker, minimise, Ask Asha; no flip with the camera off.
+            "call-voice-more" -> CallPreview(com.circaso.feature.calls.CallUi("c1", "2", "Mum", false, false, com.circaso.feature.calls.CallPhase.Active, people = listOf(com.circaso.feature.calls.CallPerson("2", "Mum", true, true, false, false, null, photoUrl = DemoPhotos.Mum)), activeSince = now - 252_000, handle = "@mum", photoUrl = DemoPhotos.Mum), null, more = true)
+            "call-ended" -> CallPreview(com.circaso.feature.calls.CallUi("c1", "2", "Mum", false, false, com.circaso.feature.calls.CallPhase.Ended, endReason = "MISSED"), null)
+            "call-failed" -> CallPreview(com.circaso.feature.calls.CallUi("c1", "2", "Mum", false, false, com.circaso.feature.calls.CallPhase.Ended, endReason = "FAILED", error = "Calls aren't available right now. Try again in a moment."), null)
+            "call-minimised" -> CallPreview(com.circaso.feature.calls.CallUi("c1", "2", "Mum", false, false, com.circaso.feature.calls.CallPhase.Active, minimised = true, activeSince = now - 125_000, photoUrl = DemoPhotos.Mum), null)
+            // "call-group-more": its More sheet, with Add people for Juma, who missed the ring.
+            "call-group", "call-group-more" -> CallPreview(
+                com.circaso.feature.calls.CallUi("c2", "g1", "Holiday Fund", false, true, com.circaso.feature.calls.CallPhase.Active, activeSince = now - 1_100_000, photoUrl = DemoPhotos.HolidayFund, people = listOf(
+                    com.circaso.feature.calls.CallPerson("4", "Otieno Odhiambo", true, true, false, false, null, photoUrl = DemoPhotos.Otieno),
+                    com.circaso.feature.calls.CallPerson("3", "Wanjiru Kamau", true, false, false, false, null, photoUrl = DemoPhotos.Wanjiru),
+                    com.circaso.feature.calls.CallPerson("5", "Achieng Akinyi", true, true, false, false, null, photoUrl = DemoPhotos.Achieng),
+                    com.circaso.feature.calls.CallPerson("6", "Juma Kariuki", false, true, false, name != "call-group-more", null, photoUrl = DemoPhotos.Juma),
+                )),
+                null, sampleChama(), more = name == "call-group-more",
+            )
+            // The group call with contributions landing (2026-11-09): one, a coin, then three at once; again every few seconds.
+            "call-group-contributions", "call-group-contributions-row" -> CallPreview(
+                com.circaso.feature.calls.CallUi("c2", "g1", "Holiday Fund", false, true, com.circaso.feature.calls.CallPhase.Active, activeSince = now - 1_100_000, photoUrl = DemoPhotos.HolidayFund, people = listOf(
+                    com.circaso.feature.calls.CallPerson("4", "Otieno Odhiambo", true, true, false, false, null, photoUrl = DemoPhotos.Otieno),
+                    com.circaso.feature.calls.CallPerson("3", "Wanjiru Kamau", true, false, false, false, null, photoUrl = DemoPhotos.Wanjiru),
+                    com.circaso.feature.calls.CallPerson("5", "Achieng Akinyi", true, true, false, false, null, photoUrl = DemoPhotos.Achieng),
+                    com.circaso.feature.calls.CallPerson("6", "Juma Kariuki", true, true, false, false, null, photoUrl = DemoPhotos.Juma),
+                )),
+                null, sampleChama(),
+                contributions = if (name == "call-group-contributions") sampleContributions() else kotlinx.coroutines.flow.emptyFlow(),
+                preset = if (name == "call-group-contributions-row") presetContributions() else emptyList(),
+            )
+        // 2026-11-13: Rhoda's phone dropped off the network; this phone still works and waits for her.
+        "call-voice-dropped" -> CallPreview(com.circaso.feature.calls.CallUi("c1", "2", "Rhoda Wambui", false, false, com.circaso.feature.calls.CallPhase.Active, people = listOf(com.circaso.feature.calls.CallPerson("2", "Rhoda Wambui", true, true, false, false, null, live = false, dropped = true, photoUrl = DemoPhotos.Wanjiru)), activeSince = now - 252_000, handle = "@rhoda", photoUrl = DemoPhotos.Wanjiru), null)
+        "call-video-dropped" -> CallPreview(com.circaso.feature.calls.CallUi("c1", "2", "Rhoda Wambui", true, false, com.circaso.feature.calls.CallPhase.Active, camera = true, people = listOf(com.circaso.feature.calls.CallPerson("2", "Rhoda Wambui", true, true, true, false, "3", live = false, dropped = true, photoUrl = DemoPhotos.Wanjiru)), activeSince = now - 768_000), null)
+        // This phone itself has no network.
+        "call-reconnecting-offline" -> CallPreview(com.circaso.feature.calls.CallUi("c1", "2", "Mum", false, false, com.circaso.feature.calls.CallPhase.Reconnecting, offline = true, people = listOf(com.circaso.feature.calls.CallPerson("2", "Mum", true, true, false, false, null, photoUrl = DemoPhotos.Mum)), activeSince = now - 252_000, handle = "@mum", photoUrl = DemoPhotos.Mum), null)
+        "call-group-dropped" -> CallPreview(
+            com.circaso.feature.calls.CallUi("c2", "g1", "Holiday Fund", false, true, com.circaso.feature.calls.CallPhase.Active, activeSince = now - 1_100_000, photoUrl = DemoPhotos.HolidayFund, people = listOf(
+                com.circaso.feature.calls.CallPerson("4", "Otieno Odhiambo", true, true, false, false, null, photoUrl = DemoPhotos.Otieno),
+                com.circaso.feature.calls.CallPerson("3", "Wanjiru Kamau", true, true, true, false, "5", live = false, dropped = true, photoUrl = DemoPhotos.Wanjiru),
+                com.circaso.feature.calls.CallPerson("5", "Achieng Akinyi", true, true, false, false, null, photoUrl = DemoPhotos.Achieng),
+            )),
+            null,
+        )
+        else -> return false
+    }
     return true
 }

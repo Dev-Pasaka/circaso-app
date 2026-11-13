@@ -66,6 +66,6 @@ The design canvas is ahead of the backend, and in one place it disagrees.
 
 ## Refreshing this skill
 
-- `references/mobile-integration.md` is a copy of `circaso/docs/mobile-integration.md` in the backend repo (the project root keeps the same copy as `mobile-integration.md`). When Pasaka hands over a new version, replace both and delete the old one; last replaced 2026-11-09 (backend branch feat/call-contribution-live: `chama` `contribution.submitted`).
+- `references/mobile-integration.md` is a copy of `circaso/docs/mobile-integration.md` in the backend repo (the project root keeps the same copy as `mobile-integration.md`). When Pasaka hands over a new version, replace both and delete the old one; last replaced 2026-11-13 (backend PR #106: CL3 `pull`, `calls/heartbeat` and `call.heartbeat`).
 - `references/design-spec.md` is a copy of `Circaso-Design-Spec.md` at the project root. Re-copy it when the spec changes.
 - `assets/Circaso-Screens.html` is a copy of the exported canvas at the project root. After a new export, replace it and regenerate `references/design-screens.md` and `references/design-tokens.md` (both were extracted from it by script).
