@@ -65,12 +65,15 @@ fun App() {
         val presence: com.circaso.core.realtime.PresenceReporter = koinInject()
         // And for notifying a message that arrives over the socket while Circaso is away (2026-11-13).
         val liveNotices: com.circaso.core.notifications.LiveMessageNotices = koinInject()
+        // Leaving the screen is the last moment the chat keys change before iOS suspends Circaso: its notification
+        // extension words pushes from what is written now (Android: nothing to write).
+        val notificationSnapshot: com.circaso.core.notifications.NotificationSnapshotWriter = koinInject()
         val lifecycle = androidx.lifecycle.compose.LocalLifecycleOwner.current
         androidx.compose.runtime.DisposableEffect(lifecycle) {
             val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
                 when (event) {
                     androidx.lifecycle.Lifecycle.Event.ON_START -> { liveNotices.onForeground(); presence.onForeground() }
-                    androidx.lifecycle.Lifecycle.Event.ON_STOP -> { liveNotices.onBackground(); presence.onBackground() }
+                    androidx.lifecycle.Lifecycle.Event.ON_STOP -> { liveNotices.onBackground(); presence.onBackground(); notificationSnapshot.onBackground() }
                     else -> Unit
                 }
             }

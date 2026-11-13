@@ -69,7 +69,8 @@ object NotificationText {
 
     /**
      * What a chat message says, without who said it (a conversation notification names the sender beside it): its
-     * preview, or "New message" when there's none.
+     * preview, or "New message" when there's none. iOS's notification extension mirrors these words
+     * (iosApp/NotificationService/Wording.swift): change both together.
      */
     fun chatLine(event: NotificationEvent.ChatMessage): String = said(event) ?: PrivateMessage
 
