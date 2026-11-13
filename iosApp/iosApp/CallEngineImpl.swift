@@ -52,18 +52,55 @@ final class CallEngineImpl: NSObject, CallEngineProvider, RTCPeerConnectionDeleg
     private var cameraAfterShare = false
     private lazy var screenCapturer = RTCVideoCapturer()
 
+    /// A connection `prepare` built ahead of the call (2026-11-13): who for, with which ICE servers, and its offer.
+    private struct Prepared { let connection: RTCPeerConnection; let userId: String; let ice: String; let offer: String }
+    private var prepared: Prepared?
+    /// Called once when the connection being built may stop gathering candidates ("complete", "srflx" or "timeout").
+    private var gatherWaiter: ((String) -> Void)?
+
     func start(iceServersJson: String, video: Bool, userId: String, completion: @escaping (String?, String?) -> Void) {
         AVAudioApplication.requestRecordPermission { granted in
             DispatchQueue.main.async {
                 guard granted else { completion(nil, "microphone"); return }
-                self.open(iceServersJson: iceServersJson, video: video, userId: userId, completion: completion)
+                if let ready = self.prepared, ready.userId == userId, ready.ice == iceServersJson, self.pc === ready.connection {
+                    self.prepared = nil
+                    self.linkListener?("offer:prepared")
+                    self.begin(video: video)
+                    completion(ready.offer, nil)
+                    return
+                }
+                let t0 = CACurrentMediaTime()
+                self.build(iceServersJson: iceServersJson, userId: userId) { offer, error in
+                    if offer != nil {
+                        self.linkListener?("offer:fresh \(Int((CACurrentMediaTime() - t0) * 1000))ms")
+                        self.begin(video: video)
+                    }
+                    completion(offer, error)
+                }
             }
         }
     }
 
-    private func open(iceServersJson: String, video: Bool, userId: String, completion: @escaping (String?, String?) -> Void) {
-        close()
+    /// Gets a call ready while it rings or while CL1 is on its way (see CallEngine.prepare): the connection and its
+    /// offer, with no audio session, camera or permission prompt. Main thread.
+    func prepare(iceServersJson: String, video: Bool, userId: String, completion: @escaping (String?) -> Void) {
+        DispatchQueue.main.async {
+            guard AVAudioApplication.shared.recordPermission == .granted else { completion("microphone"); return }
+            if let ready = self.prepared, ready.userId == userId, ready.ice == iceServersJson, self.pc === ready.connection { completion(nil); return }
+            self.build(iceServersJson: iceServersJson, userId: userId) { _, error in completion(error) }
+        }
+    }
+
+    /// The call really starts: its audio session and, for video, the camera.
+    private func begin(video: Bool) {
         configureAudio(speaker: video)
+        if video { setCamera(on: true) { _ in } }
+    }
+
+    /// A fresh connection with the microphone's and the camera's tracks (camera off, keep-alive on), its offer set and
+    /// its candidates gathered. Nothing is captured (WebRTC's audio is manual) or sent until the SFU answers.
+    private func build(iceServersJson: String, userId: String, completion: @escaping (String?, String?) -> Void) {
+        close()
         let config = RTCConfiguration()
         config.iceServers = Self.iceServers(iceServersJson)
         config.sdpSemantics = .unifiedPlan
@@ -84,22 +121,44 @@ final class CallEngineImpl: NSObject, CallEngineProvider, RTCPeerConnectionDeleg
         localVideo = cam
         let videoT = connection.addTransceiver(with: cam, init: sendOnly)
         keepVideoAlive(true)
-        if video { setCamera(on: true) { _ in } }
         connection.offer(for: constraints) { sdp, error in
-            guard let sdp else { completion(nil, error?.localizedDescription ?? "offer"); return }
+            guard let sdp else { DispatchQueue.main.async { completion(nil, error?.localizedDescription ?? "offer") }; return }
             connection.setLocalDescription(sdp) { error in
                 DispatchQueue.main.async {
                     if let error { completion(nil, error.localizedDescription); return }
-                    let tracks: [[String: String]] = [
-                        ["mid": audioT?.mid ?? "0", "trackName": "audio-\(userId)", "kind": "audio"],
-                        ["mid": videoT?.mid ?? "1", "trackName": "video-\(userId)", "kind": "video"],
-                    ]
-                    let body: [String: Any] = ["sdp": connection.localDescription?.sdp ?? sdp.sdp, "tracks": tracks]
-                    let data = try? JSONSerialization.data(withJSONObject: body)
-                    completion(data.flatMap { String(data: $0, encoding: .utf8) }, data == nil ? "json" : nil)
+                    self.awaitCandidates {
+                        guard self.pc === connection else { completion(nil, "closed"); return }
+                        let tracks: [[String: String]] = [
+                            ["mid": audioT?.mid ?? "0", "trackName": "audio-\(userId)", "kind": "audio"],
+                            ["mid": videoT?.mid ?? "1", "trackName": "video-\(userId)", "kind": "video"],
+                        ]
+                        let body: [String: Any] = ["sdp": connection.localDescription?.sdp ?? sdp.sdp, "tracks": tracks]
+                        let data = try? JSONSerialization.data(withJSONObject: body)
+                        let offer = data.flatMap { String(data: $0, encoding: .utf8) }
+                        if let offer { self.prepared = Prepared(connection: connection, userId: userId, ice: iceServersJson, offer: offer) }
+                        completion(offer, offer == nil ? "json" : nil)
+                    }
                 }
             }
         }
+    }
+
+    /// Cloudflare's order is to gather candidates before the offer goes; the offer used to go with none and every
+    /// connection took ~3.1 s to come up (2026-11-13). Waits for gathering to complete or a server-reflexive
+    /// candidate, at most half a second. Main thread.
+    private func awaitCandidates(_ then: @escaping () -> Void) {
+        let t0 = CACurrentMediaTime()
+        var fired = false
+        let fire: (String) -> Void = { how in
+            guard !fired else { return }
+            fired = true
+            self.gatherWaiter = nil
+            self.linkListener?("gather:\(how) \(Int((CACurrentMediaTime() - t0) * 1000))ms")
+            then()
+        }
+        if pc?.iceGatheringState == .complete { fire("complete"); return }
+        gatherWaiter = fire
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { fire("timeout") }
     }
 
     func acceptAnswer(sdp: String, completion: @escaping (String?) -> Void) {
@@ -192,6 +251,36 @@ final class CallEngineImpl: NSObject, CallEngineProvider, RTCPeerConnectionDeleg
     }
 
     func setLinkListener(listener: @escaping (String) -> Void) { linkListener = listener }
+
+    /// The liveness reading (2026-11-13): RTP packets per pulled mid, and everything the connection received (the
+    /// transports' bytes plus the ICE answers on every candidate pair), as JSON. nil without a connection.
+    func link(completion: @escaping (String?) -> Void) {
+        guard let connection = pc else { completion(nil); return }
+        var midOfTrack: [String: String] = [:]
+        for t in connection.transceivers { if let id = t.receiver.track?.trackId { midOfTrack[id] = t.mid } }
+        connection.statistics { report in
+            var mids: [String: Int64] = [:]
+            var transport: Int64 = 0
+            var any = false
+            for stat in report.statistics.values {
+                switch stat.type {
+                case "inbound-rtp":
+                    let mid = (stat.values["mid"] as? String) ?? (stat.values["trackIdentifier"] as? String).flatMap { midOfTrack[$0] }
+                    guard let mid else { continue }
+                    mids[mid, default: 0] += (stat.values["packetsReceived"] as? NSNumber)?.int64Value ?? 0
+                case "transport":
+                    if let n = stat.values["bytesReceived"] as? NSNumber { transport += n.int64Value; any = true }
+                case "candidate-pair":
+                    if let n = stat.values["responsesReceived"] as? NSNumber { transport += n.int64Value; any = true }
+                default: break
+                }
+            }
+            var out: [String: Any] = ["mids": mids]
+            if any { out["transport"] = transport }
+            let json = (try? JSONSerialization.data(withJSONObject: out)).flatMap { String(data: $0, encoding: .utf8) }
+            DispatchQueue.main.async { completion(json) }
+        }
+    }
 
     private static func name(_ s: RTCIceConnectionState) -> String {
         switch s {
@@ -306,6 +395,8 @@ final class CallEngineImpl: NSObject, CallEngineProvider, RTCPeerConnectionDeleg
     }
 
     func close() {
+        prepared = nil
+        gatherWaiter = nil
         screenSharing = false
         cameraAfterShare = false
         keepVideoAlive(false)
@@ -418,8 +509,14 @@ final class CallEngineImpl: NSObject, CallEngineProvider, RTCPeerConnectionDeleg
         guard let up else { return }
         DispatchQueue.main.async { self.connectionListener?(KotlinInt(int: up)) }
     }
-    func peerConnection(_ peerConnection: RTCPeerConnection, didChange newState: RTCIceGatheringState) {}
-    func peerConnection(_ peerConnection: RTCPeerConnection, didGenerate candidate: RTCIceCandidate) {}
+    func peerConnection(_ peerConnection: RTCPeerConnection, didChange newState: RTCIceGatheringState) {
+        guard newState == .complete else { return }
+        DispatchQueue.main.async { if self.pc === peerConnection { self.gatherWaiter?("complete") } }
+    }
+    func peerConnection(_ peerConnection: RTCPeerConnection, didGenerate candidate: RTCIceCandidate) {
+        guard candidate.sdp.contains(" typ srflx") else { return }
+        DispatchQueue.main.async { if self.pc === peerConnection { self.gatherWaiter?("srflx") } }
+    }
     func peerConnection(_ peerConnection: RTCPeerConnection, didRemove candidates: [RTCIceCandidate]) {}
     func peerConnection(_ peerConnection: RTCPeerConnection, didOpen dataChannel: RTCDataChannel) {}
 }

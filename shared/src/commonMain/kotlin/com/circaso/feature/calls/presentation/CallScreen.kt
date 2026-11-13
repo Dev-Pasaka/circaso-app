@@ -331,6 +331,11 @@ private fun BoxScope.Incoming(call: CallUi, actions: CallActions) {
 private fun VoiceCall(call: CallUi, actions: CallActions, money: String?, onSendMoney: (() -> Unit)?, more: MoreState, onNotePlaced: (androidx.compose.ui.layout.LayoutCoordinates) -> Unit = {}) {
     val t = CircasoTheme.typography
     val short = com.circaso.designsystem.adaptive.LocalWindowLayout.current.short
+    // Their photo eases back while their connection is dropped, and forward again when they're back.
+    val faded by androidx.compose.animation.core.animateFloatAsState(
+        if (droppedPeer(call) != null) DroppedAlpha else 1f,
+        tween(if (CircasoTheme.reduceMotion) CircasoMotion.QuickMs else CircasoMotion.BaseMs), label = "dropped",
+    )
     val controls: @Composable () -> Unit = {
         CallControlBar(call, actions, onSendMoney, "Send money", voice = true, moreOpen = more.open, onMore = more.onToggle, modifier = Modifier.fillMaxWidth())
     }
@@ -343,7 +348,7 @@ private fun VoiceCall(call: CallUi, actions: CallActions, money: String?, onSend
                 Column(Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally) {
                     SecureLine()
                     Spacer(Modifier.height(CircasoSpacing.s3))
-                    Avatar(call.title, size = 88.dp, imageUrl = call.photoUrl)
+                    Avatar(call.title, Modifier.graphicsLayer { alpha = faded }, size = 88.dp, imageUrl = call.photoUrl)
                     Spacer(Modifier.height(CircasoSpacing.s3))
                     BasicText(call.title, style = t.title1.copy(color = CallColors.Ink, textAlign = TextAlign.Center), maxLines = 1, overflow = TextOverflow.Ellipsis)
                     Handle(call.handle)
@@ -357,7 +362,7 @@ private fun VoiceCall(call: CallUi, actions: CallActions, money: String?, onSend
             Spacer(Modifier.height(CircasoSpacing.s6))
             SecureLine()
             Spacer(Modifier.height(CircasoSpacing.s6))
-            Avatar(call.title, size = 120.dp, imageUrl = call.photoUrl)
+            Avatar(call.title, Modifier.graphicsLayer { alpha = faded }, size = 120.dp, imageUrl = call.photoUrl)
             Spacer(Modifier.height(CircasoSpacing.s4))
             BasicText(call.title, style = t.largeTitle.copy(color = CallColors.Ink, textAlign = TextAlign.Center), maxLines = 1, overflow = TextOverflow.Ellipsis)
             Handle(call.handle)
@@ -390,7 +395,7 @@ private fun BoxScope.VideoCall(call: CallUi, actions: CallActions, stage: CallSt
         Column(Modifier.padding(top = CircasoSpacing.s2)) {
             BasicText(call.title, style = t.title2.copy(color = CallColors.Ink))
             Handle(call.handle, center = false)
-            Status(call)
+            Status(call, center = false)
             SharingLine(call, actions.onShareScreen, Modifier.padding(top = CircasoSpacing.s2))
         }
         Spacer(Modifier.weight(1f))
@@ -443,11 +448,17 @@ private fun DuoStage(call: CallUi, them: CallPerson?, mine: Boolean, meBig: Bool
             ) {
                 androidx.compose.foundation.layout.BoxWithConstraints(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                     val theirMid = them?.videoMid
-                    if (them != null && them.video && theirMid != null) {
+                    // While their connection is dropped their picture would freeze on its last frame: their photo,
+                    // faded, says they're away instead (2026-11-13).
+                    val faded by androidx.compose.animation.core.animateFloatAsState(
+                        if (them?.dropped == true) DroppedAlpha else 1f,
+                        tween(if (still) CircasoMotion.QuickMs else CircasoMotion.BaseMs), label = "dropped",
+                    )
+                    if (them != null && them.video && theirMid != null && !them.dropped) {
                         // A shared screen is shown whole; a face fills the picture.
                         CallVideo(VideoSource.Remote(theirMid), Modifier.fillMaxSize(), fill = !them.screen)
                     } else {
-                        Avatar(call.title, size = if (maxWidth < 200.dp) CircasoSizes.avatarLg else 120.dp, imageUrl = them?.photoUrl ?: call.photoUrl)
+                        Avatar(call.title, Modifier.graphicsLayer { alpha = faded }, size = if (maxWidth < 200.dp) CircasoSizes.avatarLg else 120.dp, imageUrl = them?.photoUrl ?: call.photoUrl)
                     }
                 }
             }
@@ -688,7 +699,7 @@ private fun Tile(p: CallPerson) {
     // Wider than tall, so six people fit on a phone without scrolling (design H4's 2 x 3 grid).
     // The tile reads as one: who, and whether they are ringing or still connecting (on a narrow tile only the name's
     // softer colour shows it, so screen readers get it in words).
-    val state = when { p.ringing -> ", ringing"; p.joined && !p.live -> ", connecting"; !p.audio && p.joined -> ", muted"; else -> "" } +
+    val state = when { p.ringing -> ", ringing"; p.dropped -> ", connection dropped, reconnecting"; p.joined && !p.live -> ", connecting"; !p.audio && p.joined -> ", muted"; else -> "" } +
         if (p.screen) ", sharing their screen" else ""
     androidx.compose.foundation.layout.BoxWithConstraints(
         Modifier.fillMaxSize().clip(CircasoShapes.lg).background(CallColors.Control)
@@ -698,7 +709,8 @@ private fun Tile(p: CallPerson) {
         val small = maxHeight < SmallTileHeight
         val wide = maxWidth >= WideTileWidth
         // A shared screen is shown whole, never cropped.
-        if (p.video && mid != null) CallVideo(VideoSource.Remote(mid), Modifier.fillMaxSize(), fill = !p.screen)
+        // A dropped person's picture would freeze on its last frame: their photo, shown as away, instead.
+        if (p.video && mid != null && !p.dropped) CallVideo(VideoSource.Remote(mid), Modifier.fillMaxSize(), fill = !p.screen)
         else PersonFill(p.name, p.photoUrl, present = p.live, avatarSize = if (small) CircasoSizes.avatarMd else CircasoSizes.avatarLg)
         // H4's name chip: readable on any photo or video.
         Row(
@@ -717,6 +729,7 @@ private fun Tile(p: CallPerson) {
             if (p.screen) CircasoIconImage(CircasoIcon.ScreenShare, CallColors.Ink, Modifier.size(14.dp))
             if (wide) {
                 if (p.ringing) BasicText("· ringing", style = t.footnote.copy(color = CallColors.InkSoft), maxLines = 1)
+                else if (p.dropped) BasicText("· reconnecting", style = t.footnote.copy(color = CallColors.InkSoft), maxLines = 1)
                 else if (p.joined && !p.live) BasicText("· connecting", style = t.footnote.copy(color = CallColors.InkSoft), maxLines = 1)
             }
         }
@@ -737,6 +750,9 @@ private fun MeTile(call: CallUi) {
 
 /** Below this height a tile's avatar steps down a size so the name under it never runs across the face. */
 private val SmallTileHeight = 120.dp
+
+/** How far a direct call's photo fades while the other person's connection is dropped. */
+private const val DroppedAlpha = 0.45f
 
 /** From this width a tile says "ringing" or "connecting" in words beside the name. */
 private val WideTileWidth = 140.dp
@@ -1052,10 +1068,63 @@ private fun Handle(handle: String?, center: Boolean = true) {
 }
 
 @Composable
-private fun Status(call: CallUi) {
+private fun Status(call: CallUi, center: Boolean = true) {
     val t = CircasoTheme.typography
-    BasicText(statusText(call), style = t.body.copy(color = CallColors.InkSoft))
-    call.error?.let { BasicText(it, style = t.footnote.copy(color = CallColors.Ink, textAlign = TextAlign.Center), modifier = Modifier.padding(top = CircasoSpacing.s2)) }
+    val still = CircasoTheme.reduceMotion
+    // The line changes kind ("04:12" → "Rhoda's connection dropped · Reconnecting…" → "04:31") with a soft cross-fade,
+    // never a jump; the timer's own ticks inside one kind don't animate. Said politely to screen readers as it changes.
+    val kind = statusKind(call)
+    // Read out once per kind, never per tick of the timer: "Rhoda's connection dropped, reconnecting".
+    val spoken = remember(kind) { statusSpoken(call) }
+    androidx.compose.animation.AnimatedContent(
+        StatusLine(kind, statusText(call)),
+        contentKey = { it.kind },
+        contentAlignment = if (center) Alignment.TopCenter else Alignment.TopStart,
+        transitionSpec = {
+            (fadeIn(tween(if (still) CircasoMotion.QuickMs else CircasoMotion.BaseMs)) togetherWith fadeOut(tween(CircasoMotion.QuickMs)))
+                .using(androidx.compose.animation.SizeTransform(clip = false))
+        },
+        label = "status",
+        modifier = Modifier.fillMaxWidth().clearAndSetSemantics {
+            contentDescription = spoken
+            liveRegion = androidx.compose.ui.semantics.LiveRegionMode.Polite
+        },
+    ) { line ->
+        BasicText(line.text, style = t.body.copy(color = CallColors.InkSoft, textAlign = if (center) TextAlign.Center else TextAlign.Start))
+    }
+    call.error?.let { BasicText(it, style = t.footnote.copy(color = CallColors.Ink, textAlign = if (center) TextAlign.Center else TextAlign.Start), modifier = Modifier.padding(top = CircasoSpacing.s2)) }
+}
+
+/** The status line: its [kind] is what cross-fades; the [text] (a ticking timer) updates in place within a kind. */
+private data class StatusLine(val kind: String, val text: String)
+
+/** The status line for screen readers, stable within a kind so the timer isn't read every second. */
+private fun statusSpoken(call: CallUi): String = when (statusKind(call)) {
+    "dropped" -> droppedPeer(call).let { if (it == null || it == "Their") "Their connection dropped, reconnecting" else "$it's connection dropped, reconnecting" }
+    "offline" -> "You're offline, reconnecting"
+    else -> when (call.phase) {
+        CallPhase.Active -> "On the call"
+        CallPhase.Reconnecting -> "Reconnecting"
+        CallPhase.Incoming -> "Incoming call"
+        CallPhase.Ringing -> "Ringing"
+        CallPhase.Connecting -> "Connecting"
+        CallPhase.Ended -> "Call ended"
+    }
+}
+
+/** What the status line is saying, without the ticking time: what [Status] cross-fades between. */
+private fun statusKind(call: CallUi): String = when {
+    call.phase == CallPhase.Active && droppedPeer(call) != null -> "dropped"
+    call.phase == CallPhase.Reconnecting && call.offline -> "offline"
+    else -> call.phase.name
+}
+
+/** The other person in a direct call whose connection dropped (2026-11-13), by first name; null when nobody's has. */
+private fun droppedPeer(call: CallUi): String? {
+    if (call.group) return null
+    val them = call.people.firstOrNull { it.joined } ?: return null
+    if (!them.dropped) return null
+    return com.circaso.designsystem.components.firstNameWord(them.name).takeIf { it.isNotBlank() } ?: "Their"
 }
 
 @Composable
@@ -1064,8 +1133,12 @@ private fun statusText(call: CallUi, short: Boolean = false): String = when (cal
     CallPhase.Ringing -> "Ringing…"
     // Joined isn't heard: until their audio or video arrives it says who it's reaching, and no timer runs.
     CallPhase.Connecting -> connectingTo(call).takeUnless { short }?.let { "Connecting to $it…" } ?: "Connecting…"
-    CallPhase.Reconnecting -> "Reconnecting…"
-    CallPhase.Active -> elapsedText(call.activeSince)
+    // This phone's own connection: with no network at all it says so, so nobody waits on the other person.
+    CallPhase.Reconnecting -> if (call.offline && !short) "You're offline · Reconnecting…" else "Reconnecting…"
+    // Theirs dropped while ours works (2026-11-13): said at once, the call waiting for them to come back.
+    CallPhase.Active -> droppedPeer(call)?.let { name ->
+        if (short) "Connection dropped" else if (name == "Their") "Their connection dropped · Reconnecting…" else "$name's connection dropped · Reconnecting…"
+    } ?: elapsedText(call.activeSince)
     CallPhase.Ended -> when (call.endReason) { "DECLINED" -> "Declined"; "MISSED" -> "No answer"; "CANCELLED" -> "Cancelled"; "FAILED" -> "Call failed"; else -> "Call ended" }
 }
 

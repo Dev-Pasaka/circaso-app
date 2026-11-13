@@ -48,6 +48,12 @@ data class CallPerson(
     val photoUrl: String? = null,
     /** Their video is their screen (CL8): shown whole, never cropped, and said ("Amina is sharing their screen"). */
     val screen: Boolean = false,
+    /**
+     * They were heard, then their media stopped while this phone's own connection kept working (2026-11-13): their
+     * phone dropped off the network. Shown at once ("Rhoda's connection dropped · Reconnecting…"); clears when their
+     * media is back.
+     */
+    val dropped: Boolean = false,
 )
 
 /**
@@ -84,6 +90,8 @@ data class CallUi(
     val myPhotoUrl: String? = null,
     /** This phone is sharing its screen on the call's video track ("You're sharing your screen · Stop"). */
     val screen: Boolean = false,
+    /** The phone has no network at all, as the system says ("You're offline · Reconnecting…"). */
+    val offline: Boolean = false,
 ) {
     val joined get() = people.filter { it.joined }
     /** In the group but not on the call (missed, declined or left): who "Add people" rings. */
@@ -142,6 +150,31 @@ class CallController(
     private val recorder: CallRecorder? = null,
     /** How long apart the attempts to send CL7 are when the network fails them; the first is at once. */
     private val leaveRetryMillis: List<Long> = listOf(2_000, 4_000, 8_000, 15_000, 30_000),
+    /**
+     * Build the call's connection before it is answered (2026-11-13): while an incoming call rings, and beside CL1 for
+     * one this phone makes, so answering doesn't wait ~1 s for WebRTC (see [CallEngine.prepare]).
+     */
+    private val prewarm: Boolean = false,
+    /**
+     * How often this phone says it is still on the call (`calls/heartbeat` over the socket, relayed to the others as
+     * `call.heartbeat`). 0: never. See [livenessMillis] for how heartbeats and media are judged.
+     */
+    private val heartbeatMillis: Long = 0,
+    /** Sends a `calls` frame over the realtime socket; false when there is no socket. */
+    private val sendFrame: suspend (type: String, data: JsonObject) -> Boolean = { _, _ -> false },
+    /**
+     * How often the media's liveness is read (2026-11-13; 0: never, and the older [stallMillis] check runs). Each
+     * person's audio arrives 50 times a second, even muted, so their packet count standing still for [peerDropMillis]
+     * while this phone's own connection still receives (the SFU's ICE answers and RTCP) means their phone dropped: the
+     * screen says so at once and this phone keeps its own connection, waiting for them. This phone's own connection
+     * receiving nothing for [selfDropMillis] means it is this phone: it reconnects at once.
+     */
+    private val livenessMillis: Long = 0,
+    private val peerDropMillis: Long = 2_500,
+    private val selfDropMillis: Long = 4_000,
+    /** A direct call whose other side stays dropped this long ends; longer while their heartbeat says their phone is still online. */
+    private val peerGiveUpMillis: Long = 45_000,
+    private val peerGiveUpOnlineMillis: Long = 90_000,
 ) {
     private val _state = MutableStateFlow<CallUi?>(null)
     val state: StateFlow<CallUi?> = _state
@@ -184,6 +217,22 @@ class CallController(
     /** The latest of [online], as [watch] last saw it. */
     private var netUp = true
 
+    /** When each person's `call.heartbeat` last came, by user id (this call). */
+    private val heartbeats = mutableMapOf<String, Long>()
+    /** Who is dropped now (their media stopped while this phone's connection kept working), and since when. */
+    private var dropped: Map<String, Long> = emptyMap()
+    /** Liveness bookkeeping: each person's packet total and when it last rose; the connection's total and when it last rose. */
+    private val peerPackets = mutableMapOf<String, Long>()
+    private val peerRose = mutableMapOf<String, Long>()
+    private var linkTotal: Long? = null
+    private var linkRose = 0L
+    /** True once the engine gave a liveness reading this call: the older stall check stands down. */
+    private var livenessActive = false
+    private var heartbeatJob: Job? = null
+    private var livenessJob: Job? = null
+    /** The last ICE servers the server handed out (TURN credentials last a day), so a call can be built beside CL1. */
+    private var lastIce: List<IceServerSpec> = emptyList()
+
     val available get() = engine.available
 
     /** Opens a new call's timeline and notes each phase it passes through. */
@@ -216,8 +265,13 @@ class CallController(
             labelOf = labels(chatId)
             // Beside the call, never before it: the photo fills in when this phone's store answers.
             scope.launch { loadPhotos(chatId) }
+            // The connection is built while CL1 is on its way, with the ICE servers of the last call (the same TURN
+            // credentials, cached by the server for a day); join takes it over when they match (2026-11-13).
+            val me = myUserId()
+            if (prewarm && me != null && lastIce.isNotEmpty()) { val warm = lastIce; scope.launch { lock.withLock { runCatching { engine.prepare(warm, video, me) } } } }
+            val asked = clock()
             when (val r = remote.start(chatId, video, newIdempotencyKey())) {
-                is AppResult.Success -> { call = r.value; recorder?.callId(r.value.callId); publish(); join(r.value) }
+                is AppResult.Success -> { note("cl1", "${clock() - asked}ms"); call = r.value; recorder?.callId(r.value.callId); publish(); join(r.value) }
                 is AppResult.Failure -> {
                     // A call already running in this chat (a group call someone started): join that one instead.
                     if ((r.error as? AppError.Api)?.code == "calls.already_in_call") {
@@ -260,6 +314,7 @@ class CallController(
         stopRinging(c.callId)
         _state.update { it?.copy(phase = CallPhase.Ended, endReason = "DECLINED") }
         ended(CallEndCause.Declined)
+        closeEngine() // a connection prepared while it rang
         val mine = epoch
         scope.launch {
             (remote.decline(c.callId) as? AppResult.Success)?.value?.takeIf { it.state == "ENDED" }?.let { logEnded(it) }
@@ -401,6 +456,18 @@ class CallController(
                 publish()
                 if (quick == null) scope.launch { applyPhotos(token, c.chatId, lookup.await()) }
                 startReconcile()
+                // Answering shouldn't wait for WebRTC: the connection and its offer are made while it rings, with no
+                // microphone, camera or audio route touched (2026-11-13).
+                val me = myUserId()
+                if (prewarm && me != null) {
+                    val servers = serversOf(c)
+                    scope.launch { lock.withLock { if (call?.callId == c.callId && _state.value?.phase == CallPhase.Incoming) runCatching { engine.prepare(servers, c.kind == "VIDEO", me) } } }
+                }
+            }
+            "call.heartbeat" -> {
+                val callId = data?.get("callId")?.jsonPrimitive?.contentOrNull ?: return
+                val userId = data["userId"]?.jsonPrimitive?.contentOrNull ?: return
+                if (callId == call?.callId) heartbeats[userId] = clock()
             }
             "call.updated" -> data?.let { decode(it) }?.let { c -> if (c.callId == call?.callId) { call = c; publish(); pullNew() } }
             "call.ended" -> data?.let { decode(it) }?.let { c -> endedByServer(c) }
@@ -411,6 +478,7 @@ class CallController(
                 if (callId != call?.callId || _state.value?.phase != CallPhase.Incoming) return
                 _state.update { it?.copy(phase = CallPhase.Ended, endReason = data["reason"]?.jsonPrimitive?.contentOrNull ?: "MISSED") }
                 ended(CallEndCause.RingStopped)
+                closeEngine()
                 finish(epoch)
             }
         }
@@ -452,6 +520,7 @@ class CallController(
             stopRinging(fresh.callId)
             _state.update { it?.copy(phase = CallPhase.Ended, endReason = if (mine.state == "JOINED") "COMPLETED" else mine.state) }
             ended(if (mine.state == "JOINED") CallEndCause.AnsweredElsewhere else CallEndCause.RingStopped)
+            closeEngine()
             finish(epoch)
             return
         }
@@ -481,7 +550,7 @@ class CallController(
             while (true) {
                 delay(pollMillis)
                 reconcile()
-                if (stallMillis <= 0 || _state.value?.phase != CallPhase.Active) { lastPackets = null; continue }
+                if (stallMillis <= 0 || livenessActive || _state.value?.phase != CallPhase.Active) { lastPackets = null; continue }
                 val packets = engine.receivedPackets() ?: continue
                 val now = clock()
                 if (packets != lastPackets) {
@@ -536,22 +605,33 @@ class CallController(
 
     private fun decode(o: JsonObject): CallDto? = runCatching { json.decodeFromJsonElement(CallDto.serializer(), o) }.getOrNull()
 
+    /** The call's ICE servers: CL1/CL2's, else the last ones handed out, else Cloudflare's STUN. */
+    private fun serversOf(c: CallDto): List<IceServerSpec> =
+        c.iceServers.map { IceServerSpec(it.urls, it.username, it.credential) }.ifEmpty { ice }.ifEmpty { lastIce }
+            .ifEmpty { listOf(IceServerSpec(listOf("stun:stun.cloudflare.com:3478"))) }
+
     private suspend fun join(c: CallDto) = lock.withLock {
         val me = myUserId() ?: return@withLock
         try {
-            val servers = c.iceServers.map { IceServerSpec(it.urls, it.username, it.credential) }.ifEmpty { ice }.ifEmpty { listOf(IceServerSpec(listOf("stun:stun.cloudflare.com:3478"))) }
+            val servers = serversOf(c)
+            val t0 = clock()
             val offer = engine.start(servers, c.kind == "VIDEO", me)
-            when (val r = remote.join(c.callId, JoinCallRequest(offer.sdp, offer.tracks.map { LocalTrackDto(it.mid, it.trackName, it.kind) }))) {
+            val t1 = clock()
+            note("offer", "${t1 - t0}ms")
+            when (val r = remote.join(c.callId, JoinCallRequest(offer.sdp, offer.tracks.map { LocalTrackDto(it.mid, it.trackName, it.kind) }, pull = true))) {
                 is AppResult.Success -> {
                     engine.acceptAnswer(r.value.answer)
                     sessionId = r.value.sessionId
                     joinedAtMillis = clock()
                     call = r.value.call
                     recorder?.joined()
-                    note("join", "ok")
+                    note("join", "ok ${joinedAtMillis - t1}ms" + (r.value.pull?.let { " pulled=${it.tracks.size}" } ?: ""))
                     val s = _state.value
                     engine.setMicrophone(s?.mic ?: true)
                     engine.setSpeaker(s?.speaker ?: false)
+                    // Everyone already connected came pulled with the join: answered now, while this phone's own
+                    // connection is still coming up, so they're heard the moment it does (2026-11-13).
+                    r.value.pull?.let { applyPull(r.value.call, r.value.sessionId, r.value.call.participants.filter { it.userId != me && it.connected }, emptyList(), it) }
                     watch()
                     // Tell everyone the real state: a pushed video track isn't a camera that's on (CL8).
                     remote.media(c.callId, s?.mic ?: true, s?.camera ?: false)
@@ -603,8 +683,18 @@ class CallController(
         }
         if (fresh.isEmpty()) return
         val asked = fresh.flatMap { p -> missing(p).map { PullTrackRequest(p.userId, it.trackName) } }
+        val t0 = clock()
         val r = remote.pull(c.callId, PullRequest(session, asked))
         val pull = (r as? AppResult.Success)?.value ?: return
+        note("pull", "${clock() - t0}ms tracks=${pull.tracks.count { it.mid != null }}")
+        applyPull(c, session, fresh, asked, pull)
+    }
+
+    /**
+     * What a pull (CL4, or the one that came with the join) brought: each track's mid, the SFU's offer answered (CL5),
+     * and what the SFU turned down asked for again shortly. [asked] empty: everything in [pull] was what was wanted.
+     */
+    private suspend fun applyPull(c: CallDto, session: String, fresh: List<com.circaso.feature.calls.data.ParticipantDto>, asked: List<PullTrackRequest>, pull: com.circaso.feature.calls.data.PullResponse) {
         pull.tracks.forEach { t ->
             if (t.trackName.startsWith("video") && t.mid != null) midOf[t.userId] = t.mid
             t.mid?.let { mediaMids[t.userId] = mediaMids[t.userId].orEmpty() + it }
@@ -613,12 +703,15 @@ class CallController(
         val offer = pull.offer
         if (offer != null) {
             val answer = runCatching { engine.answerOffer(offer) }.getOrNull() ?: return
+            val t0 = clock()
             remote.renegotiate(c.callId, RenegotiateRequest(session, answer))
+            note("renegotiate", "${clock() - t0}ms")
         }
         val connectionOf = fresh.associate { it.userId to it.connection }
         pull.tracks.filter { it.mid != null }.forEach { t -> pulled["${t.userId}/${t.trackName}"] = connectionOf[t.userId] }
         // A track the SFU turned down is tried again shortly, not left out for the rest of the call.
-        val refused = asked.count { a -> pull.tracks.none { it.userId == a.userId && it.trackName == a.trackName && it.mid != null } }
+        val wanted = asked.ifEmpty { pull.tracks.map { PullTrackRequest(it.userId, it.trackName) } }
+        val refused = wanted.count { a -> pull.tracks.none { it.userId == a.userId && it.trackName == a.trackName && it.mid != null } }
         if (refused > 0 && pullRetries < MaxPullRetries) {
             pullRetries++
             if (deferredPull?.isActive != true) deferredPull = scope.launch { delay(pullGraceMillis); pullNew() }
@@ -665,16 +758,17 @@ class CallController(
     private fun publish() {
         val c = call ?: return
         com.circaso.core.common.Diagnostics.note("calls: state=${c.state} people=${c.participants.joinToString { it.state + "/v=" + it.video + "/mid=" + (midOf[it.userId] ?: "-") }}")
-        if (c.iceServers.isNotEmpty()) ice = c.iceServers.map { IceServerSpec(it.urls, it.username, it.credential) }
+        if (c.iceServers.isNotEmpty()) { ice = c.iceServers.map { IceServerSpec(it.urls, it.username, it.credential) }; lastIce = ice }
         val me = myUserId()
         val receiving = engine.receivingMids?.value
         val people = c.participants.filter { it.userId != me }.map { p ->
             val joined = p.state == "JOINED"
             val heard = receiving == null || graceOver || mediaMids[p.userId].orEmpty().any { it in receiving }
+            val gone = joined && p.userId in dropped
             CallPerson(
                 p.userId, personName(p.userId, p.displayName).ifBlank { labelOf[p.userId] ?: "Someone" }, joined, p.audio, p.video, p.state == "INVITED", midOf[p.userId],
-                handle = labelOf[p.userId], live = joined && heard, photoUrl = photosOf.people[p.userId],
-                screen = joined && p.video && p.screen,
+                handle = labelOf[p.userId], live = joined && heard && !gone, photoUrl = photosOf.people[p.userId],
+                screen = joined && p.video && p.screen, dropped = gone,
             )
         }
         val othersJoined = people.any { it.joined }
@@ -748,6 +842,8 @@ class CallController(
      */
     private fun watch() {
         startReconcile()
+        startHeartbeat()
+        startLiveness()
         if (connectedJob?.isActive != true) {
             connectedJob = scope.launch {
                 engine.connected.collect { up ->
@@ -770,6 +866,7 @@ class CallController(
             kotlinx.coroutines.flow.combine(engine.connected, online) { media, net -> net to media }
                 .collect { (net, media) ->
                     netUp = net
+                    if (_state.value?.offline != !net) _state.update { it?.copy(offline = !net) }
                     val s = _state.value ?: return@collect
                     if (s.phase == CallPhase.Ended || sessionId == null) return@collect
                     // The media connection is the judge: up means the call is fine whatever else says. With no
@@ -779,12 +876,117 @@ class CallController(
         }
     }
 
-    /** Says "Reconnecting…" and starts [reconnect], unless it is already running. */
-    private fun startReconnect(stall: Boolean) {
+    /**
+     * Says "Reconnecting…" and starts [reconnect], unless it is already running. [now]: this phone's own connection
+     * receives nothing at all, so there is nothing for ICE to recover: rejoin at once.
+     */
+    private fun startReconnect(stall: Boolean, now: Boolean = false) {
         if (_state.value?.phase.let { it == null || it == CallPhase.Ended }) return
         if (reconnectJob?.isActive == true) return
         _state.update { it?.copy(phase = CallPhase.Reconnecting) }
-        reconnectJob = scope.launch { reconnect(stall) }
+        reconnectJob = scope.launch { reconnect(stall, now) }
+    }
+
+    /** `calls/heartbeat` every [heartbeatMillis] while this phone has a session in the call (2026-11-13). */
+    private fun startHeartbeat() {
+        if (heartbeatMillis <= 0 || heartbeatJob?.isActive == true) return
+        heartbeatJob = scope.launch {
+            while (true) {
+                val c = call
+                val phase = _state.value?.phase
+                if (c != null && sessionId != null && phase != null && phase != CallPhase.Ended && phase != CallPhase.Incoming) {
+                    runCatching { sendFrame("heartbeat", kotlinx.serialization.json.buildJsonObject { put("callId", kotlinx.serialization.json.JsonPrimitive(c.callId)) }) }
+                        .onFailure { if (it is kotlinx.coroutines.CancellationException) throw it }
+                }
+                delay(heartbeatMillis)
+            }
+        }
+    }
+
+    private fun startLiveness() {
+        if (livenessMillis <= 0 || livenessJob?.isActive == true) return
+        livenessJob = scope.launch {
+            while (true) {
+                delay(livenessMillis)
+                runCatching { liveness() }.onFailure { if (it is kotlinx.coroutines.CancellationException) throw it }
+            }
+        }
+    }
+
+    /** Forgets what liveness knew: a new connection's counters start from 0. */
+    private fun resetLiveness() {
+        peerPackets.clear()
+        peerRose.clear()
+        linkTotal = null
+        linkRose = clock()
+        if (dropped.isNotEmpty()) { dropped = emptyMap(); publish() }
+    }
+
+    /**
+     * One liveness reading (2026-11-13). Their media is the heartbeat that matters: 50 audio packets a second, even
+     * muted, and their video's keep-alive. Someone whose count stood still for [peerDropMillis] while this phone's own
+     * connection received something after they went quiet (so it can't be this phone) has dropped: the screen says
+     * so at once and the call waits for them, this phone keeping its connection. Their `call.heartbeat` only adds what
+     * media can't say: whether their phone is still online (then the wait is longer), and, on an engine with no
+     * readings, that they've gone quiet at all. This phone's connection receiving nothing for [selfDropMillis] means
+     * it is this phone: it reconnects at once.
+     */
+    private suspend fun liveness() {
+        val s = _state.value ?: return
+        val c = call ?: return
+        if (sessionId == null || (s.phase != CallPhase.Active && s.phase != CallPhase.Reconnecting)) return
+        val reading = engine.link()
+        val now = clock()
+        val me = myUserId()
+        val others = c.participants.filter { it.userId != me && it.state == "JOINED" }
+        if (reading != null) {
+            livenessActive = true
+            val total = reading.transportReceived
+            if (total != null && total != linkTotal) { linkTotal = total; linkRose = now }
+            others.forEach { p ->
+                val n = mediaMids[p.userId].orEmpty().sumOf { reading.packetsByMid[it] ?: 0L }
+                val before = peerPackets[p.userId]
+                if (before == null || n > before) {
+                    // Only once they've really been heard does silence from them mean anything.
+                    if (n > 0) peerRose[p.userId] = now
+                    peerPackets[p.userId] = n
+                }
+            }
+        }
+        if (s.phase == CallPhase.Reconnecting) return // this phone is the one rebuilding; nobody else is judged meanwhile
+        if (reading?.transportReceived != null && linkTotal != null && now - linkRose >= selfDropMillis && now - joinedAtMillis >= selfDropMillis) {
+            note("link", "quiet ${now - linkRose}ms")
+            com.circaso.core.common.Diagnostics.note("calls: this phone's connection received nothing for ${now - linkRose}ms, reconnecting")
+            startReconnect(stall = true, now = true)
+            return
+        }
+        val gone = others.filter { p ->
+            if (reading != null) {
+                val rose = peerRose[p.userId] ?: return@filter false
+                now - rose >= peerDropMillis && linkRose > rose + 500 && engine.connected.value == true
+            } else {
+                // No readings: their heartbeat going quiet while ours is up is all there is.
+                val beat = heartbeats[p.userId] ?: return@filter false
+                heartbeatMillis > 0 && now - beat >= heartbeatMillis * 3
+            }
+        }.map { it.userId }.toSet()
+        val next = gone.associateWith { dropped[it] ?: now }
+        if (next.keys != dropped.keys) {
+            (next.keys - dropped.keys).forEach { note("peer", "dropped"); com.circaso.core.common.Diagnostics.note("calls: someone's media stopped while ours kept going: they dropped") }
+            (dropped.keys - next.keys).forEach { note("peer", "back") }
+            dropped = next
+            publish()
+        }
+        // A direct call whose other side never comes back ends, a little after their own phone would have given up.
+        if (!s.group && others.isNotEmpty() && others.all { it.userId in dropped }) {
+            val since = dropped.values.maxOrNull() ?: return
+            val online = others.any { p -> heartbeats[p.userId]?.let { now - it < heartbeatMillis * 3 } == true }
+            if (now - since >= if (online) peerGiveUpOnlineMillis else peerGiveUpMillis) {
+                val name = s.people.firstOrNull { it.joined }?.name?.let { com.circaso.designsystem.components.firstNameWord(it) }
+                _state.update { it?.copy(error = if (name.isNullOrBlank()) "The call dropped." else "$name's connection dropped.") }
+                leave(CallEndCause.PeerLost)
+            }
+        }
     }
 
     /** How long a fresh session from a rejoin gets to connect before the next try. */
@@ -810,12 +1012,13 @@ class CallController(
      * phone has a network, a fresh session is made (CL3). [stall]: the connection says it is up but nothing arrives, so
      * only a fresh session counts.
      */
-    private suspend fun reconnect(stall: Boolean) {
-        note("reconnect", if (stall) "start:stall" else "start:" + if (!netUp) "network" else "media")
-        com.circaso.core.common.Diagnostics.note("calls: reconnecting (${if (stall) "stall" else if (!netUp) "network" else "media"})")
+    private suspend fun reconnect(stall: Boolean, now: Boolean = false) {
+        note("reconnect", if (now) "start:link" else if (stall) "start:stall" else "start:" + if (!netUp) "network" else "media")
+        com.circaso.core.common.Diagnostics.note("calls: reconnecting (${if (now) "link" else if (stall) "stall" else if (!netUp) "network" else "media"})")
         val back = kotlinx.coroutines.withTimeoutOrNull(reconnectGiveUpMillis) {
             var needRejoin = stall
-            delay(2_500)
+            // ICE often recovers a blip by itself; a connection that receives nothing at all has nothing to recover.
+            if (!now) delay(2_500)
             while (true) {
                 if (!needRejoin && engine.connected.value == true) { note("reconnect", "ok:media"); return@withTimeoutOrNull true }
                 if (netUp) {
@@ -854,7 +1057,7 @@ class CallController(
         val s = _state.value
         try {
             val offer = engine.start(ice.ifEmpty { listOf(IceServerSpec(listOf("stun:stun.cloudflare.com:3478"))) }, s?.camera == true, me)
-            when (val r = remote.join(c.callId, JoinCallRequest(offer.sdp, offer.tracks.map { LocalTrackDto(it.mid, it.trackName, it.kind) }))) {
+            when (val r = remote.join(c.callId, JoinCallRequest(offer.sdp, offer.tracks.map { LocalTrackDto(it.mid, it.trackName, it.kind) }, pull = true))) {
                 is AppResult.Success -> {
                     engine.acceptAnswer(r.value.answer)
                     sessionId = r.value.sessionId
@@ -870,6 +1073,8 @@ class CallController(
                     pullRetries = 0
                     midOf.clear()
                     mediaMids.clear()
+                    resetLiveness()
+                    r.value.pull?.let { applyPull(r.value.call, r.value.sessionId, r.value.call.participants.filter { it.userId != me && it.connected }, emptyList(), it) }
                 }
                 is AppResult.Failure -> return@withLock false
             }
@@ -881,6 +1086,14 @@ class CallController(
     }
 
     private fun reset() {
+        heartbeatJob?.cancel()
+        livenessJob?.cancel()
+        heartbeats.clear()
+        dropped = emptyMap()
+        peerPackets.clear()
+        peerRose.clear()
+        linkTotal = null
+        livenessActive = false
         phaseJob?.cancel()
         reconcileJob?.cancel()
         connectedJob?.cancel()

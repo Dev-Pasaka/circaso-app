@@ -88,6 +88,13 @@ val callsModule = module {
             socketUp = get<com.circaso.core.realtime.RealtimeClient>().connected,
             stallMillis = 20_000,
             recorder = get(),
+            // 2026-11-13: the connection is built while a call rings (and beside CL1), each phone says "still here"
+            // every 2 s, and media liveness is read every second, so a dropped peer shows within ~3 s and this
+            // phone's own dropped connection reconnects at once (the 20 s stall check stands down).
+            prewarm = true,
+            heartbeatMillis = 2_000,
+            sendFrame = { type, data -> get<com.circaso.core.realtime.RealtimeClient>().send("calls", type, data) },
+            livenessMillis = 1_000,
         ).also { controller ->
             // A call the app didn't live to end (killed mid-call) is reported now, once someone is signed in.
             val recorder = get<com.circaso.feature.calls.CallRecorder>()

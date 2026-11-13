@@ -48,6 +48,9 @@ private class FakeRemote : CallsRemote {
     var current = call(people = arrayOf(person("me", "INVITED"), person("mum", "INVITED")))
     var startResult: AppResult<CallDto>? = null
     var pullOffer: String? = "sfu-offer"
+    /** What CL3 pulls with the join (2026-11-13), and whether each join asked for it. */
+    var joinPull: PullResponse? = null
+    val joinPulls = mutableListOf<Boolean>()
     override suspend fun start(chatId: String, video: Boolean, key: String): AppResult<CallDto> { calls += "start"; return startResult ?: AppResult.Success(current) }
     override suspend fun get(callId: String) = AppResult.Success(current).also { calls += "get" }
     override suspend fun forChat(chatId: String) = AppResult.Success(current).also { calls += "forChat" }
@@ -55,7 +58,8 @@ private class FakeRemote : CallsRemote {
         calls += "join:" + request.tracks.joinToString { it.trackName }
         current = current.copy(participants = current.participants.map { if (it.userId == "me") person("me", "JOINED") else it })
         if (current.participants.count { it.state == "JOINED" } >= 2) current = current.copy(state = "ACTIVE")
-        return AppResult.Success(JoinCallResponse("s-me", "sfu-answer", current))
+        joinPulls += request.pull
+        return AppResult.Success(JoinCallResponse("s-me", "sfu-answer", current, joinPull))
     }
     /** Track names the SFU turns down once (no mid, as Cloudflare's `empty_track_error` for a video with no media). */
     val refuseOnce = mutableSetOf<String>()
@@ -115,6 +119,10 @@ private class FakeEngine : CallEngine {
     override fun close() { events += "close" }
     var packets: Long? = null
     override suspend fun receivedPackets(): Long? = packets
+    /** The liveness reading the engine gives now; null: it can't tell. */
+    var reading: (() -> com.circaso.core.calls.LinkReading?)? = null
+    override suspend fun link(): com.circaso.core.calls.LinkReading? = reading?.invoke()
+    override suspend fun prepare(iceServers: List<IceServerSpec>, video: Boolean, userId: String) { events += "prepare:$video" }
     var stats: com.circaso.core.calls.CallStats? = null
     override suspend fun stats(): com.circaso.core.calls.CallStats? = stats
     var screenSupported = true
@@ -885,5 +893,132 @@ class CallControllerTest {
         assertEquals("APP_KILLED", reports.single().report.endCause)
         assertEquals("c9", reports.single().callId)
         assertNull(store.saved)
+    }
+
+    // ---- 2026-11-13: a dropped phone is noticed in seconds; connecting does less after the answer ----
+
+    private val beats = mutableListOf<String>()
+
+    private fun TestScope.livenessController(giveUp: Long = 45_000) =
+        CallController(
+            remote, engine, myUserId = { "me" }, scope = backgroundScope, names = { "Mum" to false }, stopRinging = { rings += it },
+            pullGraceMillis = 3_000, pollMillis = 5_000, stallMillis = 20_000, clock = { currentTime },
+            heartbeatMillis = 2_000, sendFrame = { type, data -> beats += type + ":" + data["callId"].toString(); true },
+            livenessMillis = 1_000, peerGiveUpMillis = giveUp, prewarm = true,
+        )
+
+    /** A call with Mum heard on mids 2 and 3; [packets] and [transport] are what the engine reads from then on. */
+    private suspend fun TestScope.liveCall(cc: CallController, packets: () -> Long, transport: () -> Long) {
+        engine.receiving = MutableStateFlow(emptySet())
+        cc.start("chat1", video = false)
+        advanceUntilIdle()
+        engine.link.value = true
+        remote.current = call("ACTIVE", person("me", "JOINED"), person("mum", "JOINED").copy(connected = true))
+        cc.onFrame("call.updated", frame("call.updated", remote.current))
+        runCurrent()
+        engine.receiving!!.value = setOf("2", "3")
+        runCurrent()
+        engine.reading = { com.circaso.core.calls.LinkReading(mapOf("2" to packets(), "3" to 0L), transport()) }
+    }
+
+    @Test fun theirPhoneDroppingShowsWithinSecondsAndTheCallWaitsForThemWithoutRejoining() = runTest(UnconfinedTestDispatcher()) {
+        var packets = 0L
+        var transport = 0L
+        val cc = livenessController()
+        liveCall(cc, { packets }, { transport })
+        assertEquals(CallPhase.Active, cc.state.value!!.phase)
+        repeat(3) { packets += 50; transport += 1_000; advanceTimeBy(1_000); runCurrent() }
+        assertEquals(false, cc.state.value!!.people.single().dropped)
+        val joins = remote.calls.count { it.startsWith("join") }
+        // Mum's phone goes off the network: her packets stop, while this phone still hears the SFU.
+        repeat(4) { transport += 100; advanceTimeBy(1_000); runCurrent() }
+        val mum = cc.state.value!!.people.single()
+        assertTrue(mum.dropped, "said within ~3 s, not 20")
+        assertTrue(!mum.live)
+        assertEquals(CallPhase.Active, cc.state.value!!.phase, "this phone's own call is fine: it doesn't say Reconnecting about itself")
+        assertEquals(joins, remote.calls.count { it.startsWith("join") }, "the healthy side keeps its connection")
+        // She's back.
+        packets += 50; transport += 1_000; advanceTimeBy(1_000); runCurrent()
+        assertEquals(false, cc.state.value!!.people.single().dropped)
+        assertTrue("leave" !in remote.calls)
+    }
+
+    @Test fun whenThisPhonesOwnConnectionHearsNothingItReconnectsAtOnce() = runTest(UnconfinedTestDispatcher()) {
+        var packets = 0L
+        var transport = 0L
+        val cc = livenessController()
+        liveCall(cc, { packets }, { transport })
+        repeat(5) { packets += 50; transport += 1_000; advanceTimeBy(1_000); runCurrent() }
+        val joins = remote.calls.count { it.startsWith("join") }
+        // Nothing at all arrives any more: not Mum's media, not the SFU's answers. It's this phone.
+        repeat(3) { advanceTimeBy(1_000); runCurrent() }
+        assertEquals(false, cc.state.value!!.people.single().dropped, "never blamed on Mum")
+        advanceTimeBy(1_000); runCurrent()
+        assertEquals(joins + 1, remote.calls.count { it.startsWith("join") }, "rejoined at once, no 2.5 s wait and no 20 s stall")
+        assertTrue(remote.joinPulls.last(), "the rejoin pulls everyone connected with it")
+    }
+
+    @Test fun aDirectCallWhoseOtherSideNeverComesBackEndsAsPeerLost() = runTest(UnconfinedTestDispatcher()) {
+        var packets = 0L
+        var transport = 0L
+        val cc = livenessController(giveUp = 45_000)
+        liveCall(cc, { packets }, { transport })
+        repeat(3) { packets += 50; transport += 1_000; advanceTimeBy(1_000); runCurrent() }
+        repeat(30) { transport += 100; advanceTimeBy(1_000); runCurrent() }
+        assertTrue("leave" !in remote.calls, "still waiting for her")
+        repeat(20) { transport += 100; advanceTimeBy(1_000); runCurrent() }
+        assertEquals("PEER_LOST", remote.leaves.single().first)
+    }
+
+    @Test fun herHeartbeatSayingSheIsStillOnlineKeepsTheCallWaitingLonger() = runTest(UnconfinedTestDispatcher()) {
+        var packets = 0L
+        var transport = 0L
+        val cc = livenessController(giveUp = 45_000)
+        liveCall(cc, { packets }, { transport })
+        repeat(3) { packets += 50; transport += 1_000; advanceTimeBy(1_000); runCurrent() }
+        repeat(60) {
+            transport += 100
+            cc.onFrame("call.heartbeat", buildJsonObject { put("callId", "c1"); put("userId", "mum") })
+            advanceTimeBy(1_000); runCurrent()
+        }
+        assertTrue("leave" !in remote.calls, "her phone is online and rebuilding its side")
+        assertTrue(cc.state.value!!.people.single().dropped)
+    }
+
+    @Test fun aPhoneInACallSaysItIsStillThereEveryTwoSeconds() = runTest(UnconfinedTestDispatcher()) {
+        val cc = livenessController()
+        liveCall(cc, { 0L }, { 0L })
+        beats.clear()
+        advanceTimeBy(4_100); runCurrent()
+        assertEquals(2, beats.size)
+        assertEquals("heartbeat:\"c1\"", beats.first())
+        cc.leave()
+        advanceTimeBy(10_000); runCurrent()
+        assertEquals(2, beats.size, "no heartbeat after the call")
+    }
+
+    @Test fun anIncomingCallIsPreparedWhileItRingsAndDecliningDropsIt() = runTest(UnconfinedTestDispatcher()) {
+        remote.current = call("RINGING", person("me", "INVITED"), person("mum", "JOINED")).copy(startedBy = "mum")
+        val cc = livenessController()
+        cc.onFrame("call.ringing", buildJsonObject { put("callId", "c1") })
+        runCurrent()
+        assertTrue("prepare:false" in engine.events, "built while it rings")
+        assertTrue(engine.events.none { it.startsWith("mic") || it.startsWith("speaker") }, "no microphone or audio route while ringing")
+        cc.decline()
+        runCurrent()
+        assertTrue("close" in engine.events)
+    }
+
+    @Test fun joiningAnswersThePullThatCameWithItWithoutAskingAgain() = runTest(UnconfinedTestDispatcher()) {
+        remote.current = call("RINGING", person("me", "INVITED"), person("mum", "JOINED").copy(connected = true)).copy(startedBy = "mum")
+        remote.joinPull = PullResponse("sfu-offer", true, listOf(PulledTrackDto("mum", "audio-mum", "2"), PulledTrackDto("mum", "video-mum", "3")))
+        val cc = controller()
+        cc.onFrame("call.ringing", buildJsonObject { put("callId", "c1") })
+        cc.accept()
+        advanceUntilIdle()
+        assertTrue(remote.joinPulls.single())
+        assertTrue("renegotiate:my-answer" in remote.calls)
+        assertTrue(remote.calls.none { it.startsWith("pull") }, "Mum came with the join")
+        assertEquals("3", cc.state.value!!.people.single().videoMid)
     }
 }

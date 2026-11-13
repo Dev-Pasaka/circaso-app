@@ -24,6 +24,15 @@ data class CallStats(
     val bytesReceived: Long? = null,
 )
 
+/**
+ * One liveness reading (2026-11-13): [packetsByMid] is the RTP packets received so far on each pulled transceiver (a
+ * person's audio arrives 50 times a second, even muted, and their video's keep-alive twice a second, so a count that
+ * stops means their media stopped); [transportReceived] is everything this phone's connection to the SFU has received
+ * (media, RTCP and the SFU's answers to ICE's own checks), so a count that keeps rising while someone's stops means
+ * they went quiet, not this phone. Null fields: the engine can't tell.
+ */
+data class LinkReading(val packetsByMid: Map<String, Long>, val transportReceived: Long?)
+
 /** Why the engine couldn't start: no microphone permission, no camera, or the platform has no WebRTC. */
 class CallEngineException(val reason: String) : Exception(reason)
 
@@ -39,6 +48,18 @@ interface CallEngine {
 
     /** Opens the connection with the microphone (and the camera when [video]); the offer to push (CL3). */
     suspend fun start(iceServers: List<IceServerSpec>, video: Boolean, userId: String): LocalOffer
+
+    /**
+     * Gets a call ready before it is answered (2026-11-13): while a call rings, or while CL1 is on its way, the peer
+     * connection is built, its offer made and its network candidates gathered, with no microphone, camera or audio
+     * route touched and nothing sent. [start] with the same [iceServers] and [userId] then reuses it, so answering
+     * doesn't wait ~1 s for WebRTC to start. Does nothing without the microphone permission (it never asks) or when
+     * the platform can't. Anything prepared is dropped by [close].
+     */
+    suspend fun prepare(iceServers: List<IceServerSpec>, video: Boolean, userId: String) = Unit
+
+    /** A liveness reading of the connection (see [LinkReading]); null without a connection or when it can't tell. */
+    suspend fun link(): LinkReading? = null
 
     /** The SFU's answer to [start]'s offer. */
     suspend fun acceptAnswer(sdp: String)
