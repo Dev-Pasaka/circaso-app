@@ -123,6 +123,9 @@ interface MessagesRepository {
     /** I have the chat open and have seen everything in it: moves the read marker and tells the sender. */
     suspend fun markRead(chatId: String)
 
+    /** Sends the read receipts that waited for the socket ([markRead] with no connection). Called when it connects. */
+    suspend fun flushReads() {}
+
     suspend fun setTyping(chatId: String, typing: Boolean)
 
     /** Who is typing in a chat right now (cleared after a few seconds without a new signal). */

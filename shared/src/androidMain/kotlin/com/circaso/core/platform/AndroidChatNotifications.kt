@@ -45,6 +45,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 import org.koin.mp.KoinPlatform
@@ -128,11 +129,20 @@ class AndroidChatNotifications(private val context: Context) : ChatNotifications
         when {
             notice.channel == NoticeChannel.Message && conversation != null -> if (!onScreen(conversation.chatId)) showConversation(notice, conversation)
             notice.channel == NoticeChannel.Money && from != null -> showMoney(notice, from, coins)
-            else -> showPlain(notice, coins)
+            else -> showPlain(notice, coins, private = privacyOn())
         }
     }
 
-    private fun showPlain(notice: Notice, coins: Boolean = true) {
+    private suspend fun privacyOn(): Boolean = runCatching {
+        KoinPlatform.getKoin().get<com.circaso.core.datastore.AppPreferences>()
+            .flag(com.circaso.core.datastore.AppPreferences.NotificationPrivacy).first()
+    }.getOrDefault(false)
+
+    /**
+     * [private]: Notification privacy is on, so a message's notification is plain ("New message"); it still offers
+     * Mark as read, and Reply where Android can ask for the screen lock first (12 and up), as on iPhone (2026-11-13).
+     */
+    private fun showPlain(notice: Notice, coins: Boolean = true, private: Boolean = false, quietly: Boolean = false, replyAgain: Boolean = false) {
         if (!allowed()) return
         if (notice.channel == NoticeChannel.Message && onScreen(notice.chatId)) return
         val id = notice.key.hashCode()
@@ -145,9 +155,18 @@ class AndroidChatNotifications(private val context: Context) : ChatNotifications
             .setCategory(if (notice.channel == NoticeChannel.Money) NotificationCompat.CATEGORY_STATUS else NotificationCompat.CATEGORY_MESSAGE)
             .setPriority(NotificationCompat.PRIORITY_HIGH)
             .setAutoCancel(true)
-            .setOnlyAlertOnce(notice.channel == NoticeChannel.Money)
+            .setOnlyAlertOnce(notice.channel == NoticeChannel.Money || quietly)
             .setContentIntent(tapIntent(context, id, notice.destination))
-            .apply { if (notice.channel == NoticeChannel.Message) setGroup(Group) }
+            .apply {
+                if (notice.channel == NoticeChannel.Message) setGroup(Group)
+                // Only a message someone sent (it names the message), not "You were added to …".
+                val chatId = notice.chatId
+                val message = replyAgain || (notice.destination as? NotificationDestination.Chat)?.messageId != null
+                if (private && message && chatId != null && notice.key == "chat:$chatId") {
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) addAction(replyAction(id, chatId, unlock = true))
+                    addAction(markReadAction(id, chatId))
+                }
+            }
             .build()
         runCatching { manager.notify(id, notification) }
     }
@@ -259,7 +278,7 @@ class AndroidChatNotifications(private val context: Context) : ChatNotifications
         runCatching { manager.notify(id, notification) }
     }
 
-    private fun replyAction(id: Int, chatId: String): NotificationCompat.Action {
+    private fun replyAction(id: Int, chatId: String, unlock: Boolean = false): NotificationCompat.Action {
         val input = RemoteInput.Builder(ReplyKey).setLabel("Reply").build()
         val intent = PendingIntent.getBroadcast(
             context, id * 31 + 1,
@@ -272,6 +291,7 @@ class AndroidChatNotifications(private val context: Context) : ChatNotifications
             .setAllowGeneratedReplies(true)
             .setSemanticAction(NotificationCompat.Action.SEMANTIC_ACTION_REPLY)
             .setShowsUserInterface(false)
+            .setAuthenticationRequired(unlock)
             .build()
     }
 
@@ -359,8 +379,16 @@ class AndroidChatNotifications(private val context: Context) : ChatNotifications
      * Returns whether the notification was re-posted. Android keeps the reply field spinning until the app posts the
      * notification again, so a caller that gets false must still settle it ([settleAfterReply]).
      */
-    internal fun addMyReply(chatId: String, text: String, failed: Boolean = false): Boolean {
+    internal fun addMyReply(chatId: String, text: String, failed: Boolean = false, private: Boolean = false): Boolean {
         val id = "chat:$chatId".hashCode()
+        if (private) {
+            // Notification privacy on: the plain notification, whose words aren't shown, nor are mine. Sent, it goes
+            // (the chat is read); not sent, it says so, still with Reply.
+            if (!failed) return runCatching { manager.cancel(id) }.isSuccess
+            val title = active(id)?.extras?.getCharSequence(NotificationCompat.EXTRA_TITLE)?.toString() ?: "Circaso"
+            val notice = Notice(NotificationContent(title, ReplyNotSent), NoticeChannel.Message, "chat:$chatId", NotificationDestination.Chat(chatId), chatId)
+            return runCatching { showPlain(notice, private = true, quietly = true, replyAgain = true) }.isSuccess
+        }
         val mine = NotificationCompat.MessagingStyle.Message(if (failed) ReplyNotSent else text, System.currentTimeMillis(), null as Person?)
         val current = active(id)
         val style = current?.let { NotificationCompat.MessagingStyle.extractMessagingStyleFromNotification(it) }
@@ -419,7 +447,8 @@ class AndroidChatNotifications(private val context: Context) : ChatNotifications
         const val ReplyKey = "com.circaso.reply"
         private const val ExtraMessageId = "com.circaso.messageId"
         private const val ShortcutPrefix = "chat:"
-        private const val ReplyNotSent = "Your reply didn't send. Open the chat to try again."
+        /** As on iPhone (ChatNotificationActions.swift), without the chat's name: the notification already shows it. */
+        private const val ReplyNotSent = "Couldn't send your reply. Tap to open."
         /** ShortcutInfo.SHORTCUT_CATEGORY_CONVERSATION (API 30); the string works on every version. */
         private const val ConversationCategory = "android.shortcut.conversation"
         private const val MeKey = "me"
@@ -458,21 +487,22 @@ class ChatNotificationActionReceiver : BroadcastReceiver() {
             var settled = false
             try {
                 val koin = KoinPlatform.getKoin()
-                val messages = koin.get<com.circaso.feature.messaging.domain.MessagesRepository>()
+                // The same rules as iPhone's (NotificationReplies): no reply to a chat I've left or someone I blocked.
+                val replies = koin.get<com.circaso.core.notifications.NotificationReplies>()
                 val notifications = koin.get<ChatNotifications>() as? AndroidChatNotifications
                 when (intent.action) {
                     AndroidChatNotifications.ActionReply -> {
                         val text = RemoteInput.getResultsFromIntent(intent)?.getCharSequence(AndroidChatNotifications.ReplyKey)?.toString()?.trim()
                         if (!text.isNullOrEmpty()) {
-                            // Queued in the outbox (it sends on its own, now or once there's a connection), or not at all.
-                            val queued = runCatching { withTimeoutOrNull(ActionMillis) { messages.send(chatId, text) } != null }.getOrDefault(false)
-                            // Replying is reading: the chat's unread count and its receipt follow.
-                            if (queued) runCatching { withTimeoutOrNull(ActionMillis) { messages.markRead(chatId) } }
-                            settled = notifications?.addMyReply(chatId, text, failed = !queued) == true
+                            // Queued in the outbox (it sends on its own, now or once there's a connection), or not at
+                            // all; replying is reading, so the chat's unread count and its receipt follow.
+                            val queued = withTimeoutOrNull(ActionMillis) { replies.reply(chatId, text) } == com.circaso.core.notifications.NotificationReplies.Outcome.Queued
+                            val private = koin.get<com.circaso.core.datastore.AppPreferences>().flag(com.circaso.core.datastore.AppPreferences.NotificationPrivacy).first()
+                            settled = notifications?.addMyReply(chatId, text, failed = !queued, private = private) == true
                         }
                     }
                     AndroidChatNotifications.ActionMarkRead -> {
-                        withTimeoutOrNull(ActionMillis) { messages.markRead(chatId) }
+                        withTimeoutOrNull(ActionMillis) { replies.markRead(chatId) }
                         notifications?.clear(chatId)
                         settled = notifications != null
                     }
@@ -487,7 +517,7 @@ class ChatNotificationActionReceiver : BroadcastReceiver() {
     }
 
     private companion object {
-        /** A broadcast gets about ten seconds; both steps are local writes (the outbox sends on its own). */
-        const val ActionMillis = 4_000L
+        /** A broadcast gets about ten seconds; the steps are local writes (the outbox sends on its own). */
+        const val ActionMillis = 8_000L
     }
 }

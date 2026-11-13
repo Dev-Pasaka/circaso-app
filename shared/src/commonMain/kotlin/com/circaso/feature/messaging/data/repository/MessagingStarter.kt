@@ -35,6 +35,7 @@ class MessagingStarter(
                 chats.refresh()
                 invites?.refresh()
                 messages.syncInbox()
+                messages.flushReads() // chats marked read while the socket was down (from a notification)
                 live?.flushStops()
                 while (true) {
                     delay(askAgainMillis)

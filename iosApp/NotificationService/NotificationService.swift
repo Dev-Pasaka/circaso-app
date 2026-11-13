@@ -25,8 +25,12 @@ final class NotificationService: UNNotificationServiceExtension {
         let content = (request.content.mutableCopy() as? UNMutableNotificationContent) ?? UNMutableNotificationContent()
         let info = Info(content.userInfo)
         if let chatId = info.chatId { content.threadIdentifier = chatId }
-        fallback = content.copy() as? UNNotificationContent
         let privacy = UserDefaults(suiteName: Snapshot.appGroup)?.bool(forKey: "notificationPrivacy") ?? false
+        // A chat message, 1:1 or group: Reply and Mark as Read (ChatNotificationActions.swift in the app). With privacy
+        // on too, as on Android; that Reply asks for Face ID or the passcode first. Money cards opened below lose it;
+        // under privacy, or out of time, one can't be told from words, so it keeps it (a reply is just a message).
+        if info.isChatMessage { content.categoryIdentifier = privacy ? Info.privateChatCategory : Info.chatCategory }
+        fallback = content.copy() as? UNNotificationContent
         if privacy {
             if let words = Wording.privateWords(kind: info.kind, hasMessage: info.messageId != nil) {
                 content.title = words.0
@@ -64,6 +68,12 @@ struct Info {
     var kind: String? { string("kind") }
     var chatId: String? { string("chatId") }
     var messageId: String? { string("messageId") }
+    /** A message in a chat (pushes for money, calls and the rest carry a `kind`). */
+    var isChatMessage: Bool { kind == nil && chatId != nil && messageId != nil }
+
+    /// The app's categories (ChatNotificationActions.swift), registered at its launch.
+    static let chatCategory = "CHAT_MESSAGE"
+    static let privateChatCategory = "CHAT_MESSAGE_PRIVATE"
 }
 
 private struct Worder {
@@ -94,6 +104,7 @@ private struct Worder {
         if let messageId = info.messageId, let copy = Snapshot.arrived(messageId) {
             content.title = copy.title
             content.body = copy.body
+            if copy.money == true { content.categoryIdentifier = "" } // money: no Reply, as on Android
             if copy.money == true, let transferId = copy.transferId {
                 var extra = content.userInfo
                 extra["transferId"] = transferId
@@ -145,6 +156,7 @@ private struct Worder {
     /// A money card in a chat: the amount in the person's currency, from the sender, with their photo.
     private func paymentCard(_ s: Snapshot, chat: Snapshot.Chat?, sender: Snapshot.Person?, payload p: Payload, minor: String) async -> UNNotificationContent {
         let sum = Wording.amount(minor: minor, asset: p.asset ?? "USDC", fiat: s.fiat)
+        content.categoryIdentifier = "" // money: no Reply, as on Android
         let note = p.text?.trimmingCharacters(in: .whitespacesAndNewlines).nonEmpty.flatMap { $0.hasPrefix("Paid from") ? nil : " · \($0)" } ?? ""
         let name = sender?.name
         if chat?.group == true {
