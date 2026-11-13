@@ -28,6 +28,43 @@ data class Notice(
     val destination: NotificationDestination?,
     /** The chat it belongs to, for "no notification for the chat on screen" and clearing it when the chat opens. */
     val chatId: String? = null,
+    /**
+     * A chat message's parts, for a conversation notification (Android's MessagingStyle with the sender's photo): who
+     * said what, in which chat. Null with Notification privacy on, and for anything that isn't a message; then
+     * [content] is shown as it is.
+     */
+    val conversation: NoticeConversation? = null,
+    /**
+     * Who money came from (2026-11-13), so a money notification shows their photo beside the amount. Null with
+     * Notification privacy on, and when the sender isn't known on this phone.
+     */
+    val from: NoticePerson? = null,
+    /** The group's photo when [from]'s money moved in a group chat (this phone's decrypted copy). */
+    val groupPhoto: String? = null,
+    /** Money in a group chat (titled by the group, [from] named in [fromLine]). */
+    val group: Boolean = false,
+    /** Money's words beside [from]'s name and photo, without the name ("Sent you KES 2,000", "Added KES 1,000"). */
+    val fromLine: String? = null,
+)
+
+/** A person on a notification: the name as this phone shows it (a saved name first) and their photo's link. */
+data class NoticePerson(val userId: String?, val name: String, val photo: String?)
+
+/**
+ * One message in a conversation notification. [title] is the group's name (null for a direct chat, which is titled by
+ * the sender); [line] is what was said without the sender's name ("📷 Photo", "Reacted 👍 to …"). [groupPhoto] is the
+ * group's decrypted local copy. Photos may be missing: the platform then draws initials.
+ */
+data class NoticeConversation(
+    val chatId: String,
+    val group: Boolean,
+    val title: String?,
+    val sender: NoticePerson,
+    val groupPhoto: String?,
+    val line: String,
+    val at: Long,
+    /** The message it is about, so a line already shown (FCM delivering twice) isn't added again. */
+    val messageId: String? = null,
 )
 
 /**
@@ -94,25 +131,70 @@ class PushNotices(
     private suspend fun senderName(chatId: String, userId: String?) =
         userId?.let { id -> names.orNull(id, chats.members(chatId).firstOrNull { it.userId == id }?.displayName) }
 
+    /**
+     * Who [userId] is in [chatId], as the chat itself shows them: the name I saved for them first, else their own, and
+     * their photo; for a direct chat the chat's own title and photo stand in. Null when not known on this phone (the
+     * words then fall back, and no person is ever made up). Never with privacy on.
+     */
+    private suspend fun person(chatId: String, userId: String?): NoticePerson? {
+        if (privacyOn()) return null
+        val chat = withTimeoutOrNull(LookupMillis) { chatsRepo.chat(chatId).first() }
+        // No sender named (the wallet's `payment.received`): in a direct chat it is the other person.
+        val id = userId ?: chat?.takeIf { it.kind == com.circaso.feature.messaging.domain.ChatKind.Direct }?.peerId
+        val member = id?.let { i -> chat?.members?.firstOrNull { it.userId == i } }
+        if (member != null) return NoticePerson(member.userId, member.displayName, member.avatarUrl)
+        val name = senderName(chatId, userId) ?: return null
+        val raw = userId?.let { id -> chats.members(chatId).firstOrNull { it.userId == id } }
+        return NoticePerson(userId, name, raw?.avatarUrl)
+    }
+
+    /**
+     * A group's name as the chat list shows it: its own name, or its members' names while this phone can't read it
+     * ("Wanjiru, Otieno"), never a bare "Group".
+     */
+    private suspend fun groupTitle(chatId: String, raw: String?): String? =
+        raw ?: withTimeoutOrNull(LookupMillis) { chatsRepo.chat(chatId).first() }?.takeIf { it.kind == com.circaso.feature.messaging.domain.ChatKind.Group }?.title
+
+    /** The group's photo (this phone's decrypted copy) for a group chat's notification. */
+    private suspend fun groupPhoto(chatId: String): String? =
+        withTimeoutOrNull(LookupMillis) { chatsRepo.chat(chatId).first() }?.takeIf { it.kind == com.circaso.feature.messaging.domain.ChatKind.Group }?.avatarUrl
+
+    private suspend fun conversation(chatId: String, group: Boolean, title: String?, sender: NoticePerson?, line: String, at: Long?, messageId: String?): NoticeConversation? {
+        sender ?: return null
+        return NoticeConversation(
+            chatId = chatId, group = group, title = if (group) title ?: "Group" else null, sender = sender,
+            groupPhoto = if (group) groupPhoto(chatId) else null, line = line,
+            at = at ?: com.circaso.core.sync.nowMillis(), messageId = messageId,
+        )
+    }
+
     private suspend fun message(chatId: String, messageId: String): Notice? {
         messages.syncInbox()
         val chat = chats.chat(chatId)
         val group = chat?.kind == "GROUP"
+        val chatName = if (group) groupTitle(chatId, chat?.name) else chat?.name
         // A reaction isn't a message: name it as WhatsApp does, or say nothing when one was taken back.
         inbox.reactionCarriedBy(messageId)?.let { r ->
-            val target = messagesDao.byMessageId(r.targetMessageId)?.text
-            val content = compose(NotificationEvent.Reaction(chat?.name, group, senderName(chatId, r.senderId), r.emoji, target))
-            return Notice(content, NoticeChannel.Message, "chat:$chatId", NotificationDestination.Chat(chatId, r.targetMessageId), chatId)
+            val target = messagesDao.byMessageId(r.targetMessageId)?.let { MessagePreview.of(it.kind, it.text, it.status) }
+            val who = person(chatId, r.senderId)
+            val name = who?.name ?: senderName(chatId, r.senderId)
+            val content = compose(NotificationEvent.Reaction(chatName, group, name, r.emoji, target))
+            val line = NotificationText.compose(NotificationEvent.Reaction(null, false, name, r.emoji, target), false, null).text
+            val conversation = conversation(chatId, group, chatName, who, line, null, messageId)
+            return Notice(content, NoticeChannel.Message, "chat:$chatId", NotificationDestination.Chat(chatId, r.targetMessageId), chatId, conversation)
         }
         val row = messagesDao.byMessageId(messageId) ?: return null // a control message: nothing to show
-        val sender = senderName(chatId, row.senderId)
-        if (row.kind == MessageKind.Payment && row.transferId != null) return paymentCard(chatId, chat?.name, group, sender, row)
-        val content = compose(NotificationEvent.ChatMessage(chat?.name, group, sender, row.text, momentReply = row.momentQuote != null))
-        return Notice(content, NoticeChannel.Message, "chat:$chatId", NotificationDestination.Chat(chatId, messageId, row.localId), chatId)
+        val who = person(chatId, row.senderId)
+        val sender = who?.name ?: senderName(chatId, row.senderId)
+        if (row.kind == MessageKind.Payment && row.transferId != null) return paymentCard(chatId, chatName, group, sender, row, who)
+        // Media reads as what it is ("📷 Photo"), never as the row's JSON.
+        val event = NotificationEvent.ChatMessage(chatName, group, sender, MessagePreview.of(row.kind, row.text, row.status), momentReply = row.momentQuote != null)
+        val conversation = conversation(chatId, group, chatName, who, NotificationText.chatLine(event), row.orderAt, messageId)
+        return Notice(compose(event), NoticeChannel.Message, "chat:$chatId", NotificationDestination.Chat(chatId, messageId, row.localId), chatId, conversation)
     }
 
-    /** A money card in a chat: money, on the money channel, worded in the person's currency. */
-    private suspend fun paymentCard(chatId: String, chatName: String?, group: Boolean, sender: String?, row: MessageEntity): Notice {
+    /** A money card in a chat: money, on the money channel, worded in the person's currency, with the sender's photo. */
+    private suspend fun paymentCard(chatId: String, chatName: String?, group: Boolean, sender: String?, row: MessageEntity, from: NoticePerson? = null): Notice {
         val money = Money(row.amountMinor ?: "0", row.asset ?: "USDC")
         val note = row.text
         val event = when {
@@ -122,8 +204,18 @@ class PushNotices(
             else -> NotificationEvent.GroupContribution(chatName, sender, money)
         }
         val destination = NotificationDestination.Payment(chatId, row.transferId)
-        return Notice(compose(event), NoticeChannel.Money, "money:${row.transferId}", destination, chatId)
+        val content = compose(event)
+        val person = from ?: person(chatId, row.senderId)
+        return Notice(
+            content, NoticeChannel.Money, "money:${row.transferId}", destination, chatId,
+            from = person, groupPhoto = if (group && person != null) groupPhoto(chatId) else null, group = group,
+            fromLine = person?.let { moneyLine(content.text, group, sender) },
+        )
     }
+
+    /** "Wanjiru added KES 1,000" beside Wanjiru's name and photo reads "Added KES 1,000"; a direct payment as it is. */
+    private fun moneyLine(text: String, group: Boolean, name: String?): String =
+        if (group && name != null && text.startsWith("$name ")) text.removePrefix("$name ").replaceFirstChar { it.uppercase() } else text
 
     /** `payment.received` (Wallet → Realtime frames): the amount from the chat's card, else the wallet's record. */
     private suspend fun moneyReceived(data: Map<String, String>): Notice {
@@ -136,7 +228,9 @@ class PushNotices(
         val destination = NotificationDestination.Payment(chatId, transferId, transactionId)
         if (card != null && chatId != null) {
             val chat = chats.chat(chatId)
-            return paymentCard(chatId, chat?.name, chat?.kind == "GROUP", senderName(chatId, card.senderId), card)
+            val from = person(chatId, card.senderId)
+            val group = chat?.kind == "GROUP"
+            return paymentCard(chatId, if (group) groupTitle(chatId, chat?.name) else chat?.name, group, from?.name ?: senderName(chatId, card.senderId), card, from)
         }
         // No card (money from outside Circaso, or the card is still on its way): the wallet's own record of it.
         if (key != null) withTimeoutOrNull(3_000) { wallet.refresh() }
@@ -144,7 +238,11 @@ class PushNotices(
         val from = transfer?.counterpartName ?: data["fromName"]?.takeIf { it.isNotBlank() } ?: nameFromBody(data["body"])
         val money = transfer?.amount?.let { Money(it.amountMinor, it.asset) }
         val content = compose(NotificationEvent.MoneyReceived(from, money, transfer?.note))
-        return Notice(content, NoticeChannel.Money, "money:${key ?: data["body"].hashCode()}", destination, chatId)
+        // A direct chat's money: the other person's photo beside it.
+        val person = chatId?.let { id -> chats.chat(id)?.takeIf { it.kind != "GROUP" }?.let { person(id, null) } }
+        // With no name from the wallet's record, the chat's other person names it ("Amina · Sent you money").
+        val named = if (from == null && person != null) compose(NotificationEvent.MoneyReceived(person.name, money, transfer?.note)) else content
+        return Notice(named, NoticeChannel.Money, "money:${key ?: data["body"].hashCode()}", destination, chatId, from = person, fromLine = person?.let { named.text })
     }
 
     /** "Amina sent you money" (an older server's words): the name, if that's what it says. */
@@ -153,12 +251,17 @@ class PushNotices(
     /** `chama.contribution`: the member's card in the group chat carries the amount; it shows as the same notice. */
     private suspend fun contribution(chatId: String, userId: String?): Notice {
         messages.syncInbox()
-        val chatName = chats.chat(chatId)?.name
-        val sender = senderName(chatId, userId)
+        val chatName = groupTitle(chatId, chats.chat(chatId)?.name)
+        val who = person(chatId, userId)
+        val sender = who?.name ?: senderName(chatId, userId)
         val card = userId?.let { latestCardFrom(chatId, it) }
         val event = NotificationEvent.GroupContribution(chatName, sender, card?.let { Money(it.amountMinor ?: "0", it.asset ?: "USDC") })
         val key = card?.transferId?.let { "money:$it" } ?: "group:$chatId:${userId.orEmpty()}"
-        return Notice(compose(event), NoticeChannel.Money, key, NotificationDestination.Payment(chatId, card?.transferId), chatId)
+        val content = compose(event)
+        return Notice(
+            content, NoticeChannel.Money, key, NotificationDestination.Payment(chatId, card?.transferId), chatId,
+            from = who, groupPhoto = who?.let { groupPhoto(chatId) }, group = true, fromLine = who?.let { moneyLine(content.text, true, sender) },
+        )
     }
 
     private suspend fun latestCardFrom(chatId: String, userId: String): MessageEntity? =
@@ -203,6 +306,8 @@ class PushNotices(
     private companion object {
         /** How far back a contribution's card is looked for in its group chat. */
         const val RecentCards = 30
+        /** A local lookup (the chat's names and photos); never worth holding the notification for longer. */
+        const val LookupMillis = 1_000L
         /** The invite push's `kind` (backend PR #83). */
         const val InviteKind = "chat.invite"
         /** How long an invite push waits for the invites to load before it words itself without the group's name. */

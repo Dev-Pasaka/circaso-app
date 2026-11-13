@@ -140,6 +140,10 @@
             android:name="androidx.work.impl.foreground.SystemForegroundService"
             android:foregroundServiceType="dataSync"
             tools:node="merge" />
+        <!-- Reply and Mark as read on a chat notification, without opening Circaso. -->
+        <receiver
+            android:name="com.circaso.core.platform.ChatNotificationActionReceiver"
+            android:exported="false" />
         <!-- Receives a new push token from Firebase and hands it to the app. -->
         <service
             android:name="com.circaso.core.platform.CircasoMessagingService"
