@@ -66,7 +66,13 @@ val coreModule = module {
         val room = RoomSessionDataCleaner(get(), get<AppPreferences>())
         val secure = get<com.circaso.core.platform.SecureStorage>()
         // The group key backup's root goes with the person's data (KeyBackupRepository.LocalRoot).
-        SessionDataCleaner { room.clearUserData(); secure.remove(com.circaso.feature.keybackup.data.KeyBackupRepository.LocalRoot) }
+        val koin = getKoin()
+        SessionDataCleaner {
+            room.clearUserData(); secure.remove(com.circaso.feature.keybackup.data.KeyBackupRepository.LocalRoot)
+            // Another person may sign in next: nothing of this one's chats stays on show (notifications and Android's
+            // conversation shortcuts, which carry names and photos).
+            runCatching { koin.getOrNull<com.circaso.core.platform.ChatNotifications>()?.clearShown() }
+        }
     }
     single { AuthManager(get(), get(), refreshOverHttp(lazy { get<CircasoApi>() }), cleaner = get()) }
     single<AccessTokenProvider> { get<AuthManager>() }
