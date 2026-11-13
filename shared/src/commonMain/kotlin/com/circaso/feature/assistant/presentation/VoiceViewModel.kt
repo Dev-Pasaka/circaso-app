@@ -451,6 +451,8 @@ class VoiceViewModel(
                 if (!herTurn && !speaker.playing.value) { tune("listening", e, detector, null); return }
                 if (herTurn) dropStale = true
                 speaker.flush()
+                // release builds too: a reply cut short by the phone itself must show in the diagnostic log
+                Diagnostics.note("voice: phone stopped her (${if (herTurn) "barge-in" else "tail"}, p=${e.probability.fmt()})")
                 val stoppedAt = monoClock()
                 detector.onFlushed(stoppedAt)
                 tune(if (herTurn) "barge-in" else "tail", e, detector, stoppedAt)
