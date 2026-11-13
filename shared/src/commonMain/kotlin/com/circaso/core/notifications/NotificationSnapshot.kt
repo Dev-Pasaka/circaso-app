@@ -147,6 +147,11 @@ class NotificationSnapshotWriter(
     private val file: NotificationSnapshotFile,
     private val ownUserId: suspend () -> String?,
     private val scope: CoroutineScope,
+    /**
+     * My contacts (saved names applied), so a push about someone I have no chat with (a reaction on my moment, a
+     * contact who joined) still shows their name and photo (2026-11-14).
+     */
+    private val contacts: com.circaso.feature.contacts.domain.ContactsRepository? = null,
 ) {
     private var running: Job? = null
 
@@ -232,6 +237,12 @@ class NotificationSnapshotWriter(
             shown?.avatarUrl?.let { photoSources["g:${chat.chatId}"] = it }
             NotificationSnapshot.Chat(chat.chatId, group, if (group) chat.name ?: shown?.title else null, members = members.map { it.userId })
         }
+        // People in no chat of mine: my contacts, up to [MaxContacts] (their photos are read from the image cache only).
+        val known = contacts?.let { repo -> withTimeoutOrNull(LookupMillis) { repo.contacts.first() } }.orEmpty()
+        known.asSequence().filter { it.person.userId !in people }.take(MaxContacts).forEach { c ->
+            people[c.person.userId] = NotificationSnapshot.Person(c.person.userId, c.person.displayName)
+            c.person.avatarUrl?.let { photoSources[c.person.userId] = it }
+        }
         val photos = runCatching { file.photos(photoSources) }.getOrDefault(emptyMap())
         val fiat = withTimeoutOrNull(LookupMillis) { wallet.wallet.first()?.fiat }
         return NotificationSnapshot(
@@ -252,5 +263,7 @@ class NotificationSnapshotWriter(
 
     private companion object {
         const val LookupMillis = 1_000L
+        /** Enough for anyone's contacts; keeps the snapshot well inside the extension's memory. */
+        const val MaxContacts = 500
     }
 }

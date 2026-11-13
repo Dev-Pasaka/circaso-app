@@ -129,7 +129,8 @@ class AndroidChatNotifications(private val context: Context) : ChatNotifications
         when {
             notice.channel == NoticeChannel.Message && conversation != null -> if (!onScreen(conversation.chatId)) showConversation(notice, conversation)
             notice.channel == NoticeChannel.Money && from != null -> showMoney(notice, from, coins)
-            else -> showPlain(notice, coins, private = privacyOn())
+            notice.channel == NoticeChannel.Message && from != null -> showPerson(notice, from)
+            else -> showPlain(notice, coins, private = privacyOn(), quietly = repeatSoon(notice.key))
         }
     }
 
@@ -233,6 +234,50 @@ class AndroidChatNotifications(private val context: Context) : ChatNotifications
         post(id, channelOf(NoticeChannel.Money, coins), chatId, notice.content, style, notice.destination, shortcutId, senderBitmap, alert = true, actions = false, money = true)
     }
 
+    /**
+     * A notice about a person that isn't a message or money (2026-11-14): a reaction on my moment, a missed call, a
+     * contact who joined. It looks like their chat message: their photo as the icon (initials when there's none), the
+     * line beside their name, on my chat with them when there is one. Notices with one key gather in one notification,
+     * a line per person: someone who changes their reaction replaces their own line, quietly, and the notification
+     * buzzes at most once every [QuietMillis] however many react; two or more people are titled by [Notice.thread].
+     */
+    private suspend fun showPerson(notice: Notice, from: NoticePerson) {
+        val id = notice.key.hashCode()
+        val moment = notice.key.startsWith("moment:")
+        // A group's (a missed group call): titled by the group, with its photo, on the group's conversation.
+        val inGroup = !moment && notice.group && notice.thread != null && notice.chatId != null
+        val (bitmap, groupBitmap) = photos(from, inGroup, notice.thread, notice.groupPhoto)
+        val person = personOf(from, bitmap)
+        val shown = active(id)
+        val previous = shown?.let { NotificationCompat.MessagingStyle.extractMessagingStyleFromNotification(it) }
+        val earlier = previous?.messages.orEmpty().filter { it.person?.key != person.key }
+        val again = previous?.messages?.any { it.person?.key == person.key } == true
+        val gathered = inGroup || moment && notice.thread != null && (earlier.mapNotNull { it.person?.key } + person.key).distinct().size > 1
+        val style = conversationStyle(gathered, notice.thread)
+        earlier.takeLast(MaxLines - 1).forEach { style.addMessage(it) }
+        style.addMessage(NotificationCompat.MessagingStyle.Message(notice.fromLine ?: notice.content.text, System.currentTimeMillis(), person))
+        // Whose conversation it is: the moment's own (re-drawn with the latest face), the group's, or my chat with the
+        // person. Someone I have no chat with gets no shortcut (no launcher clutter): the large icon carries the photo.
+        val icon = groupBitmap ?: bitmap
+        val conversation = when {
+            moment -> notice.key
+            inGroup -> notice.chatId
+            else -> from.directChatId
+        }
+        val shortcutId = conversation?.let {
+            conversationShortcut(
+                it, gathered, if (gathered) notice.thread else from.name, person, IconCompat.createWithBitmap(icon),
+                open = if (moment) notice.destination else null,
+            )
+        }
+        val recent = shown != null && System.currentTimeMillis() - shown.`when` < QuietMillis
+        post(id, ChannelId, conversation, notice.content, style, notice.destination, shortcutId, icon, alert = !again && !recent, actions = false)
+    }
+
+    /** A moment's notification showed a moment ago (Notification privacy on): update it without another buzz. */
+    private fun repeatSoon(key: String): Boolean = key.startsWith("moment:") &&
+        active(key.hashCode())?.let { System.currentTimeMillis() - it.`when` < QuietMillis } == true
+
     /** The style every chat notification starts from: me as the owner, the group's name on a group's. */
     private fun conversationStyle(group: Boolean, title: String?) =
         NotificationCompat.MessagingStyle(Person.Builder().setName("You").setKey(MeKey).build())
@@ -312,13 +357,21 @@ class AndroidChatNotifications(private val context: Context) : ChatNotifications
      * conversation notification: the photo as its icon, the Conversations section, priority conversations). Opening
      * it opens the chat. Null when the launcher refuses or there's no name to give it.
      */
-    private fun conversationShortcut(chatId: String, group: Boolean, label: String?, sender: Person, icon: IconCompat): String? {
+    private fun conversationShortcut(
+        chatId: String,
+        group: Boolean,
+        label: String?,
+        sender: Person,
+        icon: IconCompat,
+        /** Where it opens when [chatId] isn't a chat (a person's own conversation): else the chat. */
+        open: NotificationDestination? = null,
+    ): String? {
         val id = ShortcutPrefix + chatId
         val name = label?.takeIf { it.isNotBlank() } ?: return null
         val open = context.packageManager.getLaunchIntentForPackage(context.packageName)?.apply {
             action = Intent.ACTION_VIEW
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP)
-            NotificationDestination.Chat(chatId).toExtras().forEach { (k, v) -> putExtra(k, v) }
+            (open ?: NotificationDestination.Chat(chatId)).toExtras().forEach { (k, v) -> putExtra(k, v) }
         } ?: return null
         val shortcut = ShortcutInfoCompat.Builder(context, id)
             .setShortLabel(name)
@@ -456,6 +509,8 @@ class AndroidChatNotifications(private val context: Context) : ChatNotifications
         private const val MaxLines = 7
         /** Big enough for the conversation avatar on a dense screen, small enough for the notification's limits. */
         private const val PhotoPx = 192
+        /** However many react to one moment, its notification buzzes at most once in this long. */
+        private const val QuietMillis = 60_000L
         /** A photo on disk takes a few milliseconds; one from the network gets this long, then initials. */
         private const val PhotoWaitMillis = 2_500L
 

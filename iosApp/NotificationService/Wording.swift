@@ -32,6 +32,21 @@ enum Wording {
         }
     }
 
+    // MARK: people (NotificationText.personLine)
+
+    static func momentReactionLine(emoji: String?) -> String { "Reacted \(emoji.flatMap(emojiOrNil) ?? "❤️") to your moment" }
+
+    /// A reaction as it may show (NotificationText.emojiOrNull): one emoji, no letters, digits or spaces.
+    static func emojiOrNil(_ text: String) -> String? {
+        let t = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !t.isEmpty, t.utf16.count <= 16, !t.unicodeScalars.contains(where: { CharacterSet.alphanumerics.contains($0) || CharacterSet.whitespaces.contains($0) }) else { return nil }
+        return t
+    }
+
+    static func missedCallLine(video: Bool) -> String { video ? "Missed video call" : "Missed voice call" }
+    static let joinedLine = "Joined Circaso. Say hi 👋"
+    static let connectedLine = "Connected with you"
+
     // MARK: chat messages
 
     /// Payloads that never show as a message (ChatPayload's control types).
