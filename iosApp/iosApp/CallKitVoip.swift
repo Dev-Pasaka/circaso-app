@@ -53,6 +53,7 @@ final class CallKitVoip: NSObject, PKPushRegistryDelegate, CXProviderDelegate, C
 
     func pushRegistry(_ registry: PKPushRegistry, didReceiveIncomingPushWith payload: PKPushPayload, for type: PKPushType, completion: @escaping () -> Void) {
         let data = payload.dictionaryPayload
+        Diagnostics.shared.note(message: "push: voip \((data["kind"] as? String) ?? "call.ringing")")
         if (data["kind"] as? String) == "call.ended" {
             ringEnded(data, completion: completion)
             return

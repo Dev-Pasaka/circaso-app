@@ -54,6 +54,9 @@ class ConnectionState(
     }.distinctUntilChanged().stateIn(scope, SharingStarted.Eagerly, ConnectionStatus.Online)
 
     init {
+        // Each change of what the app shows, and of what the OS says, in the diagnostic log.
+        status.drop(1).onEach { com.circaso.core.common.Diagnostics.note("net: app ${it.name.lowercase()}") }.launchIn(scope)
+        monitor.osStatus.drop(1).onEach { com.circaso.core.common.Diagnostics.note("net: os ${it.name.lowercase()}") }.launchIn(scope)
         // A network change is a fresh start: forget earlier failures so the next call decides.
         monitor.osStatus.drop(1).onEach { reachedDespiteOs.value = false; health.reset() }.launchIn(scope)
         // Whatever made the app think it is offline (failed requests, or an OS that missed a network switch), ask the

@@ -75,7 +75,8 @@ import kotlin.math.roundToInt
 /**
  * Modal bottom sheet (design `cx-sheet`): scrim, 34 dp top corners, grabber. Place it in a scaffold's
  * `overlay` slot so it covers the tab bar. Dismisses on scrim tap, back, or a downward drag.
- * [label] is read by screen readers as the dialog name.
+ * [label] is read by screen readers as the dialog name. [dismissible] false holds it open (while something it started
+ * is still running): back and the scrim do nothing and a drag always springs back.
  */
 @OptIn(ExperimentalComposeUiApi::class)
 @Composable
@@ -83,16 +84,17 @@ fun BoxScope.CircasoSheet(
     visible: Boolean,
     onDismiss: () -> Unit,
     label: String,
+    dismissible: Boolean = true,
     content: @Composable ColumnScope.() -> Unit,
 ) {
     val c = CircasoTheme.colors
     val ios = CircasoTheme.platform == PlatformStyle.Ios
-    BackHandler(enabled = visible, onBack = onDismiss)
+    BackHandler(enabled = visible, onBack = { if (dismissible) onDismiss() })
     // Over the whole window, not the pane that opened it: on an iPad a sheet from the list pane is still a centred
     // card over everything (WindowOverlay.kt).
     OverWindow {
         AnimatedVisibility(visible, Modifier.matchParentSize(), enter = fadeIn(tween(CircasoMotion.BaseMs)), exit = fadeOut(tween(CircasoMotion.QuickMs))) {
-            Box(Modifier.fillMaxSize().background(c.scrim).clickable(interactionSource = remember { MutableInteractionSource() }, indication = null, onClick = onDismiss))
+            Box(Modifier.fillMaxSize().background(c.scrim).clickable(interactionSource = remember { MutableInteractionSource() }, indication = null, onClick = { if (dismissible) onDismiss() }))
         }
         // On a tablet (regular width and height) a sheet is a centred card with every corner rounded, as iPadOS presents a
         // form sheet; a strip across a 13" screen would look stretched. Phones, either way up, keep the bottom sheet.
@@ -125,11 +127,11 @@ fun BoxScope.CircasoSheet(
                     .clip(shape)
                     .background(c.surface)
                     .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null, onClick = {})
-                    .pointerInput(Unit) {
+                    .pointerInput(dismissible) {
                         detectVerticalDragGestures(
                             onDragEnd = {
                                 scope.launch {
-                                    if (drag.value > dismissAt) onDismiss() else drag.animateTo(0f, spring(stiffness = Spring.StiffnessMedium))
+                                    if (dismissible && drag.value > dismissAt) onDismiss() else drag.animateTo(0f, spring(stiffness = Spring.StiffnessMedium))
                                 }
                             },
                             onDragCancel = { scope.launch { drag.animateTo(0f) } },

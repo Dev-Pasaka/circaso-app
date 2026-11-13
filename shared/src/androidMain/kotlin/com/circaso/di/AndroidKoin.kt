@@ -56,6 +56,9 @@ fun initKoinAndroid(context: Context) {
     if (app.applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE != 0) {
         com.circaso.core.common.Diagnostics.sink = { android.util.Log.i("CircasoNet", it) }
     }
+    // Every build keeps a rolling, scrubbed diagnostic log in its private files (You → Help → Send diagnostic log).
+    com.circaso.core.common.Diagnostics.log = com.circaso.core.common.DiagnosticsLog(okio.FileSystem.SYSTEM, okio.Path.Companion.run { File(app.filesDir, "diagnostics").absolutePath.toPath() })
+    com.circaso.core.common.Diagnostics.note("app: started ${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL}, Android ${android.os.Build.VERSION.RELEASE}")
     initKoin(
         module {
             single<ClientInfo> { AndroidClientInfo(app) }
