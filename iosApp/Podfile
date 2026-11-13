@@ -31,6 +31,10 @@ target 'iosApp' do
   # GoogleSignIn's pods already bring GoogleUtilities and PromisesObjC: two copies of those would collide at runtime.
   # Messaging only, no Analytics. See PushNotificationsImpl.swift.
   pod 'FirebaseMessaging', '12.19.0'
+  # Crash reports (approved 2026-11-13): the same Firebase 12.19.0 as Messaging, as a pod for the same reason. Crashes,
+  # breadcrumbs (the app's scrubbed Diagnostics notes) and Kotlin exceptions; no user id. See CrashReporterImpl.swift and
+  # the "Upload dSYMs to Crashlytics" build phase.
+  pod 'FirebaseCrashlytics', '12.19.0'
   # Circle's social login (Google, Facebook) is not used. Its binary links both frameworks, so they must ship or the app
   # can't start; Facebook's is switched off in Info.plist (no app id, no auto-init, no event logging, no ad id).
 end

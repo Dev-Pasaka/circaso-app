@@ -111,6 +111,7 @@
 				5DF128E009D582F2669FAE84 /* Resources */,
 				3D0BC7F3C54C3683829A0A91 /* [CP] Embed Pods Frameworks */,
 				C94A0A1AAE27171DA6AA7684 /* [CP] Copy Pods Resources */,
+				F1C2A3B4D5E6F70812345678 /* Upload dSYMs to Crashlytics */,
 			);
 			buildRules = (
 			);
@@ -260,6 +261,26 @@
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
 			shellScript = "\"${PODS_ROOT}/Target Support Files/Pods-iosApp/Pods-iosApp-resources.sh\"\n";
+			showEnvVarsInLog = 0;
+		};
+		F1C2A3B4D5E6F70812345678 /* Upload dSYMs to Crashlytics */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Upload dSYMs to Crashlytics";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "# Crash reports (2026-11-13): Release builds (archives) send their dSYMs to Crashlytics so iPhone crashes, Kotlin\n# ones included, read as code. Skipped without GoogleService-Info.plist (kept out of git) or the pod.\nif [ \"${CONFIGURATION}\" != \"Release\" ]; then exit 0; fi\nif [ ! -f \"${PROJECT_DIR}/iosApp/GoogleService-Info.plist\" ]; then\n  echo \"warning: GoogleService-Info.plist is missing: no crash reports, dSYMs not uploaded\"\n  exit 0\nfi\nif [ ! -x \"${PODS_ROOT}/FirebaseCrashlytics/run\" ]; then\n  echo \"warning: FirebaseCrashlytics pod missing (run pod install): dSYMs not uploaded\"\n  exit 0\nfi\n\"${PODS_ROOT}/FirebaseCrashlytics/run\"\n";
 			showEnvVarsInLog = 0;
 		};
 /* End PBXShellScriptBuildPhase section */
