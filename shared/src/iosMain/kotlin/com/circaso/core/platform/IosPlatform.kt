@@ -13,6 +13,7 @@ import platform.Network.nw_path_monitor_set_queue
 import platform.Network.nw_path_monitor_set_update_handler
 import platform.Network.nw_path_monitor_start
 import platform.Network.nw_path_status_satisfied
+import platform.Network.nw_path_uses_interface_type
 import platform.UIKit.UIApplication
 import platform.UIKit.UIDevice
 import platform.darwin.dispatch_get_main_queue
@@ -33,13 +34,21 @@ class IosClientInfo : ClientInfo {
 class IosConnectivityMonitor : ConnectivityMonitor {
     private val _status = MutableStateFlow(ConnectionStatus.Online)
     override val osStatus: StateFlow<ConnectionStatus> = _status
+    private val _transport = MutableStateFlow("other")
+    override val transport: StateFlow<String> = _transport
     private val monitor = nw_path_monitor_create()
 
     init {
         nw_path_monitor_set_update_handler(monitor) { path ->
-            _status.value =
-                if (nw_path_get_status(path) == nw_path_status_satisfied) ConnectionStatus.Online
-                else ConnectionStatus.Offline
+            val up = nw_path_get_status(path) == nw_path_status_satisfied
+            _status.value = if (up) ConnectionStatus.Online else ConnectionStatus.Offline
+            _transport.value = when {
+                !up -> "none"
+                nw_path_uses_interface_type(path, platform.Network.nw_interface_type_wifi) -> "wifi"
+                nw_path_uses_interface_type(path, platform.Network.nw_interface_type_cellular) -> "cellular"
+                nw_path_uses_interface_type(path, platform.Network.nw_interface_type_wired) -> "ethernet"
+                else -> "other"
+            }
         }
         nw_path_monitor_set_queue(monitor, dispatch_get_main_queue())
         nw_path_monitor_start(monitor)

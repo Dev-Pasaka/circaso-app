@@ -12,6 +12,18 @@ data class LocalTrackSpec(val mid: String, val trackName: String, val kind: Stri
 
 data class LocalOffer(val sdp: String, val tracks: List<LocalTrackSpec>)
 
+/**
+ * One stats reading: [rttMs] from the active candidate pair, [jitterMs] from inbound audio, and running totals over
+ * every inbound track since the connection opened. Any of them null when WebRTC doesn't say.
+ */
+data class CallStats(
+    val rttMs: Double? = null,
+    val jitterMs: Double? = null,
+    val packetsReceived: Long? = null,
+    val packetsLost: Long? = null,
+    val bytesReceived: Long? = null,
+)
+
 /** Why the engine couldn't start: no microphone permission, no camera, or the platform has no WebRTC. */
 class CallEngineException(val reason: String) : Exception(reason)
 
@@ -48,6 +60,18 @@ interface CallEngine {
 
     /** Audio packets received so far over every pulled track; a number that stops rising means nobody is sending. Null: can't tell. */
     suspend fun receivedPackets(): Long? = null
+
+    /**
+     * A reading of the connection's WebRTC stats for the call report (2026-11-13): round trip, jitter and the running
+     * totals of what was received and lost. Null when there is no connection or the engine can't tell.
+     */
+    suspend fun stats(): CallStats? = null
+
+    /**
+     * Every change of the connection's states for the call report, as `ice:<state>` and `pc:<state>` in WebRTC's own
+     * lowercase names (`ice:disconnected`, `pc:failed`). Null when the engine can't tell.
+     */
+    val linkStates: kotlinx.coroutines.flow.Flow<String>? get() = null
 
     fun setMicrophone(on: Boolean)
     /** Turns the camera on (asking for permission) or off; false when it couldn't be turned on. */

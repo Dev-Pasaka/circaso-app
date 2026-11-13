@@ -26,23 +26,37 @@ class AndroidConnectivityMonitor(context: Context) : ConnectivityMonitor {
     private val manager = context.getSystemService(ConnectivityManager::class.java)
     private val _status = MutableStateFlow(current())
     override val osStatus: StateFlow<ConnectionStatus> = _status
+    private val _transport = MutableStateFlow(transportOf(manager.getNetworkCapabilities(manager.activeNetwork)))
+    override val transport: StateFlow<String> = _transport
 
     init {
         manager.registerDefaultNetworkCallback(object : ConnectivityManager.NetworkCallback() {
             override fun onCapabilitiesChanged(network: Network, caps: NetworkCapabilities) {
                 _status.value = status(caps)
+                _transport.value = transportOf(caps)
             }
 
             override fun onLost(network: Network) {
                 // Switching Wi-Fi ↔ mobile data reports the old network lost, sometimes after the new one is already
                 // up: read what is current rather than assume nothing is, or the app stays "offline" on good Wi-Fi.
                 _status.value = current()
+                _transport.value = transportOf(manager.getNetworkCapabilities(manager.activeNetwork))
             }
 
             override fun onAvailable(network: Network) {
                 _status.value = current()
+                _transport.value = transportOf(manager.getNetworkCapabilities(manager.activeNetwork))
             }
         })
+    }
+
+    private fun transportOf(caps: NetworkCapabilities?): String = when {
+        caps == null -> "none"
+        caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) -> "wifi"
+        caps.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) -> "cellular"
+        caps.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET) -> "ethernet"
+        caps.hasTransport(NetworkCapabilities.TRANSPORT_VPN) -> "vpn"
+        else -> "other"
     }
 
     private fun current(): ConnectionStatus =

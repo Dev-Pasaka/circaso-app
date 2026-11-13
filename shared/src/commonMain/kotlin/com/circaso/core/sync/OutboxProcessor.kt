@@ -10,6 +10,12 @@ import kotlin.time.Clock
 interface OutboxHandler {
     val type: String
     suspend fun send(item: OutboxEntity): AppResult<Unit>
+
+    /**
+     * A write nobody asked for and nobody needs to decide about (a call report): one the server refuses, or that grew
+     * stale, is dropped instead of shown in You as a failed change.
+     */
+    val bestEffort: Boolean get() = false
 }
 
 sealed interface DrainResult {
@@ -52,7 +58,7 @@ class OutboxProcessor(
                 continue
             }
             if (nowMillis() - item.createdAtMillis > StaleAfterMillis) {
-                outbox.markFailed(item.id, Stale)
+                if (handler.bestEffort) outbox.discard(item.id) else outbox.markFailed(item.id, Stale)
                 continue
             }
             outbox.markSending(item.id)
@@ -64,7 +70,7 @@ class OutboxProcessor(
                         outbox.markPending(item.id, error.describe())
                         return DrainResult.Paused(sent, error.describe())
                     }
-                    outbox.markFailed(item.id, error.describe())
+                    if (handler.bestEffort) outbox.discard(item.id) else outbox.markFailed(item.id, error.describe())
                 }
             }
         }

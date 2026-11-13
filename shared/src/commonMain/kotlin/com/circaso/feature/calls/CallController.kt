@@ -22,6 +22,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.update
@@ -108,7 +109,11 @@ class CallController(
     private val personName: (userId: String, profileName: String) -> String = { _, profileName -> profileName },
     /** Clears the platform's ringing notification once the call is answered, declined or over. */
     private val stopRinging: (callId: String) -> Unit = {},
-    /** Whether the phone is online; a call rejoins when it comes back. */
+    /**
+     * Whether the phone has a network, as the operating system says. Never "can our server be reached": a dead realtime
+     * socket or slow API says nothing about the media path, and tying calls to it hung up a call whose audio was fine
+     * (2026-11-13, see [reconnect]). A call rejoins when it comes back.
+     */
     private val online: kotlinx.coroutines.flow.Flow<Boolean> = kotlinx.coroutines.flow.flowOf(true),
     private val reconnectGiveUpMillis: Long = 40_000,
     /** How long a joined call may wait for media before it counts as connected anyway (stats can be missing). */
@@ -126,10 +131,17 @@ class CallController(
     private val pollMillis: Long = 0,
     /** True while the realtime socket is up; each time it comes back the call is read again. */
     private val socketUp: kotlinx.coroutines.flow.Flow<Boolean> = kotlinx.coroutines.flow.flowOf(false),
-    /** No packet from anyone for this long in an active call: it is dead, hang up. 0: never. */
+    /**
+     * No packet from anyone for this long in an active call: the media path is dead, so the call reconnects (a fresh
+     * session). If a second stall follows without a packet in between, the other side is gone and it ends. 0: never.
+     */
     private val stallMillis: Long = 0,
     /** The time for [pullGraceMillis] and [stallMillis]; tests pass their virtual clock. */
     private val clock: () -> Long = { nowMillis() },
+    /** The per-call timeline and end cause behind the call report (2026-11-13). */
+    private val recorder: CallRecorder? = null,
+    /** How long apart the attempts to send CL7 are when the network fails them; the first is at once. */
+    private val leaveRetryMillis: List<Long> = listOf(2_000, 4_000, 8_000, 15_000, 30_000),
 ) {
     private val _state = MutableStateFlow<CallUi?>(null)
     val state: StateFlow<CallUi?> = _state
@@ -166,28 +178,53 @@ class CallController(
     private var connectedJob: Job? = null
     private var deferredPull: Job? = null
     private var reconcileJob: Job? = null
+    /** The calls this phone has sent CL7 for: one hang-up per call, however many paths end it (2026-11-13). */
+    private val leaving = mutableSetOf<String>()
+    private var phaseJob: Job? = null
+    /** The latest of [online], as [watch] last saw it. */
+    private var netUp = true
 
     val available get() = engine.available
+
+    /** Opens a new call's timeline and notes each phase it passes through. */
+    private fun record(callId: String?, video: Boolean, outgoing: Boolean) {
+        val r = recorder ?: return
+        r.begin(callId, video, outgoing)
+        phaseJob?.cancel()
+        phaseJob = scope.launch {
+            _state.map { it?.phase }.distinctUntilChanged().collect { p -> if (p != null) r.event("phase", p.name) }
+        }
+    }
+
+    private fun note(type: String, detail: String? = null) { recorder?.event(type, detail) }
+
+    /** Closes this call's timeline with [cause]; only the first cause of a call counts. */
+    private fun ended(cause: CallEndCause) {
+        if (recorder?.recording == true) com.circaso.core.common.Diagnostics.note("calls: ended, cause=${cause.wire}")
+        phaseJob?.cancel()
+        recorder?.finish(cause)
+    }
 
     /** Design C2/D2's call buttons: ring the chat (CL1), then join at once so the caller is ready when they answer. */
     fun start(chatId: String, video: Boolean) {
         if (_state.value?.phase.let { it != null && it != CallPhase.Ended }) return
         takeOver()
         _state.value = CallUi(null, chatId, "", video, false, CallPhase.Ringing, camera = video, speaker = video)
+        record(null, video, outgoing = true)
         scope.launch {
             names(chatId)?.let { (t, g) -> _state.update { it?.copy(title = t, group = g) } }
             labelOf = labels(chatId)
             // Beside the call, never before it: the photo fills in when this phone's store answers.
             scope.launch { loadPhotos(chatId) }
             when (val r = remote.start(chatId, video, newIdempotencyKey())) {
-                is AppResult.Success -> { call = r.value; publish(); join(r.value) }
+                is AppResult.Success -> { call = r.value; recorder?.callId(r.value.callId); publish(); join(r.value) }
                 is AppResult.Failure -> {
                     // A call already running in this chat (a group call someone started): join that one instead.
                     if ((r.error as? AppError.Api)?.code == "calls.already_in_call") {
                         val existing = (remote.forChat(chatId) as? AppResult.Success)?.value
-                        if (existing != null) { call = existing; publish(); join(existing); return@launch }
+                        if (existing != null) { call = existing; recorder?.callId(existing.callId); publish(); join(existing); return@launch }
                     }
-                    fail(r.error)
+                    fail(r.error, cause = CallEndCause.JoinFailed)
                 }
             }
         }
@@ -203,6 +240,7 @@ class CallController(
             val (t, g) = names(chatId) ?: ("Group call" to (existing.participants.size > 2))
             _state.value = CallUi(existing.callId, chatId, t, existing.kind == "VIDEO", g, CallPhase.Connecting, camera = existing.kind == "VIDEO", speaker = true)
             call = existing
+            record(existing.callId, existing.kind == "VIDEO", outgoing = false)
             scope.launch { loadPhotos(chatId) }
             join(existing)
         }
@@ -221,6 +259,7 @@ class CallController(
         val c = call ?: return
         stopRinging(c.callId)
         _state.update { it?.copy(phase = CallPhase.Ended, endReason = "DECLINED") }
+        ended(CallEndCause.Declined)
         val mine = epoch
         scope.launch {
             (remote.decline(c.callId) as? AppResult.Success)?.value?.takeIf { it.state == "ENDED" }?.let { logEnded(it) }
@@ -237,25 +276,64 @@ class CallController(
         scope.launch { lock.withLock { engine.close() } }
     }
 
-    /** H2–H4: End (CL7). */
-    fun leave() {
+    /**
+     * H2–H4: End (CL7), for [cause]. Idempotent (2026-11-13): the End button, the system's call screen, a give-up and a
+     * re-read could each end the same call, and the Redmi sent CL7 four to six times per call. Now one CL7 per call,
+     * repeated only when the request itself fails (no network, a 5xx), with the same Idempotency-Key.
+     */
+    fun leave(cause: CallEndCause = CallEndCause.UserHangup) {
         val c = call
-        _state.update { it?.copy(phase = CallPhase.Ended, endReason = it.endReason ?: "COMPLETED") }
+        val already = c != null && c.callId in leaving
+        if (already && _state.value?.phase == CallPhase.Ended) return
+        // The server already ended it (its frame, or a read): there's nothing left to leave.
+        if (c?.state == "ENDED" && _state.value?.phase == CallPhase.Ended) return
+        _state.update { it?.copy(phase = CallPhase.Ended, endReason = it.endReason ?: if (cause.dropped) "DROPPED" else "COMPLETED") }
+        ended(cause)
         closeEngine()
+        reconnectJob?.cancel()
         val mine = epoch
+        if (c == null || already) { finish(mine); return }
+        leaving += c.callId
         scope.launch {
-            if (c != null) (remote.leave(c.callId) as? AppResult.Success)?.value?.takeIf { it.state == "ENDED" }?.let { logEnded(it) }
+            sendLeave(c.callId, cause)?.takeIf { it.state == "ENDED" }?.let { logEnded(it) }
             finish(mine)
         }
     }
 
-    fun toggleMic() = media { it.copy(mic = !it.mic) }
+    /** One CL7, retried while the request itself fails; the server's answer, or null if it never got through. */
+    private suspend fun sendLeave(callId: String, cause: CallEndCause): CallDto? {
+        val key = newIdempotencyKey()
+        val waits = leaveRetryMillis.iterator()
+        while (true) {
+            when (val r = remote.leave(callId, cause.wire, key)) {
+                is AppResult.Success -> {
+                    com.circaso.core.common.Diagnostics.note("calls: leave sent, cause=${cause.wire}")
+                    return r.value
+                }
+                is AppResult.Failure -> {
+                    val e = r.error
+                    val retry = e == AppError.Network || e is AppError.Unexpected || (e is AppError.Api && (e.httpStatus >= 500 || e.httpStatus == 429 || e.code == "request.in_progress"))
+                    com.circaso.core.common.Diagnostics.note("calls: leave failed (${describe(e)}), ${if (retry && waits.hasNext()) "retrying" else "giving up"}")
+                    if (!retry || !waits.hasNext()) return null
+                    delay(waits.next())
+                }
+            }
+        }
+    }
+
+    private fun describe(e: AppError) = when (e) {
+        AppError.Network -> "network"
+        is AppError.Unexpected -> "http ${e.httpStatus}"
+        is AppError.Api -> e.code
+    }
+
+    fun toggleMic() { media { it.copy(mic = !it.mic) }; _state.value?.let { note("mic", if (it.mic) "on" else "off") } }
 
     /** The camera only counts as on once it really is: no black "video" when permission was refused. */
     fun toggleCamera() {
         val want = !(_state.value?.camera ?: return)
         scope.launch {
-            if (engine.setCamera(want)) media { it.copy(camera = want) }
+            if (engine.setCamera(want)) { media { it.copy(camera = want) }; note("camera", if (want) "on" else "off") }
             else _state.update { it?.copy(error = "Circaso needs the camera for video. Turn it on in Settings.") }
         }
     }
@@ -272,11 +350,11 @@ class CallController(
         val want = !s.screen
         scope.launch {
             val ok = engine.setScreenShare(want)
-            if (ok && _state.value?.phase.let { it != null && it != CallPhase.Ended }) media { it.copy(screen = want) }
+            if (ok && _state.value?.phase.let { it != null && it != CallPhase.Ended }) { media { it.copy(screen = want) }; note("screen", if (want) "on" else "off") }
         }
     }
 
-    fun toggleSpeaker() { _state.update { it?.copy(speaker = !it.speaker) }; _state.value?.let { engine.setSpeaker(it.speaker) } }
+    fun toggleSpeaker() { _state.update { it?.copy(speaker = !it.speaker) }; _state.value?.let { engine.setSpeaker(it.speaker); note("speaker", if (it.speaker) "on" else "off") } }
     fun flipCamera() { engine.flipCamera(); _state.update { it?.copy(frontCamera = !it.frontCamera) } }
     fun minimise(on: Boolean) = _state.update { it?.copy(minimised = on) }
 
@@ -309,6 +387,7 @@ class CallController(
                 if (c.state == "ENDED") return
                 takeOver()
                 call = c
+                record(c.callId, c.kind == "VIDEO", outgoing = false)
                 labelOf = labels(c.chatId)
                 val starter = c.participants.firstOrNull { it.userId == c.startedBy }
                 val caller = starter?.let { personName(it.userId, it.displayName) }?.takeIf { it.isNotBlank() }
@@ -331,6 +410,7 @@ class CallController(
                 stopRinging(callId)
                 if (callId != call?.callId || _state.value?.phase != CallPhase.Incoming) return
                 _state.update { it?.copy(phase = CallPhase.Ended, endReason = data["reason"]?.jsonPrimitive?.contentOrNull ?: "MISSED") }
+                ended(CallEndCause.RingStopped)
                 finish(epoch)
             }
         }
@@ -347,7 +427,9 @@ class CallController(
         logEnded(c)
         call = c
         closeEngine()
+        reconnectJob?.cancel()
         _state.update { it?.copy(phase = CallPhase.Ended, endReason = c.endReason) }
+        ended(CallEndCause.RemoteEnded)
         finish(epoch)
     }
 
@@ -369,13 +451,14 @@ class CallController(
             // our ring stopped (missed in a group call going on) or we answered elsewhere
             stopRinging(fresh.callId)
             _state.update { it?.copy(phase = CallPhase.Ended, endReason = if (mine.state == "JOINED") "COMPLETED" else mine.state) }
+            ended(if (mine.state == "JOINED") CallEndCause.AnsweredElsewhere else CallEndCause.RingStopped)
             finish(epoch)
             return
         }
         if (!s.group && sessionId != null) {
             // a direct call: the other person hung up (the server ends it then; this covers an older server)
             val other = fresh.participants.firstOrNull { it.userId != me }
-            if (other != null && other.joinedAt != null && other.state != "JOINED") return leave()
+            if (other != null && other.joinedAt != null && other.state != "JOINED") return leave(CallEndCause.RemoteLeft)
         }
         if (fresh != call) {
             call = fresh
@@ -392,17 +475,34 @@ class CallController(
             }
             var lastPackets: Long? = null
             var quietSince = 0L
+            // Set when a stall sent the call reconnecting, cleared by the first packet after it: a second stall with
+            // nothing in between means the other side is gone, not the path, and the call ends.
+            var stallUnresolved = false
             while (true) {
                 delay(pollMillis)
                 reconcile()
                 if (stallMillis <= 0 || _state.value?.phase != CallPhase.Active) { lastPackets = null; continue }
                 val packets = engine.receivedPackets() ?: continue
                 val now = clock()
-                if (packets != lastPackets) { lastPackets = packets; quietSince = now; continue }
+                if (packets != lastPackets) {
+                    if (lastPackets != null && packets > lastPackets) stallUnresolved = false
+                    lastPackets = packets; quietSince = now; continue
+                }
                 if (now - quietSince >= stallMillis) {
-                    com.circaso.core.common.Diagnostics.note("calls: no packets for ${now - quietSince}ms, hanging up")
-                    _state.update { it?.copy(error = "The call dropped.") }
-                    leave()
+                    val quiet = now - quietSince
+                    note("stall", "${quiet}ms")
+                    lastPackets = null
+                    if (stallUnresolved) {
+                        com.circaso.core.common.Diagnostics.note("calls: no packets for ${quiet}ms again after reconnecting, ending")
+                        _state.update { it?.copy(error = "The call dropped.") }
+                        leave(CallEndCause.Stall)
+                        continue
+                    }
+                    // 2026-11-13: this used to hang up at once, and again on every later poll. Now the media path is
+                    // rebuilt as for any other drop; only the reconnect's give-up ends the call.
+                    com.circaso.core.common.Diagnostics.note("calls: no packets for ${quiet}ms, reconnecting")
+                    stallUnresolved = true
+                    startReconnect(stall = true)
                 }
             }
         }
@@ -418,7 +518,8 @@ class CallController(
         val outgoing = c.startedBy == me
         val joined = mine?.joinedAt != null
         val outcome = when (c.endReason) {
-            "COMPLETED" -> if (joined && c.startedAt != null) CallLogOutcome.Completed else if (outgoing) CallLogOutcome.NoAnswer else CallLogOutcome.Missed
+            // A dropped call (2026-11-13) reads like a finished one, with the time it lasted, as WhatsApp's do.
+            "COMPLETED", "DROPPED" -> if (joined && c.startedAt != null) CallLogOutcome.Completed else if (outgoing) CallLogOutcome.NoAnswer else CallLogOutcome.Missed
             "MISSED" -> if (outgoing) CallLogOutcome.NoAnswer else CallLogOutcome.Missed
             "DECLINED" -> CallLogOutcome.Declined
             "CANCELLED" -> if (outgoing) CallLogOutcome.Cancelled else CallLogOutcome.Missed
@@ -446,6 +547,8 @@ class CallController(
                     sessionId = r.value.sessionId
                     joinedAtMillis = clock()
                     call = r.value.call
+                    recorder?.joined()
+                    note("join", "ok")
                     val s = _state.value
                     engine.setMicrophone(s?.mic ?: true)
                     engine.setSpeaker(s?.speaker ?: false)
@@ -455,11 +558,13 @@ class CallController(
                     publish()
                     watchScreen()
                 }
-                is AppResult.Failure -> { fail(r.error); return@withLock }
+                is AppResult.Failure -> { fail(r.error, cause = CallEndCause.JoinFailed); return@withLock }
             }
         } catch (e: CallEngineException) {
-            fail(null, if (e.reason == "microphone") "Circaso needs the microphone for calls. Turn it on in Settings." else "The call couldn't start on this phone.")
-            remote.leave(c.callId)
+            val noMic = e.reason == "microphone"
+            note("engine", "failed:" + e.reason.take(60))
+            fail(null, if (noMic) "Circaso needs the microphone for calls. Turn it on in Settings." else "The call couldn't start on this phone.", if (noMic) CallEndCause.PermissionDenied else CallEndCause.EngineFailed)
+            if (leaving.add(c.callId)) scope.launch { sendLeave(c.callId, if (noMic) CallEndCause.PermissionDenied else CallEndCause.EngineFailed) }
             return@withLock
         }
         pullNewLocked()
@@ -606,10 +711,13 @@ class CallController(
         }
     }
 
-    private fun fail(error: AppError?, message: String? = null) {
+    private fun fail(error: AppError?, message: String? = null, cause: CallEndCause = CallEndCause.JoinFailed) {
         closeEngine()
         reconcileJob?.cancel()
+        reconnectJob?.cancel()
         _state.update { it?.copy(phase = CallPhase.Ended, error = message ?: error?.let { e -> ErrorMessages.forError(e) }, endReason = it.endReason ?: "FAILED") }
+        error?.let { note("join", "failed:" + describe(it)) }
+        ended(cause)
         finish()
     }
 
@@ -625,6 +733,8 @@ class CallController(
 
     /** A new call right after the last one ended: the last one's pending clean-up must not wipe this one. */
     private fun takeOver() {
+        // A timeline still open is the last call's; the new call's own begins with it.
+        if (recorder?.recording == true) ended(CallEndCause.Other)
         epoch++
         if (clearJob?.isActive == true) { clearJob?.cancel(); reset() }
         // the last call's engine, if a stale clean-up ever left it running, never plays under this one
@@ -657,21 +767,28 @@ class CallController(
         }
         if (watchJob?.isActive == true) return
         watchJob = scope.launch {
-            kotlinx.coroutines.flow.combine(engine.connected, online) { media, net -> net && media != false }
-                .collect { healthy ->
+            kotlinx.coroutines.flow.combine(engine.connected, online) { media, net -> net to media }
+                .collect { (net, media) ->
+                    netUp = net
                     val s = _state.value ?: return@collect
                     if (s.phase == CallPhase.Ended || sessionId == null) return@collect
-                    if (!healthy) {
-                        if (s.phase != CallPhase.Reconnecting) {
-                            _state.update { it?.copy(phase = CallPhase.Reconnecting) }
-                            reconnectJob?.cancel()
-                            reconnectJob = scope.launch { reconnect() }
-                        }
-                    }
+                    // The media connection is the judge: up means the call is fine whatever else says. With no
+                    // network the phone says "Reconnecting…" at once rather than wait for ICE to notice.
+                    if (media == false || (!net && media != true)) startReconnect(stall = false)
                 }
         }
     }
 
+    /** Says "Reconnecting…" and starts [reconnect], unless it is already running. */
+    private fun startReconnect(stall: Boolean) {
+        if (_state.value?.phase.let { it == null || it == CallPhase.Ended }) return
+        if (reconnectJob?.isActive == true) return
+        _state.update { it?.copy(phase = CallPhase.Reconnecting) }
+        reconnectJob = scope.launch { reconnect(stall) }
+    }
+
+    /** How long a fresh session from a rejoin gets to connect before the next try. */
+    private val RejoinMediaMillis = 10_000L
     private var reconnectJob: Job? = null
     private var screenJob: Job? = null
 
@@ -685,18 +802,49 @@ class CallController(
         }
     }
 
-    private suspend fun reconnect() {
-        val started = nowMillis()
-        while (nowMillis() - started < reconnectGiveUpMillis) {
-            // Wait for the network, then a moment for the media connection to come back on its own (ICE often does).
-            val back = kotlinx.coroutines.withTimeoutOrNull(reconnectGiveUpMillis - (nowMillis() - started)) { online.first { it } } ?: break
-            if (back) delay(2_500)
-            if (engine.connected.value == true) { _state.update { it?.copy(phase = CallPhase.Active) }; return }
-            if (rejoin()) { _state.update { it?.copy(phase = CallPhase.Active) }; return }
-            delay(3_000)
+    /**
+     * Gets the media flowing again within [reconnectGiveUpMillis], or hangs up. Call 1 of 2026-11-13 dropped because
+     * this waited for the app's "online" (can our server be reached), which a socket ping timeout had turned off; the
+     * probe that turns it back on backs off 5, 10, 20 s, so 40 s ran out on a call whose audio was fine. Now the media
+     * connection decides: once it is up again (ICE often recovers by itself) the call goes on; otherwise, whenever the
+     * phone has a network, a fresh session is made (CL3). [stall]: the connection says it is up but nothing arrives, so
+     * only a fresh session counts.
+     */
+    private suspend fun reconnect(stall: Boolean) {
+        note("reconnect", if (stall) "start:stall" else "start:" + if (!netUp) "network" else "media")
+        com.circaso.core.common.Diagnostics.note("calls: reconnecting (${if (stall) "stall" else if (!netUp) "network" else "media"})")
+        val back = kotlinx.coroutines.withTimeoutOrNull(reconnectGiveUpMillis) {
+            var needRejoin = stall
+            delay(2_500)
+            while (true) {
+                if (!needRejoin && engine.connected.value == true) { note("reconnect", "ok:media"); return@withTimeoutOrNull true }
+                if (netUp) {
+                    note("reconnect", "rejoin")
+                    needRejoin = false
+                    if (rejoin()) {
+                        // A session the server took is not a call that works: the fresh connection has to come up.
+                        val up = kotlinx.coroutines.withTimeoutOrNull(RejoinMediaMillis) { engine.connected.first { it == true } }
+                        if (up != null) { note("reconnect", "ok:rejoin"); return@withTimeoutOrNull true }
+                        note("reconnect", "failed:no_media")
+                    } else {
+                        note("reconnect", "failed")
+                        delay(3_000)
+                    }
+                } else {
+                    delay(1_000)
+                }
+            }
+            @Suppress("UNREACHABLE_CODE") false
         }
+        if (back == true) {
+            com.circaso.core.common.Diagnostics.note("calls: reconnected")
+            _state.update { if (it?.phase == CallPhase.Reconnecting) it.copy(phase = CallPhase.Active) else it }
+            return
+        }
+        note("reconnect", "gave_up")
+        com.circaso.core.common.Diagnostics.note("calls: couldn't reconnect in ${reconnectGiveUpMillis}ms, ending")
         _state.update { it?.copy(error = "The call dropped and couldn't reconnect.") }
-        leave()
+        leave(if (stall) CallEndCause.Stall else CallEndCause.ReconnectGaveUp)
     }
 
     /** CL3 again with a fresh peer connection; everyone is pulled again from scratch. */
@@ -733,6 +881,7 @@ class CallController(
     }
 
     private fun reset() {
+        phaseJob?.cancel()
         reconcileJob?.cancel()
         connectedJob?.cancel()
         deferredPull?.cancel()
