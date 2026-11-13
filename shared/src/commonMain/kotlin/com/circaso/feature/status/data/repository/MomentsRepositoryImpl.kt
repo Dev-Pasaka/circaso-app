@@ -271,11 +271,14 @@ class MomentsRepositoryImpl(
         )
     }
 
+    private val viewed = kotlinx.coroutines.flow.MutableSharedFlow<String>(extraBufferCapacity = 16)
+    override val viewedFrames: Flow<String> = viewed
+
     override suspend fun onFrame(type: String, momentId: String?, posterId: String?, requesterId: String?) {
         when (type) {
             "status.deleted" -> momentId?.let { id -> dao.byId(id)?.let { forgetMedia(it) }; dao.delete(id) }
             // ST5 repeats when a heart changes, so the count comes from the server, never by adding one per frame.
-            "status.viewed" -> refresh()
+            "status.viewed" -> { refresh(); momentId?.let { viewed.tryEmit(it) } }
             // A poster's phone answered my key request: open what came; what still won't open never will here.
             "status.keys_ready" -> refresh(answeredBy = posterId)
             // Someone's new phone can't open my moments: answer through the outbox, so it waits for a connection.

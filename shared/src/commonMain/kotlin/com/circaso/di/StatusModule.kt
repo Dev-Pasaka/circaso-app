@@ -88,6 +88,7 @@ val statusModule = module {
         }
     }
     viewModel { com.circaso.feature.status.presentation.MomentForwardViewModel(get(), get()) }
+    single<com.circaso.feature.status.domain.SeenReactions> { com.circaso.feature.status.data.local.PreferencesSeenReactions(get(), get()) }
     viewModel { params ->
         val chats = get<com.circaso.feature.messaging.domain.ChatsRepository>()
         val messages = get<com.circaso.feature.messaging.domain.MessagesRepository>()
@@ -95,6 +96,7 @@ val statusModule = module {
             params.getOrNull<String>(), get(), get(), get(), get(),
             startAt = params.values.getOrNull(1) as? String,
             observeBlocks = get(),
+            seenReactions = get(),
             replyInChat = { posterId, text, moment ->
                 // The 1:1 chat on this phone if there is one (so a reply waits offline like any message), else open it.
                 val existing = chats.chats.first().firstOrNull { it.chat.peerId == posterId && it.chat.viaSpaceId == null }?.chat?.chatId
