@@ -47,6 +47,8 @@ fun HomeScreen(
     chats: @Composable (bottomPadding: PaddingValues) -> Unit,
     chatsActions: @Composable androidx.compose.foundation.layout.RowScope.() -> Unit,
     chatsBanner: @Composable () -> Unit,
+    /** Bars that stay on Chats until dealt with (a wallet hold, restoring group names): part of the layout, not floating. */
+    chatsStrip: @Composable () -> Unit = {},
     wallet: @Composable (bottomPadding: PaddingValues) -> Unit,
     walletActions: @Composable androidx.compose.foundation.layout.RowScope.() -> Unit,
     /** Each tab's sheets: drawn in the scaffold's overlay so they cover the floating tab bar, as `cx-sheet` does. */
@@ -96,6 +98,7 @@ fun HomeScreen(
         // No title bar on the tabs (Pasaka, 2026-10-30): the tab bar already says where you are, and each screen's
         // actions live in it (the Chats button, the eye on the wallet card).
         banner = { when (tab) { Tab.Chats -> chatsBanner(); Tab.Wallet -> ConnectionBanner(); Tab.You -> Unit } },
+        strip = { if (tab == Tab.Chats) chatsStrip() },
         // On its side, with room to spare, or in a tablet's list pane, the tabs move to the left edge (Material's
         // rail, iPad's sidebar), in the same place on every tab; a phone upright keeps them at the bottom.
         bottomBar = if (rail) null else {

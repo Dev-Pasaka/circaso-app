@@ -109,7 +109,7 @@ fun ChamaContent(
     val c = CircasoTheme.colors
     val t = CircasoTheme.typography
     val toast = rememberToastState()
-    LaunchedEffect(state.notice, state.error) { (state.notice ?: state.error)?.let { toast.show(it); onNoticeShown() } }
+    LaunchedEffect(state.notice, state.error) { (state.notice ?: state.error)?.let { toast.show(it, problem = state.notice == null); onNoticeShown() } }
     val chama = state.chama
     val chat = state.chat
     val amAdmin = chat?.myRole == MemberRole.Admin || chat?.myRole == MemberRole.Owner

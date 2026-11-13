@@ -66,7 +66,7 @@ fun HelpContent(
     val c = CircasoTheme.colors
     val t = CircasoTheme.typography
     val toast = rememberToastState()
-    LaunchedEffect(state.error) { state.error?.let { toast.show(it); onErrorShown() } }
+    LaunchedEffect(state.error) { state.error?.let { toast.show(it, problem = true); onErrorShown() } }
     val now = nowMillis()
     CircasoScaffold(
         grouped = true,

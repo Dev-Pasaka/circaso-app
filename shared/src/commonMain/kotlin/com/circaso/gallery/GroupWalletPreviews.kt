@@ -118,7 +118,7 @@ private fun InfoPreview(info: GroupInfoMoney, online: Boolean = true, chat: Chat
     CircasoScaffold(
         grouped = true,
         topBar = { CircasoNavBar("Group Info", onBack = {}) },
-        banner = { if (!online) com.circaso.designsystem.chrome.Banner("You’re offline · Showing the group as of 10:42", com.circaso.designsystem.components.CircasoIcon.Offline) },
+        banner = { if (!online) com.circaso.designsystem.chrome.FloatingNotice("You’re offline", com.circaso.designsystem.components.CircasoIcon.Offline, Modifier.padding(horizontal = 16.dp, vertical = 8.dp), detail = "Showing the group as of 10:42") },
         overlay = { if (sheet != null) CircasoSheet(true, {}, label = "Sheet", content = sheet) },
     ) { padding ->
         Column(Modifier.padding(horizontal = CircasoSpacing.s4).padding(top = CircasoSpacing.s6, bottom = padding.calculateBottomPadding())) {

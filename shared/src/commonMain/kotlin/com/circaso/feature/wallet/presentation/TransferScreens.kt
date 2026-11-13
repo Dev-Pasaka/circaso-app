@@ -471,7 +471,7 @@ fun NetworksScreen(viewModel: NetworksViewModel, onBack: () -> Unit) {
     val c = CircasoTheme.colors
     val t = CircasoTheme.typography
     val toast = rememberToastState()
-    LaunchedEffect(state.notice, state.error) { (state.notice ?: state.error)?.let { toast.show(it); viewModel.onNoticeShown() } }
+    LaunchedEffect(state.notice, state.error) { (state.notice ?: state.error)?.let { toast.show(it, problem = state.notice == null); viewModel.onNoticeShown() } }
     CircasoScaffold(topBar = { CircasoNavBar(title = "Networks", onBack = onBack) }, toast = { ToastHost(toast, Modifier.align(Alignment.TopCenter).padding(top = 8.dp)) }) { padding ->
         val chains = state.chains
         LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = padding.calculateBottomPadding() + CircasoSpacing.s4)) {

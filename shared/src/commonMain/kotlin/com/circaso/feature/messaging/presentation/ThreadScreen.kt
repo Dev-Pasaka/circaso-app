@@ -351,7 +351,7 @@ fun ThreadContent(
     val toast = rememberToastState()
     val quoteScope = androidx.compose.runtime.rememberCoroutineScope()
     LaunchedEffect(state.message) { state.message?.let { toast.show(it); onMessageShown() } }
-    LaunchedEffect(toastPayError) { toastPayError?.let { toast.show(it); toastPayError = null } }
+    LaunchedEffect(toastPayError) { toastPayError?.let { toast.show(it, problem = true); toastPayError = null } }
     val listState = rememberLazyListState()
     val rows = state.messages.size + state.openRequests.size
     // Opened at one message (a search result, a notification's card or call): scroll there once; otherwise follow the
@@ -403,7 +403,7 @@ fun ThreadContent(
     // Location tiles draw the server's map picture when there is one (MAP1).
     androidx.compose.runtime.CompositionLocalProvider(LocalMapPicture provides media?.mapPicture, LocalOpenDocument provides media?.openDocument, LocalDownloading provides downloading) {
     CircasoScaffold(
-        banner = {
+        strip = {
             // Someone I chat with but haven't saved: one tap saves them (moments need both sides saved).
             if (state.peerUnsaved && state.chat?.members?.any { it.userId == state.chat.peerId && it.handle != null } == true) {
                 Row(

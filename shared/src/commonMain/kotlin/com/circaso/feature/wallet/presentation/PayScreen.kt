@@ -125,7 +125,7 @@ fun PayContent(
     val c = CircasoTheme.colors
     val t = CircasoTheme.typography
     val toast = rememberToastState()
-    LaunchedEffect(state.error) { state.error?.let { toast.show(it); onErrorShown() } }
+    LaunchedEffect(state.error) { state.error?.let { toast.show(it, problem = true); onErrorShown() } }
     val title = when {
         // Group wallets (GW9, GW9c, GW9d): the review says what kind of money this is.
         state.toGroup -> if (state.step == PayStep.Done) "Added" else "Contribute"

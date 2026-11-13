@@ -38,7 +38,9 @@ import com.circaso.designsystem.adaptive.readableWidth
 import com.circaso.designsystem.theme.CircasoTheme
 
 /**
- * Screen frame. Order, top to bottom: top bar, banner (the connection banner), content.
+ * Screen frame. Order, top to bottom: top bar, [strip] (bars that belong to the screen: an ongoing call, a chama goal),
+ * content. [banner] (the connection banner and other notices that come and go) floats over the content just under the
+ * top bar, so nothing below it moves when it appears (Pasaka, 2026-11-13).
  * The floating [bottomBar] sits over the content; [content] receives the bottom padding it needs so
  * nothing hides behind it. [overlay] (sheets) draws above everything but the [toast].
  */
@@ -48,7 +50,10 @@ fun CircasoScaffold(
     grouped: Boolean = false,
     /** Across the top; down the left side when the phone is on its side, with everything in it stacked. */
     topBar: (@Composable () -> Unit)? = null,
+    /** Floats over the content under the top bar; appearing never pushes the screen down. */
     banner: @Composable () -> Unit = {},
+    /** Part of the layout under the top bar: bars that stay while something is on (an ongoing call, a goal). */
+    strip: @Composable () -> Unit = {},
     bottomBar: (@Composable () -> Unit)? = null,
     /** In place of [bottomBar] on a wide or short screen: the tabs float down the left side. */
     sideBar: (@Composable () -> Unit)? = null,
@@ -73,6 +78,7 @@ fun CircasoScaffold(
     val topBarOnSide = topBar != null && com.circaso.designsystem.adaptive.LocalWindowLayout.current.short
     var bottomBarHeight by remember { mutableStateOf(0.dp) }
     var sideBarWidth by remember { mutableStateOf(0.dp) }
+    var topBarHeight by remember { mutableStateOf(0.dp) }
     val sideInsets = WindowInsets.displayCutout.union(WindowInsets.navigationBars).only(WindowInsetsSides.Horizontal)
     // Some devices report no navigation inset; keep the floating bar off the screen edge anyway.
     val navInset = maxOf(WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding(), 16.dp)
@@ -99,8 +105,10 @@ fun CircasoScaffold(
             },
         ) {
             androidx.compose.runtime.CompositionLocalProvider(LocalBackdropHost provides host) {
-            if (!topBarOnSide) topBar?.invoke()
-            banner()
+            if (!topBarOnSide && topBar != null) {
+                Box(Modifier.fillMaxWidth().onSizeChanged { topBarHeight = with(density) { it.height.toDp() } }) { topBar() }
+            }
+            strip()
             Box(Modifier.weight(1f).let { if (keepReadable) it.readableWidth(maxContentWidth) else it }) { content(PaddingValues(bottom = if (bottomBar != null) bottomBarHeight + navInset else 0.dp)) }
             }
         }
@@ -150,6 +158,18 @@ fun CircasoScaffold(
                     .padding(start = 12.dp)
                     .onSizeChanged { sideBarWidth = with(density) { it.width.toDp() } + 12.dp + 8.dp },
             ) { sideBar() }
+        }
+        // Notices float under the top bar, over the content, within the same readable frame; the content stays put.
+        Box(
+            Modifier.align(Alignment.TopCenter).fillMaxWidth()
+                .windowInsetsPadding(WindowInsets.statusBars).windowInsetsPadding(sideInsets)
+                .padding(
+                    start = (if (sideBar != null) sideBarWidth else 0.dp) + (if (topBarOnSide) WindowLayout.SideTopBarWidth else 0.dp),
+                    top = if (topBar != null && !topBarOnSide) topBarHeight else 0.dp,
+                ),
+            contentAlignment = Alignment.TopCenter,
+        ) {
+            Box(if (keepReadable) Modifier.readableWidth(maxContentWidth) else Modifier.fillMaxWidth()) { banner() }
         }
         overlay()
         toast()

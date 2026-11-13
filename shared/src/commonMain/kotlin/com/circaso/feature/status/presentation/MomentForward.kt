@@ -150,7 +150,7 @@ fun MomentForwardScreen(viewModel: MomentForwardViewModel, media: ForwardMedia, 
         }
     }
     val close = { viewModel.reset(); onClose() }
-    LaunchedEffect(state.error) { state.error?.let { toast.show(it); viewModel.errorShown() } }
+    LaunchedEffect(state.error) { state.error?.let { toast.show(it, problem = true); viewModel.errorShown() } }
     androidx.compose.ui.backhandler.BackHandler(onBack = close)
     CircasoScaffold(
         Modifier.fillMaxSize().background(c.bg),

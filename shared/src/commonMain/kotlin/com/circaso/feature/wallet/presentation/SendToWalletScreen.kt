@@ -72,7 +72,7 @@ fun SendToWalletContent(
     val t = CircasoTheme.typography
     val toast = rememberToastState()
     val clipboard = LocalClipboardManager.current
-    LaunchedEffect(state.error) { state.error?.let { toast.show(it); onErrorShown() } }
+    LaunchedEffect(state.error) { state.error?.let { toast.show(it, problem = true); onErrorShown() } }
     CircasoScaffold(
         topBar = { CircasoNavBar(title = when (state.step) { ExternalStep.Review, ExternalStep.Signing -> "Review"; ExternalStep.Done -> "Sent"; else -> "Send to a Wallet" }, onBack = when (state.step) { ExternalStep.Signing -> null; ExternalStep.Review -> onBackToForm; else -> onBack }) },
         toast = { ToastHost(toast, Modifier.align(Alignment.TopCenter).padding(top = 8.dp)) },
