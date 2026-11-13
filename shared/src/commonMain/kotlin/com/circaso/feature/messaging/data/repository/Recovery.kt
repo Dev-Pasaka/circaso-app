@@ -180,7 +180,7 @@ class RetryReceipts(
                 is AppResult.Success -> {
                     restartedAt[requesterId] = t
                     if (restarted.value && chat.kind == MessagingWire.Direct) {
-                        insertSystemRow(dao, chatId, requesterId, "${chats.members(chatId).first { it.userId == requesterId }.displayName}'s security code changed", t)
+                        insertSystemRow(dao, chatId, requesterId, "${chats.members(chatId).first { it.userId == requesterId }.displayName}${com.circaso.feature.messaging.domain.SecurityCodeChangedSuffix}", t)
                     }
                 }
             }
