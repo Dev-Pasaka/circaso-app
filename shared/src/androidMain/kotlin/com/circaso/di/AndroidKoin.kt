@@ -124,16 +124,20 @@ fun callOnScreen(): kotlinx.coroutines.flow.Flow<Boolean> =
         ?: kotlinx.coroutines.flow.flowOf(false)
 
 /** The incoming-call notification was tapped: load that call and show its answer screen (design H1). */
-fun openRingingCall(callId: String) {
+fun openRingingCall(callId: String, answer: Boolean = false) {
     runCatching {
         val koin = org.koin.mp.KoinPlatform.getKoin()
         koin.get<com.circaso.core.calls.AndroidCallNotifier>().clear(callId)
         val scope = koin.get<kotlinx.coroutines.CoroutineScope>()
         scope.launch {
-            koin.get<com.circaso.feature.calls.CallController>().onFrame(
+            val controller = koin.get<com.circaso.feature.calls.CallController>()
+            controller.onFrame(
                 "call.ringing",
                 kotlinx.serialization.json.buildJsonObject { put("callId", kotlinx.serialization.json.JsonPrimitive(callId)) },
             )
+            // The notification's Accept: answered as if Accept had been tapped on the answer screen, if it still rings.
+            val now = controller.state.value
+            if (answer && now?.callId == callId && now.phase == com.circaso.feature.calls.CallPhase.Incoming) controller.accept()
         }
     }
 }

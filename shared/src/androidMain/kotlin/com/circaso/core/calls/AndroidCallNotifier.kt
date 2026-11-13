@@ -101,8 +101,14 @@ class AndroidCallNotifier(private val context: Context, private val scope: Corou
         val open = context.packageManager.getLaunchIntentForPackage(context.packageName)?.apply {
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP)
             putExtra(ExtraCallId, callId)
-        }
-        val tap = open?.let { PendingIntent.getActivity(context, callId.hashCode(), it, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE) } ?: return
+        } ?: return
+        val tap = PendingIntent.getActivity(context, callId.hashCode(), open, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+        // Accept answers straight away (2026-11-14): with the tap's intent it only opened the answer screen, and the
+        // person had to accept a second time. Its own request code, so its extra isn't folded into the tap's.
+        val answer = PendingIntent.getActivity(
+            context, callId.hashCode() + 1, Intent(open).putExtra(ExtraAnswer, true),
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+        )
         val decline = PendingIntent.getBroadcast(
             context, callId.hashCode(),
             Intent(context, CallDeclineReceiver::class.java).putExtra(ExtraCallId, callId),
@@ -113,7 +119,7 @@ class AndroidCallNotifier(private val context: Context, private val scope: Corou
             .setSmallIcon(com.circaso.shared.R.drawable.ic_stat_circaso)
             .setContentTitle(title)
             .setContentText(text)
-            .setStyle(NotificationCompat.CallStyle.forIncomingCall(caller, decline, tap))
+            .setStyle(NotificationCompat.CallStyle.forIncomingCall(caller, decline, answer))
             .setCategory(NotificationCompat.CATEGORY_CALL)
             .setPriority(NotificationCompat.PRIORITY_MAX)
             .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
@@ -138,6 +144,8 @@ class AndroidCallNotifier(private val context: Context, private val scope: Corou
     companion object {
         const val ChannelId = "calls"
         const val ExtraCallId = "com.circaso.callId"
+        /** On the Accept button's intent: answer the call, not only show it. */
+        const val ExtraAnswer = "com.circaso.answer"
         const val RingMillis = 45_000L
         /** How long a ring waits for the caller's photo before it rings without it. */
         const val PhotoWaitMillis = 300L

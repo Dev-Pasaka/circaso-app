@@ -178,11 +178,13 @@ class MainActivity : ComponentActivity() {
                 .metaData?.getString("com.circaso.SHARE_HOST")
         }.getOrNull()
 
-    /** From the incoming-call notification (design H1): show that call's answer screen. */
+    /** From the incoming-call notification (design H1): show that call's answer screen, or answer it (its Accept). */
     private fun openCall(intent: android.content.Intent?) {
         val callId = intent?.getStringExtra(com.circaso.core.calls.AndroidCallNotifier.ExtraCallId) ?: return
+        val answer = intent.getBooleanExtra(com.circaso.core.calls.AndroidCallNotifier.ExtraAnswer, false)
+        intent.removeExtra(com.circaso.core.calls.AndroidCallNotifier.ExtraAnswer) // answered once, never again on a re-create
         overLockScreen(true) // the full-screen intent may be opening us on a locked phone
-        com.circaso.di.openRingingCall(callId)
+        com.circaso.di.openRingingCall(callId, answer)
     }
 
     /**
