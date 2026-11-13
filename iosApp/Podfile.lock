@@ -32,6 +32,29 @@ PODS:
   - FBSDKCoreKit_Basics (18.1.1)
   - FBSDKLoginKit (18.1.1):
     - FBSDKCoreKit (= 18.1.1)
+  - FirebaseCore (12.19.3):
+    - FirebaseCoreInternal (~> 12.19.0)
+    - GoogleUtilities/Environment (~> 8.1)
+    - GoogleUtilities/Logger (~> 8.1)
+  - FirebaseCoreInternal (12.19.0):
+    - "GoogleUtilities/NSData+zlib (~> 8.1)"
+  - FirebaseInstallations (12.19.0):
+    - FirebaseCore (~> 12.19.0)
+    - GoogleUtilities/Environment (~> 8.1)
+    - GoogleUtilities/UserDefaults (~> 8.1)
+    - PromisesObjC (~> 2.4)
+  - FirebaseMessaging (12.19.0):
+    - FirebaseCore (~> 12.19.0)
+    - FirebaseInstallations (~> 12.19.0)
+    - GoogleDataTransport (~> 10.1)
+    - GoogleUtilities/AppDelegateSwizzler (~> 8.1)
+    - GoogleUtilities/Environment (~> 8.1)
+    - GoogleUtilities/Reachability (~> 8.1)
+    - GoogleUtilities/UserDefaults (~> 8.1)
+    - nanopb (~> 3.30910.0)
+  - GoogleDataTransport (10.1.1):
+    - nanopb (~> 3.30910.0)
+    - PromisesObjC (~> 2.4)
   - GoogleMaps (9.4.0):
     - GoogleMaps/Maps (= 9.4.0)
   - GoogleMaps/Maps (9.4.0)
@@ -40,12 +63,27 @@ PODS:
     - AppCheckCore (< 13.0, >= 11.0)
     - GTMAppAuth (~> 6.0)
     - GTMSessionFetcher/Core (< 6.0, >= 3.3)
+  - GoogleUtilities/AppDelegateSwizzler (8.1.5):
+    - GoogleUtilities/Environment
+    - GoogleUtilities/Logger
+    - GoogleUtilities/Network
+    - GoogleUtilities/Privacy
   - GoogleUtilities/Environment (8.1.5):
     - GoogleUtilities/Privacy
   - GoogleUtilities/Logger (8.1.5):
     - GoogleUtilities/Environment
     - GoogleUtilities/Privacy
+  - GoogleUtilities/Network (8.1.5):
+    - GoogleUtilities/Logger
+    - "GoogleUtilities/NSData+zlib"
+    - GoogleUtilities/Privacy
+    - GoogleUtilities/Reachability
+  - "GoogleUtilities/NSData+zlib (8.1.5)":
+    - GoogleUtilities/Privacy
   - GoogleUtilities/Privacy (8.1.5)
+  - GoogleUtilities/Reachability (8.1.5):
+    - GoogleUtilities/Logger
+    - GoogleUtilities/Privacy
   - GoogleUtilities/UserDefaults (8.1.5):
     - GoogleUtilities/Logger
     - GoogleUtilities/Privacy
@@ -64,6 +102,11 @@ PODS:
   - IQKeyboardNotification (1.0.3)
   - IQTextInputViewNotification (1.0.5):
     - IQKeyboardCore (= 1.0.5)
+  - nanopb (3.30910.0):
+    - nanopb/decode (= 3.30910.0)
+    - nanopb/encode (= 3.30910.0)
+  - nanopb/decode (3.30910.0)
+  - nanopb/encode (3.30910.0)
   - onnxruntime-c (1.30.0)
   - onnxruntime-objc (1.30.0):
     - onnxruntime-objc/Core (= 1.30.0)
@@ -80,6 +123,7 @@ PODS:
 
 DEPENDENCIES:
   - CircleProgrammableWalletSDK (= 1.4.5)
+  - FirebaseMessaging (= 12.19.0)
   - GoogleMaps (= 9.4.0)
   - GoogleSignIn (from `LocalPods/GoogleSignIn/GoogleSignIn.podspec.json`)
   - onnxruntime-objc (= 1.30.0)
@@ -97,6 +141,11 @@ SPEC REPOS:
     - FBSDKCoreKit
     - FBSDKCoreKit_Basics
     - FBSDKLoginKit
+    - FirebaseCore
+    - FirebaseCoreInternal
+    - FirebaseInstallations
+    - FirebaseMessaging
+    - GoogleDataTransport
     - GoogleMaps
     - GoogleUtilities
     - GTMAppAuth
@@ -105,6 +154,7 @@ SPEC REPOS:
     - IQKeyboardManagerSwift
     - IQKeyboardNotification
     - IQTextInputViewNotification
+    - nanopb
     - onnxruntime-c
     - onnxruntime-objc
     - PromisesObjC
@@ -128,6 +178,11 @@ SPEC CHECKSUMS:
   FBSDKCoreKit: 0063014b3b1f7e975e70b60232b0cf8003839746
   FBSDKCoreKit_Basics: f4a1e0f38769eb71abaf6395b85e015318fcda49
   FBSDKLoginKit: 0e6d0df30ae0a5b33f33d9050ca10ca21e0da234
+  FirebaseCore: ab948de5d99e69aeed3cd6f5ace263ce795b2559
+  FirebaseCoreInternal: 656b1c2fd5a1c5976183dc54b73deda78fb26ee3
+  FirebaseInstallations: f70a49eed611f5602f373e40974b3b01556ac217
+  FirebaseMessaging: c15f48126adbe8b4d3238a5e1fa24bab3ad3e472
+  GoogleDataTransport: a24e58982ab3ba2f64d79613e027fe7f57e88539
   GoogleMaps: 0608099d4870cac8754bdba9b6953db543432438
   GoogleSignIn: 9514bc45cc13d4432fb1ee9014058045513ea26e
   GoogleUtilities: 7dc09b3fa9ecb5c2298b952313d14628b61b9da3
@@ -137,6 +192,7 @@ SPEC CHECKSUMS:
   IQKeyboardManagerSwift: 12d6ae3632ef744ccd033c048b566af13cc10d49
   IQKeyboardNotification: d7382c4466c5a5adef92c7452ebf861b36050088
   IQTextInputViewNotification: 4381fb828881983205fbee38f17da8a9fe2e835c
+  nanopb: fad817b59e0457d11a5dfbde799381cd727c1275
   onnxruntime-c: 36ca0f2cdbc89c6b330ec5287c3faf5ca6ed394d
   onnxruntime-objc: b5edf18cf57daebe2ee59a7866aab12c8eeff940
   PromisesObjC: 752c3227f599e3467650e47ea36f433eeb10c273
@@ -145,6 +201,6 @@ SPEC CHECKSUMS:
   SDWebImage: fc8f2d48bbfd72ef39d70e981bd24a3f3be53fec
   SnapKit: d612e99e678a2d3b95bf60b0705ed0a35c03484a
 
-PODFILE CHECKSUM: 5b2c653bf5de8658d921bc3d3a3f855d1980239a
+PODFILE CHECKSUM: 625cdab4053865fab2ea2a9e9ee570204346ea1c
 
 COCOAPODS: 1.17.0

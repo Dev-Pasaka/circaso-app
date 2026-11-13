@@ -26,6 +26,11 @@ target 'iosApp' do
   # Silero VAD for talking over Asha in voice mode (approved 2026-11-07): ONNX Runtime's Objective-C API, latest stable
   # on CocoaPods at build time (the Swift package lags several releases). See VadImpl.swift.
   pod 'onnxruntime-objc', '1.30.0'
+  # Message, payment and missed-call notifications on iPhone (approved 2026-11-10): the server already sends them through
+  # FCM with an APNs block, so the phone only needs its FCM token. A pod (12.x: Firebase 13 is Swift-package only) because
+  # GoogleSignIn's pods already bring GoogleUtilities and PromisesObjC: two copies of those would collide at runtime.
+  # Messaging only, no Analytics. See PushNotificationsImpl.swift.
+  pod 'FirebaseMessaging', '12.19.0'
   # Circle's social login (Google, Facebook) is not used. Its binary links both frameworks, so they must ship or the app
   # can't start; Facebook's is switched off in Info.plist (no app id, no auto-init, no event logging, no ad id).
 end

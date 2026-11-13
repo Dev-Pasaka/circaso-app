@@ -84,7 +84,17 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
     /// Set before launch finishes, so a tap that started Circaso (cold) is delivered too.
     func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil) -> Bool {
         UNUserNotificationCenter.current().delegate = self
+        PushNotificationsImpl.install() // message, payment and missed-call pushes through FCM; see PushNotificationsImpl.swift
         return true
+    }
+
+    /// APNs answered with this iPhone's device token: Firebase turns it into the FCM token the server sends to.
+    func application(_ application: UIApplication, didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data) {
+        PushNotificationsImpl.shared.apnsTokenReceived(deviceToken)
+    }
+
+    func application(_ application: UIApplication, didFailToRegisterForRemoteNotificationsWithError error: Error) {
+        NSLog("Circaso push: APNs registration failed: %@", error.localizedDescription)
     }
 
     /// Tapped, cold, in the background or on screen: open where it points (NotificationTaps → the navigation).
