@@ -355,21 +355,39 @@ class AndroidChatNotifications(private val context: Context) : ChatNotifications
      * After a reply from the notification: my words join the conversation, quietly (Android expects the update, or the
      * reply field keeps spinning). [failed] says it couldn't be queued, in place of the words.
      */
-    internal fun addMyReply(chatId: String, text: String, failed: Boolean = false) {
+    /**
+     * Returns whether the notification was re-posted. Android keeps the reply field spinning until the app posts the
+     * notification again, so a caller that gets false must still settle it ([settleAfterReply]).
+     */
+    internal fun addMyReply(chatId: String, text: String, failed: Boolean = false): Boolean {
         val id = "chat:$chatId".hashCode()
-        val current = active(id) ?: return
-        val style = NotificationCompat.MessagingStyle.extractMessagingStyleFromNotification(current) ?: return
+        val mine = NotificationCompat.MessagingStyle.Message(if (failed) ReplyNotSent else text, System.currentTimeMillis(), null as Person?)
+        val current = active(id)
+        val style = current?.let { NotificationCompat.MessagingStyle.extractMessagingStyleFromNotification(it) }
+        if (current == null || style == null) {
+            // The shown one couldn't be read (MIUI can hand back a stripped copy, or it was swiped meanwhile): post the
+            // reply on its own, quietly, so the field still stops spinning and the person sees it went.
+            val fresh = conversationStyle(group = false, title = null).addMessage(mine)
+            return runCatching {
+                post(
+                    id, ChannelId, chatId, NotificationContent("Circaso", text), fresh, NotificationDestination.Chat(chatId),
+                    current?.let { NotificationCompat.getShortcutId(it) }, largeIcon = null, alert = false, actions = true,
+                )
+            }.isSuccess
+        }
         val updated = conversationStyle(style.isGroupConversation, style.conversationTitle?.toString())
         style.messages.takeLast(MaxLines - 1).forEach { updated.addMessage(it) }
-        updated.addMessage(NotificationCompat.MessagingStyle.Message(if (failed) ReplyNotSent else text, System.currentTimeMillis(), null as Person?))
+        updated.addMessage(mine)
         val title = current.extras.getCharSequence(NotificationCompat.EXTRA_TITLE)?.toString().orEmpty()
         // The photo stays (MIUI and Android below 11 draw it from the large icon).
         @Suppress("DEPRECATION")
         val photo = current.extras.getParcelable<Bitmap>(NotificationCompat.EXTRA_LARGE_ICON)
-        post(
-            id, ChannelId, chatId, NotificationContent(title, text), updated, NotificationDestination.Chat(chatId),
-            NotificationCompat.getShortcutId(current), largeIcon = photo, alert = false, actions = true,
-        )
+        return runCatching {
+            post(
+                id, ChannelId, chatId, NotificationContent(title, text), updated, NotificationDestination.Chat(chatId),
+                NotificationCompat.getShortcutId(current), largeIcon = photo, alert = false, actions = true,
+            )
+        }.isSuccess
     }
 
     override fun clear(chatId: String) { manager.cancel("chat:$chatId".hashCode()) }
@@ -435,6 +453,9 @@ class ChatNotificationActionReceiver : BroadcastReceiver() {
         val chatId = intent.getStringExtra(AndroidChatNotifications.ExtraChatId) ?: return
         val pending = goAsync()
         CoroutineScope(Dispatchers.IO).launch {
+            // Whatever happens below, the notification is settled at the end: Android spins the reply field until the
+            // app posts or removes it, and a spinner that never stops reads as a reply that never went.
+            var settled = false
             try {
                 val koin = KoinPlatform.getKoin()
                 val messages = koin.get<com.circaso.feature.messaging.domain.MessagesRepository>()
@@ -447,17 +468,19 @@ class ChatNotificationActionReceiver : BroadcastReceiver() {
                             val queued = runCatching { withTimeoutOrNull(ActionMillis) { messages.send(chatId, text) } != null }.getOrDefault(false)
                             // Replying is reading: the chat's unread count and its receipt follow.
                             if (queued) runCatching { withTimeoutOrNull(ActionMillis) { messages.markRead(chatId) } }
-                            notifications?.addMyReply(chatId, text, failed = !queued)
+                            settled = notifications?.addMyReply(chatId, text, failed = !queued) == true
                         }
                     }
                     AndroidChatNotifications.ActionMarkRead -> {
                         withTimeoutOrNull(ActionMillis) { messages.markRead(chatId) }
                         notifications?.clear(chatId)
+                        settled = notifications != null
                     }
                 }
             } catch (_: Exception) {
                 // Nothing to tell anyone from here; the notification stays and the chat opens as usual.
             } finally {
+                if (!settled) runCatching { NotificationManagerCompat.from(context).cancel("chat:$chatId".hashCode()) }
                 pending.finish()
             }
         }
