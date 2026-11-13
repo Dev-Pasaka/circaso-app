@@ -21,6 +21,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
+import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
@@ -63,13 +64,13 @@ class MomentReactionSplashTest {
         val vm = mine()
         assertNull(vm.state.value.burst)
         repo.views = listOf(MomentViewer("w", 1, true, "❤️"))
-        repo.frames.emit("m1")
+        repo.frames.emit("m1"); advanceUntilIdle()
         assertEquals(listOf("❤️"), vm.state.value.burst?.emojis)
         vm.splashDone(vm.state.value.burst!!.id)
-        repo.frames.emit("m1")
+        repo.frames.emit("m1"); advanceUntilIdle()
         assertNull(vm.state.value.burst)
         repo.views = listOf(MomentViewer("w", 1, true, "🔥"))
-        repo.frames.emit("m1")
+        repo.frames.emit("m1"); advanceUntilIdle()
         assertEquals(listOf("🔥"), vm.state.value.burst?.emojis)
     }
 
@@ -77,13 +78,26 @@ class MomentReactionSplashTest {
         val vm = mine()
         vm.openViewers(true)
         repo.views = listOf(MomentViewer("w", 1, true, "😂"))
-        repo.frames.emit("m1")
+        repo.frames.emit("m1"); advanceUntilIdle()
         assertNull(vm.state.value.burst)
         assertEquals("😂", vm.state.value.viewers?.single()?.viewer?.reaction)
         vm.openViewers(false)
-        repo.frames.emit("m1")
+        repo.frames.emit("m1"); advanceUntilIdle()
         // Seen in the list, so it doesn't splash afterwards either.
         assertNull(vm.state.value.burst)
+    }
+
+    @Test fun aSplashCutShortPlaysAgainNextTime() = runTest(dispatcher) {
+        repo.views = listOf(MomentViewer("w", 1, true, "😂"))
+        val vm = mine()
+        assertEquals(listOf("😂"), vm.state.value.burst?.emojis)
+        // Closed before it finished: not counted as seen.
+        assertEquals(listOf("😂"), mine().state.value.burst?.emojis)
+    }
+
+    @Test fun twoPeopleWithTheSameFirstNameStayTwo() {
+        val merged = ReactionBurst(1, listOf("😂"), listOf("John"), who = listOf("a")).merge(ReactionBurst(2, listOf("❤️"), listOf("John"), who = listOf("b")))
+        assertEquals("John and John reacted", merged.line)
     }
 
     @Test fun burstsLandingWhileOnePlaysMergeIntoOneWaiting() {

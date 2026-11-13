@@ -392,8 +392,9 @@ private fun ViewerBody(state: MomentViewerUiState, vm: MomentViewerActions, onCl
             }
         }
 
-        // New reactions on my moment splash over it; it takes no touches, so the moment can be tapped through.
-        if (moment.mine) ReactionSplash(state.burst, vm.splashDone)
+        // New reactions on my moment splash over it; it takes no touches, so the moment can be tapped through. Always
+        // composed, so moving on fades it out; held while a sheet or confirm covers the moment, then played.
+        ReactionSplash(state.burst?.takeIf { moment.mine && !state.moreOpen && !state.confirmDelete }, vm.splashDone)
 
         ToastHost(toast, Modifier.align(Alignment.TopCenter).statusBarsPadding().padding(top = 96.dp))
         MoreSheet(state.moreOpen, ring.name, onMute = vm.mute, onMessage = { vm.openMore(false); onMessage(ring.posterId) }, onDismiss = { vm.openMore(false) })
@@ -632,7 +633,7 @@ private fun BoxScope.ViewersSheet(state: MomentViewerUiState, onDismiss: () -> U
                                     val id = "${row.viewer.userId}|$emoji"
                                     androidx.compose.runtime.key(id) {
                                         val play = remember { popped.add(id) }
-                                        val delay = remember { if (nowMillis() - shownAt < FirstRowsMillis) i.coerceAtMost(MaxStaggered) * RowStaggerMillis + SheetSettleMillis else 0 }
+                                        val delay = remember { if (nowMillis() - shownAt < FirstRowsMillis) reactedBefore(state.viewers, i).coerceAtMost(MaxStaggered) * RowStaggerMillis + SheetSettleMillis else 0 }
                                         ReactionPop(emoji, play, delay, t.title3)
                                     }
                                 }
@@ -643,6 +644,9 @@ private fun BoxScope.ViewersSheet(state: MomentViewerUiState, onDismiss: () -> U
         }
     }
 }
+
+/** How many rows above [i] have a reaction: only reactions take a place in the stagger. */
+private fun reactedBefore(rows: List<ViewerRow>, i: Int): Int = (0 until i).count { rows[it].viewer.reaction != null }
 
 /** Rows on screen when Seen by loads pop one after another, starting once the sheet has settled. */
 private const val FirstRowsMillis = 400L

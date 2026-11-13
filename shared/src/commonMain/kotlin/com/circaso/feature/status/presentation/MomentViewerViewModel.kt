@@ -1,3 +1,5 @@
+@file:OptIn(kotlinx.coroutines.FlowPreview::class)
+
 package com.circaso.feature.status.presentation
 
 import androidx.lifecycle.ViewModel
@@ -20,6 +22,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
@@ -87,7 +90,9 @@ class MomentViewerViewModel(
     private var load: Job? = null
     private var started = false
     // Declared before init: the first emission may run inside it.
-    private var lastCounts: Triple<String, Int, Int>? = null
+    private var lastCounts: Pair<String, Int>? = null
+    /** Asks to look for new reactions; asks landing together (a frame and the refresh it caused) make one fetch. */
+    private val checkAsks = kotlinx.coroutines.flow.MutableSharedFlow<Unit>(extraBufferCapacity = 1, onBufferOverflow = kotlinx.coroutines.channels.BufferOverflow.DROP_OLDEST)
     private var reactionsJob: Job? = null
     private var reactionsAgain = false
     private var burstIds = 0L
@@ -129,16 +134,18 @@ class MomentViewerViewModel(
                     }
                 }
                 showCurrent()
-                // My moment's counts moved (a refresh after reconnecting, say): look for reactions that came meanwhile.
+                // My moment's reaction count moved (a refresh after reconnecting, say): look for reactions that came meanwhile.
                 _state.value.moment?.takeIf { it.mine }?.let { m ->
-                    val counts = Triple(m.momentId, m.viewCount, m.reactionCount)
-                    if (counts != lastCounts) { lastCounts = counts; checkReactions() }
+                    val counts = m.momentId to m.reactionCount
+                    if (counts != lastCounts) { lastCounts = counts; checkAsks.tryEmit(Unit) }
                 }
             }
         }
         viewModelScope.launch { connection.status.collect { st -> _state.update { it.copy(online = st == ConnectionStatus.Online) } } }
         // Someone viewed or reacted to the moment of mine on screen, live.
-        viewModelScope.launch { repository.viewedFrames.collect { id -> if (_state.value.moment?.let { it.mine && it.momentId == id } == true) checkReactions() } }
+        // (A changed emoji leaves the counts alone, so the frame itself asks too.)
+        viewModelScope.launch { repository.viewedFrames.collect { id -> if (_state.value.moment?.let { it.mine && it.momentId == id } == true) checkAsks.tryEmit(Unit) } }
+        viewModelScope.launch { checkAsks.debounce(com.circaso.designsystem.theme.CircasoMotion.BaseMs.toLong()).collect { checkReactions() } }
     }
 
     private var shownId: String? = null
@@ -165,7 +172,7 @@ class MomentViewerViewModel(
             }
         }
         if (!m.mine && !m.viewed) viewModelScope.launch { repository.markViewed(m.momentId) }
-        if (m.mine) { lastCounts = Triple(m.momentId, m.viewCount, m.reactionCount); checkReactions() }
+        if (m.mine) { lastCounts = m.momentId to m.reactionCount; checkReactions() }
         // Fetch and decrypt the next one while this plays, so tapping on rarely stops at Loading.
         upNext()?.takeIf { it.media != null && _state.value.online }?.let { next -> viewModelScope.launch { repository.media(next) } }
     }
@@ -287,9 +294,12 @@ class MomentViewerViewModel(
                 val views = (repository.viewers(m.momentId) as? AppResult.Success)?.value ?: break
                 // Moved on while asking: these belong to another moment.
                 if (_state.value.moment?.momentId != m.momentId) continue
-                val fresh = unseenReactions(views, seenReactions.seen(m.momentId))
-                markSeen(m.momentId, views)
+                // Waiting to splash already counts as shown here, so a second look doesn't queue them twice.
+                val pending = _state.value.bursts.flatMap { it.keys }.toSet()
+                val fresh = unseenReactions(views, seenReactions.seen(m.momentId) + pending)
                 val rows = rowsOf(views)
+                // With Seen by open the list shows them now; otherwise they count as seen once their splash has played.
+                if (_state.value.viewersOpen) markSeen(m.momentId, views)
                 val names = fresh.map { v -> rows.first { it.viewer.userId == v.userId }.name.firstName() }
                 _state.update { s ->
                     when {
@@ -297,16 +307,18 @@ class MomentViewerViewModel(
                         // The list is on screen: it shows them, each new row's emoji popping in.
                         s.viewersOpen -> if (s.viewers != null) s.copy(viewers = rows) else s
                         fresh.isEmpty() -> s
-                        else -> s.copy(bursts = s.bursts.queue(ReactionBurst(++burstIds, fresh.mapNotNull { it.reaction }, names)))
+                        else -> s.copy(bursts = s.bursts.queue(ReactionBurst(++burstIds, fresh.mapNotNull { it.reaction }, names, who = fresh.map { it.userId }, keys = fresh.mapNotNull(::reactionKey).toSet(), momentId = m.momentId)))
                     }
                 }
             } while (reactionsAgain)
         }
     }
 
-    private suspend fun markSeen(momentId: String, views: List<MomentViewer>) {
+    private suspend fun markSeen(momentId: String, views: List<MomentViewer>) = markSeen(momentId, views.mapNotNull(::reactionKey).toSet())
+
+    private suspend fun markSeen(momentId: String, keys: Set<String>) {
         val live = _state.value.rings.flatMap { it.moments }.filter { it.mine }.map { it.momentId }.toSet()
-        seenReactions.markSeen(momentId, views.mapNotNull(::reactionKey).toSet(), live)
+        seenReactions.markSeen(momentId, keys, live)
     }
 
     private suspend fun rowsOf(views: List<MomentViewer>): List<ViewerRow> {
@@ -314,8 +326,15 @@ class MomentViewerViewModel(
         return views.map { v -> ViewerRow(v, people[v.userId]?.person?.displayName ?: "Someone not in your contacts", people[v.userId]?.person?.avatarUrl) }
     }
 
-    /** The splash [id] has played (or was cut short): the next one, if any, plays. */
-    fun splashDone(id: Long) = _state.update { s -> if (s.burst?.id == id) s.copy(bursts = s.bursts.drop(1)) else s }
+    /**
+     * The splash [id] has played: its reactions count as seen, and the next one, if any, plays. One cut short (I moved
+     * on, the app went away) never gets here, so it plays again the next time I look.
+     */
+    fun splashDone(id: Long) {
+        val played = _state.value.burst?.takeIf { it.id == id } ?: return
+        _state.update { s -> if (s.burst?.id == id) s.copy(bursts = s.bursts.drop(1)) else s }
+        if (played.momentId.isNotEmpty() && played.keys.isNotEmpty()) viewModelScope.launch { markSeen(played.momentId, played.keys) }
+    }
 
     fun openViewers(open: Boolean) {
         // Opening Seen by cuts a splash short: the list shows the same reactions, popping in.

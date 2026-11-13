@@ -711,12 +711,12 @@ private fun MomentPreview(
     splash: Boolean = false,
 ) {
     // The splash loop: each burst plays, a short pause, then the next sample.
-    var turn by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(0) }
-    var burst by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf<com.circaso.feature.status.presentation.ReactionBurst?>(null) }
-    androidx.compose.runtime.LaunchedEffect(splash, turn) {
+    val turn = androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(0) }
+    val burst = androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf<com.circaso.feature.status.presentation.ReactionBurst?>(null) }
+    androidx.compose.runtime.LaunchedEffect(splash, turn.value) {
         if (!splash) return@LaunchedEffect
-        kotlinx.coroutines.delay(if (turn == 0) 600 else 900)
-        burst = SplashSamples[turn % SplashSamples.size].copy(id = turn.toLong() + 1)
+        kotlinx.coroutines.delay(if (turn.value == 0) 600 else 900)
+        burst.value = SplashSamples[turn.value % SplashSamples.size].copy(id = turn.value.toLong() + 1)
     }
     val bytes = androidx.compose.runtime.remember { kotlin.io.encoding.Base64.decode(SamplePhoto) }
     val ring = com.circaso.feature.status.domain.MomentRing(if (moment.mine) "me" else "w", if (moment.mine) "My moment" else "Wanjiru Kamau", if (moment.mine) DemoPhotos.You else DemoPhotos.Wanjiru, listOf(moment, moment.copy(momentId = "next")), muted = false)
@@ -730,11 +730,11 @@ private fun MomentPreview(
         com.circaso.feature.status.presentation.MomentViewerUiState(
             rings = listOf(ring), media = media, picking = picking,
             viewersOpen = viewers != null, viewers = viewers, paused = picking || viewers != null || splash,
-            bursts = listOfNotNull(burst),
+            bursts = listOfNotNull(burst.value),
         ),
         if (!splash) com.circaso.feature.status.presentation.MomentViewerActions.None
         else com.circaso.feature.status.presentation.MomentViewerActions({}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {},
-            splashDone = { burst = null; turn++ }),
+            splashDone = { burst.value = null; turn.value++ }),
         onClose = {},
     )
 }

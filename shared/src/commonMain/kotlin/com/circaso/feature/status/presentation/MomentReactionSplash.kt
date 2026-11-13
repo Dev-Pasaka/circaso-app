@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.sizeIn
 import androidx.compose.foundation.text.BasicText
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -58,8 +59,25 @@ import kotlin.random.Random
  * into the screen"), played as one splash. Several that land while one is playing merge into the next ([merge]), so
  * a burst of reactions never queues for half a minute.
  */
-data class ReactionBurst(val id: Long, val emojis: List<String>, val names: List<String>) {
-    fun merge(other: ReactionBurst): ReactionBurst = copy(emojis = emojis + other.emojis, names = (names + other.names).distinct())
+data class ReactionBurst(
+    val id: Long,
+    val emojis: List<String>,
+    val names: List<String>,
+    /** Who [names] are, so two different "John"s stay two people when bursts merge. */
+    val who: List<String> = names,
+    /** The reactions it shows (see [reactionKey]), counted as seen once it has played. */
+    val keys: Set<String> = emptySet(),
+    val momentId: String = "",
+) {
+    fun merge(other: ReactionBurst): ReactionBurst {
+        val newcomers = other.who.indices.filter { other.who[it] !in who }
+        return copy(
+            emojis = emojis + other.emojis,
+            names = names + newcomers.map { other.names[it] },
+            who = who + newcomers.map { other.who[it] },
+            keys = keys + other.keys,
+        )
+    }
 
     /** At most three different emoji fly in, side by side; the rest are said in the line. */
     val shown: List<String> get() = emojis.distinct().take(3)
@@ -129,7 +147,7 @@ internal fun BoxScope.ReactionSplash(burst: ReactionBurst?, onDone: (Long) -> Un
             presence.snapTo(1f)
         } else if (playing != null) {
             // Interrupted: gone quickly, from wherever it was.
-            presence.animateTo(0f, tween(CircasoMotion.QuickMs, easing = OutEasing))
+            presence.animateTo(0f, tween(CircasoMotion.ExitMs, easing = OutEasing))
             playing = null
         }
     }
@@ -183,7 +201,7 @@ private fun Splash(b: ReactionBurst, onDone: (Long) -> Unit) {
                 // The ring of light, on its own layer so a frame redraws only this.
                 Spacer(
                     Modifier.size(hero).graphicsLayer().drawWithCache {
-                        val glow = Brush.radialGradient(listOf(ink.copy(alpha = 0.32f), Color.Transparent), center = center, radius = ringPx)
+                        val glow = Brush.radialGradient(listOf(ink.copy(alpha = 0.32f), Color.Transparent), center = Offset(size.width / 2f, size.height / 2f), radius = ringPx)
                         onDrawBehind {
                             val p = progress.value
                             val e = OutEasing.transform(segment(p, SplashBeat.RingStart, SplashBeat.RingEnd))
@@ -269,7 +287,7 @@ private fun Splash(b: ReactionBurst, onDone: (Long) -> Unit) {
  * [delayMillis] staggers the rows on screen when the list first shows. Reduce Motion: a short fade.
  */
 @Composable
-internal fun ReactionPop(emoji: String, play: Boolean, delayMillis: Int, style: TextStyle, size: Dp = 32.dp) {
+internal fun ReactionPop(emoji: String, play: Boolean, delayMillis: Int, style: TextStyle, size: Dp = CircasoSpacing.s8) {
     val still = CircasoTheme.reduceMotion
     val ink = CircasoTheme.colors.ink
     val p = remember { Animatable(if (play) 0f else 1f) }
@@ -278,10 +296,11 @@ internal fun ReactionPop(emoji: String, play: Boolean, delayMillis: Int, style: 
         kotlinx.coroutines.delay(delayMillis.toLong())
         p.animateTo(1f, tween(if (still) CircasoMotion.QuickMs else RowPopMillis, easing = LinearEasing))
     }
-    Box(Modifier.size(size), contentAlignment = Alignment.Center) {
+    // At least [size], growing with large text so the emoji is never clipped.
+    Box(Modifier.sizeIn(minWidth = size, minHeight = size), contentAlignment = Alignment.Center) {
         if (!still) {
             Spacer(
-                Modifier.size(size).graphicsLayer().drawBehind {
+                Modifier.matchParentSize().graphicsLayer().drawBehind {
                     val l = segment(p.value, 0.12f, 1f)
                     if (l <= 0f || l >= 1f) return@drawBehind
                     val out = OutEasing.transform(l)
