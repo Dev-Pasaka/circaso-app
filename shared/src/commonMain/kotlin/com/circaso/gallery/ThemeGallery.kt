@@ -98,6 +98,7 @@ fun ThemeGallery(darkTheme: Boolean, highContrast: Boolean, onToggleDark: () -> 
                 title = "Sign out of Circaso?",
                 message = "You can sign back in with Google or Apple. Your chats and money stay safe, and this phone stays yours.",
                 confirmLabel = "Sign Out",
+                icon = com.circaso.designsystem.components.CircasoIcon.SignOut,
                 onConfirm = { confirm = false; scope.launch { signOut() } },
                 onDismiss = { confirm = false },
             )

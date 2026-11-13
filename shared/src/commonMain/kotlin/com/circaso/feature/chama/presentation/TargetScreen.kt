@@ -187,7 +187,7 @@ fun TargetContent(
         overlay = {
             ConfirmSheet(
                 visible = state.confirmingRemove, title = "Remove the target?", message = "The wallet, its money and any open requests stay.",
-                confirmLabel = "Remove", onConfirm = onConfirmRemove, onDismiss = onCancelRemove, destructive = true,
+                confirmLabel = "Remove", onConfirm = onConfirmRemove, onDismiss = onCancelRemove, destructive = true, icon = com.circaso.designsystem.components.CircasoIcon.Target,
             )
         },
     ) { padding ->

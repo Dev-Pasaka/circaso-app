@@ -84,6 +84,7 @@ import com.circaso.feature.profile.presentation.EditProfileContent
 import com.circaso.feature.profile.presentation.EditProfileUiState
 import com.circaso.feature.profile.presentation.HandleCheck
 
+internal val previewProfile get() = profile
 private val profile = Profile("u1", "Amina Wanjiru", "Hi there", "amina", null, DemoPhotos.You, Privacy("contacts", "contacts", true), 3, pendingSync = true)
 private fun person(id: String, name: String, handle: String) = Person(id, name, handle, DemoPhotos.of(name), null)
 private val contacts = listOf(
@@ -557,11 +558,11 @@ fun PreviewScreens(name: String) {
             }
             com.circaso.feature.wallet.presentation.ActivityContent(state, {}, {}, {}, {})
         }
-        else -> if (!GroupWalletPreview(name) && !ChatMoneyPreview(name) && !MomentsChatsPreview(name) && !AshaPreview(name) && !VaultPreview(name) && !SavedNamesPreview(name) && !SecurityCodePreview(name)) BasicText("Unknown preview: $name")
+        else -> if (!GroupWalletPreview(name) && !ChatMoneyPreview(name) && !MomentsChatsPreview(name) && !AshaPreview(name) && !VaultPreview(name) && !SavedNamesPreview(name) && !SecurityCodePreview(name) && !SheetsPreview(name)) BasicText("Unknown preview: $name")
     }
 }
 
-private val noWalletActions = WalletActions({}, {}, {}, {}, {})
+internal val noWalletActions = WalletActions({}, {}, {}, {}, {})
 
 private val groupThread = listOf(
     text(1, "g1", "Bus deposit is due Friday. Coast Bus wants KES 12,000", false, 70, sender = "4", senderName = "Otieno"),
@@ -591,7 +592,7 @@ private fun sampleLedger() = listOf(
     LedgerEntry(LedgerDirection.In, "2026-10-12T09:00:00Z", "30960000", "me", "t3", null),
 )
 
-private fun sampleWallet() = Wallet(
+internal fun sampleWallet() = Wallet(
     status = WalletStatus.Active,
     chains = listOf(WalletChain("BASE-SEPOLIA", "0x7a3f0000000000000000000000000000001e4b00", "ACTIVE", listOf(Asset("USDC", "0xusdc", 6, "249460000", "249.46", "32180.34")), true)),
     totals = listOf(AssetTotal("USDC", 6, "249460000", "249.46")),

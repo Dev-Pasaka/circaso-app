@@ -132,7 +132,7 @@ fun EditProfileContent(
         overlay = {
             ConfirmSheet(
                 visible = confirmDiscard, title = "Discard changes?", message = "What you changed here hasn't been saved.",
-                confirmLabel = "Discard", destructive = true, cancelLabel = "Keep Editing",
+                confirmLabel = "Discard", destructive = true, cancelLabel = "Keep Editing", icon = com.circaso.designsystem.components.CircasoIcon.Trash,
                 onConfirm = { confirmDiscard = false; onBack() }, onDismiss = { confirmDiscard = false },
             )
             CircasoSheet(visible = photoChoices, onDismiss = { photoChoices = false }, label = "Profile photo") {

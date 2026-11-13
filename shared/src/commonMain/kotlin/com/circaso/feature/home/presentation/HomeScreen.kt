@@ -134,6 +134,7 @@ fun HomeScreen(
                     onConfirm = { confirmExit = false; com.circaso.core.platform.exitApp() },
                     onDismiss = { confirmExit = false },
                     cancelLabel = "Stay",
+                    icon = com.circaso.designsystem.components.CircasoIcon.Bell,
                 )
             },
         ) { padding ->
