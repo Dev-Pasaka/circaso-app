@@ -64,7 +64,7 @@ interface SignalBridgeApi {
      * iPhone's memory): libsignal's `Aes256GcmEncryption` / `Aes256GcmDecryption` under [key] (32 bytes) and [nonce]
      * (12 bytes), no associated data. Null when it can't be made. Nothing here throws: a failure is a null or a false.
      */
-    fun gcmStream(key: NSData, nonce: NSData, seal: Boolean): BridgeGcmStream?
+    fun gcmStream(key: NSData, nonce: NSData, sealing: Boolean): BridgeGcmStream?
 
     /** SHA-256 fed a piece at a time (CryptoKit). */
     fun sha256Stream(): BridgeHashStream
