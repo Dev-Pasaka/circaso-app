@@ -26,6 +26,111 @@ Spaces tagged `archive/spaces-v1`; Room v20 drops its tables); the backend keeps
   support's moments, never on a group's card. A Not sent card paid again keeps its moment. The notification reads
   "Sent you KES 500 for your moment" (Kotlin and the iOS extension). The transfer itself is unchanged; the server
   never sees the moment.
+- **Posting a moment (2026-11-14, Pasaka): like WhatsApp status, in the background.** "The only things to check on the
+  preview are the video's duration (under a minute) and the file size limit. Once that's fine they tap post and do not
+  have to stay on the preview. They track progress on the ring around their own moment."
+  - **The preview checks only that** (`momentRefusal` in `MomentComposerViewModel.kt`): a video is a minute or less
+    (the trimmer, as before), each file is still on the phone, and the size rule holds. **The size rule:** a photo or
+    a voice goes as it is, so it must fit the post limit (32 MiB, `MomentMediaMaxBytes`); a video over that limit is
+    **accepted**, because a minute always fits once encoded and it is made smaller after Post; only a video file over
+    1 GB (`MomentSourceMaxBytes`: more than a minute of anything a phone's camera records) is refused, with its size
+    ("This video is 1.4 GB. Videos up to 1 GB can be posted: trim it shorter or pick another."). Every item is checked
+    before any is recorded, so a batch is never half posted and half refused.
+  - **Post returns at once**, for a video too: `MomentsRepository.post` writes the pending row (`moment_pending`,
+    state `preparing`) and takes the file into the app's private files (a photo's bytes written; a video **moved**, a
+    rename however large, as `source-{localId}.mp4`, so a picker's or the camera's cache copy can't be cleared from
+    under it). No "Making the video smaller…" on the preview any more.
+  - **Getting ready and sending happen in the data layer, in the app's scope** (`MomentsRepositoryImpl.prepareWaiting`,
+    under `uploads.keep(UploadKind.Moment)`): one moment at a time, oldest first; a video over the limit goes through
+    `MediaLibrary.shrink` (the trimmer's encoder, from the file, never through memory), the result is moved under the
+    pending id, the row becomes `posting` and the outbox job `moment.post` is queued. So several picked post in the
+    order picked. A video the encoder couldn't do this time stays `preparing` (the ones behind wait their turn) and is
+    tried again 20 s later and at each launch or reconnect, three times in all, because an iPhone stops encoding once
+    Circaso is in the background; then it is Failed with why. Failed in preparing uses M6's failed row with plain
+    words (`moment.source_missing`, `moment.video_unreadable`), and Retry gets it ready again.
+  - **Resume:** anything `preparing` is picked up at launch once signed in (online or not), at each reconnect, and
+    whenever the outbox sends a moment (`MomentsStarter`, `MomentsRepository.resume`). The process dying mid-encode
+    loses nothing: the row and the private source file are still there, and the encode starts again from the start.
+  - **The ring (M6)** is one determinate arc over the whole batch: a video made smaller fills the first half of its
+    share (Android: Media3 Transformer's own progress; iPhone: no progress from the encoder yet, so the arc turns
+    and then moves to half when the video is ready), then the bytes sent fill to 95 %, and the post itself the rest.
+    Until there is something real to show (the first moments after Post, a text moment) the arc turns, as M6's
+    "Posting…" does, never an empty ring. It never runs back (`MomentsUiState.postingFloor`), and a moment that is
+    waiting or failed is never counted as posted (`postingIds`). While anything is still on its way the arc shows
+    even if another of the batch failed (its card is under the row). Offline it is Waiting, as designed, though
+    getting ready carries on. Reduced motion: the arc steps, no easing.
+  - **An encode that comes out over the limit is done again smaller, never failed on the person (2026-11-14, the
+    Redmi):** a 57 s, 1080x1920 video (139 MB) passed the preview and then failed "too large", because the phone's
+    (MediaTek) hardware encoder ran well past the bit rate it was asked for. Now: the plan aims at 85 % of the limit
+    (`MomentVideoEncoding.BudgetShare`, was 92 %); Android's encoder, over the limit, gets one more go lower by as much
+    as it overshot and a tenth more (was a fixed 80 %); and if the file handed back is still over 32 MiB the worker
+    asks again with a smaller byte budget, `budget × limit ÷ size it came out at × 0.9`
+    (`MomentVideoEncoding.smallerBudget`), which through the same plan lowers the bit rate and then the picture size
+    (1080p → 720p → 540p → 360p). Up to 4 passes (`EncodePasses`); each rejected file is deleted; the budget reached
+    is kept in the draft (`PendingDraft.budget`) so a restart doesn't repeat a pass. Only if all four come out over
+    is it Failed, with "This phone couldn’t make the video small enough to post. Trim it shorter and post it again."
+    (`moment.video_too_large`). The ring: the first pass fills four fifths of the encoding half, each later pass four
+    fifths of what is left, so it never goes back. Retry on a moment failed before this fix (`status.moment_too_large`
+    with its source still there) gets it ready again with the new rule.
+  - **Said before it is picked (2026-11-14, Pasaka: "show the duration and the file size before the user selects;
+    those larger than the maximum, grey them out"; no frame):** `LibraryItem.sizeBytes` (Android: MediaStore `SIZE`
+    in the same query; iPhone: the Photos resource's file size, read in `IosMediaLibrary`; null when unknown, never
+    held against a video).
+    - **Tiles:** the gallery's video tiles say the size under the length ("0:57" over "139 MB", two short lines so
+      neither is cut at large text, on a short shade); the 56 dp strip tile keeps the length alone; **photos say
+      nothing** (every photo is handed over as a JPEG of at most 2048 px whatever the original weighs, so its size
+      tells nothing and the grid stays calm).
+    - **A moment:** a video that can't be posted at all (its file over 1 GB, `MomentSourceMaxBytes`) is greyed out
+      (scrim, the over-limit mark in the tick's place, "Too large" across the gallery tile), can't be ticked or used
+      from the strip, and a tap says why in a quiet toast (Info, not Problem): "This video is 1.4 GB. Videos up to
+      1 GB can be posted." ("just over 1 GB" for one a little over). Videos over a minute are not greyed: they go
+      to the trimmer.
+    - **A chat: marked, not greyed.** A chat's video over its limit can still be sent once trimmed shorter on the
+      review (the trimmer cuts it to fit, and the review's note says so), so greying it would take that away. Its
+      tile carries the over-limit mark and its size, it stays pickable, and the existing review note takes over.
+      (`MediaComposer.pickLimit` is null in a chat; `overLimit(item)` marks.)
+    - **The review** shows the picked video's length and size in a small glass pill at the top of the stage (where
+      the recording pill sits), so nothing under the finger moves as the item on the stage changes. The line "will
+      be made smaller to post" was tried and left out: it read as if the video would be cut shorter.
+    - Sizes at a glance use `compactSize` ("1.4 GB", "146 MB", "8.4 MB"; binary units like every other size in the
+      app, so the Redmi's 145,978,653-byte clip reads "139 MB").
+  - **A moment's file up to 64 MiB (2026-11-14, Pasaka: "fast file uploads and at the same time improve the
+    quality"; was 32 MiB; where this note says 32 MiB above, read 64).** One number, `MomentMediaMaxBytes`
+    (`core/platform/MomentCamera.kt`); the backend's is `STATUS_MEDIA_MAX_BYTES` (backend PR "a moment's file up to
+    64 MiB"). What it buys: a full minute of 1080p30 keeps about 7.5 Mbit/s of the 8 it aims for (it was about 3.7),
+    a minute of 1080p60 keeps its size (it dropped to 720p), anything up to 40 s gets the full rate, a minute from the
+    in-app camera goes as recorded, and any file up to 64 MiB goes untouched. Not more than 64: a higher limit buys
+    a full minute almost nothing and costs upload time and memory. The bigger plan (chunked encryption, an original
+    and a quick version, streaming) is a later project.
+    - **Memory, which is what bounded the number.** A moment's file is one AES-GCM box that every app version must
+      open, and it was sealed and opened in memory: on Android about three to four times the file (the plaintext,
+      the JCA's own buffer, the ciphertext, the nonce-plus-ciphertext copy), with no `largeHeap`, and the viewer kept
+      the opened video's bytes while it played. Now (`core/crypto/SingleBoxFile`): Android seals and opens from file
+      to file a megabyte at a time with libsignal's incremental AES-256-GCM (already in the app; the same bytes as
+      before, checked against the JCA in `SingleBoxFileTest`); the download goes straight to a file; a video is
+      handed to the viewer by its path, never its bytes. iPhone has no streaming GCM in the app yet, so it still
+      seals and opens in memory, about four times the file (256 MB at the limit), outside any fixed heap.
+    - **Either release order works.** A server still at 32 MiB answers `status.media_invalid` to a larger video at
+      ST1: the app then makes the video fit 32 MiB (`MomentMediaLegacyMaxBytes`) and posts it, and for the rest of
+      that run makes videos fit 32 MiB straight away (`MomentsRepositoryImpl.fitOlderServer`). An older app keeps
+      sending at most 32 MiB to the new server. An older app **viewing** a new, larger moment still opens it in
+      memory: on an Android phone with a small heap a video near 64 MiB may fail to open there ("couldn't load")
+      until that phone updates.
+    - Shared in from another app, a video for a moment is still held to the post limit (now 64 MiB) by the share
+      screen's own check; picked in the app it may be up to 1 GB.
+  - **No Room change:** `preparing` is a new value of the `state` text column and the rest is in the draft JSON
+    (`PendingDraft.source`, `encoded`, `tries`); the database stays at version 22.
+  - **Departures from M4–M6:** none in layout. M4's review loses the "Making the video smaller to share…" footnote
+    and the Post button's wait (the owner's request); M6's ring is as drawn (a determinate arc with "Posting… n%"),
+    now from 0 % instead of a turning arc before the first byte. No frame for a failure in preparing: M6's "Your
+    moment didn't post" card with the two reasons above in its place.
+  - **Not done:** the trimmer's Done (M3b) still cuts the video there and then (a video over a minute waits on the
+    trimmer, not on the preview); deferring the cut to the background needs the review's player to play only the
+    chosen part on both phones. The encoder's progress on iPhone needs a Swift change (MomentVideoTranscoder).
+    A posted moment's media is still sealed whole in memory for the upload (32 MiB at most; the encrypted body is
+    one AES-GCM box). My own viewer doesn't show a pending moment (it never did).
+  - Tests: `MomentPostingTest` (the repository's worker), `MomentComposerViewModelTest`, `MomentsViewModelTest`,
+    `MomentsStateTest`, `MomentsStarterTest`. Previews: `chats-moments-preparing`, `chats-moments-prepare-failed`.
 - **Stays from the Spaces plan:** groups with optional wallets, the one Circaso fee, daily caps, Paying from, the
   wallet PIN and biometrics per wallet.
 

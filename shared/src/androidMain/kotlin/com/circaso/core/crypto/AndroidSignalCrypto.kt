@@ -214,6 +214,27 @@ class AndroidSignalCrypto : SignalCrypto {
 
     override fun sha256(bytes: ByteArray): ByteArray = MessageDigest.getInstance("SHA-256").digest(bytes)
 
+    /**
+     * libsignal's own incremental AES-256-GCM (the JCA's `AES/GCM/NoPadding` holds the whole input until `doFinal`,
+     * so it can't stream). The same box, byte for byte, as [aesGcmSeal] makes and [aesGcmOpen] reads.
+     */
+    override fun gcmStream(key: ByteArray, nonce: ByteArray, seal: Boolean): GcmStream? {
+        if (key.size != 32 || nonce.size != GcmNonceSize) return null
+        val sealing = if (seal) org.signal.libsignal.crypto.Aes256GcmEncryption(key, nonce, ByteArray(0)) else null
+        val opening = if (seal) null else org.signal.libsignal.crypto.Aes256GcmDecryption(key, nonce, ByteArray(0))
+        return object : GcmStream {
+            override fun update(piece: ByteArray) { sealing?.encrypt(piece) ?: opening!!.decrypt(piece) }
+            override fun tag(): ByteArray = sealing!!.computeTag()
+            override fun verify(tag: ByteArray): Boolean = opening!!.verifyTag(tag)
+        }
+    }
+
+    override fun sha256Stream(): HashStream = object : HashStream {
+        private val digest = MessageDigest.getInstance("SHA-256")
+        override fun update(bytes: ByteArray) = digest.update(bytes)
+        override fun finish(): ByteArray = digest.digest()
+    }
+
     override fun randomBytes(count: Int): ByteArray = ByteArray(count).also { random.nextBytes(it) }
 
     // ---- plumbing

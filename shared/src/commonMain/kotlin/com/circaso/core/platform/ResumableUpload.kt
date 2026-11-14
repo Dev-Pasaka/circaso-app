@@ -51,7 +51,9 @@ class UploadedFile(val id: String, val key: ByteArray, val digest: ByteArray, va
  *
  * The ciphertext goes up streamed from its file ([putStoredFile]). With `chunked` the file is also sealed a chunk at
  * a time ([com.circaso.core.crypto.ChunkedFileCipher]), so a 100 MiB video never sits in memory; without it the one
- * AES-GCM box every app opens is made in memory, which callers keep to files of at most 32 MiB.
+ * AES-GCM box every app opens is made from file to file where the platform can stream it
+ * ([com.circaso.core.crypto.SingleBoxFile], Android), else in memory (iPhone), which callers keep to files of at most
+ * 64 MiB (a moment's; a chat's single box stays at 32 MiB).
  */
 class ResumableUpload(
     private val crypto: SignalCrypto,
@@ -81,11 +83,18 @@ class ResumableUpload(
                 val size = com.circaso.core.crypto.ChunkedFileCipher.seal(crypto, files, key, plainFile, sealedFile) ?: return AppResult.Failure(missing)
                 UploadState(sealedFile, Base64.encode(key), "", size, chunked = true)
             } else {
-                val plain = files.read(plainFile) ?: return AppResult.Failure(missing)
-                val bytes = withContext(Dispatchers.Default) { crypto.aesGcmSeal(key, plain) }
-                val digest = withContext(Dispatchers.Default) { crypto.sha256(bytes) }
-                files.write(sealedFile, bytes)
-                UploadState(sealedFile, Base64.encode(key), Base64.encode(digest), bytes.size.toLong())
+                if (files.size(plainFile) == null) return AppResult.Failure(missing)
+                // From file to file a piece at a time where the phone can (Android): the same box, without the file
+                // in memory two or three times over (a moment's video is up to 64 MiB since 2026-11-14).
+                val streamed = com.circaso.core.crypto.SingleBoxFile.seal(crypto, files, key, plainFile, sealedFile)
+                if (streamed != null) UploadState(sealedFile, Base64.encode(key), Base64.encode(streamed.digest), streamed.size)
+                else {
+                    val plain = files.read(plainFile) ?: return AppResult.Failure(missing)
+                    val bytes = withContext(Dispatchers.Default) { crypto.aesGcmSeal(key, plain) }
+                    val digest = withContext(Dispatchers.Default) { crypto.sha256(bytes) }
+                    files.write(sealedFile, bytes)
+                    UploadState(sealedFile, Base64.encode(key), Base64.encode(digest), bytes.size.toLong())
+                }
             }.also { save(it) }
         }
         for (attempt in 0..1) {

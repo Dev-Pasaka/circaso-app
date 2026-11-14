@@ -34,11 +34,12 @@ import com.circaso.feature.status.domain.PendingMoment
 import com.circaso.feature.status.domain.PendingState
 import io.ktor.client.HttpClient
 import com.circaso.core.platform.putFile
-import io.ktor.client.request.get
+import io.ktor.client.request.prepareGet
+import io.ktor.client.statement.bodyAsChannel
+import io.ktor.utils.io.readAvailable
 import io.ktor.client.request.header
 import io.ktor.client.request.put
 import io.ktor.client.request.setBody
-import io.ktor.client.statement.readRawBytes
 import io.ktor.http.isSuccess
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
@@ -48,6 +49,7 @@ import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.Serializable
@@ -86,6 +88,20 @@ internal data class PendingDraft(
     val levels: List<Int>? = null,
     /** How far the media's upload got, so a post cut off by the process dying resumes it (ResumableUpload). */
     val upload: com.circaso.core.platform.UploadState? = null,
+    /**
+     * While the moment is still being got ready (state `preparing`): the picked file's name in [MediaFiles], taken in
+     * at Post. Null once the file to upload is there under the pending id (and for a photo or voice, written at Post).
+     */
+    val source: String? = null,
+    /** The video was made smaller before uploading: that took the first part of the ring ([MomentsRepositoryImpl.PrepareShare]). */
+    val encoded: Boolean = false,
+    /** How many times the encoder has been tried and couldn't (it is tried again before the moment is failed). */
+    val tries: Int = 0,
+    /**
+     * The size the next encode is planned for, once a pass has come out over the limit on this phone
+     * ([com.circaso.core.platform.MomentVideoEncoding.smallerBudget]); kept so a restart doesn't repeat that pass.
+     */
+    val budget: Long? = null,
 )
 
 @Serializable
@@ -135,8 +151,15 @@ class MomentsRepositoryImpl(
     private val keysPublished: suspend () -> Boolean = { true },
     /** Keeps a media post going when the person leaves Circaso mid-upload. */
     private val uploads: com.circaso.core.platform.BackgroundUploads = com.circaso.core.platform.NoBackgroundUploads,
+    /** Makes a video over the limit smaller once Post has closed the composer (the trimmer's encoder); null in tests without one. */
+    private val library: com.circaso.core.platform.MediaLibrary? = null,
+    /** The app's own scope: getting a moment ready outlives the screen that posted it. */
+    private val scope: kotlinx.coroutines.CoroutineScope? = null,
 ) : MomentsRepository {
     private val refreshLock = Mutex()
+    /** One moment is got ready at a time, in the order they were posted. */
+    private val preparing = Mutex()
+    private val postLock = Mutex()
     private val resumable = com.circaso.core.platform.ResumableUpload(crypto, files, uploads, storage, now)
 
     /**
@@ -174,7 +197,7 @@ class MomentsRepositoryImpl(
         rows.map { PendingMoment(it.localId, kindOf(it.kind), stateOf(it.state), it.error, it.createdAt, progress[it.localId]) }
     }
 
-    /** Published in whole percent steps, so a 30 MB upload is a hundred updates, not thousands. */
+    /** Published in whole percent steps, so a 30 MB upload (or a minute of encoding) is a hundred updates, not thousands. */
     private fun setProgress(localId: String, fraction: Float?) {
         uploadProgress.update { now ->
             when {
@@ -368,10 +391,14 @@ class MomentsRepositoryImpl(
         body.media?.mediaId?.let { files.delete(it) }
     }
 
-    /** This phone's copy, else ST8, checked against the digest in the body and decrypted; kept for next time. */
+    /**
+     * This phone's copy, else ST8, checked against the digest in the body and decrypted; kept for next time. A video
+     * is handed over by its file alone (never read into memory: it is up to 64 MiB since 2026-11-14); the download
+     * goes straight to a file, and where the phone can it is opened from file to file too ([SingleBoxFile]).
+     */
     override suspend fun media(moment: Moment): MomentMediaLoad {
         val media = moment.media ?: return MomentMediaLoad.Failed(null)
-        files.read(media.mediaId)?.let { return MomentMediaLoad.Loaded(it, files.path(media.mediaId)) }
+        loaded(moment, media.mediaId)?.let { return it }
         val link = when (val r = remote.download(media.mediaId)) {
             is AppResult.Success -> r.value
             is AppResult.Failure -> return when {
@@ -380,46 +407,264 @@ class MomentsRepositoryImpl(
                 else -> MomentMediaLoad.Failed((r.error as? AppError.Api)?.requestId)
             }
         }
-        val sealed = runCatching { storage.get(link.downloadUrl).takeIf { it.status.isSuccess() }?.readRawBytes() }.getOrNull()
-            ?: return MomentMediaLoad.NeedsConnection
-        val plain = withContext(Dispatchers.Default) {
-            runCatching {
-                check(crypto.sha256(sealed).contentEquals(Base64.decode(media.digest)))
-                crypto.aesGcmOpen(Base64.decode(media.key), sealed)
-            }.getOrNull()
-        } ?: return MomentMediaLoad.Failed(null)
-        files.write(media.mediaId, plain)
-        return MomentMediaLoad.Loaded(plain, files.path(media.mediaId))
+        val sealed = "dl-${media.mediaId}"
+        if (!download(link.downloadUrl, sealed)) { files.delete(sealed); return MomentMediaLoad.NeedsConnection }
+        val key = runCatching { Base64.decode(media.key) }.getOrNull()
+        val digest = runCatching { Base64.decode(media.digest) }.getOrNull()
+        val opened = if (key == null || digest == null) false else runCatching {
+            com.circaso.core.crypto.SingleBoxFile.open(crypto, files, key, sealed, media.mediaId, digest) ?: withContext(Dispatchers.Default) {
+                // No streaming on this phone (iPhone): the one-shot, in memory.
+                val bytes = files.read(sealed) ?: return@withContext false
+                check(crypto.sha256(bytes).contentEquals(digest))
+                files.write(media.mediaId, crypto.aesGcmOpen(key, bytes))
+                true
+            }
+        }.getOrDefault(false)
+        files.delete(sealed)
+        if (!opened) return MomentMediaLoad.Failed(null)
+        return loaded(moment, media.mediaId) ?: MomentMediaLoad.Failed(null)
+    }
+
+    /** The decrypted file on this phone as the viewer takes it: a video by its path alone, a photo or voice by its bytes. */
+    private suspend fun loaded(moment: Moment, name: String): MomentMediaLoad? {
+        val path = files.path(name)
+        if (moment.kind == MomentKind.Video && path != null) return MomentMediaLoad.Loaded(ByteArray(0), path)
+        return files.read(name)?.let { MomentMediaLoad.Loaded(it, path) }
+    }
+
+    /** The ciphertext from storage into [name], a piece at a time. False when the connection or storage failed. */
+    private suspend fun download(url: String, name: String): Boolean = try {
+        files.delete(name)
+        storage.prepareGet(url).execute { response ->
+            if (!response.status.isSuccess()) return@execute false
+            val channel = response.bodyAsChannel()
+            val buffer = ByteArray(com.circaso.core.platform.StreamPieceBytes)
+            while (true) {
+                var filled = 0
+                while (filled < buffer.size) {
+                    val n = channel.readAvailable(buffer, filled, buffer.size - filled)
+                    if (n < 0) break
+                    filled += n
+                }
+                if (filled > 0) files.append(name, buffer.copyOf(filled))
+                if (filled < buffer.size) break
+            }
+            // An empty body still leaves a file, so the open says it isn't a box rather than "not there".
+            if (files.size(name) == null) files.write(name, ByteArray(0))
+            true
+        }
+    } catch (e: kotlin.coroutines.cancellation.CancellationException) {
+        throw e
+    } catch (_: Throwable) {
+        false
     }
 
     // ---- posting
 
+    /**
+     * Post (2026-11-14, Pasaka: "the same experience as WhatsApp"): the moment is recorded as pending and this
+     * returns, so the composer closes at once. Text goes straight to the outbox. A photo, video or voice is written
+     * (or, a video on disk, moved: a rename, however large) into the app's private files and left `preparing`; the
+     * worker ([prepareWaiting]) gets each ready in the order posted and hands it to the outbox, whatever screen is
+     * showing, and again after a restart.
+     */
     @OptIn(ExperimentalUuidApi::class)
-    override suspend fun post(draft: MomentDraft): AppResult<Unit> {
+    override suspend fun post(draft: MomentDraft): AppResult<Unit> = postLock.withLock {
         val localId = Uuid.random().toString()
-        val pending = when (draft) {
-            is MomentDraft.Text -> PendingDraft(MomentKind.Text.name, text = draft.text, background = draft.background, style = draft.style.name)
+        // Strictly after everything already waiting: several posted in the same millisecond keep their order.
+        val at = maxOf(now(), (dao.observePending().first().maxOfOrNull { it.createdAt } ?: 0L) + 1)
+        when (draft) {
+            is MomentDraft.Text -> {
+                val pending = PendingDraft(MomentKind.Text.name, text = draft.text, background = draft.background, style = draft.style.name)
+                dao.savePending(PendingMomentEntity(localId, pending.kind, json.encodeToString(PendingDraft.serializer(), pending), null, null, null, StatePosting, null, at))
+                outbox.enqueue(MomentOutbox.Post, json.encodeToString(MomentJob.serializer(), MomentJob(localId)))
+                kickOutbox()
+            }
             is MomentDraft.Media -> {
-                files.write(localId, draft.bytes)
-                PendingDraft(draft.kind.name, caption = draft.caption?.takeIf { it.isNotBlank() }, mime = draft.mime, thumb = draft.thumb?.let { Base64.encode(it) },
+                val fromDisk = draft.bytes.isEmpty() && draft.path != null
+                // The extension stays: the phone's encoder tells a video by it (AVFoundation).
+                val source = if (fromDisk) "source-$localId.${draft.path!!.substringAfterLast('/').substringAfterLast('.', "mp4").take(8)}" else null
+                if (source != null) { if (!files.moveIn(draft.path!!, source)) return@withLock AppResult.Failure(AppError.Api(SourceMissing, 400, null, null, emptyMap())) }
+                else files.write(localId, draft.bytes)
+                val pending = PendingDraft(draft.kind.name, caption = draft.caption?.takeIf { it.isNotBlank() }, mime = draft.mime, thumb = draft.thumb?.let { Base64.encode(it) },
                     durationMs = draft.durationMs, width = draft.width, height = draft.height, background = draft.background,
-                    levels = draft.levels?.map { (it * 100).toInt().coerceIn(0, 100) })
+                    levels = draft.levels?.map { (it * 100).toInt().coerceIn(0, 100) }, source = source)
+                dao.savePending(PendingMomentEntity(localId, pending.kind, json.encodeToString(PendingDraft.serializer(), pending), null, null, null, StatePreparing, null, at))
+                kickPreparing()
             }
         }
-        dao.savePending(PendingMomentEntity(localId, pending.kind, json.encodeToString(PendingDraft.serializer(), pending), null, null, null, StatePosting, null, now()))
-        outbox.enqueue(MomentOutbox.Post, json.encodeToString(MomentJob.serializer(), MomentJob(localId)))
-        kickOutbox()
-        return AppResult.Success(Unit)
+        AppResult.Success(Unit)
     }
 
+    override suspend fun resume() = prepareWaiting()
+
+    /** Retry (M6): a moment that failed while being got ready is got ready again; one that failed posting is posted again. */
     override suspend fun retry(localId: String) {
-        dao.pending(localId) ?: return
+        val row = dao.pending(localId) ?: return
+        val draft = runCatching { json.decodeFromString(PendingDraft.serializer(), row.draft) }.getOrNull()
+        if (draft?.source != null) {
+            dao.savePending(row.copy(draft = json.encodeToString(PendingDraft.serializer(), draft.copy(tries = 0, budget = null)), state = StatePreparing, error = null))
+            kickPreparing()
+            return
+        }
         dao.setPendingState(localId, StatePosting, null)
         outbox.enqueue(MomentOutbox.Post, json.encodeToString(MomentJob.serializer(), MomentJob(localId)))
         kickOutbox()
     }
 
-    override suspend fun discard(localId: String) { dao.deletePending(localId); files.delete(localId); files.delete("sealed-$localId"); setProgress(localId, null) }
+    override suspend fun discard(localId: String) {
+        val source = dao.pending(localId)?.let { runCatching { json.decodeFromString(PendingDraft.serializer(), it.draft) }.getOrNull()?.source }
+        dao.deletePending(localId)
+        files.delete(localId); files.delete("sealed-$localId"); source?.let { files.delete(it) }
+        setProgress(localId, null)
+    }
+
+    // ---- getting ready (after Post, outside any screen)
+
+    /** In the app's scope when there is one; a test without one calls [prepareWaiting] itself. */
+    private fun kickPreparing() { scope?.launch { prepareWaiting() } }
+
+    /**
+     * Gets every `preparing` moment ready, oldest first, one at a time, and hands each to the outbox as it is ready,
+     * so they post in the order they were picked. Runs as background work ([BackgroundUploads.keep]: Android's
+     * foreground service, iOS's background time), so leaving Circaso doesn't stop it. A process that dies part-way
+     * loses nothing: the row is still `preparing` with its file in the app's private files, and the next launch
+     * ([resume]) starts that one again. Each row leaves `preparing` (ready, or failed with why) before the next; an
+     * encoder that couldn't this time (an iPhone stops encoding once Circaso is in the background) leaves its row
+     * `preparing`, the ones behind it waiting their turn, and is tried again a little later ([PrepareAgainMillis])
+     * and on the next launch or reconnect, [PrepareTries] times in all before it is failed.
+     */
+    internal suspend fun prepareWaiting(): Unit = preparing.withLock {
+        if (nextPreparing() == null) return@withLock
+        val again = uploads.keep(com.circaso.core.platform.UploadKind.Moment) {
+            while (true) {
+                val row = nextPreparing() ?: return@keep false
+                val moved = try {
+                    prepare(row)
+                } catch (e: kotlin.coroutines.cancellation.CancellationException) {
+                    throw e
+                } catch (_: Throwable) {
+                    failPreparing(row, PrepareFailed); true
+                }
+                if (!moved) return@keep true
+            }
+            @Suppress("UNREACHABLE_CODE") false
+        }
+        if (again) scope?.launch { kotlinx.coroutines.delay(PrepareAgainMillis); prepareWaiting() }
+    }
+
+    private suspend fun nextPreparing(): PendingMomentEntity? = dao.observePending().first().firstOrNull { it.state == StatePreparing }
+
+    /**
+     * One moment: its file under the pending id at a size the server takes, then the outbox. False when it is still
+     * `preparing` afterwards (the encoder is to be tried again later); true when it is ready, failed or gone.
+     */
+    private suspend fun prepare(row: PendingMomentEntity): Boolean {
+        val id = row.localId
+        var draft = json.decodeFromString(PendingDraft.serializer(), row.draft)
+        val source = draft.source
+        if (files.size(id) == null) {
+            // Nothing ready and nothing to make it from: the file was cleared from under the app.
+            val size = source?.let { files.size(it) } ?: return failPreparing(row, SourceMissing)
+            val video = kindOf(draft.kind) == MomentKind.Video
+            when {
+                size <= limit() -> if (!files.move(source, id)) return failPreparing(row, SourceMissing)
+                !video -> return failPreparing(row, TooLarge)
+                else -> {
+                    // A minute shot at a high bit rate: the same clip at the moments' bit rate, as large as the limit
+                    // allows. A pass that comes out over the limit (a hardware encoder running past its bit rate) is
+                    // never the person's problem: it is done again, planned smaller by as much as it overshot.
+                    val max = limit()
+                    val path = files.path(source)
+                    var budget = draft.budget?.coerceIn(1, max) ?: max
+                    var made: com.circaso.core.platform.CapturedMedia? = null
+                    for (pass in 0 until EncodePasses) {
+                        // Each pass has its own stretch of the ring's first half, so the arc never goes back.
+                        val from = encodeShare(pass)
+                        val to = encodeShare(pass + 1)
+                        setProgress(id, from)
+                        val smaller = if (path == null || library == null) null else library.shrink(
+                            path, 0, draft.durationMs ?: com.circaso.core.platform.MomentMediaMaxMs, max, budget,
+                        ) { done -> setProgress(id, from + (to - from) * done.coerceIn(0f, 1f)) }
+                        val out = smaller?.path
+                        val outSize = out?.let { library?.size(it) } ?: 0
+                        if (smaller == null || out == null || outSize <= 0) {
+                            // Couldn't this time. Not yet the person's problem: it is tried again before it is failed.
+                            val tries = draft.tries + 1
+                            if (tries >= PrepareTries) return failPreparing(row, VideoUnreadable)
+                            saveDraft(id) { it.copy(tries = tries) }
+                            return false
+                        }
+                        if (outSize <= max) {
+                            if (!files.moveIn(out, id)) return failPreparing(row, VideoUnreadable)
+                            made = smaller
+                            break
+                        }
+                        // Over: the encoder's file is taken in and deleted (so out of the cache), and the next pass is smaller.
+                        files.moveIn(out, "over-$id"); files.delete("over-$id")
+                        budget = com.circaso.core.platform.MomentVideoEncoding.smallerBudget(budget, outSize, max)
+                        saveDraft(id) { it.copy(budget = budget) }
+                    }
+                    val smaller = made ?: return failPreparing(row, VideoTooLarge)
+                    draft = draft.copy(
+                        mime = smaller.mime, thumb = smaller.thumb?.let { Base64.encode(it) } ?: draft.thumb, durationMs = smaller.durationMs ?: draft.durationMs,
+                        width = smaller.width ?: draft.width, height = smaller.height ?: draft.height, encoded = true,
+                    )
+                }
+            }
+        }
+        source?.let { files.delete(it) }
+        // Discarded while it was being made: nothing of it stays.
+        val fresh = dao.pending(id) ?: run { files.delete(id); setProgress(id, null); return true }
+        dao.savePending(fresh.copy(draft = json.encodeToString(PendingDraft.serializer(), draft.copy(source = null)), state = StatePosting, error = null))
+        setProgress(id, if (draft.encoded) PrepareShare else 0f)
+        outbox.enqueue(MomentOutbox.Post, json.encodeToString(MomentJob.serializer(), MomentJob(id)))
+        kickOutbox()
+        return true
+    }
+
+    /**
+     * The most a moment's file may be for the server this phone is talking to: [MomentMediaMaxBytes] (64 MiB), or
+     * what an older server takes once it has refused a larger one ([olderServer]).
+     */
+    private fun limit(): Long = if (olderServer) com.circaso.core.platform.MomentMediaLegacyMaxBytes else com.circaso.core.platform.MomentMediaMaxBytes
+
+    /**
+     * The server refused a video over 32 MiB at ST1 (`status.media_invalid`): it hasn't been updated to 64 MiB yet
+     * (2026-11-14). Remembered while the app runs, so the next videos are made to fit straight away; a new launch
+     * asks again, which is how the app finds out the server has been updated.
+     */
+    private var olderServer = false
+
+    /**
+     * ST1 refused this moment's video for its size, which an updated server would take: it goes back to be got ready,
+     * made to fit what the older server takes, and is posted again by the worker. The video already made ready is
+     * what it is made from (its picked file is gone by now), so against an older server it may be encoded twice.
+     * True when it was sent back; false when this isn't that case (the failure stands).
+     */
+    private suspend fun fitOlderServer(row: PendingMomentEntity, error: AppError): Boolean {
+        if ((error as? AppError.Api)?.code != "status.media_invalid" || kindOf(row.kind) != MomentKind.Video) return false
+        val size = files.size(row.localId) ?: return false
+        if (size <= com.circaso.core.platform.MomentMediaLegacyMaxBytes) return false
+        olderServer = true
+        val source = "source-${row.localId}.mp4"
+        if (!files.move(row.localId, source)) return false
+        files.delete("sealed-${row.localId}")
+        val fresh = dao.pending(row.localId) ?: run { files.delete(source); return true }
+        val draft = json.decodeFromString(PendingDraft.serializer(), fresh.draft).copy(source = source, upload = null, budget = null, tries = 0)
+        dao.savePending(fresh.copy(draft = json.encodeToString(PendingDraft.serializer(), draft), state = StatePreparing, error = null, mediaId = null, mediaKey = null, mediaDigest = null))
+        setProgress(row.localId, 0f)
+        kickPreparing()
+        return true
+    }
+
+    /** Couldn't be got ready: Failed with why (M6's row offers Retry and Delete), and told if the person is away. */
+    private suspend fun failPreparing(row: PendingMomentEntity, code: String): Boolean {
+        setProgress(row.localId, null)
+        dao.setPendingState(row.localId, StateFailed, code)
+        if (dao.pending(row.localId) != null) uploads.failed(com.circaso.core.platform.UploadKind.Moment)
+        return true
+    }
 
     /**
      * The outbox's turn for one pending moment. A photo, video or voice moment runs as background work, so it
@@ -431,6 +676,8 @@ class MomentsRepositoryImpl(
         if (row.kind == MomentKind.Text.name) return sendNow(job)
         return uploads.keep(com.circaso.core.platform.UploadKind.Moment) { sendNow(job) }.also {
             if (dao.pending(job.localId)?.state == StateFailed) uploads.failed(com.circaso.core.platform.UploadKind.Moment)
+            // The queue has moved: anything still to be got ready (left by an earlier run) is picked up.
+            kickPreparing()
         }
     }
 
@@ -448,12 +695,16 @@ class MomentsRepositoryImpl(
 
         val kind = kindOf(draft.kind)
         if (kind != MomentKind.Text && row.mediaId == null) {
-            (upload(row, draft) as? AppResult.Failure)?.let { return outcome(row, it.error) }
+            (upload(row, draft) as? AppResult.Failure)?.let {
+                // An older server's size limit is not the person's problem: the video is made to fit it and sent again.
+                if (fitOlderServer(row, it.error)) return AppResult.Success(Unit)
+                return outcome(row, it.error)
+            }
             row = dao.pending(row.localId) ?: return AppResult.Success(Unit)
         }
         val body = MomentBody(
             kind = kind.name, text = draft.text, background = draft.background, style = draft.style, caption = draft.caption, thumb = draft.thumb, levels = draft.levels,
-            media = row.mediaId?.let { MomentMediaBody(it, row.mediaKey!!, row.mediaDigest!!, draft.mime ?: "application/octet-stream", files.read(it)?.size?.toLong() ?: 0, draft.durationMs, draft.width, draft.height) },
+            media = row.mediaId?.let { MomentMediaBody(it, row.mediaKey!!, row.mediaDigest!!, draft.mime ?: "application/octet-stream", files.size(it) ?: 0, draft.durationMs, draft.width, draft.height) },
         )
         val plain = json.encodeToString(MomentBody.serializer(), body).encodeToByteArray()
         val sealed = when (val s = keys.seal(audience, plain)) {
@@ -485,8 +736,10 @@ class MomentsRepositoryImpl(
      */
     private suspend fun upload(row: PendingMomentEntity, draft: PendingDraft): AppResult<Unit> {
         val kind = when (kindOf(draft.kind)) { MomentKind.Video -> "video"; MomentKind.Voice -> "voice"; else -> "image" }
-        // The ring on "My moment" follows the bytes (M6); the last few percent wait for the post itself.
-        setProgress(row.localId, 0f)
+        // The ring on "My moment" follows the bytes (M6), after the part getting a video ready took; the last few
+        // percent wait for the post itself.
+        val base = if (draft.encoded) PrepareShare else 0f
+        setProgress(row.localId, base)
         val done = when (val r = resumable.run(
             plainFile = row.localId, sealedFile = "sealed-" + row.localId, state = draft.upload,
             save = { state -> saveDraft(row.localId) { it.copy(upload = state) } },
@@ -500,14 +753,16 @@ class MomentsRepositoryImpl(
             complete = { id -> when (val c = remote.completeMedia(id, newIdempotencyKey())) { is AppResult.Failure -> c; is AppResult.Success -> AppResult.Success(Unit) } },
             startOver = { e -> (e as? AppError.Api)?.code in setOf("status.media_invalid", "status.media_not_found") },
             missing = AppError.Api("status.media_missing", 400, null, null, emptyMap()),
-            onProgress = { sent, total -> if (total > 0) setProgress(row.localId, UploadShare * sent / total) },
+            onProgress = { sent, total -> if (total > 0) setProgress(row.localId, base + (UploadShare - base) * sent / total) },
         )) {
-            is AppResult.Failure -> { setProgress(row.localId, null); return r }
+            // Waiting or failed: the ring holds where the encoder left it, so a second try never starts from nothing.
+            is AppResult.Failure -> { setProgress(row.localId, base.takeIf { it > 0f }); return r }
             is AppResult.Success -> r.value
         }
         setProgress(row.localId, UploadShare)
         // Filed under the media id, the name a viewer's copy gets, so my own viewer opens it without downloading.
-        files.read(row.localId)?.let { files.write(done.id, it) }
+        // (a copy through the file system where the phone has one, never the whole video through memory)
+        if (files.path(row.localId)?.let { files.copyIn(it, done.id) } != true) files.read(row.localId)?.let { files.write(done.id, it) }
         val fresh = dao.pending(row.localId) ?: return AppResult.Success(Unit)
         val clean = json.decodeFromString(PendingDraft.serializer(), fresh.draft).copy(upload = null)
         dao.savePending(fresh.copy(draft = json.encodeToString(PendingDraft.serializer(), clean),
@@ -587,17 +842,43 @@ class MomentsRepositoryImpl(
     private fun millis(iso: String): Long = runCatching { Instant.parse(iso).toEpochMilliseconds() }.getOrDefault(now())
 
     private companion object {
-        /** How much of the ring the upload fills; sealing and posting (ST3) fill the rest. */
+        /** Where the ring is when the upload is done; sealing and posting (ST3) fill the rest. */
         const val UploadShare = 0.95f
+        /**
+         * Where the ring is when a video has been made smaller (only a video over the limit goes through that): the
+         * encoder's own progress fills up to here where the phone reports it, and the upload fills on from here. A
+         * fair share: encoding a minute of video takes about as long as sending 32 MB.
+         */
+        const val PrepareShare = 0.5f
         /** The server's own limit per (requester, poster); asking sooner would only be skipped. */
         const val KeyRequestEveryMillis = 10 * 60 * 1000L
         /** The same unreadable moments are asked about again after this, in case the poster's phone missed it. */
         const val KeyRequestAgainMillis = 30 * 60 * 1000L
         const val KeyRequestBatch = 100
+        /**
+         * A video is encoded at most this many times, each planned smaller than the last came out, before it is
+         * failed as one this phone can't make small enough (which a minute of video should never reach: the third
+         * pass is planned at well under half the limit, at a smaller size).
+         */
+        const val EncodePasses = 4
+        /** Where the ring is as encode pass [pass] begins: the first takes four fifths of [PrepareShare], each later one four fifths of what is left. */
+        fun encodeShare(pass: Int): Float { var left = 1f; repeat(pass) { left *= 0.2f }; return PrepareShare * (1f - left) }
+        /** The encoder is tried this many times in all before a video is failed as one this phone can't get ready. */
+        const val PrepareTries = 3
+        /** How long after the encoder couldn't it is tried again (also at the next launch and reconnect). */
+        const val PrepareAgainMillis = 20_000L
+        const val StatePreparing = "preparing"
         const val StatePosting = "posting"
         const val StateWaiting = "waiting"
         const val StateFailed = "failed"
         fun kindOf(name: String) = runCatching { MomentKind.valueOf(name) }.getOrDefault(MomentKind.Text)
-        fun stateOf(name: String) = when (name) { StateWaiting -> PendingState.Waiting; StateFailed -> PendingState.Failed; else -> PendingState.Posting }
+        fun stateOf(name: String) = when (name) { StatePreparing -> PendingState.Preparing; StateWaiting -> PendingState.Waiting; StateFailed -> PendingState.Failed; else -> PendingState.Posting }
+        /** Why a moment couldn't be got ready (the pending row's error; MomentsList's `postError` has the words). */
+        const val SourceMissing = "moment.source_missing"
+        const val VideoUnreadable = "moment.video_unreadable"
+        const val PrepareFailed = "moment.prepare_failed"
+        /** Every encode pass came out over the limit. */
+        const val VideoTooLarge = "moment.video_too_large"
+        const val TooLarge = "status.moment_too_large"
     }
 }

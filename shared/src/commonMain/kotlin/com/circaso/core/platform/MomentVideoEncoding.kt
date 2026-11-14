@@ -29,8 +29,29 @@ object MomentVideoEncoding {
     const val AudioBitRate = 128_000
     /** Below this many bits per pixel per frame H.264 starts to smear detail: drop a size step instead. */
     const val MinBitsPerPixel = 0.05
-    /** The share of the limit the clip aims for: VBR encoders overshoot a little, and MP4 boxes take some room. */
-    const val BudgetShare = 0.92
+    /**
+     * The share of the limit the clip aims for: VBR encoders overshoot, and MP4 boxes take some room. 0.85 since
+     * 2026-11-14: at 0.92 a 57 s clip came out over 32 MiB from a Redmi's (MediaTek) hardware encoder, which runs
+     * well past the bit rate it is asked for. An encode that still comes out over is done again smaller
+     * ([smallerBudget]); this only makes the first pass fit on more phones.
+     */
+    const val BudgetShare = 0.85
+    /** How much under the size it aims for a second pass goes, after the first came out over the limit. */
+    const val RetryMargin = 0.9
+    /** The least a pass is asked to fit in: below this a minute of video isn't worth sending. */
+    const val MinBudgetBytes = 2L * 1024 * 1024
+
+    /**
+     * The byte budget for the next pass after one planned for [budgetBytes] came out at [outBytes], over [maxBytes]:
+     * scaled by how far over the limit this phone's encoder really went, less [RetryMargin]. Planned through [plan],
+     * a smaller budget lowers the bit rate and, once that would smear the picture, the size too, so even an encoder
+     * that ignores the bit rate it is given comes out smaller.
+     */
+    fun smallerBudget(budgetBytes: Long, outBytes: Long, maxBytes: Long = MomentMediaMaxBytes): Long {
+        if (outBytes <= 0) return budgetBytes
+        val next = minOf(budgetBytes, maxBytes).toDouble() * maxBytes / outBytes * RetryMargin
+        return next.roundToLong().coerceIn(minOf(MinBudgetBytes, maxBytes), maxBytes)
+    }
     /** The short sides tried, largest first. */
     private val Steps = listOf(1080, 720, 540, 360)
 
