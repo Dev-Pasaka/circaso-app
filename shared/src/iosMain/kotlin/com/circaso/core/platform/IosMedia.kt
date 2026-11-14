@@ -135,6 +135,15 @@ class IosMediaFiles : MediaFiles {
         fm.removeItemAtPath(filePath(name), error = null)
         return fm.copyItemAtPath(path, toPath = filePath(name), error = null)
     }
+
+    /** A move through the file system: a rename inside the app's container, which is where every picked file is. */
+    override suspend fun moveIn(path: String, name: String): Boolean {
+        val fm = NSFileManager.defaultManager
+        if (!fm.fileExistsAtPath(path)) return false
+        fm.createDirectoryAtPath(applicationSupportPath("media"), withIntermediateDirectories = true, attributes = null, error = null)
+        fm.removeItemAtPath(filePath(name), error = null)
+        return fm.moveItemAtPath(path, toPath = filePath(name), error = null)
+    }
 }
 
 actual fun fileSizeAt(path: String): Long? = kotlinx.cinterop.memScoped {

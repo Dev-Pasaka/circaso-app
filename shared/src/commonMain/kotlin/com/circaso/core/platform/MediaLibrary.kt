@@ -101,6 +101,14 @@ interface MediaLibrary {
     suspend fun trim(path: String, startMs: Long, endMs: Long, maxBytes: Long = MomentMediaMaxBytes): CapturedMedia? = null
 
     /**
+     * [trim] for a moment being got ready after Post (the whole clip made smaller, in the background): the same copy,
+     * with [onProgress] told how far the encoder has got (0..1) where the phone says (Android's Transformer). Where it
+     * doesn't, [onProgress] is never called and the ring moves on when the copy is ready.
+     */
+    suspend fun shrink(path: String, startMs: Long, endMs: Long, maxBytes: Long = MomentMediaMaxBytes, onProgress: (Float) -> Unit = {}): CapturedMedia? =
+        trim(path, startMs, endMs, maxBytes)
+
+    /**
      * The system's Files picker for any document (a chat's Document, no permission needed); null when the person
      * closes it. The file is copied to this app's cache and handed over by [PickedFile.path], read when it is sent.
      */

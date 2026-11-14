@@ -18,7 +18,6 @@ import com.circaso.feature.mediacompose.GalleryState
 import com.circaso.feature.mediacompose.GalleryTab
 import com.circaso.feature.mediacompose.MediaComposeState
 import com.circaso.feature.mediacompose.MediaComposer
-import com.circaso.feature.mediacompose.PreparedItem
 import com.circaso.feature.mediacompose.TrimState
 import com.circaso.feature.status.domain.MomentAudienceMode
 import com.circaso.feature.status.domain.MomentDraft
@@ -103,8 +102,6 @@ class MomentComposerViewModel(
     private val now: () -> Long = { com.circaso.core.sync.nowMillis() },
     /** Where the composer starts; previews start it on a given screen (the gallery, the trimmer, several picked). */
     initial: MomentComposerUiState = MomentComposerUiState(),
-    /** Re-encoding a video after Share runs as background work, so leaving Circaso mid-way doesn't stop it. */
-    private val uploads: com.circaso.core.platform.BackgroundUploads = com.circaso.core.platform.NoBackgroundUploads,
     /** Opened from another app's share sheet with "My moment": where its photos and videos come from. */
     shared: (() -> List<com.circaso.feature.mediacompose.SharedFile>?)? = null,
 ) : ViewModel() {
@@ -320,51 +317,40 @@ class MomentComposerViewModel(
     // ---- sharing
 
     /**
-     * Hands the moments to the outbox, in order, and closes (optimistic; my ring shows Posting, M6). Several picked
-     * at once each become their own moment. A video too large to post as it is gets re-encoded first (the shared
-     * composer's [MediaComposer.prepare], the same step a chat's video goes through).
+     * Post (2026-11-14, Pasaka: "the same experience as WhatsApp"). The preview checks only what can stop a moment
+     * for good ([momentRefusal]: a file that is gone, one too large to post at all; a video's minute is the trimmer's).
+     * Then each moment is recorded as pending, in the order picked (several picked are several moments), and the
+     * composer closes at once, for a video too: making it smaller and sending it happen in the background
+     * ([MomentsRepository.post]), and my ring in the Moments list shows how far it has got (M6).
      */
     fun share() {
         val s = _state.value
         if (!s.canShare) return
-        if (s.items.isEmpty()) {
-            _state.update { it.copy(sharing = true) }
-            viewModelScope.launch {
-                repository.post(MomentDraft.Text(s.text.trim(), s.background, s.style))
-                _state.update { it.copy(sharing = false, shared = true) }
-            }
-            return
-        }
         _state.update { it.copy(sharing = true) }
         viewModelScope.launch {
-            // Preparing and queueing run as one piece of background work: leaving Circaso while a video re-encodes
-            // doesn't stop it, and the queued moments are the outbox's from there (they survive the process).
-            uploads.keep(com.circaso.core.platform.UploadKind.Moment) {
-                val drafts = mutableListOf<MomentDraft>()
-                for ((index, item) in s.items.withIndex()) {
-                    when (val ready = composer.prepare(item)) {
-                        is PreparedItem.Shot -> drafts += MomentDraft.Media(
-                            if (ready.media.mime.startsWith("video")) MomentKind.Video else MomentKind.Image, ready.bytes, ready.media.mime, ready.caption,
-                            ready.media.thumb, ready.media.durationMs, ready.media.width, ready.media.height,
-                        )
-                        is PreparedItem.Voice -> drafts += MomentDraft.Media(
-                            MomentKind.Voice, ready.capture.bytes, ready.capture.mime, ready.caption, null, ready.capture.durationMs,
-                            background = _state.value.voiceBackground, levels = ready.capture.levels,
-                        )
-                        // A moment has no file kind; the composer never offers one here.
-                        is PreparedItem.Document -> Unit
-                        PreparedItem.Missing -> { stop(index, "This video isn’t on the phone any more. Pick it again."); return@keep }
-                        is PreparedItem.TooLarge -> { stop(index, "This is too large to share. Keep videos under a minute."); return@keep }
-                    }
-                }
-                // Only once every one is ready: never half a batch posted and the rest left behind.
-                drafts.forEach { repository.post(it) }
-                _state.update { it.copy(sharing = false, shared = true, media = it.media.copy(preparing = false)) }
+            if (s.items.isEmpty()) {
+                repository.post(MomentDraft.Text(s.text.trim(), s.background, s.style))
+                _state.update { it.copy(sharing = false, shared = true) }
+                return@launch
             }
+            // Every one is checked before any is recorded: never half a batch posted and the rest refused.
+            for ((index, item) in s.items.withIndex()) {
+                momentRefusal(item, library)?.let { stop(index, it); return@launch }
+            }
+            for ((index, item) in s.items.withIndex()) {
+                val draft = momentDraft(item, s.voiceBackground) ?: continue
+                if (repository.post(draft) is com.circaso.core.common.AppResult.Failure) {
+                    // Its file went between the check and now. The ones before it are on their way: they leave the
+                    // review, so posting again never sends them twice.
+                    _state.update { it.copy(sharing = false, media = it.media.copy(items = it.media.items.drop(index), current = 0, error = GoneCopy)) }
+                    return@launch
+                }
+            }
+            _state.update { it.copy(sharing = false, shared = true) }
         }
     }
 
-    private fun stop(index: Int, why: String) = _state.update { it.copy(sharing = false, media = it.media.copy(preparing = false, current = index, error = why)) }
+    private fun stop(index: Int, why: String) = _state.update { it.copy(sharing = false, media = it.media.copy(current = index, error = why)) }
 
     override fun onCleared() { player.stop(); camera.close() }
 
@@ -378,6 +364,56 @@ class MomentComposerViewModel(
         /** The shortest clip the trimmer keeps. */
         const val MinTrimMs = MediaComposer.MinTrimMs
     }
+}
+
+private const val GoneCopy = "This video isn’t on the phone any more. Pick it again."
+
+/**
+ * Why [item] can't be posted as a moment at all, in plain words, or null when it can (2026-11-14: the preview checks
+ * only the minute, which the trimmer holds, and the size). The size rule: a photo or a voice goes as it is, so it must
+ * fit the post limit ([com.circaso.core.platform.MomentMediaMaxBytes]); a video over that limit is fine, because it is
+ * made smaller after Post, in the background (a minute always fits once encoded), so only a file that is gone, or one
+ * past [com.circaso.core.platform.MomentSourceMaxBytes], is refused here.
+ */
+internal suspend fun momentRefusal(item: ComposerItem, library: MediaLibrary): String? {
+    val max = com.circaso.core.platform.MomentMediaMaxBytes
+    return when (val cap = item.capture) {
+        is ComposerCapture.Voice -> when {
+            cap.bytes.isEmpty() -> "This recording isn’t on the phone any more. Record it again."
+            cap.bytes.size > max -> "This recording is too large to post. Voice moments are up to a minute."
+            else -> null
+        }
+        is ComposerCapture.Document -> "Moments are photos, videos, voice and text."
+        is ComposerCapture.Shot -> {
+            val path = cap.media.path
+            val onDisk = path != null && (cap.video || cap.media.bytes.isEmpty())
+            val size = if (onDisk) library.size(path!!) ?: 0 else cap.media.bytes.size.toLong()
+            when {
+                size <= 0 -> if (cap.video) GoneCopy else "This photo isn’t on the phone any more. Pick it again."
+                !cap.video && size > max -> "This photo is too large to post. Pick another."
+                // In memory only (no file for the encoder to read): it goes as it is, or not at all.
+                cap.video && !onDisk && size > max -> "This video is too large to post. Pick a shorter one."
+                cap.video && size > com.circaso.core.platform.MomentSourceMaxBytes -> {
+                    // "1.4 GB"; a file a little over reads "just over 1 GB", never "1.0 GB" beside "up to 1 GB".
+                    val tenths = (size * 10 + com.circaso.core.platform.MomentSourceMaxBytes / 2) / com.circaso.core.platform.MomentSourceMaxBytes
+                    "This video is ${if (tenths <= 10) "just over 1 GB" else "${tenths / 10}.${tenths % 10} GB"}. Videos up to 1 GB can be posted: trim it shorter or pick another."
+                }
+                else -> null
+            }
+        }
+    }
+}
+
+/** [item] as the moment to record: a video by its file (never read into memory here), the rest by their bytes. */
+internal fun momentDraft(item: ComposerItem, voiceBackground: String): MomentDraft.Media? = when (val cap = item.capture) {
+    is ComposerCapture.Shot -> {
+        val m = cap.media
+        val onDisk = m.path != null && (cap.video || m.bytes.isEmpty())
+        MomentDraft.Media(cap.momentKind, if (onDisk) ByteArray(0) else m.bytes, m.mime, item.caption, m.thumb, m.durationMs, m.width, m.height, path = m.path.takeIf { onDisk })
+    }
+    is ComposerCapture.Voice -> MomentDraft.Media(MomentKind.Voice, cap.bytes, cap.mime, item.caption, null, cap.durationMs, background = voiceBackground, levels = cap.levels)
+    // A moment has no file kind; the composer never offers one here.
+    is ComposerCapture.Document -> null
 }
 
 /** A shot's kind as a moment knows it. */

@@ -131,6 +131,23 @@ class AndroidMediaFiles(context: Context) : MediaFiles {
         source.renameTo(target) || (runCatching { source.copyTo(target, overwrite = true); source.delete() }.isSuccess)
     }
 
+    override suspend fun moveIn(path: String, name: String): Boolean = withContext(Dispatchers.IO) {
+        runCatching {
+            dir.mkdirs()
+            val source = File(path)
+            if (!source.isFile) return@runCatching false
+            val target = File(dir, name)
+            target.delete()
+            if (source.renameTo(target)) return@runCatching true
+            // Another volume: copied under a name nothing reads, then renamed, so [name] is never half a file.
+            val part = File(dir, "$name.part")
+            source.inputStream().use { input -> part.outputStream().use { input.copyTo(it, 256 * 1024) } }
+            if (!part.renameTo(target)) { part.delete(); return@runCatching false }
+            source.delete()
+            true
+        }.getOrDefault(false)
+    }
+
     override suspend fun copyIn(path: String, name: String): Boolean = withContext(Dispatchers.IO) {
         runCatching {
             dir.mkdirs()

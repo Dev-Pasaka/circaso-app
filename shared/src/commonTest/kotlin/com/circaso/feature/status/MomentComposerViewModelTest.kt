@@ -111,6 +111,9 @@ private class FakeLibrary : MediaLibrary {
     override suspend fun load(item: LibraryItem) = media[item.id]
     override suspend fun pick(kind: LibraryKind): CapturedMedia? = systemPicks.firstOrNull()
     override suspend fun read(path: String) = files[path]
+    /** A file's size without the file (a gigabyte is not allocated to test the ceiling). */
+    val sizes = mutableMapOf<String, Long>()
+    override suspend fun size(path: String): Long? = sizes[path] ?: files[path]?.size?.toLong()
     override suspend fun filmstrip(path: String, count: Int) = List(count) { ByteArray(1) }
     override suspend fun trim(path: String, startMs: Long, endMs: Long, maxBytes: Long): CapturedMedia? {
         trims += Triple(path, startMs, endMs)
@@ -120,12 +123,18 @@ private class FakeLibrary : MediaLibrary {
 
 private class ComposerFakeMoments : MomentsRepository {
     val posted = mutableListOf<MomentDraft>()
+    /** Paths the repository can't take in any more (the file went after the preview's check). */
+    val gone = mutableSetOf<String>()
     override val moments: Flow<List<Moment>> = flowOf(emptyList())
     override val pending: Flow<List<PendingMoment>> = flowOf(emptyList())
     override val privacy: Flow<MomentPrivacy> = flowOf(MomentPrivacy())
     override val muted: Flow<Set<String>> = flowOf(emptySet())
     override suspend fun refresh() = AppResult.Success(Unit)
-    override suspend fun post(draft: MomentDraft): AppResult<Unit> { posted += draft; return AppResult.Success(Unit) }
+    override suspend fun post(draft: MomentDraft): AppResult<Unit> {
+        if ((draft as? MomentDraft.Media)?.path in gone) return AppResult.Failure(AppError.Api("moment.source_missing", 400, null, null, emptyMap()))
+        posted += draft
+        return AppResult.Success(Unit)
+    }
     override suspend fun retry(localId: String) = Unit
     override suspend fun discard(localId: String) = Unit
     override suspend fun markViewed(momentId: String, reacted: Boolean?) = AppResult.Success(Unit)
@@ -359,8 +368,11 @@ class MomentComposerViewModelTest {
         val posted = moments.posted.map { it as MomentDraft.Media }
         assertEquals(listOf(MomentKind.Image, MomentKind.Video, MomentKind.Image), posted.map { it.kind })
         assertEquals(listOf("", "the video", "last"), posted.map { it.caption })
-        // The video was on disk, not in memory: read when it was posted.
-        assertEquals(5, posted[1].bytes.size)
+        // The video was on disk, not in memory: handed over by its file, never read here.
+        assertEquals(0, posted[1].bytes.size)
+        assertEquals("/tmp/v.mp4", posted[1].path)
+        assertNull(posted[0].path)
+        assertTrue(vm.state.value.shared)
     }
 
     @Test fun theGalleryMergesPhotosAndVideosNewestFirst() = runTest(dispatcher) {
@@ -455,14 +467,87 @@ class MomentComposerViewModelTest {
         assertEquals("This video couldn’t be trimmed on this phone. Try a shorter one.", vm.state.value.error)
     }
 
-    @Test fun aVideoTooLargeToPostIsReencodedFirst() = runTest(dispatcher) {
+    // Post like WhatsApp (2026-11-14): the preview checks the minute and the size, and Post closes at once.
+
+    @Test fun aVideoOverThePostLimitIsAcceptedAndPostClosesWithoutEncodingIt() = runTest(dispatcher) {
         library.media["big"] = clip("/tmp/big.mp4", 50_000)
-        library.files["/tmp/big.mp4"] = ByteArray((com.circaso.core.platform.MomentMediaMaxBytes + 1).toInt())
+        library.sizes["/tmp/big.mp4"] = com.circaso.core.platform.MomentMediaMaxBytes * 6
         val vm = composer()
         vm.useRecent(video("big", 50_000))
+        assertTrue(vm.state.value.canShare)
         vm.share()
-        assertEquals(Triple("/tmp/big.mp4", 0L, 50_000L), library.trims.single())
-        assertEquals(7, (moments.posted.single() as MomentDraft.Media).bytes.size)
+        assertTrue(library.trims.isEmpty(), "made smaller after Post, in the background, never on the preview")
+        assertFalse(vm.state.value.preparing)
+        assertTrue(vm.state.value.shared, "the composer closes at once")
+        val draft = moments.posted.single() as MomentDraft.Media
+        assertEquals(MomentKind.Video, draft.kind)
+        assertEquals("/tmp/big.mp4", draft.path)
+        assertEquals(0, draft.bytes.size)
+    }
+
+    @Test fun aVideoTooLargeToPostAtAllIsRefusedOnThePreviewWithItsSize() = runTest(dispatcher) {
+        library.media["ok"] = jpeg(3)
+        library.media["huge"] = clip("/tmp/huge.mov", 40_000)
+        library.sizes["/tmp/huge.mov"] = com.circaso.core.platform.MomentSourceMaxBytes * 14 / 10
+        val vm = composer()
+        vm.openGallery()
+        vm.toggle(photo("ok")); vm.toggle(video("huge", 40_000))
+        vm.useSelection()
+        vm.share()
+        assertTrue(moments.posted.isEmpty(), "never half a batch: the photo waits with it")
+        assertFalse(vm.state.value.shared)
+        assertFalse(vm.state.value.sharing)
+        assertEquals(1, vm.state.value.current, "the one that can't go is on the stage")
+        assertEquals("This video is 1.4 GB. Videos up to 1 GB can be posted: trim it shorter or pick another.", vm.state.value.error)
+        // Taken out, the rest goes.
+        vm.removeCurrent()
+        vm.share()
+        assertEquals(1, moments.posted.size)
+        assertTrue(vm.state.value.shared)
+    }
+
+    @Test fun aVideoThatIsNoLongerOnThePhoneIsRefusedOnThePreview() = runTest(dispatcher) {
+        library.media["v"] = clip("/tmp/v.mp4", 8_000) // its file was cleared: no size
+        val vm = composer()
+        vm.useRecent(video("v", 8_000))
+        vm.share()
+        assertTrue(moments.posted.isEmpty())
+        assertFalse(vm.state.value.shared)
+        assertEquals("This video isn’t on the phone any more. Pick it again.", vm.state.value.error)
+    }
+
+    @Test fun aFileThatGoesBetweenTheCheckAndThePostLeavesOnlyWhatIsNotYetOnItsWay() = runTest(dispatcher) {
+        library.media["a"] = jpeg(1)
+        library.media["v"] = clip("/tmp/v.mp4", 8_000)
+        library.files["/tmp/v.mp4"] = ByteArray(5)
+        moments.gone += "/tmp/v.mp4"
+        val vm = composer()
+        vm.openGallery()
+        vm.toggle(photo("a")); vm.toggle(video("v", 8_000))
+        vm.useSelection()
+        vm.share()
+        assertEquals(1, moments.posted.size, "the photo before it is on its way")
+        assertFalse(vm.state.value.shared)
+        assertEquals(1, vm.state.value.items.size, "and has left the review, so posting again never sends it twice")
+        assertNotNull(vm.state.value.items.single().video)
+        assertEquals("This video isn’t on the phone any more. Pick it again.", vm.state.value.error)
+    }
+
+    @Test fun aTrimmedVideoPostsItsCutByFileAndATextMomentStillPostsAtOnce() = runTest(dispatcher) {
+        library.media["long"] = clip("/tmp/long.mp4", 134_000)
+        val vm = composer()
+        vm.useRecent(video("long", 134_000))
+        vm.applyTrim()
+        vm.share()
+        assertEquals("/tmp/long.mp4-cut", (moments.posted.single() as MomentDraft.Media).path)
+        assertTrue(vm.state.value.shared)
+
+        val text = composer()
+        text.setMode(ComposerMode.Text)
+        text.onText("Habari")
+        text.share()
+        assertTrue(moments.posted.last() is MomentDraft.Text)
+        assertTrue(text.state.value.shared)
     }
 
     @Test fun theGalleryAsksForAccessAndFillsWhenItIsAllowed() = runTest(dispatcher) {
@@ -511,8 +596,16 @@ class MomentComposerViewModelTest {
 
     @Test fun theRingFillsOverTheWholeBatchAndNeverRunsBackwards() {
         fun p(progress: Float?, state: PendingState = PendingState.Posting) = PendingMoment("l$progress", MomentKind.Image, state, null, 0, progress)
-        assertNull(MomentsUiState(pending = listOf(p(null))).postingProgress)
+        // A photo or video shows the arc from nothing, from the moment Post is tapped (WhatsApp's ring), never a spinner.
+        assertEquals(0f, MomentsUiState(pending = listOf(p(null))).postingProgress)
+        assertEquals(0f, MomentsUiState(pending = listOf(p(null, PendingState.Preparing))).postingProgress)
+        // Only text moments, which have nothing to send but themselves, turn.
+        assertNull(MomentsUiState(pending = listOf(PendingMoment("t", MomentKind.Text, PendingState.Posting, null, 0))).postingProgress)
         assertEquals(0.5f, MomentsUiState(pending = listOf(p(1f), p(null))).postingProgress)
+        // Getting ready and sending are one arc: a video half made smaller and a photo not started.
+        assertEquals(0.125f, MomentsUiState(pending = listOf(p(0.25f, PendingState.Preparing), p(null, PendingState.Preparing))).postingProgress)
+        // A step started again (a second try at the upload) never takes the arc back.
+        assertEquals(0.6f, MomentsUiState(pending = listOf(p(0.5f)), postingFloor = 0.6f).postingProgress)
         assertEquals(0.25f, MomentsUiState(pending = listOf(p(0.25f), p(0.9f, PendingState.Failed))).postingProgress)
         // Three picked: the first has posted and left the queue, the next hasn't started. Still a third, not zero.
         assertEquals(1f / 3, MomentsUiState(pending = listOf(p(null), p(null)), postingBatch = 3).postingProgress)

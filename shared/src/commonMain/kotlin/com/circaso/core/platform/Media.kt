@@ -103,6 +103,14 @@ interface MediaFiles {
      * piece at a time. False when it can't be read.
      */
     suspend fun copyIn(path: String, name: String): Boolean = false
+
+    /**
+     * Takes a file of this app's from elsewhere on the phone ([path]: a picked video's copy in the cache, an encoder's
+     * output) in as [name], and the file at [path] is gone afterwards. A rename where the phone allows it (the same
+     * volume: instant, however large), else a copy that only appears under [name] once it is whole. False when it
+     * can't be read; then nothing is under [name].
+     */
+    suspend fun moveIn(path: String, name: String): Boolean = copyIn(path, name)
 }
 
 /** The size of a file anywhere on this phone (a picked video, a shared document), or null when it can't be read. */

@@ -53,7 +53,16 @@ data class MomentsUiState(
     val refreshing: Boolean = false,
     /** How many moments the current run of posting started with (several picked at once fill one ring); 0 when none. */
     val postingBatch: Int = 0,
+    /**
+     * The furthest the ring has shown for this batch: it holds there if a moment starts a step again (a second try at
+     * an upload), so the arc only ever grows. Back to 0 when the batch ends, or when another moment joins it.
+     */
+    val postingFloor: Float = 0f,
 ) {
+    /**
+     * My ring (M6). A moment still being got ready after Post (a video made smaller, 2026-11-14) is on its way like
+     * one that is uploading: the same arc. Offline it waits, as designed, though getting ready carries on.
+     */
     val myRing: MyRing
         get() = when {
             pending.any { it.state == PendingState.Failed } -> MyRing.Failed
@@ -64,19 +73,24 @@ data class MomentsUiState(
         }
     val failedPost: PendingMoment? get() = pending.firstOrNull { it.state == PendingState.Failed }
 
+    /** My moments on their way: being got ready or being sent. */
+    private val underway: List<PendingMoment> get() = pending.filter { it.state == PendingState.Preparing || it.state == PendingState.Posting }
+
     /**
-     * How far my moments on their way have got (0..1) over the whole batch: the ones already posted count in full,
-     * so the ring only ever moves forward as several picked at once go up one after another. Null while nothing has
-     * started uploading or posted yet (a text moment, or the queue just began), which shows the turning arc.
+     * How far my moments on their way have got (0..1) over the whole batch, as WhatsApp's ring shows it: each one's
+     * getting ready and then its bytes sent, and the ones already posted count in full, so the arc grows from the
+     * moment Post is tapped and only ever forward as several picked at once go one after another. Null only when
+     * nothing in the batch has a file (text moments, which post in a blink): that shows the turning arc.
      */
     val postingProgress: Float?
         get() {
-            val posting = pending.filter { it.state == PendingState.Posting }
-            val batch = maxOf(postingBatch, posting.size)
+            val going = underway
+            val batch = maxOf(postingBatch, going.size)
             if (batch == 0) return null
-            val done = batch - posting.size
-            if (done == 0 && posting.none { it.progress != null }) return null
-            return ((done + posting.sumOf { (it.progress ?: 0f).toDouble() }.toFloat()) / batch).coerceIn(0f, 1f)
+            val done = batch - going.size
+            if (done == 0 && going.none { it.progress != null || it.kind != com.circaso.feature.status.domain.MomentKind.Text }) return null
+            val raw = (done + going.sumOf { (it.progress ?: 0f).toDouble() }.toFloat()) / batch
+            return maxOf(raw, postingFloor).coerceIn(0f, 1f)
         }
     /** S1d: skeleton rings only on the very first open, before anything is stored or answered. */
     val loading: Boolean get() = !refreshed && rings.isEmpty() && myMoments.isEmpty() && online
@@ -139,8 +153,13 @@ class MomentsViewModel(
         }
         viewModelScope.launch {
             moments.pending.collect { p ->
-                val posting = p.count { it.state == PendingState.Posting }
-                _state.update { it.copy(pending = p, postingBatch = if (posting == 0) 0 else maxOf(it.postingBatch, posting)) }
+                val going = p.count { it.state == PendingState.Preparing || it.state == PendingState.Posting }
+                _state.update {
+                    val batch = if (going == 0) 0 else maxOf(it.postingBatch, going)
+                    // A batch that ended or grew is measured afresh; otherwise the ring keeps what it has shown.
+                    val next = it.copy(pending = p, postingBatch = batch, postingFloor = if (batch == 0 || batch != it.postingBatch) 0f else it.postingFloor)
+                    next.copy(postingFloor = if (batch == 0) 0f else next.postingProgress ?: 0f)
+                }
             }
         }
         viewModelScope.launch {

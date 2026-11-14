@@ -366,7 +366,10 @@ internal class ViewerFakeMoments : MomentsRepository {
     override val moments: Flow<List<Moment>> = list
     val lockedList = MutableStateFlow<List<com.circaso.feature.status.domain.LockedMoment>>(emptyList())
     override val locked: Flow<List<com.circaso.feature.status.domain.LockedMoment>> = lockedList
-    override val pending: Flow<List<PendingMoment>> = MutableStateFlow(emptyList())
+    val pendingList = MutableStateFlow<List<PendingMoment>>(emptyList())
+    override val pending: Flow<List<PendingMoment>> = pendingList
+    var resumes = 0
+    override suspend fun resume() { resumes++ }
     override val privacy: Flow<MomentPrivacy> = MutableStateFlow(MomentPrivacy())
     override val muted: Flow<Set<String>> = MutableStateFlow(emptySet())
     var refreshResult: AppResult<Unit> = AppResult.Success(Unit)

@@ -24,6 +24,10 @@ class MomentsStateTest {
         assertEquals(MyRing.Add, MomentsUiState().myRing)
         assertEquals(MyRing.Seen, MomentsUiState(myMoments = listOf(moment("m", true, mine = true))).myRing)
         assertEquals(MyRing.Posting, MomentsUiState(pending = listOf(pending(PendingState.Posting))).myRing)
+        // Still being got ready after Post (a video made smaller): on its way, the same ring.
+        assertEquals(MyRing.Posting, MomentsUiState(pending = listOf(pending(PendingState.Preparing))).myRing)
+        assertEquals(MyRing.Waiting, MomentsUiState(pending = listOf(pending(PendingState.Preparing)), online = false).myRing)
+        assertEquals(MyRing.Failed, MomentsUiState(pending = listOf(pending(PendingState.Preparing), pending(PendingState.Failed))).myRing)
         assertEquals(MyRing.Waiting, MomentsUiState(pending = listOf(pending(PendingState.Posting)), online = false).myRing)
         assertEquals(MyRing.Failed, MomentsUiState(pending = listOf(pending(PendingState.Waiting), pending(PendingState.Failed))).myRing)
     }

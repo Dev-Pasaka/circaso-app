@@ -413,6 +413,9 @@ private fun postError(code: String?) = when (code) {
     "status.audience_invalid" -> "None of your contacts can see moments yet, so it didn't post."
     "outbox.stale" -> "Your moment waited too long and didn't post."
     "status.media_invalid", "status.moment_too_large" -> "Your moment was too large to post. Try a shorter video."
+    // Getting it ready after Post (2026-11-14): the picked file was cleared, or this phone couldn't encode the video.
+    "moment.source_missing", "status.media_missing" -> "The photo or video isn’t on this phone any more, so it didn’t post. Delete this and pick it again."
+    "moment.video_unreadable", "moment.prepare_failed" -> "This phone couldn’t get the video ready to post. Try again, or pick a shorter one."
     "status.too_many_moments" -> "You’ve shared a lot of moments today. Try again later."
     else -> "Your moment didn’t post."
 }

@@ -10,6 +10,10 @@ import com.circaso.feature.contacts.domain.ObserveContactsUseCase
 import com.circaso.feature.profile.domain.ObserveProfileUseCase
 import com.circaso.feature.status.domain.LockState
 import com.circaso.feature.status.domain.LockedMoment
+import com.circaso.feature.status.domain.MomentKind
+import com.circaso.feature.status.domain.PendingMoment
+import com.circaso.feature.status.domain.PendingState
+import com.circaso.feature.status.presentation.MyRing
 import com.circaso.feature.status.presentation.MomentsViewModel
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -39,6 +43,31 @@ class MomentsViewModelTest {
     @AfterTest fun tearDown() = Dispatchers.resetMain()
 
     private fun vm() = MomentsViewModel(repo, ObserveContactsUseCase(FakeContacts()), ObserveProfileUseCase(FakeProfile()), connection)
+
+    @Test fun myRingFillsAcrossABatchFromGettingReadyThroughSendingAndNeverRunsBack() = runTest(dispatcher) {
+        fun p(id: String, state: PendingState, progress: Float?) = PendingMoment(id, MomentKind.Video, state, null, 0, progress)
+        val vm = vm()
+        val shown = mutableListOf<Float>()
+        fun step(vararg rows: PendingMoment) { repo.pendingList.value = rows.toList(); vm.state.value.postingProgress?.let { shown += it } }
+        // Two videos picked together: Post has just closed the composer.
+        step(p("a", PendingState.Preparing, null), p("b", PendingState.Preparing, null))
+        assertEquals(MyRing.Posting, vm.state.value.myRing)
+        assertEquals(0f, shown.single(), "an arc from nothing, not a spinner")
+        step(p("a", PendingState.Preparing, 0.3f), p("b", PendingState.Preparing, null))   // the encoder's own progress
+        step(p("a", PendingState.Posting, 0.5f), p("b", PendingState.Preparing, null))     // ready: handed to the queue
+        step(p("a", PendingState.Posting, 0.8f), p("b", PendingState.Preparing, 0.2f))     // sending, the next one being got ready
+        step(p("a", PendingState.Posting, null), p("b", PendingState.Preparing, 0.2f))     // the upload starts again: held, not back
+        step(p("a", PendingState.Posting, 0.95f), p("b", PendingState.Posting, 0.5f))
+        step(p("b", PendingState.Posting, 0.7f))                                           // the first has posted: counts in full
+        step(p("b", PendingState.Posting, 0.95f))
+        assertEquals(shown.sorted(), shown, "only ever forward: $shown")
+        assertEquals(0.975f, shown.last())
+        // Gone from the queue: the batch is over and the next one starts from nothing.
+        step()
+        assertEquals(0, vm.state.value.postingBatch)
+        step(p("c", PendingState.Preparing, null))
+        assertEquals(0f, vm.state.value.postingProgress)
+    }
 
     @Test fun aWorkingCheckShowsTheRingsWithNoErrorLine() = runTest(dispatcher) {
         val vm = vm()

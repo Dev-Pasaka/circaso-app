@@ -400,7 +400,10 @@ class AndroidMediaLibrary(private val context: Context) : MediaLibrary {
      * side, its frame rate, and a bit rate for that size that the 32 MiB limit allows for this length.
      */
     @OptIn(UnstableApi::class)
-    override suspend fun trim(path: String, startMs: Long, endMs: Long, maxBytes: Long): CapturedMedia? {
+    override suspend fun trim(path: String, startMs: Long, endMs: Long, maxBytes: Long): CapturedMedia? = shrink(path, startMs, endMs, maxBytes) {}
+
+    @OptIn(UnstableApi::class)
+    override suspend fun shrink(path: String, startMs: Long, endMs: Long, maxBytes: Long, onProgress: (Float) -> Unit): CapturedMedia? {
         val out = File(context.cacheDir, "moment-trim-${System.nanoTime()}.mp4")
         val source = withContext(Dispatchers.IO) { probeVideo(path) }
         val plan = MomentVideoEncoding.plan(
@@ -423,7 +426,7 @@ class AndroidMediaLibrary(private val context: Context) : MediaLibrary {
             val encoder = DefaultEncoderFactory.Builder(context)
                 .setRequestedVideoEncoderSettings(VideoEncoderSettings.Builder().setBitrate(bitRate).build())
                 .build()
-            val failed = export(edited, encoder, out)
+            val failed = export(edited, encoder, out, onProgress)
             if (failed == null) {
                 if (out.length() > maxBytes && !shrunk) {
                     Log.i("MomentVideo", "trim: ${out.length()} bytes is over the limit at ${bitRate / 1000} kbit/s, once more at 80 %")
@@ -444,7 +447,7 @@ class AndroidMediaLibrary(private val context: Context) : MediaLibrary {
 
     /** One Transformer run: null when it worked, else the failed decoder's name ("" for any other failure). */
     @OptIn(UnstableApi::class)
-    private suspend fun export(edited: EditedMediaItem, encoder: DefaultEncoderFactory, out: File): String? {
+    private suspend fun export(edited: EditedMediaItem, encoder: DefaultEncoderFactory, out: File, onProgress: (Float) -> Unit = {}): String? {
         out.delete()
         val selector = MediaCodecSelector { mime, secure, tunneling ->
             MediaCodecUtil.getDecoderInfos(mime, secure, tunneling).filterNot { it.name in failedDecoders }
@@ -472,7 +475,19 @@ class AndroidMediaLibrary(private val context: Context) : MediaLibrary {
                     })
                     .build()
                 transformer.start(edited, out.absolutePath)
-                cont.invokeOnCancellation { transformer.cancel(); out.delete() }
+                // The encoder's own progress (a moment got ready after Post fills my ring with it), read on this
+                // thread, the one Transformer runs on, until the export ends one way or the other.
+                val handler = android.os.Handler(android.os.Looper.getMainLooper())
+                val holder = androidx.media3.transformer.ProgressHolder()
+                val poll = object : Runnable {
+                    override fun run() {
+                        if (!cont.isActive) return
+                        if (transformer.getProgress(holder) == Transformer.PROGRESS_STATE_AVAILABLE) onProgress(holder.progress / 100f)
+                        handler.postDelayed(this, ExportProgressPollMs)
+                    }
+                }
+                handler.postDelayed(poll, ExportProgressPollMs)
+                cont.invokeOnCancellation { handler.removeCallbacks(poll); transformer.cancel(); out.delete() }
             }
         }
     }
@@ -499,6 +514,8 @@ class AndroidMediaLibrary(private val context: Context) : MediaLibrary {
 
 /** A chat video's poster: the long side in pixels (as the chat's own first-frame thumb has been). */
 private const val PosterSide = 240
+/** How often an export's progress is read while it runs. */
+private const val ExportProgressPollMs = 200L
 
 private fun Bitmap.toJpeg(quality: Int): ByteArray = ByteArrayOutputStream().also { compress(Bitmap.CompressFormat.JPEG, quality, it) }.toByteArray()
 

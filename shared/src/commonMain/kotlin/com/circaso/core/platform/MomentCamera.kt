@@ -105,3 +105,10 @@ const val MomentThumbSide = 96
 const val MomentVideoBitRate = MomentVideoEncoding.BitRate1080p30
 /** The server's limit for a moment's encrypted media (ST1); checked before sharing so nobody waits for a refusal. */
 const val MomentMediaMaxBytes = 32L * 1024 * 1024 - 64
+/**
+ * The largest video file a moment can be made from (Pasaka, 2026-11-14: post like WhatsApp). A video of a minute or
+ * less over [MomentMediaMaxBytes] is accepted and made smaller after Post, in the background; a minute of anything a
+ * phone's camera records (4K at 60 frames is about 400 to 800 MB) is under this. Past it (a professional format, a
+ * file from a computer) it is refused on the preview, with its size said.
+ */
+const val MomentSourceMaxBytes = 1024L * 1024 * 1024

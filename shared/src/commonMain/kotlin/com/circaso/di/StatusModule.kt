@@ -14,6 +14,7 @@ import org.koin.core.qualifier.named
 import org.koin.core.module.dsl.viewModel
 import org.koin.dsl.bind
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.map
 import org.koin.dsl.module
 
 /**
@@ -32,6 +33,8 @@ val statusModule = module {
             // A new phone asks for keys only once its own are on the server, or a poster could seal for the old ones.
             keysPublished = { get<com.circaso.feature.messaging.domain.KeysRepository>().maintain() is com.circaso.core.common.AppResult.Success },
             uploads = getOrNull<com.circaso.core.platform.BackgroundUploads>() ?: com.circaso.core.platform.NoBackgroundUploads,
+            // Post closes the composer at once (2026-11-14): a video is made smaller here, in the app's scope.
+            library = getOrNull<com.circaso.core.platform.MediaLibrary>(), scope = get(),
         )
     }
     // The outbox processor collects every handler while it is built; this one finds the repository only when it
@@ -50,6 +53,8 @@ val statusModule = module {
             socket = get<com.circaso.core.realtime.RealtimeClient>().connected,
             repository = { get() },
             scope = get(),
+            // Signed in, online or not: moments left part-way ready by the last run are picked up.
+            signedIn = auth.state.map { it == com.circaso.core.session.AuthState.Active },
         )
     }
     // Debug builds only: a dummy upload through the real pipeline, never posted (see DebugUploadHandler).
@@ -66,7 +71,6 @@ val statusModule = module {
     viewModel { com.circaso.feature.status.presentation.MomentsViewModel(get(), get(), get(), get(), get(), observeBlocks = get()) }
     viewModel { params ->
         com.circaso.feature.status.presentation.MomentComposerViewModel(get(), get(), get(), get(), get(), get(), get(), get(),
-            uploads = getOrNull<com.circaso.core.platform.BackgroundUploads>() ?: com.circaso.core.platform.NoBackgroundUploads,
             // Opened for a share from another app: its photos and videos onto the review.
             shared = if (params.getOrNull<Boolean>() == true) com.circaso.feature.mediacompose.IncomingShares::take else null)
     }
