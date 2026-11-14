@@ -40,6 +40,8 @@ data class Chat(
      * ("You and Amina" would give "YA") uses their first names ("Amina", "Amina Brian").
      */
     val initialsFrom: String? = null,
+    /** A group's description (2026-11-14), end-to-end sealed with its name; null for none or a direct chat. */
+    val description: String? = null,
 ) {
     val avatarLabel: String get() = initialsFrom ?: title
 }

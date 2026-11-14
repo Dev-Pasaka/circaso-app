@@ -51,7 +51,7 @@ class AppPreferences(private val store: DataStore<Preferences>) : com.circaso.co
         store.edit { prefs ->
             // The Wallet tab's remembered mode and group belong to the account too, and so do its group invites, the
             // reactions on my moments already shown and the security codes I've checked.
-            prefs.asMap().keys.filter { it.name.startsWith("rt.seq.") || it.name.startsWith("text.wallet.") || it.name.startsWith("text.vault.") || it.name.startsWith("text.verified.") || it.name == "text.$GroupInvitesText" || it.name == "text.moments.reactions_seen" || it.name == "flag.$BiometricApproval" || it.name.startsWith("flag.$BiometricApproval.") || it.name.startsWith("flag.biometric_lost.") }.forEach { prefs.remove(it) }
+            prefs.asMap().keys.filter { it.name.startsWith("rt.seq.") || it.name.startsWith("text.wallet.") || it.name.startsWith("text.vault.") || it.name.startsWith("text.verified.") || it.name == "text.$GroupInvitesText" || it.name == "text.$GroupLinksText" || it.name == "text.moments.reactions_seen" || it.name == "flag.$BiometricApproval" || it.name.startsWith("flag.$BiometricApproval.") || it.name.startsWith("flag.biometric_lost.") }.forEach { prefs.remove(it) }
         }
     }
 
@@ -121,6 +121,9 @@ class AppPreferences(private val store: DataStore<Preferences>) : com.circaso.co
          * offline; the account's, so cleared on sign-out.
          */
         const val GroupInvitesText = "group_invites"
+
+        /** The join links of the groups I administer, as the server last gave them, so a link shows offline; the account's. */
+        const val GroupLinksText = "group_links"
 
         /** The flag that says a wallet approves with biometrics: the personal one keeps its old name. */
         fun biometricFlag(walletId: String?) = if (walletId == null) BiometricApproval else "$BiometricApproval.$walletId"

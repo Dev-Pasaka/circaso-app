@@ -773,6 +773,8 @@ class MessagingFrameHandler(
     private val now: () -> Long = ::nowMillis,
     /** Group invites (2026-11-09); null in tests that don't need them. */
     private val invites: GroupInvitesRepositoryImpl? = null,
+    /** Group join links (2026-11-14): `link.changed` reloads this phone's copy of a group's link. */
+    private val links: GroupLinksRepositoryImpl? = null,
 ) {
     suspend fun handle(type: String, data: JsonObject?) {
         val d = data ?: return
@@ -806,7 +808,10 @@ class MessagingFrameHandler(
                 d.str("chatId") ?: return,
                 (d["userIds"] as? kotlinx.serialization.json.JsonArray).orEmpty().mapNotNull { (it as? kotlinx.serialization.json.JsonPrimitive)?.content },
                 joined = (d["joined"] as? kotlinx.serialization.json.JsonPrimitive)?.content == "true",
+                viaLink = (d["viaLink"] as? kotlinx.serialization.json.JsonPrimitive)?.content == "true",
             )
+            // Group join links (2026-11-14): another admin changed a group's link; this phone's copy follows.
+            "link.changed" -> links?.onLinkChanged(d.str("chatId") ?: return)
             // Group invites (backend PR #83): mine came or went; a group's Invited list changed.
             "invite.received" -> invites?.onInviteReceived()
             "invite.removed" -> invites?.onInviteRemoved(d.str("inviteId") ?: return)

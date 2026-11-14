@@ -168,6 +168,64 @@ Media3 1.4.1, multiplatform-markdown-renderer 0.46.0.
   names stay end-to-end encrypted. Accept opens the chat; everyone sees "X joined". Decline is silent. Group info lists
   "Invited · N"; admins or the inviter cancel. Invites expire after 30 days and are cached on the phone for offline view
   (answering is online-only). No canvas frame: built from the glass `InviteCard`, `CircasoSheet`, `ListRow`.
+- D-C9 **Group description** (Pasaka, 2026-11-14; branch `feat/group-join-links`): optional, up to 500 characters,
+  inside the group's end-to-end sealed metadata next to the name (`GroupMeta.description`), so members read it and the
+  server can't. Admins edit it where they edit the name: Group info → **Edit group** (one sheet, name + description,
+  one PATCH). Shown under the name in Group info (4 lines, tap for all) and on the join preview. This app always writes
+  the field ("" = none); a seal without it came from an older app, which can't have meant to clear it, so the phone
+  keeps the description it knew (`keptDescription`, `chat.description`, Room 23) and the next seal from a new app
+  carries it again. The seal keeps the description before the photo's thumbnail when 4 KB is tight.
+- D-C10 **Group join links** (Pasaka, 2026-11-14: "people can share links and people can join from those links ... you
+  don't have to add them yourself", to move WhatsApp groups over; backend M28–M32, branch `feat/group-join-links` on
+  both repos). Decisions:
+  - **One link per group, admins only**: Group info → **Invite via link** → a screen with the QR code, the link (tap
+    to copy), Copy, Share (system share sheet with "Join *<name>* on Circaso: <link>", bold in WhatsApp), Reset Link
+    and Turn Off Link (each behind a confirm). The token is 22 base62 characters (131 bits).
+  - **Same link system as share links**: `https://<share host>/s/{token}` and `circaso://s/{token}`, so App Links,
+    Universal Links and the manifest/entitlements are unchanged. `IncomingLinks.isGroupToken` (22 characters; a share
+    code is 12) sends it to the join sheet instead of the shared-link screen.
+  - **The preview is public by the admin's choice**: the server can't read sealed metadata, so the admin's phone
+    publishes the name, description and a 256 px JPEG of the photo for that link only (`GroupLinksRepositoryImpl`).
+    The screen says "Anyone with the link can see the group's name, description and photo, and how many members it
+    has" **before** Create Link. A phone that can't read the group's name (lost key) publishes nothing. While a link is
+    on, an admin's phone republishes when the name, description or photo change (after its own edit, on
+    `chat.updated`, and when the link screen opens); turning the link off or resetting it deletes the published copy.
+    Members, messages and money are never published.
+  - **Joining**: the link opens a join sheet over wherever the person is (photo, name, "Group · N members",
+    description, Join Group). Joining is immediate (no invite to accept); the chat opens, named from the preview until
+    a member's phone sends the group's key (the existing `member.added` key distribution). The chat says "X joined
+    using the group link" (`member.added.viaLink`). Already a member: the chat opens, no sheet. Signed out: the link
+    waits in `IncomingLinks` through sign-in, as share links do.
+  - **No deferred install**: the app has no install-referrer mechanism and none is added; the web page says to get the
+    app, sign in and tap the link again.
+  - **Rules (server)**: no expiry by time (reset or turn off ends it); a full group says so; a reset/off/unknown link
+    says "This link no longer works. Ask an admin for a new one."; someone an admin removed, anyone with a block
+    either way with the link's maker or any admin, and support accounts can't join by link ("Ask an admin to add
+    you", never saying which); 60 lookups and 20 joins an hour. A link joiner is an ordinary member: in a wallet group
+    they see and pay in like any member and can't move the group's money (owner-only, 2026-11-06).
+  - **Offline**: showing an existing link, its QR, Copy and Share are reads from the phone's copy
+    (`AppPreferences.GroupLinksText`); Create, Reset, Turn Off, looking a link up and Join are online-only, disabled
+    with the reason, never queued. The join sheet opens by itself when the connection returns.
+  - **Design**: no canvas frames. The link screen is built from the wallet's Receive (QR tile), grouped rows and the
+    confirm sheet; the join sheet from the group-invite preview sheet and the message-sheet pattern.
+  - Previews: `-preview=group-link-intro|group-link-intro-offline|group-link-intro-no-name|group-link-creating|group-link-on|group-link-on-offline|group-link-resetting|group-link-reset|group-link-turn-off|group-link-loading|group-link-unknown-offline|group-link-failed|group-join|group-join-long|group-join-plain|group-join-loading|group-join-joining|group-join-offline|group-join-full|group-join-gone|group-join-not-allowed|group-join-no-connection|group-join-failed|group-info-description|group-info-description-long|group-edit|group-edit-too-long|group-edit-offline`.
+    Also `group-link-unreachable|group-link-not-admin|group-link-on-no-name|group-link-on-photo-missing|group-link-on-photo|group-join-unreachable|group-join-problem-offline|group-join-retry|group-edit-link-on|group-edit-saving|group-edit-failed`.
+  - **Design review (2026-11-15, `design-reviewer`)**, fixed: the three facts before Create Link are their own rows so
+    none is cut at two lines; money wording is the same before and after ("hidden until someone joins"; joiners "see
+    new messages and the group's wallet, like any member, and can't move its money"); with a link on, the Edit group
+    sheet says "Anyone with the group's link sees them too" and Group info's row shows "On"; a load or lookup with no
+    answer while the phone says it is online shows "Couldn't reach Circaso" with Try Again (never an endless skeleton
+    or a wait for a reconnect that isn't coming); failures are problem toasts, confirmed changes done toasts; Create
+    Link cross-fades to the link from its own top; the join sheet grows from its loading shapes; the description on
+    the join sheet and in Group info is "Show all" away from whole; the link is shown whole on two lines; the link
+    screen shows what is published ("On the link's page", and when the photo isn't there yet); the Edit group sheet
+    stays open and busy while saving and keeps the draft with the error and its reference on failure; multi-line
+    `CircasoTextField` grows to six lines (was a fixed 50 dp box; Lost Access and Vault get this too); a phone that
+    can't read the group's name can turn the link off but not reset it, and keeps the description it has.
+  - **Kept as asked, against the review**: the title "Invite via link" and the share text's `*bold*` name (both from
+    the owner's brief; the asterisks show literally outside WhatsApp). **Not done**: Circaso's own Pay scanner doesn't
+    read a group QR (it is the pay flow's scanner; the screen says "Scan with a phone's camera, or share").
+  - Not verified on a device or simulator (2026-11-15): built, unit-tested and compiled only.
 
 ### Sharing (2026-11-06)
 - D-S1 **Every share is a short link, never plain text** (Pasaka, 2026-11-06). Receipt, group statement, wallet
@@ -267,6 +325,7 @@ Media3 1.4.1, multiplatform-markdown-renderer 0.46.0.
 | Moments | Composer (text, camera, gallery, voice), viewer, replies in chat, reactions, privacy, contact-saved rule, push; shown in Chats under the Moments chip with rings on chat avatars (2026-11-05). |
 | Asha | Text and live voice, rich answers, PDF statements, conversations, voice picker; menu sheet (new chat, recents with delete, usage & credits, settings); voice mode transcript with the animated logo (2026-11-05, mascot removed). |
 | Sharing | Share links for receipts, statements, addresses, pay me and invites (options sheet, share sheet), opened links (App Links, Universal Links, `circaso://s/`), You → Shared links with turn off (2026-11-06; backend PR #52). Not yet on a device. |
+| Group links (2026-11-14) | Group description (sealed with the name, Edit group sheet), Invite via link for admins (QR, copy, share, reset, turn off, published preview), join sheet from a link, "joined using the group link" line. Needs backend `feat/group-join-links` (M28–M32). Not yet on a device. |
 | Support | Help screen, support chat UI (needs the support account), recovery case (SP06). |
 | Adaptive | Phones portrait and landscape, iPad 11"/13" checked on simulators. |
 

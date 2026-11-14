@@ -191,3 +191,39 @@ object MessagingWire {
     const val Delivered = "DELIVERED"
     const val Read = "READ"
 }
+
+// ---- group join links (M28–M32, 2026-11-14)
+
+/** M29: the preview the admin's phone publishes for the link's page. [photo] is base64 of a small JPEG; null for none. */
+@Serializable
+data class PublishGroupLinkRequest(val name: String, val description: String? = null, val photo: String? = null, val reset: Boolean = false)
+
+@Serializable
+data class GroupLinkDto(
+    val token: String,
+    val url: String,
+    val name: String = "",
+    val description: String? = null,
+    val photoUrl: String? = null,
+    val createdBy: String? = null,
+    val createdAt: String? = null,
+    val updatedAt: String? = null,
+)
+
+/** M28: [link] null when the group has none. */
+@Serializable
+data class GroupLinkResponse(val link: GroupLinkDto? = null)
+
+@Serializable
+data class GroupLinkOffResponse(val off: Boolean = true)
+
+/** M31: a join link before joining. [chatId] only when I am already in the group. */
+@Serializable
+data class GroupLinkPreviewResponse(
+    val name: String = "",
+    val description: String? = null,
+    val photoUrl: String? = null,
+    val memberCount: Int = 0,
+    val member: Boolean = false,
+    val chatId: String? = null,
+)
