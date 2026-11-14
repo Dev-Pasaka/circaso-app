@@ -339,6 +339,14 @@ fun PreviewScreens(name: String) {
             com.circaso.feature.messaging.presentation.NewChatUiState(contacts = peopleContacts, recentChats = chatList, loaded = true),
             com.circaso.feature.messaging.presentation.NewChatActions(),
         )
+        else -> PreviewScreensB(name)
+    }
+}
+
+/** More of [PreviewScreens]: one function would be too large for a JVM method. */
+@Composable
+private fun PreviewScreensB(name: String) {
+    when (name) {
         "new-chat-empty" -> com.circaso.feature.messaging.presentation.NewChatContent(
             com.circaso.feature.messaging.presentation.NewChatUiState(loaded = true), com.circaso.feature.messaging.presentation.NewChatActions(),
         )
@@ -458,6 +466,14 @@ fun PreviewScreens(name: String) {
             media(31, D(D.Video, attachmentId = "v1", width = 720, height = 1280, durationMs = 42_000, caption = "Goal!"), false, 30),
             media(32, D(D.Video, file = "x", width = 1280, height = 720, durationMs = 8_000), true, 2, DeliveryState.Sending),
         )), {}, {}, null, {}, {}, {}, {}, {}, {}, {}, media = previewMedia)
+        else -> PreviewScreensC(name)
+    }
+}
+
+/** More of [PreviewScreens]: one function would be too large for a JVM method. */
+@Composable
+private fun PreviewScreensC(name: String) {
+    when (name) {
         "chat-downloads" -> DownloadsPreview()
         "chat-live" -> ThreadContent(ThreadUiState(chat = direct("2", "Mum"), messages = liveThread), {}, {}, null, {}, {}, {}, {}, {}, {}, {}, media = previewMedia)
         "location-map" -> com.circaso.feature.messaging.presentation.map.LocationMapContent(
