@@ -10,6 +10,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
@@ -48,8 +49,14 @@ class SavedNamesRepository(
     private val syncLock = Mutex()
     private val json = Json { ignoreUnknownKeys = true }
 
+    private val _loaded = kotlinx.coroutines.flow.MutableStateFlow(false)
+
+    /** True once [names] holds what this phone has (read from Room), so a screen never shows "no saved names" first. */
+    val loaded: StateFlow<Boolean> = _loaded
+
     override val names: StateFlow<Map<String, String>> =
         dao.observeAll().map { rows -> rows.mapNotNull { r -> r.name?.let { r.userId to it } }.toMap() }
+            .onEach { _loaded.value = true }
             .stateIn(scope, SharingStarted.Eagerly, emptyMap())
 
     override suspend fun set(userId: String, name: String) {

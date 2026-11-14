@@ -22,6 +22,7 @@ import com.circaso.core.network.newIdempotencyKey
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
@@ -87,8 +88,11 @@ class ChatsViewModel(
     private val invites: GroupInvitesRepository? = null,
     /** Blocked people, whose direct chats are hidden; null in previews and tests that don't need them. */
     observeBlocks: com.circaso.feature.contacts.domain.ObserveBlocksUseCase? = null,
+    /** The chat list already read at launch (ChatListWarmup); null in previews and tests, which observe instead. */
+    private val warm: StateFlow<List<ChatSummary>?>? = null,
 ) : ViewModel() {
-    private val _state = MutableStateFlow(ChatsUiState())
+    // Opens on the list already in memory: the first frame of Chats is never empty while the phone has chats.
+    private val _state = MutableStateFlow(warm?.value?.let { ChatsUiState(chats = it, loaded = true) } ?: ChatsUiState())
     val state: StateFlow<ChatsUiState> = _state.asStateFlow()
 
     init {
@@ -102,7 +106,8 @@ class ChatsViewModel(
     private companion object { const val MetAsha = "asha.met" }
 
     init {
-        viewModelScope.launch { observeChats().collect { list -> _state.update { it.copy(chats = list, loaded = true) } } }
+        val lists = warm?.filterNotNull() ?: observeChats()
+        viewModelScope.launch { lists.collect { list -> _state.update { it.copy(chats = list, loaded = true) } } }
         observeBlocks?.let { blocks -> viewModelScope.launch { blocks().collect { people -> _state.update { it.copy(blocked = people.mapTo(HashSet()) { p -> p.userId }) } } } }
         viewModelScope.launch { connection.status.collect { s -> _state.update { it.copy(online = s == ConnectionStatus.Online) } } }
         viewModelScope.launch { outbox.waitingMessages.collect { n -> _state.update { it.copy(waitingToSend = n) } } }

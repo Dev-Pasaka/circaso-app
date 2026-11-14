@@ -115,11 +115,17 @@ fun AppNavigation(forceUpdate: Boolean, home: @Composable () -> Unit) {
     val splitHome = twoPaneNow && homeTab != com.circaso.feature.home.presentation.Tab.Wallet.ordinal
     val backStack = rememberNavBackStack(SavedStateConfiguration { serializersModule = routeSerializers }, SplashRoute)
 
+    // Signed in, the splash stays until the chat list on this phone is read (StartupGate), at most a moment: Chats
+    // never opens empty and fills afterwards.
+    val gate: com.circaso.core.common.StartupGate = koinInject()
+    val firstScreen by gate.firstScreenReady.collectAsState()
+    var waitedOut by remember { androidx.compose.runtime.mutableStateOf(false) }
+    LaunchedEffect(Unit) { kotlinx.coroutines.delay(com.circaso.core.common.StartupGate.MaxWaitMillis); waitedOut = true }
     val root: Route = when (state) {
         AuthState.Restoring -> SplashRoute
+        AuthState.Active -> if (firstScreen || waitedOut) HomeRoute else SplashRoute
         AuthState.SignedOut -> WelcomeRoute
         AuthState.Onboarding -> if (stored.onboardingStep == "REGISTER_DEVICE") RegisteringRoute else PhoneRoute
-        AuthState.Active -> HomeRoute
     }
     val client: com.circaso.core.platform.ClientInfo = koinInject()
     // Debug builds only: on Android launch arguments are extras any app could put on the launcher intent.

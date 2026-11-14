@@ -53,6 +53,6 @@ val keyBackupModule = module {
             root = { get<KeyBackupRepository>().rootOnPhone() }, scope = get(), now = { nowMillis() },
         )
     } bind SavedNames::class
-    single { PeopleNames(get<SavedNames>().names) }
+    single { get<SavedNames>().let { s -> PeopleNames(s.names, (s as? SavedNamesRepository)?.loaded ?: kotlinx.coroutines.flow.MutableStateFlow(true)) } }
     viewModel { KeyBackupViewModel(get(), get(), get(), get()) }
 }
