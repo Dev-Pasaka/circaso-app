@@ -70,6 +70,7 @@ data class MomentComposerUiState(
     val recordingSince: Long? get() = media.recordingSince
     val recents: List<LibraryItem> get() = media.recents
     val recentsAccess: LibraryAccess? get() = media.recentsAccess
+    val recentsGap: com.circaso.feature.mediacompose.RecentsGap? get() = media.recentsGap
     val selection: List<LibraryItem> get() = media.selection
     val selecting: Boolean get() = media.selecting
     val gallery: GalleryState? get() = media.gallery

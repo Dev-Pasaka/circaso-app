@@ -32,7 +32,7 @@ interface MediaLibrary {
 
     /**
      * The newest [limit] items of [kind] and the access behind them. With [ask], the permission for that kind is asked
-     * when it was never answered (each kind has its own on Android 13+, so photo access alone doesn't show videos).
+     * when it was never answered (Android asks for photos and videos together; audio has its own).
      */
     suspend fun recents(kind: LibraryKind, limit: Int = 60, ask: Boolean = true): LibraryRecents
 
@@ -45,6 +45,15 @@ interface MediaLibrary {
      * sheet; iPhone shows the limited-library picker). Denied for good: the app's settings. Returns the access after.
      */
     suspend fun manage(kind: LibraryKind): LibraryAccess
+
+    /**
+     * Photos and videos together, for the one strip they share (2026-11-14): whichever of the two is short of full
+     * access is asked for; denied for good opens the app's settings. Returns the weaker access of the two after.
+     */
+    suspend fun manageVisual(): LibraryAccess = manage(LibraryKind.Photo)
+
+    /** True where the system's prompt for limited access offers "Allow all" (Android 14+); iPhone only chooses more. */
+    val limitedOffersAllowAll: Boolean get() = false
 
     /** Ready to post: a photo as JPEG at most [MomentPhotoMaxSide] long, a video or audio file as it is, with a thumb. */
     suspend fun load(item: LibraryItem): CapturedMedia?

@@ -166,9 +166,13 @@ class AndroidMediaLibrary(private val context: Context) : MediaLibrary {
     } else Manifest.permission.READ_EXTERNAL_STORAGE
 
     /** What one prompt for [kind] asks: on Android 14 the partial "selected" access goes with photos and videos. */
-    private fun requestFor(kind: LibraryKind): Array<String> =
-        if (Build.VERSION.SDK_INT >= 34 && kind != LibraryKind.Audio) arrayOf(permissionFor(kind), Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED)
-        else arrayOf(permissionFor(kind))
+    private fun requestFor(kind: LibraryKind): Array<String> = when {
+        // Photos and videos are one prompt ("photos and videos"), and one strip: asking for both lets "Allow all"
+        // cover both at once (2026-11-14).
+        kind == LibraryKind.Audio || Build.VERSION.SDK_INT < 33 -> arrayOf(permissionFor(kind))
+        Build.VERSION.SDK_INT >= 34 -> arrayOf(Manifest.permission.READ_MEDIA_IMAGES, Manifest.permission.READ_MEDIA_VIDEO, Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED)
+        else -> arrayOf(Manifest.permission.READ_MEDIA_IMAGES, Manifest.permission.READ_MEDIA_VIDEO)
+    }
 
     private fun granted(p: String) = ContextCompat.checkSelfPermission(context, p) == PackageManager.PERMISSION_GRANTED
 
@@ -209,6 +213,28 @@ class AndroidMediaLibrary(private val context: Context) : MediaLibrary {
         return recents(LibraryKind.Photo, limit, ask = false) to recents(LibraryKind.Video, limit, ask = false)
     }
 
+    override val limitedOffersAllowAll: Boolean get() = Build.VERSION.SDK_INT >= 34
+
+    override suspend fun manageVisual(): LibraryAccess {
+        val kinds = listOf(LibraryKind.Photo, LibraryKind.Video)
+        fun weaker() = kinds.map(::accessFor).let { a ->
+            when {
+                a.all { it == LibraryAccess.Granted } -> LibraryAccess.Granted
+                a.all { it == LibraryAccess.Denied } -> LibraryAccess.Denied
+                else -> LibraryAccess.Limited
+            }
+        }
+        if (weaker() == LibraryAccess.Granted) return LibraryAccess.Granted
+        // One prompt for both ("photos and videos"): on Android 14 it offers Allow all. Answered at once with no
+        // prompt shown (refused for good): the app's settings, where the person can allow it.
+        val started = System.currentTimeMillis()
+        PermissionBridge.requestAll(requestFor(LibraryKind.Photo))
+        kinds.forEach(::markAsked)
+        val after = weaker()
+        if (after != LibraryAccess.Granted && System.currentTimeMillis() - started < 400) openAppSettings()
+        return after
+    }
+
     override suspend fun manage(kind: LibraryKind): LibraryAccess {
         val before = accessFor(kind)
         if (before == LibraryAccess.Granted) return before
@@ -217,7 +243,7 @@ class AndroidMediaLibrary(private val context: Context) : MediaLibrary {
         val started = System.currentTimeMillis()
         if (before == LibraryAccess.Limited || !asked(kind)) {
             PermissionBridge.requestAll(requestFor(kind))
-            markAsked(kind)
+            if (kind == LibraryKind.Audio) markAsked(kind) else { markAsked(LibraryKind.Photo); markAsked(LibraryKind.Video) }
         }
         val after = accessFor(kind)
         // A refusal Android answers at once (no prompt shown, "don't ask again"): send the person to settings.

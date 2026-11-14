@@ -481,7 +481,7 @@ private fun CaptionField(value: String, onChange: (String) -> Unit, enabled: Boo
 /**
  * The recents strip (WhatsApp-style): the newest photos, videos or audio on the phone. Tap one to use it; hold one to
  * pick several (numbered in the order they'll go). Without access to this kind it says so and offers to allow it;
- * with limited access (only chosen items) a Manage tile leads.
+ * with only some access an Allow all (Android) or Choose more (iPhone) tile leads.
  */
 @Composable
 private fun RecentsStrip(state: MediaComposeState, composer: MediaComposer) {
@@ -500,12 +500,20 @@ private fun RecentsStrip(state: MediaComposeState, composer: MediaComposer) {
         if (access == LibraryAccess.Denied) item(key = "allow") {
             StripTile(
                 "Allow access", CircasoIcon.Lock,
-                when (state.mode) { ComposerMode.Video -> "Allow access to your videos"; ComposerMode.Voice -> "Allow access to your audio"; else -> "Allow access to your photos" },
+                if (audio) "Allow access to your audio" else "Allow access to your photos and videos",
                 wide = true, onClick = composer::manageAccess,
             )
         }
         if (access == LibraryAccess.Limited) item(key = "manage") {
-            StripTile("Manage", CircasoIcon.Plus, "Circaso can see only what you chose. Choose more", wide = false, onClick = composer::manageAccess)
+            // The strip misses some of the phone: say what, and lead to the system's way to allow it (2026-11-14).
+            // Android 14's prompt offers Allow all; iPhone's limited-library picker only chooses more.
+            val action = if (state.limitedOffersAllowAll) "Allow all" else "Choose more"
+            val why = when (state.recentsGap) {
+                RecentsGap.NoVideos -> "Circaso can't see your videos."
+                RecentsGap.NoPhotos -> "Circaso can't see your photos."
+                else -> "Circaso can see only the photos and videos you chose."
+            }
+            StripTile(action, CircasoIcon.Lock, "$why $action", wide = false, onClick = composer::manageAccess)
         }
         items(state.recents.size, key = { state.recents[it].id }) { i ->
             val item = state.recents[i]
@@ -531,7 +539,7 @@ private fun RecentsStrip(state: MediaComposeState, composer: MediaComposer) {
     }
 }
 
-/** A glass tile at the start of the strip: Files, Allow access, Manage. */
+/** A glass tile at the start of the strip: Files, Allow access, Allow all / Choose more. */
 @Composable
 private fun StripTile(label: String, icon: CircasoIcon, description: String, wide: Boolean, busy: Boolean = false, onClick: () -> Unit) {
     val c = CircasoTheme.colors

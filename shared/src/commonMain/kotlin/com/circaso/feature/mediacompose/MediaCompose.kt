@@ -5,6 +5,7 @@ import com.circaso.core.platform.CapturedMedia
 import com.circaso.core.platform.LibraryAccess
 import com.circaso.core.platform.LibraryItem
 import com.circaso.core.platform.LibraryKind
+import com.circaso.core.platform.LibraryRecents
 import com.circaso.core.platform.MediaLibrary
 import com.circaso.core.platform.MomentCamera
 import com.circaso.core.platform.MomentMediaMaxBytes
@@ -108,6 +109,12 @@ data class GalleryState(
 /** How many photos and how many videos the gallery reads at a time. */
 const val GalleryPage = 300
 
+/** How many of the newest photos and videos the strip above the shutter shows. */
+const val RecentsSize = 30
+
+/** What the photo and video strip can't show. */
+enum class RecentsGap { OnlyChosen, NoPhotos, NoVideos }
+
 /** M3b: trimming one video to a minute or less. Times are in milliseconds from the start of the original. */
 data class TrimState(
     val index: Int,
@@ -177,6 +184,10 @@ data class MediaComposeState(
     val recents: List<LibraryItem> = emptyList(),
     /** What the phone lets the strip show for this mode; null until it has answered. */
     val recentsAccess: LibraryAccess? = null,
+    /** Why the photo and video strip falls short, when it does: says what Circaso can't see. */
+    val recentsGap: RecentsGap? = null,
+    /** The limited-access tile can promise "Allow all" (Android 14+), else "Choose more" (iPhone). */
+    val limitedOffersAllowAll: Boolean = false,
     /** Several at once (M3): a long press on the strip starts it, the gallery always picks this way. In order. */
     val selection: List<LibraryItem> = emptyList(),
     val selecting: Boolean = false,
@@ -274,22 +285,50 @@ class MediaComposer(
     }
 
     fun setMode(mode: ComposerMode) {
+        val visual = setOf(ComposerMode.Photo, ComposerMode.Video)
+        // Photo and Video share one strip: switching between them keeps it as it is (nothing flashes or reloads).
+        if (state.mode in visual && mode in visual) { update { it.copy(mode = mode, error = null, selecting = false, selection = emptyList()) }; return }
         update { it.copy(mode = mode, error = null, recents = emptyList(), recentsAccess = null, selecting = false, selection = emptyList()) }
         loadRecents(mode)
     }
 
     /**
-     * The strip under the camera: recent photos, videos or audio from the phone. Each kind asks for its own access the
-     * first time it shows (on Android photo access says nothing about videos), so a strip is never silently empty:
-     * without access it says so and offers to allow it.
+     * The strip under the camera: the newest photos and videos together (Photo and Video modes), or audio. Access is
+     * asked the first time it shows, so a strip is never silently empty: without access, or with only some, it says
+     * so and offers to allow more.
      */
     fun loadRecents(mode: ComposerMode, ask: Boolean = true) {
         val kind = libraryKind(mode) ?: return
         recentsJob?.cancel()
         recentsJob = scope.launch {
-            val r = library.recents(kind, 30, ask)
-            if (state.mode == mode) update { it.copy(recents = r.items, recentsAccess = r.access) }
+            // Photo and video show the same strip (WhatsApp, 2026-11-14): the newest photos and videos together,
+            // whatever took them, in one prompt for both. Audio keeps its own.
+            var gap: RecentsGap? = null
+            val r = if (kind == LibraryKind.Audio) library.recents(kind, RecentsSize, ask) else {
+                val (photos, videos) = library.recentsVisual(RecentsSize, ask)
+                gap = recentsGap(photos.access, videos.access)
+                LibraryRecents(
+                    (photos.items + videos.items).sortedByDescending { it.addedAt }.take(RecentsSize),
+                    visualAccess(photos.access, videos.access),
+                )
+            }
+            if (state.mode == mode) update { it.copy(recents = r.items, recentsAccess = r.access, recentsGap = gap, limitedOffersAllowAll = library.limitedOffersAllowAll) }
         }
+    }
+
+    private fun recentsGap(photos: LibraryAccess, videos: LibraryAccess): RecentsGap? = when {
+        photos == LibraryAccess.Granted && videos == LibraryAccess.Granted -> null
+        photos == LibraryAccess.Denied && videos == LibraryAccess.Denied -> null // the Allow access tile says it
+        photos == LibraryAccess.Granted && videos == LibraryAccess.Denied -> RecentsGap.NoVideos
+        photos == LibraryAccess.Denied && videos == LibraryAccess.Granted -> RecentsGap.NoPhotos
+        else -> RecentsGap.OnlyChosen
+    }
+
+    /** One answer for photos and videos together: all of both is Granted; nothing of either is Denied. */
+    private fun visualAccess(photos: LibraryAccess, videos: LibraryAccess): LibraryAccess = when {
+        photos == LibraryAccess.Granted && videos == LibraryAccess.Granted -> LibraryAccess.Granted
+        photos == LibraryAccess.Denied && videos == LibraryAccess.Denied -> LibraryAccess.Denied
+        else -> LibraryAccess.Limited
     }
 
     private fun libraryKind(mode: ComposerMode) = when (mode) {
@@ -300,13 +339,13 @@ class MediaComposer(
     }
 
     /**
-     * Limited access (M3c Manage) or none: the system's own way to allow more. The strip and the gallery read the
-     * library again afterwards.
+     * Limited access or none: the system's own way to allow more, for photos and videos together in their modes (the
+     * strip is theirs together). The strip and the gallery read the library again afterwards.
      */
     fun manageAccess() {
         val kind = libraryKind(state.mode) ?: LibraryKind.Photo
         scope.launch {
-            library.manage(kind)
+            if (kind == LibraryKind.Audio) library.manage(kind) else library.manageVisual()
             loadRecents(state.mode, ask = false)
             if (state.gallery != null) loadGallery()
         }
