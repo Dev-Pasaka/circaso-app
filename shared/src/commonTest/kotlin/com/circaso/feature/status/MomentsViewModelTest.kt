@@ -52,11 +52,13 @@ class MomentsViewModelTest {
         // Two videos picked together: Post has just closed the composer.
         step(p("a", PendingState.Preparing, null), p("b", PendingState.Preparing, null))
         assertEquals(MyRing.Posting, vm.state.value.myRing)
-        assertEquals(0f, shown.single(), "an arc from nothing, not a spinner")
+        assertNull(vm.state.value.postingProgress, "nothing real to show yet: the arc turns, never an empty ring")
         step(p("a", PendingState.Preparing, 0.3f), p("b", PendingState.Preparing, null))   // the encoder's own progress
         step(p("a", PendingState.Posting, 0.5f), p("b", PendingState.Preparing, null))     // ready: handed to the queue
         step(p("a", PendingState.Posting, 0.8f), p("b", PendingState.Preparing, 0.2f))     // sending, the next one being got ready
-        step(p("a", PendingState.Posting, null), p("b", PendingState.Preparing, 0.2f))     // the upload starts again: held, not back
+        step(p("a", PendingState.Waiting, 0.5f), p("b", PendingState.Preparing, 0.2f))     // the connection dropped: not counted as posted
+        assertEquals(0.5f, shown.last(), "held where it was, not jumped ahead")
+        step(p("a", PendingState.Posting, null), p("b", PendingState.Preparing, 0.2f))     // back: the upload starts again, held, not back
         step(p("a", PendingState.Posting, 0.95f), p("b", PendingState.Posting, 0.5f))
         step(p("b", PendingState.Posting, 0.7f))                                           // the first has posted: counts in full
         step(p("b", PendingState.Posting, 0.95f))
@@ -65,8 +67,8 @@ class MomentsViewModelTest {
         // Gone from the queue: the batch is over and the next one starts from nothing.
         step()
         assertEquals(0, vm.state.value.postingBatch)
-        step(p("c", PendingState.Preparing, null))
-        assertEquals(0f, vm.state.value.postingProgress)
+        step(p("c", PendingState.Preparing, 0.4f))
+        assertEquals(0.4f, vm.state.value.postingProgress)
     }
 
     @Test fun aWorkingCheckShowsTheRingsWithNoErrorLine() = runTest(dispatcher) {

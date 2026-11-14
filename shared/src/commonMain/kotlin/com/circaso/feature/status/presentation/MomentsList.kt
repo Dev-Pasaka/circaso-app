@@ -261,6 +261,7 @@ private fun MyMomentRow(state: MomentsUiState, actions: MomentsActions, now: Lon
             val seen = if (views == 0) "No views yet" else if (views == 1) "Seen by 1" else "Seen by $views"
             "$seen · ${state.myLatestAt?.let { momentTime(it, now) } ?: ""}".trimEnd(' ', '·')
         }
+        // The percent only once there is a real one (bytes sent, the encoder's own progress); until then the arc turns.
         MyRing.Posting -> state.postingProgress?.let { "Posting… ${(it * 100).toInt()}%" } ?: "Posting…"
         MyRing.Waiting -> "Waiting for a connection"
         MyRing.Failed -> "Not posted"
@@ -403,18 +404,22 @@ private fun FailedPostRow(error: String?, onRetry: () -> Unit, onDelete: () -> U
             BasicText(postError(error), Modifier.weight(1f), style = t.subhead.copy(color = c.ink))
         }
         Row(Modifier.align(Alignment.End), horizontalArrangement = Arrangement.spacedBy(CircasoSpacing.s1)) {
-            CircasoButton("Retry", onRetry, style = ButtonStyle.Plain, size = ButtonSize.Small)
+            // No Retry where it can't work: the file is gone, so trying again could only fail again.
+            if (error !in GoneCodes) CircasoButton("Retry", onRetry, style = ButtonStyle.Plain, size = ButtonSize.Small)
             CircasoButton("Delete", onDelete, style = ButtonStyle.Destructive, size = ButtonSize.Small)
         }
     }
 }
 
+/** The moment's file is no longer on this phone: only Delete is offered. */
+private val GoneCodes = setOf("moment.source_missing", "status.media_missing")
+
 private fun postError(code: String?) = when (code) {
-    "status.audience_invalid" -> "None of your contacts can see moments yet, so it didn't post."
-    "outbox.stale" -> "Your moment waited too long and didn't post."
+    "status.audience_invalid" -> "None of your contacts can see moments yet, so it didn’t post."
+    "outbox.stale" -> "Your moment waited too long and didn’t post."
     "status.media_invalid", "status.moment_too_large" -> "Your moment was too large to post. Try a shorter video."
     // Getting it ready after Post (2026-11-14): the picked file was cleared, or this phone couldn't encode the video.
-    "moment.source_missing", "status.media_missing" -> "The photo or video isn’t on this phone any more, so it didn’t post. Delete this and pick it again."
+    "moment.source_missing", "status.media_missing" -> "The photo or video isn’t on this phone any more, so it didn’t post. Pick it again."
     "moment.video_unreadable", "moment.prepare_failed" -> "This phone couldn’t get the video ready to post. Try again, or pick a shorter one."
     "status.too_many_moments" -> "You’ve shared a lot of moments today. Try again later."
     else -> "Your moment didn’t post."

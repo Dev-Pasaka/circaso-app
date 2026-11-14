@@ -530,7 +530,7 @@ class MomentComposerViewModelTest {
         assertFalse(vm.state.value.shared)
         assertEquals(1, vm.state.value.items.size, "and has left the review, so posting again never sends it twice")
         assertNotNull(vm.state.value.items.single().video)
-        assertEquals("This video isn’t on the phone any more. Pick it again.", vm.state.value.error)
+        assertEquals("This video isn’t on the phone any more. Pick it again. The one before it is posting.", vm.state.value.error)
     }
 
     @Test fun aTrimmedVideoPostsItsCutByFileAndATextMomentStillPostsAtOnce() = runTest(dispatcher) {
@@ -596,11 +596,16 @@ class MomentComposerViewModelTest {
 
     @Test fun theRingFillsOverTheWholeBatchAndNeverRunsBackwards() {
         fun p(progress: Float?, state: PendingState = PendingState.Posting) = PendingMoment("l$progress", MomentKind.Image, state, null, 0, progress)
-        // A photo or video shows the arc from nothing, from the moment Post is tapped (WhatsApp's ring), never a spinner.
-        assertEquals(0f, MomentsUiState(pending = listOf(p(null))).postingProgress)
-        assertEquals(0f, MomentsUiState(pending = listOf(p(null, PendingState.Preparing))).postingProgress)
-        // Only text moments, which have nothing to send but themselves, turn.
+        // Nothing real to show yet (just posted, an encoder that reports nothing, a text moment): the arc turns.
+        assertNull(MomentsUiState(pending = listOf(p(null))).postingProgress)
+        assertNull(MomentsUiState(pending = listOf(p(null, PendingState.Preparing))).postingProgress)
         assertNull(MomentsUiState(pending = listOf(PendingMoment("t", MomentKind.Text, PendingState.Posting, null, 0))).postingProgress)
+        // One of the batch waiting or failed is never counted as posted.
+        val a = PendingMoment("a", MomentKind.Video, PendingState.Waiting, null, 0, 0.5f)
+        val b = PendingMoment("b", MomentKind.Video, PendingState.Preparing, null, 1, 0.2f)
+        assertEquals(0.35f, MomentsUiState(pending = listOf(a, b), postingIds = setOf("a", "b")).postingProgress)
+        assertEquals(0.1f, MomentsUiState(pending = listOf(a.copy(state = PendingState.Failed), b), postingIds = setOf("a", "b")).postingProgress)
+        assertEquals(0.6f, MomentsUiState(pending = listOf(b), postingIds = setOf("a", "b")).postingProgress)
         assertEquals(0.5f, MomentsUiState(pending = listOf(p(1f), p(null))).postingProgress)
         // Getting ready and sending are one arc: a video half made smaller and a photo not started.
         assertEquals(0.125f, MomentsUiState(pending = listOf(p(0.25f, PendingState.Preparing), p(null, PendingState.Preparing))).postingProgress)

@@ -51,11 +51,14 @@ Spaces tagged `archive/spaces-v1`; Room v20 drops its tables); the backend keeps
   - **Resume:** anything `preparing` is picked up at launch once signed in (online or not), at each reconnect, and
     whenever the outbox sends a moment (`MomentsStarter`, `MomentsRepository.resume`). The process dying mid-encode
     loses nothing: the row and the private source file are still there, and the encode starts again from the start.
-  - **The ring (M6)** is a determinate arc from the moment Post is tapped, over the whole batch: a video made smaller
-    fills the first half of its share (Android: Media3 Transformer's own progress; iPhone: no progress from the
-    encoder yet, so it moves to half when the video is ready), then the bytes sent fill to 95 %, and the post itself
-    the rest. It never runs back (`MomentsUiState.postingFloor`). Only a batch of text moments shows the turning arc.
-    Offline it is Waiting, as designed, though getting ready carries on. Reduced motion: the arc steps, no easing.
+  - **The ring (M6)** is one determinate arc over the whole batch: a video made smaller fills the first half of its
+    share (Android: Media3 Transformer's own progress; iPhone: no progress from the encoder yet, so the arc turns
+    and then moves to half when the video is ready), then the bytes sent fill to 95 %, and the post itself the rest.
+    Until there is something real to show (the first moments after Post, a text moment) the arc turns, as M6's
+    "Posting…" does, never an empty ring. It never runs back (`MomentsUiState.postingFloor`), and a moment that is
+    waiting or failed is never counted as posted (`postingIds`). While anything is still on its way the arc shows
+    even if another of the batch failed (its card is under the row). Offline it is Waiting, as designed, though
+    getting ready carries on. Reduced motion: the arc steps, no easing.
   - **No Room change:** `preparing` is a new value of the `state` text column and the rest is in the draft JSON
     (`PendingDraft.source`, `encoded`, `tries`); the database stays at version 22.
   - **Departures from M4–M6:** none in layout. M4's review loses the "Making the video smaller to share…" footnote

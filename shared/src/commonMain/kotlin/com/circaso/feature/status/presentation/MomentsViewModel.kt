@@ -54,17 +54,29 @@ data class MomentsUiState(
     /** How many moments the current run of posting started with (several picked at once fill one ring); 0 when none. */
     val postingBatch: Int = 0,
     /**
+     * Which moments the current run of posting is made of, by pending id: one that has posted is gone from [pending]
+     * and counts in full; one that is waiting or has failed is still there and counts for what it has done, never as
+     * posted. Empty when nothing is on its way (and in previews, which give [postingBatch] alone).
+     */
+    val postingIds: Set<String> = emptySet(),
+    /**
      * The furthest the ring has shown for this batch: it holds there if a moment starts a step again (a second try at
      * an upload), so the arc only ever grows. Back to 0 when the batch ends, or when another moment joins it.
      */
     val postingFloor: Float = 0f,
 ) {
+    /** My moments on their way: being got ready or being sent. */
+    private val underway: List<PendingMoment> get() = pending.filter { it.state == PendingState.Preparing || it.state == PendingState.Posting }
+
     /**
      * My ring (M6). A moment still being got ready after Post (a video made smaller, 2026-11-14) is on its way like
-     * one that is uploading: the same arc. Offline it waits, as designed, though getting ready carries on.
+     * one that is uploading: the same arc. While anything is on its way the arc shows, even if another of the batch
+     * has failed (its card with Retry and Delete is right under the row), so nothing goes up unseen. Offline it
+     * waits, as designed, though getting ready carries on.
      */
     val myRing: MyRing
         get() = when {
+            online && underway.isNotEmpty() && pending.none { it.state == PendingState.Waiting } -> MyRing.Posting
             pending.any { it.state == PendingState.Failed } -> MyRing.Failed
             pending.any { it.state == PendingState.Waiting } || (!online && pending.isNotEmpty()) -> MyRing.Waiting
             pending.isNotEmpty() -> MyRing.Posting
@@ -73,24 +85,23 @@ data class MomentsUiState(
         }
     val failedPost: PendingMoment? get() = pending.firstOrNull { it.state == PendingState.Failed }
 
-    /** My moments on their way: being got ready or being sent. */
-    private val underway: List<PendingMoment> get() = pending.filter { it.state == PendingState.Preparing || it.state == PendingState.Posting }
-
     /**
      * How far my moments on their way have got (0..1) over the whole batch, as WhatsApp's ring shows it: each one's
-     * getting ready and then its bytes sent, and the ones already posted count in full, so the arc grows from the
-     * moment Post is tapped and only ever forward as several picked at once go one after another. Null only when
-     * nothing in the batch has a file (text moments, which post in a blink): that shows the turning arc.
+     * getting ready and then its bytes sent, and the ones already posted count in full, so the arc only ever moves
+     * forward as several picked at once go one after another. Null while there is nothing real to show yet (nothing
+     * posted, no encoder or upload progress reported: the first moments after Post, an iPhone's encoder, which
+     * reports none, a text moment): that shows the turning arc, never an empty ring that looks stuck.
      */
     val postingProgress: Float?
         get() {
-            val going = underway
-            val batch = maxOf(postingBatch, going.size)
+            // The batch's moments still on this phone; a failed one stays among them and adds nothing.
+            val members = if (postingIds.isEmpty()) pending.filter { it.state != PendingState.Failed } else pending.filter { it.localId in postingIds }
+            val batch = if (postingIds.isEmpty()) maxOf(postingBatch, members.size) else postingIds.size
             if (batch == 0) return null
-            val done = batch - going.size
-            if (done == 0 && going.none { it.progress != null || it.kind != com.circaso.feature.status.domain.MomentKind.Text }) return null
-            val raw = (done + going.sumOf { (it.progress ?: 0f).toDouble() }.toFloat()) / batch
-            return maxOf(raw, postingFloor).coerceIn(0f, 1f)
+            val done = batch - members.size
+            val raw = (done + members.filter { it.state != PendingState.Failed }.sumOf { (it.progress ?: 0f).toDouble() }.toFloat()) / batch
+            val shown = maxOf(raw, postingFloor).coerceIn(0f, 1f)
+            return shown.takeIf { it > 0f }
         }
     /** S1d: skeleton rings only on the very first open, before anything is stored or answered. */
     val loading: Boolean get() = !refreshed && rings.isEmpty() && myMoments.isEmpty() && online
@@ -153,12 +164,13 @@ class MomentsViewModel(
         }
         viewModelScope.launch {
             moments.pending.collect { p ->
-                val going = p.count { it.state == PendingState.Preparing || it.state == PendingState.Posting }
+                val active = p.filter { it.state != PendingState.Failed }.map { it.localId }
                 _state.update {
-                    val batch = if (going == 0) 0 else maxOf(it.postingBatch, going)
+                    // The batch is everything on its way since the queue was last empty; it ends when nothing is.
+                    val ids = if (active.isEmpty()) emptySet() else it.postingIds + active
                     // A batch that ended or grew is measured afresh; otherwise the ring keeps what it has shown.
-                    val next = it.copy(pending = p, postingBatch = batch, postingFloor = if (batch == 0 || batch != it.postingBatch) 0f else it.postingFloor)
-                    next.copy(postingFloor = if (batch == 0) 0f else next.postingProgress ?: 0f)
+                    val next = it.copy(pending = p, postingIds = ids, postingBatch = ids.size, postingFloor = if (ids != it.postingIds) 0f else it.postingFloor)
+                    next.copy(postingFloor = if (ids.isEmpty()) 0f else next.postingProgress ?: 0f)
                 }
             }
         }

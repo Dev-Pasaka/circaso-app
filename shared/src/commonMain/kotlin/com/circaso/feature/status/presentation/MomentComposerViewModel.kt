@@ -342,7 +342,9 @@ class MomentComposerViewModel(
                 if (repository.post(draft) is com.circaso.core.common.AppResult.Failure) {
                     // Its file went between the check and now. The ones before it are on their way: they leave the
                     // review, so posting again never sends them twice.
-                    _state.update { it.copy(sharing = false, media = it.media.copy(items = it.media.items.drop(index), current = 0, error = GoneCopy)) }
+                    val what = if ((item.capture as? ComposerCapture.Shot)?.video == false) "photo" else "video"
+                    val rest = when (index) { 0 -> ""; 1 -> " The one before it is posting."; else -> " The ones before it are posting." }
+                    _state.update { it.copy(sharing = false, media = it.media.copy(items = it.media.items.drop(index), current = 0, error = "This $what isn’t on the phone any more. Pick it again.$rest")) }
                     return@launch
                 }
             }
