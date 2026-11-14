@@ -51,11 +51,11 @@ data class LocationMapUiState(
     val line: MapLine? get() {
         val from = me ?: return null
         val to = focused?.point ?: return null
-        return MapLine(from.latitude, from.longitude, to.latitude, to.longitude)
+        return MapLine(from.latitude, from.longitude, to.latitude, to.longitude, to = focus.toString())
     }
 
-    /** A rough fix ("Approximate" on Android, or indoors): distances then say "about". */
-    val approximate: Boolean get() = (me?.accuracyMeters ?: 0.0) > RoughFixMeters
+    /** How rough my own position is, in metres, when that is rough enough to matter to a distance; else null. */
+    val roughness: Double? get() = me?.accuracyMeters?.takeIf { it > RoughFixMeters }
 
     /** True when there is someone or somewhere to measure to, so asking for location has a point. */
     val canMeasure: Boolean get() = entries.any { !it.mine }
@@ -112,15 +112,18 @@ internal fun formatDistance(meters: Double): String {
     return grouped((m / 1000).roundToLong()) + " km"
 }
 
-/** "2.4 km away", or "About 2.4 km away" from a rough fix. A straight line, so never "route" or "drive". */
-internal fun distanceAway(meters: Double, approximate: Boolean): String {
-    val d = formatDistance(meters)
-    return when {
-        meters < 10 && approximate -> "Very close"
-        meters < 10 -> "Less than 10 m away"
-        approximate -> "About $d away"
-        else -> "$d away"
-    }
+/**
+ * "2.4 km away": a straight line, so never "route" or "drive". From a rough fix ([roughness] metres, as with
+ * Android's "Approximate" location) it claims no more than the fix can know: a distance inside the fix's own error
+ * is "Within about 2 km", and a longer one is rounded to the size of that error ("About 5 km away").
+ */
+internal fun distanceAway(meters: Double, roughness: Double? = null): String {
+    if (roughness == null) return if (meters < 10) "Less than 10 m away" else formatDistance(meters) + " away"
+    if (meters <= roughness) return "Within about " + formatDistance(roughness)
+    // The largest of 100 m, 1 km, 10 km … that isn't bigger than the error.
+    var step = 100.0
+    while (step * 10 <= roughness) step *= 10
+    return "About " + formatDistance((meters / step).roundToLong() * step) + " away"
 }
 
 private fun grouped(n: Long): String = n.toString().reversed().chunked(3).joinToString(",").reversed()
@@ -134,7 +137,11 @@ internal sealed interface LocationNote {
     /** Location is off for the whole phone. */
     data object PhoneOff : LocationNote
     data object Finding : LocationNote
-    /** Known: what the distance is (a straight line) and, when it isn't being shared, that only I can see it. */
+    /**
+     * Known: what the distance is (a straight line) and, when my pin comes from the phone rather than a live share
+     * here ([private]), that this map doesn't share it. (It says nothing wider than that: a live share may be
+     * running in another chat.)
+     */
     data class Known(val private: Boolean) : LocationNote
 }
 

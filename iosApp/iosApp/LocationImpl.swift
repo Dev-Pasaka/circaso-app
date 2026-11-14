@@ -12,11 +12,21 @@ final class LocationImpl: NSObject, LocationBridgeProvider, CLLocationManagerDel
     private let nearby = CLLocationManager()
     private var onNearby: ((KotlinDouble, KotlinDouble, KotlinDouble) -> Void)?
     private var pendingAccess: [(String) -> Void] = []
+    /// Location Services for the whole phone. Asking can block, so it is read off the main thread and kept.
+    private var servicesOn = true
 
     override init() {
         super.init()
         manager.delegate = self
         manager.desiredAccuracy = kCLLocationAccuracyBest
+        refreshServices()
+    }
+
+    private func refreshServices() {
+        DispatchQueue.global(qos: .utility).async {
+            let on = CLLocationManager.locationServicesEnabled()
+            DispatchQueue.main.async { self.servicesOn = on }
+        }
     }
 
     func current(completion: @escaping (KotlinDouble?, KotlinDouble?, KotlinDouble?) -> Void) {
@@ -35,6 +45,7 @@ final class LocationImpl: NSObject, LocationBridgeProvider, CLLocationManagerDel
     }
 
     func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
+        refreshServices()
         switch manager.authorizationStatus {
         case .authorizedWhenInUse, .authorizedAlways: if !pending.isEmpty { self.manager.requestLocation() }
         case .denied, .restricted: finish(nil)
@@ -49,6 +60,8 @@ final class LocationImpl: NSObject, LocationBridgeProvider, CLLocationManagerDel
     }
 
     func access() -> String {
+        // Off for the whole phone: Circaso's own page in Settings can't change that, so it is told apart.
+        if !servicesOn { return "off" }
         switch manager.authorizationStatus {
         case .authorizedWhenInUse, .authorizedAlways: return "granted"
         case .notDetermined: return "notAsked"

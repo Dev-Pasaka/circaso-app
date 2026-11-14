@@ -4,6 +4,7 @@ import android.content.pm.PackageManager
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
+import androidx.compose.runtime.State
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.snapshotFlow
@@ -33,7 +34,7 @@ import kotlinx.coroutines.launch
  * [MapCamera] and Compose draws them on top, so they track every pan and zoom.
  */
 @Composable
-internal actual fun PlatformMap(camera: MapCamera, styleJson: String, startLatitude: Double, startLongitude: Double, line: MapLine?, lineColor: Color, modifier: Modifier): Boolean {
+internal actual fun PlatformMap(camera: MapCamera, styleJson: String, startLatitude: Double, startLongitude: Double, line: State<MapLine?>, lineColor: Color, modifier: Modifier): Boolean {
     val context = LocalContext.current
     val hasKey = remember {
         runCatching {
@@ -58,10 +59,13 @@ internal actual fun PlatformMap(camera: MapCamera, styleJson: String, startLatit
         // The screen's bar and panel: framing and centring keep clear of them, and Google's mark stays in view.
         contentPadding = PaddingValues(top = camera.topInset, bottom = camera.bottomInset),
     ) {
-        if (line != null) Polyline(
-            points = listOf(LatLng(line.fromLatitude, line.fromLongitude), LatLng(line.toLatitude, line.toLongitude)),
-            color = lineColor, width = stroke, pattern = dashes, geodesic = true,
-        )
+        // Read here, inside the map's own content: a gliding line recomposes this and nothing outside it.
+        line.value?.let {
+            Polyline(
+                points = listOf(LatLng(it.fromLatitude, it.fromLongitude), LatLng(it.toLatitude, it.toLongitude)),
+                color = lineColor, width = stroke, pattern = dashes, geodesic = true,
+            )
+        }
     }
     SideEffect {
         camera.canMove = true

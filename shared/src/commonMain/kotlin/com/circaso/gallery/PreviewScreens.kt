@@ -128,7 +128,8 @@ private val mapEntries = listOf(
 /**
  * The location map with me on it (fakes: no phone location is read). [variant]: "one" (me and Mum), "group" (me and
  * three people sharing, the second in focus), "place" (a shared place), "ask" (location never asked for), "refused",
- * "finding" (allowed, no fix yet), "sharing" (my own live share is my pin).
+ * "finding" (allowed, no fix yet), "sharing" (my own live share is my pin), "off" (location off for the phone),
+ * "ended" (a share of mine that ended, beside my pin), "approx" (a rough fix: distances say "about").
  */
 private fun mapPreviewState(variant: String): com.circaso.feature.messaging.presentation.map.LocationMapUiState {
     fun share(id: Long, sender: String, name: String, lat: Double, lng: Double, minutesAgo: Int = 1) = Message.Media(
@@ -140,14 +141,15 @@ private fun mapPreviewState(variant: String): com.circaso.feature.messaging.pres
         "group" -> listOf(share(42, "3", "Wanjiru Kamau", -1.2921, 36.8219), share(43, "4", "Otieno Odhiambo", -1.2632, 36.8035, 4), share(44, "5", "Kevin Mwangi", -1.3189, 36.8510, 12))
         "place" -> listOf(Message.Media(45, "2", now - 600_000, null, "m45", "2", "Mum", false, D(D.Location, latitude = -1.2864, longitude = 36.8172, label = "Kenyatta Avenue, Nairobi"), DeliveryState.Read, null))
         "sharing" -> listOf(mum, share(46, "me", "You", -1.2995, 36.7890, 0))
+        "ended" -> listOf(mum, share(47, "me", "You", -1.2995, 36.7890, 30).let { it.copy(details = it.details.copy(liveEnded = true)) })
         else -> listOf(mum)
     }
     val chat = if (variant == "group") Chat("g1", ChatKind.Group, "Holiday Fund", DemoPhotos.HolidayFund, listOf(member("me", "Amina"), member("3", "Wanjiru Kamau"), member("4", "Otieno Odhiambo"), member("5", "Kevin Mwangi")), false, 3, 1, MemberRole.Member, null) else direct("2", "Mum")
-    val known = variant in setOf("one", "group", "place")
+    val known = variant in setOf("one", "group", "place", "approx", "ended")
     return com.circaso.feature.messaging.presentation.map.locationMapState(
         chat, messages, opened = messages.first().localId, focus = if (variant == "group") 43 else messages.first().localId,
-        fix = if (known) com.circaso.core.platform.GeoPoint(-1.2995, 36.7890, 9.0) else null,
-        access = when (variant) { "ask" -> com.circaso.core.platform.LocationAccess.NotAsked; "refused" -> com.circaso.core.platform.LocationAccess.Denied; else -> com.circaso.core.platform.LocationAccess.Granted },
+        fix = if (known) com.circaso.core.platform.GeoPoint(-1.2995, 36.7890, if (variant == "approx") 1_800.0 else 9.0) else null,
+        access = when (variant) { "ask" -> com.circaso.core.platform.LocationAccess.NotAsked; "refused" -> com.circaso.core.platform.LocationAccess.Denied; "off" -> com.circaso.core.platform.LocationAccess.Off; else -> com.circaso.core.platform.LocationAccess.Granted },
         myUserId = "me", now = now,
     )
 }
@@ -461,7 +463,7 @@ fun PreviewScreens(name: String) {
         "location-map" -> com.circaso.feature.messaging.presentation.map.LocationMapContent(
             com.circaso.feature.messaging.presentation.map.LocationMapUiState(direct("2", "Mum"), mapEntries, 22), {}, {},
         )
-        "location-map-one", "location-map-group", "location-map-place", "location-map-ask", "location-map-refused", "location-map-finding", "location-map-sharing" ->
+        "location-map-one", "location-map-group", "location-map-place", "location-map-ask", "location-map-refused", "location-map-finding", "location-map-sharing", "location-map-off", "location-map-ended", "location-map-approx" ->
             com.circaso.feature.messaging.presentation.map.LocationMapContent(mapPreviewState(name.removePrefix("location-map-")), {}, {})
         "chat-recording" -> ThreadContent(ThreadUiState(chat = direct("2", "Mum"), messages = thread, recording = true, recordingSince = now - 7_000), {}, {}, null, {}, {}, {}, {}, {}, {}, {}, media = previewMedia)
         "chat-location" -> ThreadContent(ThreadUiState(chat = direct("2", "Mum"), messages = thread, locating = true, pendingLocation = com.circaso.core.platform.GeoPoint(-1.29207, 36.82195, 18.0)), {}, {}, null, {}, {}, {}, {}, {}, {}, {}, media = previewMedia)

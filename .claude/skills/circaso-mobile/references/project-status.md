@@ -164,26 +164,37 @@ Media3 1.4.1, multiplatform-markdown-renderer 0.46.0.
 - D-C7 Maps styled monochrome from theme tokens. **The Static Maps key never ships in the app**: previews come from the backend proxy `GET /v1/maps/static`.
 - D-C7a Location map: me, distance, a line, directions (Pasaka, 2026-11-15; app branch `feat/location-map-distance`).
   No canvas frame; built from the map's own glass panel, `Avatar`, `CircasoButton` and tokens. Decisions:
-  - **Me on the map.** My photo pin with an **ink ring and a "You" tag** (others keep the action ring). The pulse means
-    "others can see this moving", so my pin pulses only while I share live; then my share's pin *is* my pin and the
-    phone isn't read a second time. Otherwise my position is read on this screen only (about every 5 s / 5 m, stopped
-    when the screen closes, never in the background) and **never sent**; the panel says "Only you can see where you are."
+  - **Me on the map.** My photo pin with a **"You" tag under it** (the ring is ink; `action` equals `ink` in today's
+    themes, so the tag and the missing pulse are what tell it apart). The pulse means "others can see this moving", so
+    my pin pulses only while I share live in this chat; then my share's pin *is* my pin and the phone isn't read a
+    second time. Otherwise my position is read on this screen only (about every 5 s / 5 m; stopped by the view model
+    when the screen closes or Circaso goes to the background) and **never sent by this map**. The copy says exactly
+    that, "This map doesn't share where you are.", never "nobody can see you": a live share may be running in another chat.
   - **Asking.** Nothing pops up on opening the map. The panel's last row gives the reason ("Uses your location on this
-    screen only. It isn't shared with anyone.") with **Turn on**, which brings up the phone's own prompt. Refused: one
-    row, "Location is off for Circaso", with **Settings**; never asked again. Phone-wide location off: a plain line.
+    screen only. This map doesn't share it.") with **Turn on**, which brings up the phone's own prompt. Refused: one
+    row, "Location is off for Circaso", with **Settings**, for the rest of that visit. (iOS keeps saying so afterwards.
+    Android can't tell "refused" from "never asked", so the next visit shows the passive Turn on row again; a tap that
+    the system refuses silently flips it to Settings. Nothing ever pops up unasked.) Phone-wide location off: a plain line.
   - **Distance.** Straight line (haversine), **metric everywhere** (the app has no unit setting): "under 10 m",
     tens of metres to 990 m, one decimal to 9.9 km, whole km after, thousands grouped. Worded "2.4 km away", never
-    "route"; "About …" when the fix is rougher than 100 m (Android "Approximate"). It leads each row's second line in
-    ink, before "Live until … · updated …".
+    "route". A fix rougher than 100 m (Android "Approximate") claims only what it knows: "Within about 1.8 km" when the
+    distance is inside the fix's error, else "About 5 km away" rounded to the size of that error. It leads each row's
+    second line in ink, before "Live until … · updated …".
   - **Order.** Unchanged: the tapped one first, then the others as their shares started. Not nearest-first: rows are
     tap targets and would shuffle under a finger as people move; every row has its own distance instead.
-  - **Focus and the line.** Tapping a row or pin focuses it (marked with `fillSelected` when there is more than one)
-    and recentres as before. A **dashed ink line** (3 dp, 8/6 dash, 80% ink, geodesic) runs from me to the focus; it is
-    dashed so it never reads as a road route. Drawn by Google Maps on both platforms (a Compose line on the fallback picture).
+  - **Focus and the line.** Tapping a row or pin focuses it and recentres as before. With more than one, the focused
+    row is tinted `fill` (ink outline in high contrast) and its Directions is the Primary button. A **dashed ink line**
+    (3 dp, 8/6 dash, 80% ink, full ink in high contrast, geodesic) runs from me to the focus; it is always dashed so it
+    never reads as a road route (on iOS a very long line seen close up gets longer dashes, never a solid line). Drawn
+    by Google Maps on both platforms (a Compose line on the fallback picture). Its ends glide with the pins; a change
+    of focus snaps.
   - **Framing.** Opened on a live share, the first framing includes me. Opened on a place, the map stays on the place.
     Top bar: frame brackets = "Show you and {name}"; the people icon = "Show everyone" (only when that differs). Points
     under 150 m apart get street level (zoom 17) around their middle, not the deepest zoom. The map is told the bar's
-    and panel's heights, so framing keeps clear of them and Google's mark stays visible above the panel.
+    and panel's heights, so framing keeps clear of them and Google's mark stays visible above the panel. The panel
+    takes at most 45% of the screen; its rows scroll and the note / Turn on row stay pinned under them. The fallback
+    picture (no Maps key) is framed between the bar and panel too, and is kept until a pin nears its edge (no new
+    `GET /v1/maps/static` at every step).
   - **Directions** open the phone's maps app from "my location" to the pin (Android: Google Maps, else any maps app at
     the place, else the browser; iOS: Apple Maps, else Google's link). Only the destination is handed over. For a live
     share the panel says "Directions lead to where {name} is now."

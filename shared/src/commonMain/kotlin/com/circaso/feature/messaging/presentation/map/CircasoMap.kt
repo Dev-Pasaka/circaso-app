@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.wrapContentSize
 import androidx.compose.foundation.text.BasicText
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.State
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableLongStateOf
@@ -67,10 +68,22 @@ data class MapPin(
     val place: Boolean = false,
     /** The person holding the phone: an ink ring and a "You" tag, so it is never mistaken for someone sharing. */
     val me: Boolean = false,
+    /** A share of my own that has ended: still my photo, read as mine. */
+    val mine: Boolean = false,
 )
 
 /** The straight line between the person holding the phone and whoever (or whatever place) the map is focused on. */
-data class MapLine(val fromLatitude: Double, val fromLongitude: Double, val toLatitude: Double, val toLongitude: Double)
+data class MapLine(
+    val fromLatitude: Double, val fromLongitude: Double, val toLatitude: Double, val toLongitude: Double,
+    /** Who or what the far end is (the focused pin's id): the line glides while it stays the same, and snaps to a new one. */
+    val to: String = "",
+) {
+    /** This line part of the way ([fraction] 0 to 1) to [other]: both ends move together. */
+    internal fun towards(other: MapLine, fraction: Double) = MapLine(
+        fromLatitude + (other.fromLatitude - fromLatitude) * fraction, fromLongitude + (other.fromLongitude - fromLongitude) * fraction,
+        toLatitude + (other.toLatitude - toLatitude) * fraction, toLongitude + (other.toLongitude - toLongitude) * fraction, other.to,
+    )
+}
 
 /**
  * The native map under Circaso's pins. The platform map (Google Maps on both platforms) reports its projection and
@@ -136,43 +149,61 @@ internal fun fitPlan(points: List<Pair<Double, Double>>): FitPlan? {
 
 /**
  * Google Maps on this platform, styled with [styleJson], reporting to [camera]. [line] is drawn by the map itself
- * (a dashed geodesic in [lineColor]), under Circaso's pins. False when it isn't set up (no key).
+ * (a dashed geodesic in [lineColor]), under Circaso's pins; it is a state read only where the line is drawn, so a
+ * moving line doesn't recompose the map. False when it isn't set up (no key).
  */
 @Composable
-internal expect fun PlatformMap(camera: MapCamera, styleJson: String, startLatitude: Double, startLongitude: Double, line: MapLine?, lineColor: Color, modifier: Modifier): Boolean
+internal expect fun PlatformMap(camera: MapCamera, styleJson: String, startLatitude: Double, startLongitude: Double, line: State<MapLine?>, lineColor: Color, modifier: Modifier): Boolean
 
 /** The line's stroke, and its dashes: broken, so it never reads as a road route. */
 internal val MapLineWidth = 3.dp
 internal val MapLineDash = 8.dp
 internal val MapLineGap = 6.dp
+internal const val MapLineAlpha = 0.8f
 
 /**
  * The map with everyone's pins. Without a native map (no key in this build) it is the server's map picture of the
  * first pin's surroundings, with the pins placed on it by the same Web Mercator maths Google uses.
  */
 @Composable
-fun CircasoMap(pins: List<MapPin>, camera: MapCamera, modifier: Modifier = Modifier, line: MapLine? = null, onPinTap: (MapPin) -> Unit = {}) {
+fun CircasoMap(
+    pins: List<MapPin>,
+    camera: MapCamera,
+    modifier: Modifier = Modifier,
+    line: MapLine? = null,
+    /** The pins the fallback picture is framed around (the native map is framed through [camera] instead). */
+    framed: List<MapPin> = pins,
+    onPinTap: (MapPin) -> Unit = {},
+) {
     val c = CircasoTheme.colors
     val style = remember(c) { mapStyleJson(c.mapPalette()) }
     val start = pins.firstOrNull()
     val still = CircasoTheme.reduceMotion
-    // Ink is the one colour that stands clear of the map's land, roads and water in all four themes.
-    val lineColor = c.ink.copy(alpha = 0.8f)
-    Box(modifier) {
-        // The line's ends glide exactly as the pins do, so it never leaves a pin behind mid-move.
-        val glide = if (still) androidx.compose.animation.core.snap<Float>() else tween(CircasoMotion.BaseMs)
-        val drawn = line?.let {
-            val fromLat by androidx.compose.animation.core.animateFloatAsState(it.fromLatitude.toFloat(), glide, label = "lineFromLat")
-            val fromLng by androidx.compose.animation.core.animateFloatAsState(it.fromLongitude.toFloat(), glide, label = "lineFromLng")
-            val toLat by androidx.compose.animation.core.animateFloatAsState(it.toLatitude.toFloat(), glide, label = "lineToLat")
-            val toLng by androidx.compose.animation.core.animateFloatAsState(it.toLongitude.toFloat(), glide, label = "lineToLng")
-            MapLine(fromLat.toDouble(), fromLng.toDouble(), toLat.toDouble(), toLng.toDouble())
+    // Ink is the one colour that stands clear of the map's land, roads and water in all four themes; a touch
+    // lighter than text so the line sits under the pins, full strength in high contrast.
+    val lineColor = if (c.isHighContrast) c.ink else c.ink.copy(alpha = MapLineAlpha)
+    // The line's ends glide as the pins do. The moving line is held in a state that only the map's own drawing
+    // reads, so a glide redraws the line and nothing else. A change of focus doesn't sweep across the map: it snaps.
+    val shown = remember { mutableStateOf(line) }
+    androidx.compose.runtime.LaunchedEffect(line, still) {
+        val from = shown.value
+        if (line == null || from == null || from.to != line.to || still) {
+            shown.value = line
+        } else {
+            androidx.compose.animation.core.animate(0f, 1f, animationSpec = tween(CircasoMotion.BaseMs)) { f, _ -> shown.value = from.towards(line, f.toDouble()) }
         }
-        val native = PlatformMap(camera, style, start?.latitude ?: 0.0, start?.longitude ?: 0.0, drawn, lineColor, Modifier.fillMaxSize())
+    }
+    // The map shifts under its pins when the screen's bar or panel changes height: the pins are placed again.
+    androidx.compose.runtime.LaunchedEffect(camera.topInset, camera.bottomInset) {
+        repeat(2) { androidx.compose.runtime.withFrameNanos { }; camera.moves++ }
+    }
+    Box(modifier) {
+        val native = PlatformMap(camera, style, start?.latitude ?: 0.0, start?.longitude ?: 0.0, shown, lineColor, Modifier.fillMaxSize())
         if (!native && start != null) {
-            StaticMapUnder(pins, camera)
+            StaticMapUnder(framed.ifEmpty { pins }, camera)
             // The picture can't draw a line of its own: Compose draws it with the picture's projection.
-            if (drawn != null) androidx.compose.foundation.Canvas(Modifier.fillMaxSize()) {
+            androidx.compose.foundation.Canvas(Modifier.fillMaxSize()) {
+                val drawn = shown.value ?: return@Canvas
                 val from = camera.project(drawn.fromLatitude, drawn.fromLongitude) ?: return@Canvas
                 val to = camera.project(drawn.toLatitude, drawn.toLongitude) ?: return@Canvas
                 drawLine(
@@ -221,7 +252,15 @@ private fun StaticMapUnder(pins: List<MapPin>, camera: MapCamera) {
         val askW = (wDp / scale).toInt()
         val askH = (hDp / scale).toInt()
         val points = pins.map { mercator(it.latitude, it.longitude) }
-        val frame = remember(points, askW, askH) { fallbackFrame(points, askW, askH) }
+        // The screen's bar and panel, in the picture's own points: the pins are framed in what's left between them.
+        val top = (camera.topInset.value / scale).toInt()
+        val bottom = (camera.bottomInset.value / scale).toInt()
+        // A picture is kept while every pin is still clear of its edges: someone walking doesn't fetch a new one
+        // at every step, only when a pin is about to leave it.
+        val kept = remember { mutableStateOf<FallbackFrame?>(null) }
+        val frame = remember(points, askW, askH, top, bottom) {
+            kept.value?.takeIf { it.holds(points, askW, askH, top, bottom) } ?: fallbackFrame(points, askW, askH, top, bottom).also { kept.value = it }
+        }
         val picture by produceState<ByteArray?>(null, frame, askW, askH, palette, load) {
             if (load != null) value = load(frame.latitude, frame.longitude, askW, askH, frame.zoom, palette)
         }
@@ -242,21 +281,38 @@ private fun StaticMapUnder(pins: List<MapPin>, camera: MapCamera) {
 }
 
 /** Where the fallback picture is centred (as degrees and as Mercator x, y) and its zoom. */
-internal class FallbackFrame(val latitude: Double, val longitude: Double, val x: Double, val y: Double, val zoom: Int)
+internal data class FallbackFrame(val latitude: Double, val longitude: Double, val x: Double, val y: Double, val zoom: Int) {
+    /**
+     * True while every one of [points] is still inside this picture, clear of its edges, the bar ([top]) and the
+     * panel ([bottom]) by half a pin: the picture can stay.
+     */
+    fun holds(points: List<Pair<Double, Double>>, w: Int, h: Int, top: Int = 0, bottom: Int = 0): Boolean {
+        val world = 256 * 2.0.pow(zoom)
+        return points.all { p ->
+            val px = w / 2 + (p.first - x) * world
+            val py = h / 2 + (p.second - y) * world
+            px in 32.0..(w - 32.0) && py in (top + 32.0)..(h - bottom - 32.0)
+        }
+    }
+}
 
-/** The middle of all [points] and the largest zoom (3 to 16) at which they fit in [w] × [h] points with a margin for the pins. */
-internal fun fallbackFrame(points: List<Pair<Double, Double>>, w: Int, h: Int): FallbackFrame {
+/**
+ * The middle of all [points] and the largest zoom (3 to 16) at which they fit in [w] × [h] points with a margin for
+ * the pins, between the screen's bar ([top] points) and its panel ([bottom] points).
+ */
+internal fun fallbackFrame(points: List<Pair<Double, Double>>, w: Int, h: Int, top: Int = 0, bottom: Int = 0): FallbackFrame {
     val minX = points.minOf { it.first }
     val maxX = points.maxOf { it.first }
     val minY = points.minOf { it.second }
     val maxY = points.maxOf { it.second }
     val x = (minX + maxX) / 2
-    val y = (minY + maxY) / 2
     // Room for a pin (62 points tall) on every side.
     val usableW = (w - 2 * 64).coerceAtLeast(32).toDouble()
-    val usableH = (h - 2 * 64).coerceAtLeast(32).toDouble()
+    val usableH = (h - top - bottom - 2 * 64).coerceAtLeast(32).toDouble()
     var zoom = 16
     while (zoom > 3 && ((maxX - minX) * 256 * 2.0.pow(zoom) > usableW || (maxY - minY) * 256 * 2.0.pow(zoom) > usableH)) zoom--
+    // The pins' middle sits in the middle of the clear part, so the picture's own centre is lower by half the difference.
+    val y = (minY + maxY) / 2 + (bottom - top) / 2.0 / (256 * 2.0.pow(zoom))
     val lng = x * 360.0 - 180.0
     val lat = kotlin.math.atan(kotlin.math.sinh(PI * (1 - 2 * y))) * 180 / PI
     return FallbackFrame(lat, lng, x, y, zoom)
@@ -282,8 +338,9 @@ private fun PinView(pin: MapPin, modifier: Modifier, onTap: () -> Unit) {
         modifier.size(PinWidth, PinHeight).pressable(role = androidx.compose.ui.semantics.Role.Button, onClick = onTap)
             .semantics {
                 contentDescription = when {
-                    pin.me -> if (pin.live) "You, sharing live location" else "You. Only you can see this"
+                    pin.me -> if (pin.live) "You, sharing live location" else "You. This pin is only on your phone"
                     pin.place -> "Shared place"
+                    pin.mine -> "You, last shared location"
                     else -> pin.name + if (pin.live) ", sharing live location" else ", last location"
                 }
             },

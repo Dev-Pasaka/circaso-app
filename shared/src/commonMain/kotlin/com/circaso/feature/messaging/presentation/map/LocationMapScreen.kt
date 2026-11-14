@@ -34,7 +34,9 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.foundation.border
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.ViewModel
@@ -99,15 +101,17 @@ class LocationMapViewModel(
 ) : ViewModel() {
     private val focus = MutableStateFlow(opened)
     private val access = MutableStateFlow(location.access())
+    /** False while Circaso is in the background: the phone's location isn't read then, by this code, not just by the system. */
+    private val visible = MutableStateFlow(true)
     private val thread = combine(chat, messages) { c, m -> c to m }
 
     /**
      * The phone's own position, only while it's wanted: access granted, someone to measure to, and no live share of
      * my own running (that already says where I am). Collected with [state], so it stops when the screen closes.
      */
-    private val fix: Flow<GeoPoint?> = combine(access, thread) { a, (chat, messages) ->
+    private val fix: Flow<GeoPoint?> = combine(access, thread, visible) { a, (chat, messages), shown ->
         val s = locationMapState(chat, messages, opened, opened, null, a, myUserId, now())
-        a == LocationAccess.Granted && s.canMeasure && !s.sharingLive
+        shown && a == LocationAccess.Granted && s.canMeasure && !s.sharingLive
     }.distinctUntilChanged().flatMapLatest { wanted ->
         if (wanted) location.updates().map<GeoPoint, GeoPoint?> { it }.onStart { emit(null) } else flowOf(null)
     }
@@ -141,13 +145,19 @@ class LocationMapViewModel(
     fun onResume() {
         val a = location.access()
         if (!(access.value == LocationAccess.Denied && a == LocationAccess.NotAsked)) access.value = a
+        visible.value = true
+    }
+
+    /** Circaso left the screen: reading the phone's location stops until it is back. */
+    fun onPause() {
+        visible.value = false
     }
 }
 
 @Composable
 fun LocationMapScreen(viewModel: LocationMapViewModel, onBack: () -> Unit) {
     val state by viewModel.state.collectAsState()
-    androidx.lifecycle.compose.LifecycleResumeEffect(viewModel) { viewModel.onResume(); onPauseOrDispose { } }
+    androidx.lifecycle.compose.LifecycleResumeEffect(viewModel) { viewModel.onResume(); onPauseOrDispose { viewModel.onPause() } }
     androidx.compose.runtime.CompositionLocalProvider(LocalMapPicture provides viewModel.mapLoader) {
         LocationMapContent(
             state, onBack, viewModel::onStop, onFocus = viewModel::onFocus, onAllowLocation = viewModel::onAllowLocation,
@@ -158,6 +168,15 @@ fun LocationMapScreen(viewModel: LocationMapViewModel, onBack: () -> Unit) {
 
 /** The pin of the person holding the phone, when it isn't one of the shares. */
 private const val MePin = "me"
+
+/** The panel takes at most this share of the screen's height: the map stays the subject. */
+private const val PanelShare = 0.45f
+
+/**
+ * The map is told how tall the bar and panel are, and shifts to keep clear of them. A status line wrapping, or a
+ * pixel of rounding, isn't worth a shift: only a change of a few points is passed on.
+ */
+private fun settled(current: androidx.compose.ui.unit.Dp, measured: androidx.compose.ui.unit.Dp) = if (kotlin.math.abs((measured - current).value) < 8f) current else measured
 
 @Composable
 fun LocationMapContent(
@@ -178,7 +197,7 @@ fun LocationMapContent(
     val focused = state.focused
     val shares = state.entries.map { e ->
         val live = e.message.details.liveNow(now)
-        MapPin(e.id.toString(), e.point.latitude, e.point.longitude, e.initialsName, e.avatarUrl, live = live, place = e.place, me = e.mine && live)
+        MapPin(e.id.toString(), e.point.latitude, e.point.longitude, e.initialsName, e.avatarUrl, live = live, place = e.place, me = e.mine && live, mine = e.mine)
     }
     // Me last, so my pin is on top where two overlap. While I share live, my share's pin is me.
     val pins = if (me != null && !state.sharingLive) shares + MapPin(MePin, me.latitude, me.longitude, state.myName, state.myAvatarUrl, live = false, me = true) else shares
@@ -198,16 +217,17 @@ fun LocationMapContent(
         onFocus(entry)
         if (camera.canMove) camera.moveTo(entry.point.latitude, entry.point.longitude, 16f)
     }
-    Box(Modifier.fillMaxSize().background(c.bgGrouped).semantics { contentDescription = "Map" }) {
+    androidx.compose.foundation.layout.BoxWithConstraints(Modifier.fillMaxSize().background(c.bgGrouped).semantics { contentDescription = "Map" }) {
+        val panelMax = maxHeight * PanelShare
         if (state.loaded) CircasoMap(
-            pins, camera, Modifier.fillMaxSize(), line = state.line,
+            pins, camera, Modifier.fillMaxSize(), line = state.line, framed = framing,
             onPinTap = { pin ->
                 val entry = state.entries.firstOrNull { it.id.toString() == pin.id }
                 if (entry != null) select(entry) else if (camera.canMove) camera.moveTo(pin.latitude, pin.longitude, 16f)
             },
         )
         Row(
-            Modifier.fillMaxWidth().onSizeChanged { camera.topInset = with(density) { it.height.toDp() } }
+            Modifier.fillMaxWidth().onSizeChanged { camera.topInset = settled(camera.topInset, with(density) { it.height.toDp() }) }
                 .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Top + WindowInsetsSides.Horizontal)).padding(horizontal = CircasoSpacing.s4, vertical = CircasoSpacing.s2),
             verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(CircasoSpacing.s2),
         ) {
@@ -219,21 +239,21 @@ fun LocationMapContent(
             )
             Box(Modifier.weight(1f))
             if (camera.canMove) {
-                // Me and whoever is in focus, together.
+                // One meaning per icon. The frame: me and whoever is in focus, together.
                 if (me != null && focused != null) CircasoIconButton(
                     CircasoIcon.Scan, if (focused.place) "Show you and the place" else "Show you and ${focused.name}",
                     { camera.fit(listOf(me.latitude to me.longitude, focused.point.latitude to focused.point.longitude)) },
                     Modifier.glass(CircasoShapes.circle, floating = true),
                 )
-                // Everyone: with me on the map this is a different framing only when there are others too.
+                // The people: everyone. With me on the map this is a different framing only when there are others too.
                 if (pins.size > (if (me != null && focused != null) 2 else 1)) CircasoIconButton(
-                    if (me != null && focused != null) CircasoIcon.People else CircasoIcon.Scan, "Show everyone",
+                    CircasoIcon.People, "Show everyone",
                     { camera.fit(pins.map { it.latitude to it.longitude }) }, Modifier.glass(CircasoShapes.circle, floating = true),
                 )
             }
         }
-        if (state.loaded) Box(Modifier.align(Alignment.BottomCenter).fillMaxWidth().onSizeChanged { camera.bottomInset = with(density) { it.height.toDp() } }) {
-            LocationPanel(state, now, canMove = camera.canMove, onSelect = ::select, onStop = onStop, onDirections = onDirections, onAllowLocation = onAllowLocation, onSettings = onSettings)
+        if (state.loaded) Box(Modifier.align(Alignment.BottomCenter).fillMaxWidth().onSizeChanged { camera.bottomInset = settled(camera.bottomInset, with(density) { it.height.toDp() }) }) {
+            LocationPanel(state, now, maxHeight = panelMax, canMove = camera.canMove, onSelect = ::select, onStop = onStop, onDirections = onDirections, onAllowLocation = onAllowLocation, onSettings = onSettings)
         }
     }
 }
@@ -243,6 +263,7 @@ fun LocationMapContent(
 internal fun LocationPanel(
     state: LocationMapUiState,
     now: Long,
+    maxHeight: androidx.compose.ui.unit.Dp,
     canMove: Boolean,
     onSelect: (LocationEntry) -> Unit,
     onStop: (LocationEntry) -> Unit,
@@ -257,23 +278,26 @@ internal fun LocationPanel(
     val markFocus = state.entries.count { !it.mine } > 1
     Column(
         Modifier.fillMaxWidth().padding(CircasoSpacing.s3).windowInsetsPadding(WindowInsets.navigationBars)
-            .glass(CircasoShapes.lg, floating = true)
-            // A big group can have many people sharing: the panel scrolls rather than covering the map.
-            .heightIn(max = 300.dp).verticalScroll(androidx.compose.foundation.rememberScrollState()).padding(CircasoSpacing.s2),
+            .glass(CircasoShapes.lg, floating = true).heightIn(max = maxHeight).padding(CircasoSpacing.s2),
         verticalArrangement = Arrangement.spacedBy(CircasoSpacing.s1),
     ) {
+      // A big group can have many people sharing: the rows scroll rather than covering the map, and the note and
+      // "Turn on" under them stay in view.
+      Column(Modifier.weight(1f, fill = false).verticalScroll(androidx.compose.foundation.rememberScrollState()), verticalArrangement = Arrangement.spacedBy(CircasoSpacing.s1)) {
         if (state.entries.isEmpty()) BasicText("Nobody is sharing a location here.", style = t.footnote.copy(color = c.inkSecondary), modifier = Modifier.padding(CircasoSpacing.s1))
         state.entries.forEach { e ->
             val d = e.message.details
             val moving = d.liveNow(now)
             val status = entryStatus(e, now)
-            val away = e.distanceMeters?.let { distanceAway(it, state.approximate) }
+            val away = e.distanceMeters?.let { distanceAway(it, state.roughness) }
             val inFocus = markFocus && e.id == focused?.id
             Row(
-                Modifier.fillMaxWidth().clip(CircasoShapes.md).background(if (inFocus) c.fillSelected else androidx.compose.ui.graphics.Color.Transparent)
+                Modifier.fillMaxWidth().clip(CircasoShapes.md).background(if (inFocus) c.fill else androidx.compose.ui.graphics.Color.Transparent)
+                    .then(if (inFocus && c.isHighContrast) Modifier.border(1.dp, c.ink, CircasoShapes.md) else Modifier)
                     .then(if (canMove || !e.mine) Modifier.pressable(role = androidx.compose.ui.semantics.Role.Button, onClickLabel = "Show on map", onClick = { onSelect(e) }) else Modifier)
                     .semantics(mergeDescendants = true) {
-                        contentDescription = listOfNotNull(if (e.place) "Shared place" else e.name, away, status, "In focus".takeIf { inFocus }).joinToString(", ")
+                        contentDescription = listOfNotNull(if (e.place) "Shared place" else e.name, away, status).joinToString(", ")
+                        if (markFocus) selected = inFocus
                     }
                     .padding(CircasoSpacing.s1),
                 verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(CircasoSpacing.s3),
@@ -301,26 +325,36 @@ internal fun LocationPanel(
                     CircasoButton("Stop", { onStop(e) }, style = ButtonStyle.Destructive, size = ButtonSize.Small)
                 } else if (!e.mine) {
                     CircasoButton(
-                        "Directions", { onDirections(e) }, style = ButtonStyle.Secondary, size = ButtonSize.Small,
+                        // On the focused row's tint a Secondary button (the same fill) would vanish.
+                        "Directions", { onDirections(e) }, style = if (inFocus) ButtonStyle.Primary else ButtonStyle.Secondary, size = ButtonSize.Small,
                         modifier = Modifier.semantics { contentDescription = if (moving) "Directions to where ${e.name} is now, in your maps app" else "Directions, in your maps app" },
                     )
                 }
+            }
+        }
+      }
+        // What "this" is, in the person's own terms.
+        val what = state.entries.filter { !it.mine }.let { others ->
+            when {
+                others.size > 1 -> "everyone is"
+                others.firstOrNull()?.place == true -> "this place is"
+                else -> (others.firstOrNull()?.name?.substringBefore(' ') ?: "this") + " is"
             }
         }
         val notes = listOfNotNull(
             // Directions are to a point, and a person sharing live keeps moving.
             focused?.takeIf { it.message.details.liveNow(now) }?.let { "Directions lead to where ${it.name.substringBefore(' ')} is now." },
             when (val note = locationNote(state)) {
-                is LocationNote.Known -> if (note.private) "Distance is in a straight line. Only you can see where you are." else "Distance is in a straight line."
+                is LocationNote.Known -> if (note.private) "Distance is in a straight line. This map doesn't share where you are." else "Distance is in a straight line."
                 LocationNote.Finding -> "Finding where you are…"
-                LocationNote.PhoneOff -> "Location is off on this phone. Turn it on to see how far away this is."
+                LocationNote.PhoneOff -> "Location is off on this phone. Turn it on to see how far away $what."
                 else -> null
             },
         )
         if (notes.isNotEmpty()) BasicText(notes.joinToString(" "), style = t.footnote.copy(color = c.inkSecondary), modifier = Modifier.padding(horizontal = CircasoSpacing.s1, vertical = CircasoSpacing.s1))
         when (locationNote(state)) {
-            LocationNote.Ask -> LocationAsk("See how far away this is", "Uses your location on this screen only. It isn't shared with anyone.", "Turn on", onAllowLocation)
-            LocationNote.Refused -> LocationAsk("Location is off for Circaso", "Turn it on in Settings to see how far away this is.", "Settings", onSettings)
+            LocationNote.Ask -> LocationAsk("See how far away $what", "Uses your location on this screen only. This map doesn't share it.", "Turn on", onAllowLocation)
+            LocationNote.Refused -> LocationAsk("Location is off for Circaso", "Turn it on in Settings to see how far away $what.", "Settings", onSettings)
             else -> Unit
         }
     }

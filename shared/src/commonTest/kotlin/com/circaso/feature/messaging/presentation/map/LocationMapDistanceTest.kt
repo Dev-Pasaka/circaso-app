@@ -95,10 +95,20 @@ class LocationMapDistanceTest {
     }
 
     @Test fun itSaysAwayNeverRouteAndAboutWhenTheFixIsRough() {
-        assertEquals("2.4 km away", distanceAway(2_400.0, approximate = false))
-        assertEquals("About 2.4 km away", distanceAway(2_400.0, approximate = true))
-        assertEquals("Less than 10 m away", distanceAway(3.0, approximate = false))
-        assertEquals("Very close", distanceAway(3.0, approximate = true))
+        assertEquals("2.4 km away", distanceAway(2_400.0))
+        assertEquals("Less than 10 m away", distanceAway(3.0))
+        // A fix good to 300 m: hundreds of metres are all it can honestly give.
+        assertEquals("About 2.4 km away", distanceAway(2_449.0, roughness = 300.0))
+        assertEquals("About 500 m away", distanceAway(460.0, roughness = 300.0))
+    }
+
+    @Test fun aRoughFixNeverClaimsMoreThanItKnows() {
+        // Android's "Approximate" location is good to a couple of kilometres.
+        assertEquals("Within about 1.8 km", distanceAway(350.0, roughness = 1_800.0))
+        assertEquals("Within about 1.8 km", distanceAway(1_800.0, roughness = 1_800.0))
+        assertEquals("About 5.0 km away", distanceAway(5_300.0, roughness = 1_800.0))
+        assertEquals("About 24 km away", distanceAway(24_400.0, roughness = 1_800.0))
+        assertEquals("About 440 km away", distanceAway(441_000.0, roughness = 12_000.0))
     }
 
     // ---- the state
@@ -175,8 +185,8 @@ class LocationMapDistanceTest {
 
     @Test fun aRoughFixMakesDistancesApproximate() {
         val mum = listOf(located(1, "mum", -1.30, 36.80))
-        assertFalse(state(mum, 1).approximate)
-        assertTrue(state(mum, 1, fix = Nairobi.copy(accuracyMeters = 1_800.0)).approximate)
+        assertNull(state(mum, 1).roughness)
+        assertEquals(1_800.0, state(mum, 1, fix = Nairobi.copy(accuracyMeters = 1_800.0)).roughness)
     }
 
     // ---- focus and the line
@@ -184,15 +194,15 @@ class LocationMapDistanceTest {
     @Test fun theLineRunsFromMeToTheFocusAndFollowsIt() {
         val messages = listOf(located(1, "mum", -1.30, 36.80), located(2, "kev", -1.20, 36.90))
         val first = state(messages, opened = 1)
-        assertEquals(MapLine(Nairobi.latitude, Nairobi.longitude, -1.30, 36.80), first.line)
+        assertEquals(MapLine(Nairobi.latitude, Nairobi.longitude, -1.30, 36.80, to = "1"), first.line)
         val second = state(messages, opened = 1, focus = 2)
         assertEquals(2L, second.focus)
-        assertEquals(MapLine(Nairobi.latitude, Nairobi.longitude, -1.20, 36.90), second.line)
+        assertEquals(MapLine(Nairobi.latitude, Nairobi.longitude, -1.20, 36.90, to = "2"), second.line)
     }
 
     @Test fun theLineMovesWhenEitherOfUsMoves() {
         val moved = state(listOf(located(1, "mum", -1.31, 36.79)), opened = 1, fix = GeoPoint(-1.28, 36.83))
-        assertEquals(MapLine(-1.28, 36.83, -1.31, 36.79), moved.line)
+        assertEquals(MapLine(-1.28, 36.83, -1.31, 36.79, to = "1"), moved.line)
     }
 
     @Test fun myOwnShareIsNeverTheFocusAndAFocusThatLeftFallsBack() {
@@ -228,6 +238,33 @@ class LocationMapDistanceTest {
     @Test fun framingOnePointCentresOnItAndNoPointsIsNothing() {
         assertEquals(FitPlan.Centre(-1.29, 36.82, 16f), fitPlan(listOf(-1.29 to 36.82, -1.29 to 36.82)))
         assertNull(fitPlan(emptyList()))
+    }
+
+    @Test fun aMovingLineGlidesBothEndsAndKeepsItsFocus() {
+        val a = MapLine(0.0, 0.0, 10.0, 10.0, to = "1")
+        val b = MapLine(2.0, 4.0, 20.0, 30.0, to = "1")
+        assertEquals(MapLine(1.0, 2.0, 15.0, 20.0, to = "1"), a.towards(b, 0.5))
+        assertEquals(b, a.towards(b, 1.0))
+    }
+
+    // ---- the fallback picture
+
+    @Test fun theFallbackPictureKeepsThePinsBetweenTheBarAndThePanel() {
+        val points = listOf(mercator(-1.29, 36.82), mercator(-1.30, 36.80))
+        val plain = fallbackFrame(points, 360, 640)
+        val inset = fallbackFrame(points, 360, 640, top = 80, bottom = 240)
+        assertTrue(inset.zoom <= plain.zoom)
+        // The picture's centre is lower than the pins' middle, so the pins sit above the panel.
+        assertTrue(inset.y > (points[0].second + points[1].second) / 2)
+        assertTrue(inset.holds(points, 360, 640, top = 80, bottom = 240))
+    }
+
+    @Test fun theSamePictureIsKeptWhileAPinOnlyMovesALittleAndReplacedWhenItLeaves() {
+        val mum = mercator(-1.30, 36.80)
+        val frame = fallbackFrame(listOf(mercator(-1.29, 36.82), mum), 360, 640)
+        assertEquals(frame, fallbackFrame(listOf(mercator(-1.29, 36.82), mum), 360, 640), "the same pins ask for the same picture")
+        assertTrue(frame.holds(listOf(mercator(-1.2901, 36.8201), mum), 360, 640), "a few metres' walk keeps the picture")
+        assertFalse(frame.holds(listOf(mercator(-1.10, 37.20), mum), 360, 640), "across town needs a new one")
     }
 
     // ---- directions
@@ -307,6 +344,18 @@ class LocationMapViewModelTest {
         screen.cancel()
     }
 
+    @Test fun thePhoneIsNotReadWhileCircasoIsInTheBackground() = runTest(UnconfinedTestDispatcher()) {
+        val location = FakeLocation(LocationAccess.Granted)
+        val vm = viewModel(location)
+        val screen = launch { vm.state.collect { } }
+        assertEquals(1, location.listening)
+        vm.onPause()
+        assertEquals(0, location.listening)
+        vm.onResume()
+        assertEquals(1, location.listening)
+        screen.cancel()
+    }
+
     @Test fun focusFollowsTheTapAndTheLineWithIt() = runTest(UnconfinedTestDispatcher()) {
         val location = FakeLocation(LocationAccess.Granted)
         val vm = viewModel(location)
@@ -315,10 +364,10 @@ class LocationMapViewModelTest {
         assertEquals(1L, vm.state.value.focus)
         vm.onFocus(vm.state.value.entries[1])
         assertEquals(2L, vm.state.value.focus)
-        assertEquals(MapLine(Nairobi.latitude, Nairobi.longitude, -1.20, 36.90), vm.state.value.line)
+        assertEquals(MapLine(Nairobi.latitude, Nairobi.longitude, -1.20, 36.90, to = "2"), vm.state.value.line)
         // Kevin moves: the line's far end moves with him.
         thread.value = listOf(located(1, "mum", -1.30, 36.80), located(2, "kev", -1.21, 36.91))
-        assertEquals(MapLine(Nairobi.latitude, Nairobi.longitude, -1.21, 36.91), vm.state.value.line)
+        assertEquals(MapLine(Nairobi.latitude, Nairobi.longitude, -1.21, 36.91, to = "2"), vm.state.value.line)
         screen.cancel()
     }
 

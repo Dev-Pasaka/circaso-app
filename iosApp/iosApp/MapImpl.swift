@@ -100,19 +100,21 @@ final class NativeMapImpl: NSObject, NativeMap, GMSMapViewDelegate {
         dashLine()
     }
 
-    /// Dashes of 8 pt with 6 pt gaps at the current zoom (the SDK measures them in metres). A line too long for
-    /// that at this zoom (hundreds of dashes, most of them off screen) is drawn solid instead.
+    /// Dashes of 8 pt with 6 pt gaps at the current zoom (the SDK measures them in metres). A very long line
+    /// seen close up would need thousands of them, so its dashes are stretched to keep it to 600 pairs: it is
+    /// always broken, never a solid line that could be taken for a road route.
     private func dashLine() {
         guard let line = polyline, let path = line.path else { return }
         dashZoom = mapView.camera.zoom
         let pointsPerMetre = Double(mapView.projection.points(forMeters: 1, at: mapView.camera.target))
         let length = path.length(of: .geodesic)
-        guard pointsPerMetre > 0, length * pointsPerMetre / 14 < 600 else {
+        guard pointsPerMetre > 0, length > 0 else {
             line.spans = nil
             return
         }
+        let stretch = max(1, length * pointsPerMetre / 14 / 600)
         let styles = [GMSStrokeStyle.solidColor(lineColor), GMSStrokeStyle.solidColor(.clear)]
-        let lengths = [NSNumber(value: 8 / pointsPerMetre), NSNumber(value: 6 / pointsPerMetre)]
+        let lengths = [NSNumber(value: 8 * stretch / pointsPerMetre), NSNumber(value: 6 * stretch / pointsPerMetre)]
         line.spans = GMSStyleSpans(path, styles, lengths, .geodesic)
     }
 
