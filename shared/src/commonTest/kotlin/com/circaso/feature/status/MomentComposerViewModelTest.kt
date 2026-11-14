@@ -277,24 +277,33 @@ class MomentComposerViewModelTest {
         assertNull(older.levels)
     }
 
-    @Test fun eachKindAsksForItsOwnAccessAndAnEmptyStripSaysWhy() = runTest(dispatcher) {
-        library.items[LibraryKind.Photo] = listOf(photo("p1"))
+    @Test fun theStripShowsTheNewestPhotosAndVideosTogether() = runTest(dispatcher) {
+        library.items[LibraryKind.Photo] = listOf(photo("p-old", at = 1), photo("p-new", at = 3))
+        library.items[LibraryKind.Video] = listOf(video("v-mid", 5_000, at = 2))
+        val vm = composer()
+        // WhatsApp's strip: whatever is newest, photo or video, first.
+        assertEquals(listOf("p-new", "v-mid", "p-old"), vm.state.value.recents.map { it.id })
+        assertEquals(LibraryAccess.Granted, vm.state.value.recentsAccess)
+        // Video mode keeps the same strip: nothing is read or asked again.
+        val asks = library.asked.size
+        vm.setMode(ComposerMode.Video)
+        assertEquals(asks, library.asked.size)
+        assertEquals(listOf("p-new", "v-mid", "p-old"), vm.state.value.recents.map { it.id })
+    }
+
+    @Test fun onlySomeAccessLeadsToAllowAllAndReadsTheStripAgain() = runTest(dispatcher) {
+        library.items[LibraryKind.Photo] = listOf(photo("p1", at = 1))
         library.access[LibraryKind.Video] = LibraryAccess.Denied
         val vm = composer()
-        assertEquals(listOf("p1"), vm.state.value.recents.map { it.id })
-        vm.setMode(ComposerMode.Video)
-        // Photo access alone is not video access: the video strip asks for its own, and says it has none.
-        assertEquals(LibraryKind.Video to true, library.asked.last())
-        assertEquals(LibraryAccess.Denied, vm.state.value.recentsAccess)
-        assertTrue(vm.state.value.recents.isEmpty())
-        // Allowing it reads the strip again, without asking a second time.
-        library.items[LibraryKind.Video] = listOf(video("v1", 5_000))
-        library.afterManage = LibraryAccess.Limited
-        vm.manageAccess()
-        assertEquals(listOf(LibraryKind.Video), library.managed)
-        assertEquals(LibraryKind.Video to false, library.asked.last())
+        // Photos but not videos: the strip shows what it can and says it can't see everything.
         assertEquals(LibraryAccess.Limited, vm.state.value.recentsAccess)
-        assertEquals(listOf("v1"), vm.state.value.recents.map { it.id })
+        assertEquals(listOf("p1"), vm.state.value.recents.map { it.id })
+        library.items[LibraryKind.Video] = listOf(video("v1", 5_000, at = 2))
+        library.afterManage = LibraryAccess.Granted
+        library.access[LibraryKind.Video] = LibraryAccess.Granted // "Allow all" covers videos too
+        vm.manageAccess()
+        assertEquals(listOf("v1", "p1"), vm.state.value.recents.map { it.id })
+        assertEquals(LibraryAccess.Granted, vm.state.value.recentsAccess)
     }
 
     @Test fun aTapUsesOneAndSharePostsIt() = runTest(dispatcher) {

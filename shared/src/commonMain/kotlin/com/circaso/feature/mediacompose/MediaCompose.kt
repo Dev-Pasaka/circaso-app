@@ -5,6 +5,7 @@ import com.circaso.core.platform.CapturedMedia
 import com.circaso.core.platform.LibraryAccess
 import com.circaso.core.platform.LibraryItem
 import com.circaso.core.platform.LibraryKind
+import com.circaso.core.platform.LibraryRecents
 import com.circaso.core.platform.MediaLibrary
 import com.circaso.core.platform.MomentCamera
 import com.circaso.core.platform.MomentMediaMaxBytes
@@ -107,6 +108,9 @@ data class GalleryState(
 
 /** How many photos and how many videos the gallery reads at a time. */
 const val GalleryPage = 300
+
+/** How many of the newest photos and videos the strip above the shutter shows. */
+const val RecentsSize = 30
 
 /** M3b: trimming one video to a minute or less. Times are in milliseconds from the start of the original. */
 data class TrimState(
@@ -274,6 +278,9 @@ class MediaComposer(
     }
 
     fun setMode(mode: ComposerMode) {
+        val visual = setOf(ComposerMode.Photo, ComposerMode.Video)
+        // Photo and Video share one strip: switching between them keeps it (and what's ticked) as it is.
+        if (state.mode in visual && mode in visual) { update { it.copy(mode = mode, error = null, selecting = false, selection = emptyList()) }; return }
         update { it.copy(mode = mode, error = null, recents = emptyList(), recentsAccess = null, selecting = false, selection = emptyList()) }
         loadRecents(mode)
     }
@@ -287,9 +294,24 @@ class MediaComposer(
         val kind = libraryKind(mode) ?: return
         recentsJob?.cancel()
         recentsJob = scope.launch {
-            val r = library.recents(kind, 30, ask)
+            // Photo and video show the same strip (WhatsApp, 2026-11-14): the newest photos and videos together,
+            // whatever took them, in one prompt for both. Audio keeps its own.
+            val r = if (kind == LibraryKind.Audio) library.recents(kind, RecentsSize, ask) else {
+                val (photos, videos) = library.recentsVisual(RecentsSize, ask)
+                LibraryRecents(
+                    (photos.items + videos.items).sortedByDescending { it.addedAt }.take(RecentsSize),
+                    visualAccess(photos.access, videos.access),
+                )
+            }
             if (state.mode == mode) update { it.copy(recents = r.items, recentsAccess = r.access) }
         }
+    }
+
+    /** One answer for photos and videos together: all of both is Granted; nothing of either is Denied. */
+    private fun visualAccess(photos: LibraryAccess, videos: LibraryAccess): LibraryAccess = when {
+        photos == LibraryAccess.Granted && videos == LibraryAccess.Granted -> LibraryAccess.Granted
+        photos == LibraryAccess.Denied && videos == LibraryAccess.Denied -> LibraryAccess.Denied
+        else -> LibraryAccess.Limited
     }
 
     private fun libraryKind(mode: ComposerMode) = when (mode) {

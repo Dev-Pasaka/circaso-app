@@ -481,7 +481,7 @@ private fun CaptionField(value: String, onChange: (String) -> Unit, enabled: Boo
 /**
  * The recents strip (WhatsApp-style): the newest photos, videos or audio on the phone. Tap one to use it; hold one to
  * pick several (numbered in the order they'll go). Without access to this kind it says so and offers to allow it;
- * with limited access (only chosen items) a Manage tile leads.
+ * with limited access (only chosen items) an Allow all tile leads.
  */
 @Composable
 private fun RecentsStrip(state: MediaComposeState, composer: MediaComposer) {
@@ -505,7 +505,9 @@ private fun RecentsStrip(state: MediaComposeState, composer: MediaComposer) {
             )
         }
         if (access == LibraryAccess.Limited) item(key = "manage") {
-            StripTile("Manage", CircasoIcon.Plus, "Circaso can see only what you chose. Choose more", wide = false, onClick = composer::manageAccess)
+            // Only what was chosen once is visible, so the strip misses the newest photos: say so, and lead to the
+            // system prompt whose "Allow all" shows everything (2026-11-14).
+            StripTile("Allow all", CircasoIcon.Plus, "Circaso can see only the photos and videos you chose. Allow all", wide = false, onClick = composer::manageAccess)
         }
         items(state.recents.size, key = { state.recents[it].id }) { i ->
             val item = state.recents[i]
