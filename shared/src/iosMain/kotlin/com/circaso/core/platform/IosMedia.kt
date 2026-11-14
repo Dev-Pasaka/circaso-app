@@ -142,7 +142,9 @@ class IosMediaFiles : MediaFiles {
         if (!fm.fileExistsAtPath(path)) return false
         fm.createDirectoryAtPath(applicationSupportPath("media"), withIntermediateDirectories = true, attributes = null, error = null)
         fm.removeItemAtPath(filePath(name), error = null)
-        return fm.moveItemAtPath(path, toPath = filePath(name), error = null)
+        // Never take a file that isn't in the app's own container (it always should be): copy it and leave it there.
+        val mine = path.startsWith(platform.Foundation.NSHomeDirectory()) || path.startsWith("/private" + platform.Foundation.NSHomeDirectory()) || path.startsWith(platform.Foundation.NSTemporaryDirectory())
+        return if (mine) fm.moveItemAtPath(path, toPath = filePath(name), error = null) else fm.copyItemAtPath(path, toPath = filePath(name), error = null)
     }
 }
 

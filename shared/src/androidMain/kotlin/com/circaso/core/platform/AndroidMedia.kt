@@ -102,6 +102,8 @@ actual fun openAppSettings() {
 /** Decrypted media in the app's private files (never on shared storage, never backed up). */
 class AndroidMediaFiles(context: Context) : MediaFiles {
     private val dir = File(context.filesDir, "media")
+    /** The app's own folders: only a file inside them is ever moved; anything else is copied and left where it is. */
+    private val ours = listOfNotNull(context.cacheDir, context.filesDir, context.externalCacheDir).map { it.canonicalPath + File.separator }
     override suspend fun read(name: String): ByteArray? = withContext(Dispatchers.IO) { File(dir, name).takeIf { it.exists() }?.readBytes() }
     override suspend fun write(name: String, bytes: ByteArray) = withContext(Dispatchers.IO) { dir.mkdirs(); File(dir, name).writeBytes(bytes) }
     override suspend fun clear() { withContext(Dispatchers.IO) { dir.deleteRecursively() } }
@@ -138,12 +140,14 @@ class AndroidMediaFiles(context: Context) : MediaFiles {
             if (!source.isFile) return@runCatching false
             val target = File(dir, name)
             target.delete()
-            if (source.renameTo(target)) return@runCatching true
+            // Never take a file that isn't the app's own copy (the person's original in their gallery): copy it.
+            val mine = ours.any { source.canonicalPath.startsWith(it) }
+            if (mine && source.renameTo(target)) return@runCatching true
             // Another volume: copied under a name nothing reads, then renamed, so [name] is never half a file.
             val part = File(dir, "$name.part")
             source.inputStream().use { input -> part.outputStream().use { input.copyTo(it, 256 * 1024) } }
             if (!part.renameTo(target)) { part.delete(); return@runCatching false }
-            source.delete()
+            if (mine) source.delete()
             true
         }.getOrDefault(false)
     }
