@@ -69,6 +69,8 @@ data class GalleryState(
     val videos: List<LibraryItem> = emptyList(),
     /** Null until the phone has answered (asking for access can take a while). */
     val access: LibraryAccess? = null,
+    /** What the grid can't show when [access] is short of everything: says which, beside the way to allow it. */
+    val gap: RecentsGap? = null,
     /**
      * Photos and videos together, newest first, merged when a page lands (not while drawing). While a kind has more
      * to read, nothing older than its last read item is in it, so the next page lands below what's on screen.
@@ -81,8 +83,6 @@ data class GalleryState(
     val photosDone: Boolean = false,
     val videosDone: Boolean = false,
     val loadingMore: Boolean = false,
-    /** The cloud option's name ("Google Photos" on Android with it installed, "Photo Library" on iPhone). */
-    val cloudLabel: String = "Photos",
 ) {
     val items: List<LibraryItem>
         get() = when (tab) {
@@ -396,24 +396,6 @@ class MediaComposer(
         use { library.pickMany(left) }
     }
 
-    /**
-     * The gallery's cloud option (2026-11-14): Google Photos' own picker on Android (the system's photo picker where
-     * it isn't installed), the system Photos picker with iCloud on iPhone. No permission needed. What was ticked in the
-     * grid goes first, then what was chosen there, onto the review; closing the picker changes nothing.
-     */
-    fun pickFromCloud() {
-        val ticked = state.selection
-        val left = maxItems - state.items.size - ticked.size
-        if (left <= 0) { update { it.copy(error = "You can pick up to $maxItems at a time.") }; return }
-        if (state.loadingPick) return
-        scope.launch {
-            val picked = library.pickCloud(left)
-            if (picked.media.isEmpty()) return@launch
-            if (picked.more > 0) update { it.copy(error = "Added the first ${picked.media.size}. You can pick up to $maxItems at a time.") }
-            use { ticked.mapNotNull { library.load(it) } + picked.media }
-        }
-    }
-
     fun openGallery() {
         update { it.copy(gallery = GalleryState(), selecting = true) }
         loadGallery()
@@ -425,18 +407,18 @@ class MediaComposer(
     private fun loadGallery() {
         galleryJob?.cancel()
         galleryJob = scope.launch {
-            val label = library.cloudLabel()
             val (photos, videos) = library.recentsVisual(GalleryPage, ask = true)
-            // The wider of the two answers decides what the screen says (one kind allowed is still a gallery).
-            val access = listOf(photos.access, videos.access).minBy { it.ordinal }
+            // One answer for both, as the strip: everything, nothing, or only some (which the screen says).
+            val access = visualAccess(photos.access, videos.access)
+            val gap = recentsGap(photos.access, videos.access)
             val photosDone = photos.items.size < GalleryPage
             val videosDone = videos.items.size < GalleryPage
             val all = GalleryState.merge(photos.items, videos.items, photosDone, videosDone)
             update { s ->
                 s.gallery?.let {
-                    s.copy(gallery = it.copy(
-                        photos = photos.items, videos = videos.items, access = access, all = all,
-                        photosDone = photosDone, videosDone = videosDone, loadingMore = false, cloudLabel = label,
+                    s.copy(limitedOffersAllowAll = library.limitedOffersAllowAll, gallery = it.copy(
+                        photos = photos.items, videos = videos.items, access = access, gap = gap, all = all,
+                        photosDone = photosDone, videosDone = videosDone, loadingMore = false,
                     ))
                 } ?: s
             }

@@ -125,8 +125,6 @@ object MediaLibraryBridge {
 class IosMediaLibrary : MediaLibrary {
     override suspend fun access(): LibraryAccess = access(ask = true)
 
-    /** The system picker (PHPicker) shows the whole library, iCloud included, whatever Circaso may read. */
-    override suspend fun cloudLabel(): String = "Photo Library"
 
     /** The next page: one lazy fetch of the whole library, read from [offset] (PHFetchResult loads only what's asked). */
     override suspend fun page(kind: LibraryKind, offset: Int, limit: Int): List<LibraryItem> {

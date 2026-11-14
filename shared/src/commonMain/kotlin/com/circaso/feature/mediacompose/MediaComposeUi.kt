@@ -728,15 +728,14 @@ fun StageButton(icon: CircasoIcon?, description: String, label: String? = null, 
 
 /**
  * M3: the gallery. Everything Circaso may see, newest first, in a three-column grid with All, Photos and Videos (more
- * is read as the grid nears its end); tap to tick (numbers show the order), Next puts them on the review. Beside the
- * tabs, the cloud option (2026-11-14): Google Photos' own picker on Android, the system picker with iCloud on iPhone,
- * straight to the review. Limited access has no card: a ⋯ in the bar offers "Allow access to more photos" and says
- * why All isn't everything. With access off, one line, Open Settings, and the phone's own picker.
+ * is read as the grid nears its end); tap to tick (numbers show the order), Next puts them on the review. It is the
+ * phone's own library, read where it lives (WhatsApp, 2026-11-14): nothing is imported and there is no other picker.
+ * Without access the screen asks for it, once, plainly; with only some (chosen photos, or one kind) a line above the
+ * grid says what's missing and leads to the system's way to allow the rest.
  */
 @Composable
 private fun GalleryScreen(gallery: GalleryState, state: MediaComposeState, composer: MediaComposer, onClose: () -> Unit) {
     val t = CircasoTheme.typography
-    var menu by androidx.compose.runtime.saveable.rememberSaveable { androidx.compose.runtime.mutableStateOf(false) }
     // The gallery is a list screen: the person's own theme, not the dark stage.
     CircasoTheme(darkTheme = LocalPersonalDark.current, highContrast = CircasoTheme.colors.isHighContrast) {
         val cc = CircasoTheme.colors
@@ -744,7 +743,7 @@ private fun GalleryScreen(gallery: GalleryState, state: MediaComposeState, compo
         com.circaso.core.platform.StatusBarIcons(light = cc.isDark)
         Box(Modifier.fillMaxSize()) {
         Column(Modifier.fillMaxSize().background(cc.bg).statusBarsPadding().navigationBarsPadding()) {
-            // Design M3's bar: Close, "Recents", Next; ⋯ only while Circaso sees just what the person chose.
+            // Design M3's bar: Close, "Recents", Next.
             Row(
                 Modifier.fillMaxWidth().heightIn(min = CircasoSizes.controlMd).padding(horizontal = CircasoSpacing.s2),
                 verticalAlignment = Alignment.CenterVertically,
@@ -754,62 +753,39 @@ private fun GalleryScreen(gallery: GalleryState, state: MediaComposeState, compo
                     contentAlignment = Alignment.Center,
                 ) { CircasoIconImage(CircasoIcon.Close, cc.ink, Modifier.size(20.dp)) }
                 BasicText("Recents", Modifier.weight(1f).semantics { heading() }, style = t.headline.copy(color = cc.ink, textAlign = TextAlign.Center))
-                if (gallery.access == LibraryAccess.Limited) {
-                    Box(
-                        Modifier.size(CircasoSizes.controlMd).clip(CircasoShapes.circle).pressable(onClick = { menu = true })
-                            .semantics { contentDescription = "More photo options"; role = Role.Button },
-                        contentAlignment = Alignment.Center,
-                    ) { CircasoIconImage(CircasoIcon.More, cc.ink, Modifier.size(20.dp)) }
-                }
                 CircasoButton(if (state.selection.size > 1) "Next (${state.selection.size})" else "Next", composer::useSelection, size = ButtonSize.Small, enabled = state.selection.isNotEmpty(), busy = state.loadingPick)
             }
             val denied = gallery.access == LibraryAccess.Denied
-            val cloudEnabled = !state.loadingPick && state.items.size + state.selection.size < composer.maxItems
-            // Access off: one line, Open Settings and the cloud option in the body (M3c), no tabs over nothing.
+            val limited = gallery.access == LibraryAccess.Limited
+            val action = if (state.limitedOffersAllowAll) "Allow all" else "Choose more"
+            // Access off: the ask fills the screen, no tabs over nothing.
             if (!denied) {
-                // Large text: the cloud option takes its own line so the tabs keep room for their words.
-                val roomy = androidx.compose.ui.platform.LocalDensity.current.fontScale <= LargeText
-                val tabs: @Composable (Modifier) -> Unit = { m ->
-                    com.circaso.designsystem.components.SegmentedControl(
-                        listOf("All", "Photos", "Videos"), GalleryTab.entries.indexOf(gallery.tab), { composer.galleryTab(GalleryTab.entries[it]) }, m,
-                    )
-                }
-                if (roomy) {
-                    Row(
-                        Modifier.fillMaxWidth().padding(horizontal = CircasoSpacing.s4, vertical = CircasoSpacing.s1),
-                        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(CircasoSpacing.s2),
-                    ) {
-                        tabs(Modifier.weight(1f))
-                        CloudPill(gallery.cloudLabel, cloudEnabled, Modifier.widthIn(max = CloudPillMax), composer::pickFromCloud)
-                    }
-                } else {
-                    tabs(Modifier.padding(horizontal = CircasoSpacing.s4, vertical = CircasoSpacing.s1))
-                    CloudPill(gallery.cloudLabel, cloudEnabled, Modifier.padding(horizontal = CircasoSpacing.s4).fillMaxWidth(), composer::pickFromCloud)
-                }
+                com.circaso.designsystem.components.SegmentedControl(
+                    listOf("All", "Photos", "Videos"), GalleryTab.entries.indexOf(gallery.tab), { composer.galleryTab(GalleryTab.entries[it]) },
+                    Modifier.padding(horizontal = CircasoSpacing.s4, vertical = CircasoSpacing.s1),
+                )
+                if (limited && gallery.items.isNotEmpty()) GalleryGapRow(gallery.gap, action, composer::manageAccess)
             }
             Box(Modifier.height(CircasoSpacing.s1))
             val items = gallery.items
             when {
                 // The grid's own shape while the library answers, so the photos land where the eye already is.
                 gallery.loading -> GalleryPlaceholder(Modifier.fillMaxWidth().weight(1f))
-                denied -> Column(
-                    Modifier.fillMaxWidth().weight(1f).padding(horizontal = 32.dp), horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(12.dp, Alignment.CenterVertically),
-                ) {
-                    CircasoIconImage(CircasoIcon.Photo, cc.inkTertiary, Modifier.size(40.dp))
-                    BasicText("Allow photo access to share from your gallery.", style = t.body.copy(color = cc.ink, textAlign = TextAlign.Center))
-                    CircasoButton("Open Settings", composer::manageAccess, style = ButtonStyle.Secondary, size = ButtonSize.Small)
-                    BasicText("Choose from ${gallery.cloudLabel} instead", Modifier.heightIn(min = CircasoSizes.controlMd).pressable(onClick = composer::pickFromCloud).padding(horizontal = 8.dp, vertical = 12.dp),
-                        style = t.subhead.copy(color = cc.action, fontWeight = FontWeight.SemiBold))
-                }
-                // Limited with nothing chosen: there are photos, Circaso just can't see them yet.
-                items.isEmpty() && gallery.access == LibraryAccess.Limited -> Column(
-                    Modifier.fillMaxWidth().weight(1f).padding(horizontal = 32.dp), horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(12.dp, Alignment.CenterVertically),
-                ) {
-                    BasicText("You haven't chosen any photos for Circaso yet.", style = t.body.copy(color = cc.ink, textAlign = TextAlign.Center))
-                    CircasoButton("Allow access to more photos", composer::manageAccess, style = ButtonStyle.Secondary, size = ButtonSize.Small)
-                }
+                denied -> GalleryAsk(
+                    Modifier.fillMaxWidth().weight(1f), "Your photos and videos show here",
+                    "Allow Circaso to see the photos and videos on this phone, and post any of them without importing anything.",
+                    "Allow access", composer::manageAccess,
+                )
+                // Only some access and nothing to show: the photos are there, Circaso just can't see them.
+                items.isEmpty() && limited -> GalleryAsk(
+                    Modifier.fillMaxWidth().weight(1f), "Circaso can't see these yet",
+                    when (gallery.gap) {
+                        RecentsGap.NoVideos -> "Circaso isn't allowed to see your videos."
+                        RecentsGap.NoPhotos -> "Circaso isn't allowed to see your photos."
+                        else -> "Circaso can see only the photos and videos you choose for it, and none are chosen."
+                    },
+                    action, composer::manageAccess,
+                )
                 items.isEmpty() -> Box(Modifier.fillMaxWidth().weight(1f).padding(32.dp), contentAlignment = Alignment.Center) {
                     BasicText(when (gallery.tab) { GalleryTab.Videos -> "No videos here yet."; GalleryTab.Photos -> "No photos here yet."; else -> "Nothing here yet." },
                         style = t.body.copy(color = cc.inkSecondary, textAlign = TextAlign.Center))
@@ -839,72 +815,50 @@ private fun GalleryScreen(gallery: GalleryState, state: MediaComposeState, compo
                 }
             }
         }
-        CircasoSheet(menu, { menu = false }, label = "Photo access") {
-            com.circaso.designsystem.chrome.SheetHead("Photo access", onClose = { menu = false })
-            GalleryMenu(
-                cloudLabel = gallery.cloudLabel,
-                onMore = { menu = false; composer.manageAccess() },
-                onCloud = { menu = false; composer.pickFromCloud() },
-            )
-        }
         }
     }
 }
 
-/**
- * The cloud option beside the tabs: a quiet pill, as tall as the tabs, inside a full-size touch area. Dimmed (and
- * said so) while a pick is loading or the composer is full.
- */
+/** The gallery without access (or with nothing it may show): what would be here, and the one way to allow it. */
 @Composable
-private fun CloudPill(label: String, enabled: Boolean, modifier: Modifier, onClick: () -> Unit) {
+private fun GalleryAsk(modifier: Modifier, title: String, body: String, action: String, onAllow: () -> Unit) {
     val cc = CircasoTheme.colors
     val t = CircasoTheme.typography
-    Box(
-        modifier.heightIn(min = CircasoSizes.controlMd).pressable(enabled = enabled, onClick = onClick)
-            .semantics(mergeDescendants = true) { contentDescription = "Choose from $label"; role = Role.Button; if (!enabled) disabled() },
-        contentAlignment = Alignment.Center,
+    Column(
+        modifier.padding(horizontal = CircasoSpacing.s8), horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(CircasoSpacing.s3, Alignment.CenterVertically),
     ) {
-        Row(
-            Modifier.graphicsLayer { alpha = if (enabled) 1f else 0.4f }.height(CloudPillHeight).clip(CircasoShapes.pill).background(cc.fill)
-                .padding(horizontal = CircasoSpacing.s3),
-            verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(CircasoSpacing.s1),
-        ) {
-            CircasoIconImage(CircasoIcon.Photo, cc.ink, Modifier.size(16.dp))
-            BasicText(label, style = t.subhead.copy(color = cc.ink, fontWeight = FontWeight.SemiBold), maxLines = 1, overflow = TextOverflow.Ellipsis)
-        }
+        CircasoIconImage(CircasoIcon.Photo, cc.inkTertiary, Modifier.size(40.dp))
+        BasicText(title, Modifier.semantics { heading() }, style = t.headline.copy(color = cc.ink, textAlign = TextAlign.Center))
+        BasicText(body, style = t.subhead.copy(color = cc.inkSecondary, textAlign = TextAlign.Center))
+        Box(Modifier.height(CircasoSpacing.s1))
+        CircasoButton(action, onAllow, size = ButtonSize.Small)
     }
 }
 
 /**
- * The ⋯ sheet while access is limited: choose more for Circaso to see (the phone's own sheet), with why All isn't
- * everything said once, quietly; and the cloud option again, for whoever looks for it here.
+ * Above the grid while Circaso sees only some of the phone: what's missing and the way to allow the rest, in one
+ * line (WhatsApp's own notice). The whole line is the button.
  */
 @Composable
-private fun GalleryMenu(cloudLabel: String, onMore: () -> Unit, onCloud: () -> Unit) {
-    val c = CircasoTheme.colors
-    Column(Modifier.fillMaxWidth().clip(CircasoShapes.md).background(com.circaso.designsystem.chrome.sheetGroupColor()).sheetGroupEdge(CircasoShapes.md)) {
-        GalleryMenuRow("Allow access to more photos", "Circaso sees only what you chose, so All shows just those.", CircasoIcon.Plus, onMore)
-        Box(Modifier.fillMaxWidth().padding(start = 52.dp).height(0.5.dp).background(c.separator))
-        GalleryMenuRow("Choose from $cloudLabel", null, CircasoIcon.Photo, onCloud)
-    }
-}
-
-@Composable
-private fun GalleryMenuRow(title: String, sub: String?, icon: CircasoIcon, onClick: () -> Unit) {
-    val c = CircasoTheme.colors
+private fun GalleryGapRow(gap: RecentsGap?, action: String, onAllow: () -> Unit) {
+    val cc = CircasoTheme.colors
     val t = CircasoTheme.typography
+    val why = when (gap) {
+        RecentsGap.NoVideos -> "Your videos aren't showing."
+        RecentsGap.NoPhotos -> "Your photos aren't showing."
+        else -> "Showing only what you chose."
+    }
     Row(
-        Modifier.fillMaxWidth().pressable(role = Role.Button, onClick = onClick).heightIn(min = 52.dp)
-            .padding(horizontal = CircasoSpacing.s3, vertical = 10.dp),
-        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(CircasoSpacing.s3),
+        Modifier.fillMaxWidth().padding(horizontal = CircasoSpacing.s4, vertical = CircasoSpacing.s1).clip(CircasoShapes.md).background(cc.fill)
+            .pressable(role = Role.Button, onClick = onAllow).heightIn(min = CircasoSizes.controlMd)
+            .padding(horizontal = CircasoSpacing.s3, vertical = CircasoSpacing.s2)
+            .semantics(mergeDescendants = true) { contentDescription = "$why $action" },
+        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(CircasoSpacing.s2),
     ) {
-        Box(Modifier.size(CircasoSizes.avatarSm).clip(CircasoShapes.sm).background(c.fillStrong), contentAlignment = Alignment.Center) {
-            CircasoIconImage(icon, c.ink, Modifier.size(16.dp))
-        }
-        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-            BasicText(title, style = t.body.copy(color = c.ink))
-            sub?.let { BasicText(it, style = t.footnote.copy(color = c.inkSecondary)) }
-        }
+        CircasoIconImage(CircasoIcon.Lock, cc.inkSecondary, Modifier.size(16.dp))
+        BasicText(why, Modifier.weight(1f), style = t.footnote.copy(color = cc.inkSecondary))
+        BasicText(action, style = t.footnote.copy(color = cc.action, fontWeight = FontWeight.SemiBold))
     }
 }
 
@@ -913,13 +867,6 @@ private const val GalleryPrefetch = 60
 
 /** Blank tiles at the grid's end while more of the library is still to be read. */
 private const val GalleryMoreTiles = 6
-
-/** Above this text size the cloud option goes on its own line under the tabs. */
-private const val LargeText = 1.3f
-
-/** The cloud pill: as tall as the tabs (32 dp segments in 3 dp padding), and never more than this wide beside them. */
-private val CloudPillHeight = 38.dp
-private val CloudPillMax = 160.dp
 
 /** The gallery's grid as blank tiles (the same columns and gaps), shown while the library is read. */
 @Composable
