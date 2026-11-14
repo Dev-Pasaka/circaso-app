@@ -110,7 +110,6 @@ private class FakeLibrary : MediaLibrary {
     }
     override suspend fun load(item: LibraryItem) = media[item.id]
     override suspend fun pick(kind: LibraryKind): CapturedMedia? = systemPicks.firstOrNull()
-    override suspend fun pickMany(max: Int) = systemPicks.take(max)
     override suspend fun read(path: String) = files[path]
     override suspend fun filmstrip(path: String, count: Int) = List(count) { ByteArray(1) }
     override suspend fun trim(path: String, startMs: Long, endMs: Long, maxBytes: Long): CapturedMedia? {
@@ -466,15 +465,34 @@ class MomentComposerViewModelTest {
         assertEquals(7, (moments.posted.single() as MomentDraft.Media).bytes.size)
     }
 
-    @Test fun theSystemPickerIsThereWhenAccessIsOff() = runTest(dispatcher) {
+    @Test fun theGalleryAsksForAccessAndFillsWhenItIsAllowed() = runTest(dispatcher) {
         library.access[LibraryKind.Photo] = LibraryAccess.Denied
         library.access[LibraryKind.Video] = LibraryAccess.Denied
-        library.systemPicks = listOf(jpeg(1), jpeg(2))
         val vm = composer()
         vm.openGallery()
         assertEquals(LibraryAccess.Denied, vm.state.value.gallery!!.access)
-        vm.closeGallery(); vm.pickWithSystem()
-        assertEquals(2, vm.state.value.items.size)
+        assertEquals(null, vm.state.value.gallery!!.gap)
+        // Allowed in the phone's Settings: coming back reads it again, without another prompt.
+        library.access[LibraryKind.Photo] = LibraryAccess.Granted
+        library.access[LibraryKind.Video] = LibraryAccess.Granted
+        library.items[LibraryKind.Photo] = listOf(photo("p1", at = 1))
+        vm.refreshAccess()
+        assertEquals(LibraryAccess.Granted, vm.state.value.gallery!!.access)
+        assertEquals(listOf("p1"), vm.state.value.gallery!!.items.map { it.id })
+        assertEquals(LibraryKind.Video to false, library.asked.last())
+    }
+
+    @Test fun theGallerySaysWhichKindItCannotSee() = runTest(dispatcher) {
+        library.items[LibraryKind.Photo] = listOf(photo("p1", at = 1))
+        library.access[LibraryKind.Video] = LibraryAccess.Denied
+        val vm = composer()
+        vm.openGallery()
+        assertEquals(LibraryAccess.Limited, vm.state.value.gallery!!.access)
+        assertEquals(com.circaso.feature.mediacompose.RecentsGap.NoVideos, vm.state.value.gallery!!.gap)
+        library.afterManage = LibraryAccess.Granted
+        vm.manageAccess()
+        assertEquals(LibraryAccess.Granted, vm.state.value.gallery!!.access)
+        assertEquals(null, vm.state.value.gallery!!.gap)
     }
 
     @Test fun theReviewForwardsTheItemOnTheStage() = runTest(dispatcher) {

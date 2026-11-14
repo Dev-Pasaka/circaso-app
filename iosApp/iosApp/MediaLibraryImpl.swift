@@ -20,8 +20,6 @@ final class MediaLibraryImpl: NSObject, MediaLibraryProvider, PHPickerViewContro
     private var pickCompletion: ((LibraryMedia?) -> Void)?
     /// The Files picker is up for a chat's document (kind 3), not for audio: the file goes as it is, under its own name.
     private var pickingDocument = false
-    /// Set while the several-at-once picker is up (Moments M3); its results come back in the order ticked.
-    private var pickManyCompletion: (([LibraryMedia]) -> Void)?
 
     // MARK: Recents
 
@@ -71,19 +69,6 @@ final class MediaLibraryImpl: NSObject, MediaLibraryProvider, PHPickerViewContro
         }
     }
 
-    func pickMany(max: Int32, completion: @escaping ([LibraryMedia]) -> Void) {
-        guard pickCompletion == nil, pickManyCompletion == nil, let presenter = Self.topController() else { completion([]); return }
-        pickManyCompletion = completion
-        var config = PHPickerConfiguration()
-        config.filter = .any(of: [.images, .videos])
-        config.selectionLimit = Int(max)
-        config.selection = .ordered // the numbers on the ticks are the order the moments post in
-        config.preferredAssetRepresentationMode = .current
-        let picker = PHPickerViewController(configuration: config)
-        picker.delegate = self
-        presenter.present(picker, animated: true)
-    }
-
     func manageLimited(completion: @escaping () -> Void) {
         guard let presenter = Self.topController() else { completion(); return }
         PHPhotoLibrary.shared().presentLimitedLibraryPicker(from: presenter) { _ in
@@ -93,19 +78,6 @@ final class MediaLibraryImpl: NSObject, MediaLibraryProvider, PHPickerViewContro
 
     func picker(_ picker: PHPickerViewController, didFinishPicking results: [PHPickerResult]) {
         picker.dismiss(animated: true)
-        if let many = pickManyCompletion {
-            pickManyCompletion = nil
-            let providers = results.map(\.itemProvider)
-            Task.detached(priority: .userInitiated) {
-                var picked: [LibraryMedia] = []
-                for provider in providers { // one at a time, in order: each is a file on disk, not all in memory
-                    if let media = await Self.media(from: provider) { picked.append(media) }
-                }
-                let done = picked
-                await MainActor.run { many(done) }
-            }
-            return
-        }
         guard let provider = results.first?.itemProvider else { finishPick(nil); return }
         if provider.hasItemConformingToTypeIdentifier(UTType.movie.identifier) {
             // The URL lives only inside the callback, so the file is copied out first.

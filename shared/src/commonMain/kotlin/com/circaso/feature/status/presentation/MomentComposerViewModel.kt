@@ -160,6 +160,7 @@ class MomentComposerViewModel(
     // ---- picking from the library (the shared composer)
 
     fun manageAccess() = composer.manageAccess()
+    fun refreshAccess() = composer.refreshAccess()
     fun useRecent(item: LibraryItem) = composer.useRecent(item)
     fun startSelecting(item: LibraryItem) = composer.startSelecting(item)
     fun toggle(item: LibraryItem) = composer.toggle(item)
@@ -167,7 +168,6 @@ class MomentComposerViewModel(
     fun useSelection() = composer.useSelection()
     fun pickFromLibrary() = composer.pickFromLibrary()
     fun pickFromGallery() = composer.pickFromLibrary()
-    fun pickWithSystem() = composer.pickWithSystem()
     fun openGallery() = composer.openGallery()
     fun galleryTab(tab: GalleryTab) = composer.galleryTab(tab)
     fun loadMoreGallery() = composer.loadMoreGallery()

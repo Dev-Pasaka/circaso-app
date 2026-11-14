@@ -2,6 +2,7 @@ package com.circaso.feature.mediacompose
 
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.foundation.background
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.border
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
@@ -40,7 +41,6 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.semantics.disabled
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onSizeChanged
@@ -70,9 +70,8 @@ import com.circaso.core.platform.MomentCamera
 import com.circaso.core.platform.openAppSettings
 import com.circaso.core.platform.excludeSystemGestures
 import com.circaso.designsystem.chrome.ToastHost
-import com.circaso.designsystem.chrome.CircasoSheet
-import com.circaso.designsystem.chrome.sheetGroupEdge
 import com.circaso.designsystem.chrome.rememberToastState
+import com.circaso.designsystem.chrome.glass
 import com.circaso.designsystem.components.ButtonSize
 import com.circaso.designsystem.components.ButtonStyle
 import com.circaso.designsystem.components.CircasoButton
@@ -507,7 +506,13 @@ private fun RecentsStrip(state: MediaComposeState, composer: MediaComposer) {
         if (access == LibraryAccess.Limited) item(key = "manage") {
             // The strip misses some of the phone: say what, and lead to the system's way to allow it (2026-11-14).
             // Android 14's prompt offers Allow all; iPhone's limited-library picker only chooses more.
-            val action = if (state.limitedOffersAllowAll) "Allow all" else "Choose more"
+            // One kind switched off is allowed; only chosen items is "all" where the phone's prompt offers it
+            // (Android 14+), else choosing more (iPhone's limited library).
+            val action = when {
+                state.recentsGap == RecentsGap.NoVideos || state.recentsGap == RecentsGap.NoPhotos -> "Allow"
+                state.limitedOffersAllowAll -> "Allow all"
+                else -> "Choose more"
+            }
             val why = when (state.recentsGap) {
                 RecentsGap.NoVideos -> "Circaso can't see your videos."
                 RecentsGap.NoPhotos -> "Circaso can't see your photos."
@@ -736,6 +741,8 @@ fun StageButton(icon: CircasoIcon?, description: String, label: String? = null, 
 @Composable
 private fun GalleryScreen(gallery: GalleryState, state: MediaComposeState, composer: MediaComposer, onClose: () -> Unit) {
     val t = CircasoTheme.typography
+    // Back from the phone's Settings with access allowed: the grid fills without another tap.
+    androidx.lifecycle.compose.LifecycleResumeEffect(composer) { composer.refreshAccess(); onPauseOrDispose { } }
     // The gallery is a list screen: the person's own theme, not the dark stage.
     CircasoTheme(darkTheme = LocalPersonalDark.current, highContrast = CircasoTheme.colors.isHighContrast) {
         val cc = CircasoTheme.colors
@@ -757,7 +764,19 @@ private fun GalleryScreen(gallery: GalleryState, state: MediaComposeState, compo
             }
             val denied = gallery.access == LibraryAccess.Denied
             val limited = gallery.access == LibraryAccess.Limited
-            val action = if (state.limitedOffersAllowAll) "Allow all" else "Choose more"
+            // What fills the gap: one kind switched off is allowed; only chosen items is "all" where the phone's
+            // prompt offers it (Android 14+), else choosing more (iPhone's limited library).
+            val action = when {
+                gallery.gap == RecentsGap.NoVideos || gallery.gap == RecentsGap.NoPhotos -> "Allow"
+                state.limitedOffersAllowAll -> "Allow all"
+                else -> "Choose more"
+            }
+            // This tab is empty because of the gap (not because the phone has none of that kind).
+            val gapHere = limited && when (gallery.gap) {
+                RecentsGap.NoVideos -> gallery.tab != GalleryTab.Photos
+                RecentsGap.NoPhotos -> gallery.tab != GalleryTab.Videos
+                else -> true
+            }
             // Access off: the ask fills the screen, no tabs over nothing.
             if (!denied) {
                 com.circaso.designsystem.components.SegmentedControl(
@@ -773,19 +792,23 @@ private fun GalleryScreen(gallery: GalleryState, state: MediaComposeState, compo
                 gallery.loading -> GalleryPlaceholder(Modifier.fillMaxWidth().weight(1f))
                 denied -> GalleryAsk(
                     Modifier.fillMaxWidth().weight(1f), "Your photos and videos show here",
-                    "Allow Circaso to see the photos and videos on this phone, and post any of them without importing anything.",
-                    "Allow access", composer::manageAccess,
+                    if (state.deniedOpensSettings) "Turn on Photos for Circaso in Settings to post the photos and videos on this phone."
+                    else "Allow Circaso to see the photos and videos on this phone to post them.",
+                    if (state.deniedOpensSettings) "Open Settings" else "Allow access", composer::manageAccess,
                 )
-                // Only some access and nothing to show: the photos are there, Circaso just can't see them.
-                items.isEmpty() && limited -> GalleryAsk(
-                    Modifier.fillMaxWidth().weight(1f), "Circaso can't see these yet",
-                    when (gallery.gap) {
-                        RecentsGap.NoVideos -> "Circaso isn't allowed to see your videos."
-                        RecentsGap.NoPhotos -> "Circaso isn't allowed to see your photos."
-                        else -> "Circaso can see only the photos and videos you choose for it, and none are chosen."
-                    },
-                    action, composer::manageAccess,
-                )
+                // Only some access and nothing to show here: they are on the phone, Circaso just can't see them.
+                items.isEmpty() && gapHere -> {
+                    val what = when {
+                        gallery.gap == RecentsGap.NoVideos || gallery.tab == GalleryTab.Videos -> "videos"
+                        gallery.gap == RecentsGap.NoPhotos || gallery.tab == GalleryTab.Photos -> "photos"
+                        else -> "photos and videos"
+                    }
+                    GalleryAsk(
+                        Modifier.fillMaxWidth().weight(1f), "Circaso can't see your $what yet",
+                        if (gallery.gap == RecentsGap.OnlyChosen) "None of your $what are chosen for Circaso." else "Circaso isn't allowed to see your $what.",
+                        action, composer::manageAccess,
+                    )
+                }
                 items.isEmpty() -> Box(Modifier.fillMaxWidth().weight(1f).padding(32.dp), contentAlignment = Alignment.Center) {
                     BasicText(when (gallery.tab) { GalleryTab.Videos -> "No videos here yet."; GalleryTab.Photos -> "No photos here yet."; else -> "Nothing here yet." },
                         style = t.body.copy(color = cc.inkSecondary, textAlign = TextAlign.Center))
@@ -825,14 +848,16 @@ private fun GalleryAsk(modifier: Modifier, title: String, body: String, action: 
     val cc = CircasoTheme.colors
     val t = CircasoTheme.typography
     Column(
-        modifier.padding(horizontal = CircasoSpacing.s8), horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(CircasoSpacing.s3, Alignment.CenterVertically),
+        // Scrolls rather than clips on a short screen with large text.
+        modifier.verticalScroll(androidx.compose.foundation.rememberScrollState()).padding(horizontal = CircasoSpacing.s8, vertical = CircasoSpacing.s4),
+        horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(CircasoSpacing.s3, Alignment.CenterVertically),
     ) {
         CircasoIconImage(CircasoIcon.Photo, cc.inkTertiary, Modifier.size(40.dp))
         BasicText(title, Modifier.semantics { heading() }, style = t.headline.copy(color = cc.ink, textAlign = TextAlign.Center))
         BasicText(body, style = t.subhead.copy(color = cc.inkSecondary, textAlign = TextAlign.Center))
         Box(Modifier.height(CircasoSpacing.s1))
-        CircasoButton(action, onAllow, size = ButtonSize.Small)
+        // The screen's one action: primary and full height (M3c draws a small secondary beside a picker that is gone).
+        CircasoButton(action, onAllow)
     }
 }
 
@@ -850,15 +875,16 @@ private fun GalleryGapRow(gap: RecentsGap?, action: String, onAllow: () -> Unit)
         else -> "Showing only what you chose."
     }
     Row(
-        Modifier.fillMaxWidth().padding(horizontal = CircasoSpacing.s4, vertical = CircasoSpacing.s1).clip(CircasoShapes.md).background(cc.fill)
+        // The design's inline banner (cx-banner: glass, 16/10, 18 dp icon, subhead), with its action at the end.
+        Modifier.fillMaxWidth().padding(horizontal = CircasoSpacing.s4, vertical = CircasoSpacing.s1).glass(CircasoShapes.md)
             .pressable(role = Role.Button, onClick = onAllow).heightIn(min = CircasoSizes.controlMd)
-            .padding(horizontal = CircasoSpacing.s3, vertical = CircasoSpacing.s2)
+            .padding(horizontal = CircasoSpacing.s4, vertical = 10.dp)
             .semantics(mergeDescendants = true) { contentDescription = "$why $action" },
-        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(CircasoSpacing.s2),
+        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp),
     ) {
-        CircasoIconImage(CircasoIcon.Lock, cc.inkSecondary, Modifier.size(16.dp))
-        BasicText(why, Modifier.weight(1f), style = t.footnote.copy(color = cc.inkSecondary))
-        BasicText(action, style = t.footnote.copy(color = cc.action, fontWeight = FontWeight.SemiBold))
+        CircasoIconImage(CircasoIcon.Lock, cc.inkSecondary, Modifier.size(18.dp))
+        BasicText(why, Modifier.weight(1f), style = t.subhead.copy(color = cc.ink))
+        BasicText(action, style = t.subhead.copy(color = cc.action, fontWeight = FontWeight.SemiBold))
     }
 }
 

@@ -76,15 +76,12 @@ import kotlin.math.roundToInt
 /** The system pickers for moments, registered by the activity like [ImagePickerBridge]; neither needs a permission. */
 object MomentPickerBridge {
     private var visual: ActivityResultLauncher<PickVisualMediaRequest>? = null
-    private var visualMany: ActivityResultLauncher<PickVisualMediaRequest>? = null
     private var audio: ActivityResultLauncher<String>? = null
     private var document: ActivityResultLauncher<Array<String>>? = null
     private var pending: CompletableDeferred<Uri?>? = null
-    private var pendingMany: CompletableDeferred<List<Uri>>? = null
 
     fun register(activity: ComponentActivity) {
         visual = activity.registerForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri -> pending?.complete(uri) }
-        visualMany = activity.registerForActivityResult(ActivityResultContracts.PickMultipleVisualMedia(MomentPickMax)) { uris -> pendingMany?.complete(uris) }
         audio = activity.registerForActivityResult(ActivityResultContracts.GetContent()) { uri -> pending?.complete(uri) }
         document = activity.registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> pending?.complete(uri) }
     }
@@ -103,13 +100,6 @@ object MomentPickerBridge {
             LibraryKind.Video -> visual?.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.VideoOnly)) ?: return null
             LibraryKind.Audio -> audio?.launch("audio/*") ?: return null
         }
-        return answer.await()
-    }
-
-    /** Photos and videos together, up to [MomentPickMax], in the order they were ticked. */
-    suspend fun pickMany(): List<Uri> {
-        val answer = CompletableDeferred<List<Uri>>().also { pendingMany = it }
-        visualMany?.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageAndVideo)) ?: return emptyList()
         return answer.await()
     }
 }
@@ -270,14 +260,6 @@ class AndroidMediaLibrary(private val context: Context) : MediaLibrary {
     override suspend fun page(kind: LibraryKind, offset: Int, limit: Int): List<LibraryItem> {
         if (accessFor(kind) == LibraryAccess.Denied) return emptyList()
         return query(kind, limit, offset, strict = true)
-    }
-
-    override suspend fun pickMany(max: Int): List<CapturedMedia> {
-        val uris = MomentPickerBridge.pickMany().take(max)
-        return uris.mapNotNull { uri ->
-            val video = withContext(Dispatchers.IO) { context.contentResolver.getType(uri) }?.startsWith("video") == true
-            load(uri, if (video) LibraryKind.Video else LibraryKind.Photo)
-        }
     }
 
     /**

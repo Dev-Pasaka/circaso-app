@@ -55,6 +55,9 @@ interface MediaLibrary {
     /** True where the system's prompt for limited access offers "Allow all" (Android 14+); iPhone only chooses more. */
     val limitedOffersAllowAll: Boolean get() = false
 
+    /** True where access refused once can only be turned on in the phone's Settings (iPhone): the button says so. */
+    val deniedOpensSettings: Boolean get() = false
+
     /** Ready to post: a photo as JPEG at most [MomentPhotoMaxSide] long, a video or audio file as it is, with a thumb. */
     suspend fun load(item: LibraryItem): CapturedMedia?
 
@@ -66,12 +69,6 @@ interface MediaLibrary {
 
     /** The system picker for [kind]; null when the person closes it. */
     suspend fun pick(kind: LibraryKind): CapturedMedia?
-
-    /**
-     * The system picker for photos and videos together, several at once (at most [max]), in the order they were
-     * chosen. Empty when the person closes it. No permission is needed.
-     */
-    suspend fun pickMany(max: Int): List<CapturedMedia> = listOfNotNull(pick(LibraryKind.Photo))
 
     /**
      * [limit] items of [kind] after the newest [offset], newest first, for the gallery's next page. Throws when the

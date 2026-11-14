@@ -329,11 +329,21 @@ Nothing to show is never an error screen. The first moment was posted through th
   video at 3.5 Mbit/s so 60 s fits the 32 MiB limit, with a size check and plain copy; hold-to-record that can't leave
   the camera or mic running; the voice moment as designed with listen-back, 1:00 cap and slide to cancel). Also fixed:
   view count from the server, the heart undone when not taken, Only-share-with needs someone.
+- The gallery is the phone's own library, as WhatsApp status (2026-11-14, Pasaka): nothing is imported and there is no
+  other picker. The camera strip shows the newest photos and videos together in Photo and Video modes; the gallery is
+  Close / Recents / Next with All / Photos / Videos full width, paged to the whole library. Removed: the Google Photos
+  / Photo Library pill, the ⋯ "Photo access" sheet, the system photo picker fallback and its code on both platforms.
+  Departures from M3c: with access off the screen is one ask with a primary button ("Allow access"; "Open Settings" on
+  iPhone, where only Settings can turn it on); with only some access (chosen items, or one kind off) a banner line
+  above the grid says what's missing with "Allow all" (Android 14+), "Choose more" (iPhone limited library) or
+  "Allow" (one kind off), instead of the Manage card. Android asks for photos and videos in one prompt. Coming back
+  from Settings re-reads the library. This applies to a chat's Photos and Videos too (same composer). Play Console's
+  photo and video permissions declaration must cover READ_MEDIA_IMAGES / READ_MEDIA_VIDEO (core use: the gallery).
 - Composer and posting gaps closed (2026-11-03, branch `worktree-agent-ad0e9b22a8d9ac97c`): each library kind asks for its
   own access (Android 13+ photo access says nothing about videos; Android 14 "selected photos and videos" is Limited
   with a Manage tile; access off says so with Allow access); gallery M3 (All/Photos/Videos, numbered ticks, up to 10,
-  each its own moment posted in order) and multi-pick on the strip (hold a tile); M3c limited/off states with the
-  system picker as a fallback; trimmer M3b (Media3 Transformer, already a dependency, on Android; AVAssetExportSession
+  each its own moment posted in order) and multi-pick on the strip (hold a tile); M3c limited/off states (see the
+  2026-11-14 note below: no system picker any more); trimmer M3b (Media3 Transformer, already a dependency, on Android; AVAssetExportSession
   on iOS; no new library), opened by itself for videos over a minute; a too-large video is re-encoded before posting;
   determinate posting ring from real bytes sent (Ktor `onUpload` on Android, `didSendBodyData` in the background
   URLSession on iOS); Forward (V4) from my moment's viewers sheet and from the composer review, a full-screen chat
