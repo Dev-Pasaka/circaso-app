@@ -449,9 +449,6 @@ fun AppNavigation(forceUpdate: Boolean, home: @Composable () -> Unit) {
                 com.circaso.feature.status.presentation.MomentViewerScreen(
                     koinViewModel(key = "moments-${key.posterId}-${key.momentId}", parameters = { parametersOf(key.posterId, key.momentId) }), onClose = ::pop,
                     onDragClose = ::dropDown,
-                    // Money for this moment (2026-11-14): the chats' own pay flow for whoever posted it, carrying the moment.
-                    onPay = { pay -> backStack.add(PayRoute(userId = pay.userId, chatId = pay.chatId, displayName = pay.displayName, momentQuote = pay.quoteJson)) },
-                    covered = backStack.lastOrNull() != key,
                     // V1b "Message": their chat on this phone if there is one, else opened on the server.
                     onMessage = { posterId ->
                         scope.launch {
@@ -631,8 +628,8 @@ fun AppNavigation(forceUpdate: Boolean, home: @Composable () -> Unit) {
             entry<PayRoute>(metadata = Panes.FullScreen) { route ->
                 PayScreen(
                     koinViewModel<PayViewModel>(
-                        key = "pay-${route.userId}-${route.chatId}-${route.requestId}-${route.groupId}-${route.fromWalletId}-${route.momentQuote?.hashCode()}",
-                        parameters = { parametersOf(PayIntent(route.userId, route.chatId, route.displayName, route.amount, route.address, route.goalName, route.requestId, groupId = route.groupId, fromWalletId = route.fromWalletId, note = route.note, moment = com.circaso.feature.status.presentation.momentQuoteOf(route.momentQuote))) },
+                        key = "pay-${route.userId}-${route.chatId}-${route.requestId}-${route.groupId}-${route.fromWalletId}",
+                        parameters = { parametersOf(PayIntent(route.userId, route.chatId, route.displayName, route.amount, route.address, route.goalName, route.requestId, groupId = route.groupId, fromWalletId = route.fromWalletId, note = route.note)) },
                     ),
                     onBack = ::pop,
                     onOpenTransfer = { id -> backStack.add(TransferRoute(id)) },

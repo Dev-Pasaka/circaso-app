@@ -274,7 +274,7 @@ fun ThreadContent(
         q.onReset()
         // Exactly the coin amount it was, so no rounding or rate move changes what is sent.
         composerMoney.payChip = "#${MinorUnits.toDisplay(m.amountMinor, decimals)} ${m.asset}"; onDraft(rest)
-        q.onRetryExact(m.amountMinor, m.asset, m.note)
+        q.onRetryExact(m.amountMinor, m.asset, m.note, m.momentQuote)
         focusComposer()
     }
     // The wallet's coin prices, so a card in EURC or ETH reads in the person's money like USDC.
@@ -1162,7 +1162,7 @@ class QuickPay(
     val onChoosing: (Boolean) -> Unit = {},
     val onPayFrom: (com.circaso.feature.wallet.presentation.NamedWallet) -> Unit = {},
     /** A Not sent card's Try Again: exactly its coin amount back on the money card. */
-    val onRetryExact: (amountMinor: String, asset: String, note: String?) -> Unit = { _, _, _ -> },
+    val onRetryExact: (amountMinor: String, asset: String, note: String?, moment: com.circaso.core.crypto.MomentQuote?) -> Unit = { _, _, _, _ -> },
     /** GW13d's Try Again on the fee. */
     val onRetryQuote: () -> Unit = {},
     /** GW14 / GW20's "… Instead". */

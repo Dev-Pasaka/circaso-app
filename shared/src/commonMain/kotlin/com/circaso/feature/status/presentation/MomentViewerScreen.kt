@@ -95,6 +95,7 @@ import com.circaso.designsystem.theme.CircasoSpacing
 import com.circaso.designsystem.theme.CircasoTheme
 import com.circaso.designsystem.theme.LightColors
 import com.circaso.feature.status.domain.Moment
+import com.circaso.feature.wallet.presentation.PayFromSheetContent
 import com.circaso.feature.status.domain.MomentKind
 import com.circaso.feature.status.domain.MomentTextStyle
 import kotlinx.coroutines.launch
@@ -112,23 +113,36 @@ fun MomentViewerScreen(
     onMessage: (posterId: String) -> Unit = {},
     /** Closed by dragging it down: the viewer leaves downward, so the navigation shouldn't slide it sideways. */
     onDragClose: () -> Unit = onClose,
-    /** The money button: open the pay flow for whoever posted the moment, carrying its quote. */
-    onPay: (MomentPay) -> Unit = {},
-    /** Another screen (the pay flow) is over the viewer. */
-    covered: Boolean = false,
 ) {
     val state by viewModel.state.collectAsState()
-    // Never while the pay flow is on top: closing then would take the pay flow away, not the viewer.
-    LaunchedEffect(state.closed, covered) { if (state.closed && !covered) onClose() }
-    LaunchedEffect(state.pay) { state.pay?.let { onPay(it); viewModel.payOpened() } }
-    // Back from the pay flow: the moment carries on.
-    LaunchedEffect(covered) { if (!covered) viewModel.payClosed() }
+    // Money typed in the reply field (`#500`, 2026-11-14) is the chat's own in-line payment, made for the chat with
+    // whoever posted this moment and carrying the moment for its card. One per moment, made once a `#` has been typed.
+    val pay = state.moneyTarget?.let { target ->
+        org.koin.compose.viewmodel.koinViewModel<com.circaso.feature.wallet.presentation.PayViewModel>(
+            key = "moment-pay-${target.chatId}-${target.momentId}",
+            parameters = { org.koin.core.parameter.parametersOf(com.circaso.feature.wallet.presentation.PayIntent(userId = target.userId, chatId = target.chatId, displayName = target.displayName, inChat = true, moment = target.quote)) },
+        )
+    }
+    val quickPay = com.circaso.feature.messaging.presentation.rememberQuickPay(pay)
+    // While the PIN is up or the payment is being sent, the viewer stays and the moment waits: leaving now would let
+    // go of the payment before its card (with the moment) is in the chat.
+    val payBusy = quickPay?.state?.step.let { it == com.circaso.feature.wallet.presentation.PayStep.Signing || it == com.circaso.feature.wallet.presentation.PayStep.Sending }
+    LaunchedEffect(payBusy) { viewModel.onPayBusy(payBusy) }
+    val close = { if (!viewModel.state.value.payBusy) onClose() }
+    val dragClose = { if (!viewModel.state.value.payBusy) onDragClose() }
+    LaunchedEffect(state.closed, state.payBusy) { if (state.closed && !state.payBusy) onClose() }
     var forward by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf<ForwardMedia?>(null) }
-    androidx.compose.ui.backhandler.BackHandler(onBack = onClose)
+    androidx.compose.ui.backhandler.BackHandler(onBack = close)
     val actions = remember(viewModel) { viewModel.actions() }
     Box(Modifier.fillMaxSize()) {
-        MomentViewerContent(state, actions, onClose, onMessage, onDragClose,
-            onForward = { m -> viewModel.openViewers(false); viewModel.setPaused(true); forward = m })
+        MomentViewerContent(state, actions, close, onMessage, dragClose,
+            onForward = { m -> viewModel.openViewers(false); viewModel.setPaused(true); forward = m }, quickPay = quickPay)
+        // GW10: Paying from, opened from the money card, as in a chat.
+        quickPay?.let { q ->
+            CircasoSheet(visible = q.state.choosing, onDismiss = { q.onChoosing(false) }, label = "Pay from") {
+                PayFromSheetContent(q.state.choices, q.state.payingFrom.walletId, q.state.balances, q.state.online, q.state.asOf, onPick = q.onPayFrom, onClose = { q.onChoosing(false) })
+            }
+        }
         // V4 Forward: a list screen in the person's own theme, over the stage; the moment waits paused behind it.
         forward?.let { m ->
             val done = { forward = null; viewModel.setPaused(false) }
@@ -160,8 +174,10 @@ class MomentViewerActions(
     val noticeShown: () -> Unit,
     /** A reaction splash over my moment finished (or was cut short). */
     val splashDone: (Long) -> Unit = {},
-    /** Send money to whoever posted this moment. */
-    val pay: () -> Unit = {},
+    /** A line for the toast (a payment from the reply field that failed). */
+    val notice: (String) -> Unit = {},
+    /** A payment from the reply field was signed. */
+    val onPaid: () -> Unit = {},
 ) {
     companion object {
         val None = MomentViewerActions({}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {})
@@ -172,8 +188,17 @@ private fun MomentViewerViewModel.actions() = MomentViewerActions(
     next = ::next, previous = ::previous, nextRing = ::nextRing, setPaused = ::setPaused, toggleMute = ::toggleMute,
     retryMedia = ::retryMedia, openPicker = ::openPicker, closePicker = ::closePicker, react = ::react, onReply = ::onReply,
     onReplyFocus = ::onReplyFocus, sendReply = ::sendReply, openMore = ::openMore, mute = ::mute, openViewers = ::openViewers,
-    askDelete = ::askDelete, delete = ::delete, noticeShown = ::noticeShown, splashDone = ::splashDone, pay = ::pay,
+    askDelete = ::askDelete, delete = ::delete, noticeShown = ::noticeShown, splashDone = ::splashDone, notice = ::notice, onPaid = ::onPaid,
 )
+
+/** Under this width the reply field's placeholder drops the name, so "#amount to send" still shows. */
+private val NarrowStage = 360.dp
+/** A first name longer than this takes the shorter placeholder too. */
+private const val LongFirstName = 10
+/** What the stage keeps above the money card: the segments, the header and the field under it. */
+private val StageChrome = 220.dp
+/** The money card's rows scroll before it gets smaller than this. */
+private val StageCardMin = 160.dp
 
 /** Past this share of the screen's height, letting go closes the viewer (a fast fling closes it from anywhere). */
 private const val DragCloseFraction = 0.22f
@@ -191,14 +216,16 @@ fun MomentViewerContent(
     onDragClose: () -> Unit = onClose,
     /** My moment to a chat (V4 Forward); null hides Forward (previews). */
     onForward: ((ForwardMedia) -> Unit)? = null,
+    /** The chat's in-line payment for whoever posted the moment on screen; null until a `#` has got their chat ready. */
+    quickPay: com.circaso.feature.messaging.presentation.QuickPay? = null,
 ) {
     // Always the dark stage, in every theme (design V1): the dark tokens, with the person's high-contrast choice kept.
     CircasoTheme(darkTheme = true, highContrast = CircasoTheme.colors.isHighContrast) {
         // A sheet or the picker on top owns the gestures; while a reply is being written, a drag down puts the
         // keyboard away instead of closing (and throwing the draft away).
-        val enabled = !state.moreOpen && !state.viewersOpen && !state.confirmDelete && !state.picking
+        val enabled = !state.moreOpen && !state.viewersOpen && !state.confirmDelete && !state.picking && !state.payBusy
         val typing = androidx.compose.foundation.layout.WindowInsets.ime.getBottom(androidx.compose.ui.platform.LocalDensity.current) > 0 || state.reply.isNotEmpty()
-        DraggableStage(enabled, typing, onDragClose) { dragging -> ViewerBody(state, vm, onClose, onMessage, dragging, onForward) }
+        DraggableStage(enabled, typing, onDragClose) { dragging -> ViewerBody(state, vm, onClose, onMessage, dragging, onForward, quickPay) }
     }
 }
 
@@ -294,7 +321,7 @@ private fun forwardOf(moment: Moment, media: ViewerMedia): ForwardMedia? {
 }
 
 @Composable
-private fun ViewerBody(state: MomentViewerUiState, vm: MomentViewerActions, onClose: () -> Unit, onMessage: (String) -> Unit, dragging: Boolean, onForward: ((ForwardMedia) -> Unit)? = null) {
+private fun ViewerBody(state: MomentViewerUiState, vm: MomentViewerActions, onClose: () -> Unit, onMessage: (String) -> Unit, dragging: Boolean, onForward: ((ForwardMedia) -> Unit)? = null, quickPay: com.circaso.feature.messaging.presentation.QuickPay? = null) {
     val c = CircasoTheme.colors
     val t = CircasoTheme.typography
     val moment = state.moment
@@ -361,7 +388,7 @@ private fun ViewerBody(state: MomentViewerUiState, vm: MomentViewerActions, onCl
             }
         }
 
-        // Bottom: caption, then the reply field, money and heart (someone else's) or Seen by (mine).
+        // Bottom: caption, then the reply field and heart (someone else's) or Seen by (mine).
         Column(Modifier.align(Alignment.BottomCenter).fillMaxWidth().navigationBarsPadding().imePadding().padding(CircasoSpacing.s3), verticalArrangement = Arrangement.spacedBy(CircasoSpacing.s3)) {
             moment.caption?.let {
                 BasicText(it, Modifier.fillMaxWidth().padding(horizontal = CircasoSpacing.s5), style = t.body.copy(color = c.ink, textAlign = TextAlign.Center))
@@ -376,40 +403,58 @@ private fun ViewerBody(state: MomentViewerUiState, vm: MomentViewerActions, onCl
                     BasicText("Seen by ${moment.viewCount}" + if (moment.reactionCount > 0) " · ${moment.reactionCount} reaction${if (moment.reactionCount == 1) "" else "s"}" else "", style = t.subhead.copy(color = c.ink, fontWeight = FontWeight.SemiBold))
                 }
             } else {
-                // The row's gaps are spacers, so the money button can fold away without leaving one behind.
-                Row(verticalAlignment = Alignment.Bottom) {
-                    // The stage's own field (the chat composer's, on glass), growing as the reply is written.
-                    com.circaso.designsystem.components.StageField(
-                        state.reply, vm.onReply, placeholder = "Reply to ${ring.name.substringBefore(' ')}", label = "Reply to ${ring.name}",
-                        modifier = Modifier.weight(1f), maxLines = 3, onFocus = vm.onReplyFocus,
-                    )
-                    androidx.compose.foundation.layout.Spacer(Modifier.width(10.dp))
-                    // Money for this moment (not in a frame; Pasaka, 2026-11-14): the chats' money mark on the same
-                    // glass as the heart, between the field and the heart. While a reply is being written it folds
-                    // away (the field grows into its place) and the heart gives way to Send, as it already did.
-                    // Offline it looks off like the heart and still opens: the pay flow says money needs a connection.
-                    val still = CircasoTheme.reduceMotion
-                    val arrive = tween<Float>(if (still) 0 else com.circaso.designsystem.theme.CircasoMotion.BaseMs)
-                    val leave = tween<Float>(if (still) 0 else com.circaso.designsystem.theme.CircasoMotion.ExitMs)
+                // The reply field is the chat's own composer on the stage (Pasaka, 2026-11-14: money in Moments works
+                // as it does in chats, no button of its own): plain words are a reply quoting this moment; `#500` is
+                // drawn as money, the chat's money card comes up over the shade, and the arrow pays straight to the
+                // PIN. The payment's card in the chat carries this moment. The heart sits where a chat has its mic.
+                val first = ring.name.substringBefore(' ')
+                // "Reply to Wanjiru, or #amount to send" where it fits; shorter on a narrow phone or for a long name.
+                val narrow = with(androidx.compose.ui.platform.LocalDensity.current) { androidx.compose.ui.platform.LocalWindowInfo.current.containerSize.width.toDp() } < NarrowStage
+                val placeholder = when {
+                    !state.canPay -> "Reply to $first"
+                    narrow || first.length > LongFirstName -> "Reply, or #amount to send"
+                    else -> "Reply to $first, or #amount to send"
+                }
+                val thread = remember(state.reply, state.online) { com.circaso.feature.messaging.presentation.ThreadUiState(draft = state.reply, online = state.online) }
+                val composerMoney = remember(moment.momentId) { com.circaso.feature.messaging.presentation.ChatComposerMoney() }
+                val focus = remember { androidx.compose.ui.focus.FocusRequester() }
+                val keyboard = androidx.compose.ui.platform.LocalSoftwareKeyboardController.current
+                val focusManager = androidx.compose.ui.platform.LocalFocusManager.current
+                // The room the money card may take: the stage between the header and the field, above the keyboard.
+                val density = androidx.compose.ui.platform.LocalDensity.current
+                val stageHeight = with(density) { androidx.compose.ui.platform.LocalWindowInfo.current.containerSize.height.toDp() }
+                val ime = androidx.compose.foundation.layout.WindowInsets.ime
+                Column(Modifier.fillMaxWidth()) {
+                    // Why `#` isn't money yet (the chat is opening, or couldn't be): said here, never silently nothing.
                     androidx.compose.animation.AnimatedVisibility(
-                        state.canPay && state.reply.isBlank(),
-                        enter = androidx.compose.animation.fadeIn(arrive) + androidx.compose.animation.expandHorizontally(tween(if (still) 0 else com.circaso.designsystem.theme.CircasoMotion.BaseMs)),
-                        exit = androidx.compose.animation.fadeOut(leave) + androidx.compose.animation.shrinkHorizontally(tween(if (still) 0 else com.circaso.designsystem.theme.CircasoMotion.ExitMs)),
+                        state.moneyLine != null,
+                        enter = androidx.compose.animation.fadeIn(tween(com.circaso.designsystem.theme.CircasoMotion.QuickMs)),
+                        exit = androidx.compose.animation.fadeOut(tween(com.circaso.designsystem.theme.CircasoMotion.QuickMs)),
                     ) {
-                        Row {
-                            GlassButton(CircasoIcon.Money, "Send money to ${ring.name.substringBefore(' ')} for this moment", dimmed = !state.online, size = com.circaso.designsystem.components.StageFieldMin, onClick = vm.pay)
-                            androidx.compose.foundation.layout.Spacer(Modifier.width(10.dp))
-                        }
+                        val last = remember { arrayOf("") }
+                        state.moneyLine?.let { last[0] = it }
+                        BasicText(last[0], Modifier.fillMaxWidth().padding(horizontal = CircasoSpacing.s1).semantics { liveRegion = LiveRegionMode.Polite }, style = t.footnote.copy(color = c.ink))
                     }
-                    if (state.reply.isNotBlank()) GlassButton(CircasoIcon.ArrowUp, "Send reply", size = com.circaso.designsystem.components.StageFieldMin, onClick = vm.sendReply)
-                    else Box {
-                        ReactButton(moment.reaction, state.online, com.circaso.designsystem.components.StageFieldMin, vm.openPicker)
-                        // The chats' reaction bubble (any emoji), floating just above the button at the screen's end.
-                        if (state.picking) ReactionPicker(
-                            current = moment.reaction, onPick = vm.react, onDismiss = vm.closePicker,
-                            anchor = ReactionAnchor.Above, alignEnd = true, gap = CircasoSpacing.s2,
-                        )
-                    }
+                    com.circaso.feature.messaging.presentation.ChatComposer(
+                        state = thread, onDraft = vm.onReply, onSend = vm.sendReply,
+                        quickPay = quickPay?.takeIf { state.canPay }, money = composerMoney, focusRequester = focus,
+                        onToast = { text, _ -> vm.notice(text) },
+                        cardMaxHeight = { (stageHeight - with(density) { ime.getBottom(density).toDp() } - StageChrome).coerceAtLeast(StageCardMin) },
+                        onPaid = { keyboard?.hide(); focusManager.clearFocus(); vm.onPaid() },
+                        stage = com.circaso.feature.messaging.presentation.StageComposer(
+                            placeholder = placeholder, canSendText = state.canReply, onFocus = vm.onReplyFocus,
+                            trailing = {
+                                Box {
+                                    ReactButton(moment.reaction, state.online, com.circaso.designsystem.components.StageFieldMin, vm.openPicker)
+                                    // The chats' reaction bubble (any emoji), floating just above the button at the screen's end.
+                                    if (state.picking) ReactionPicker(
+                                        current = moment.reaction, onPick = vm.react, onDismiss = vm.closePicker,
+                                        anchor = ReactionAnchor.Above, alignEnd = true, gap = CircasoSpacing.s2,
+                                    )
+                                }
+                            },
+                        ),
+                    )
                 }
             }
         }
@@ -590,19 +635,15 @@ private fun Segments(moments: List<Moment>, index: Int, current: Moment, paused:
 @Composable
 private fun GlassButton(
     icon: CircasoIcon, label: String, filled: Boolean = false,
-    /** Beside the reply field it is as tall as the field, so the row is one height (design V1). */
-    size: androidx.compose.ui.unit.Dp = CircasoSizes.controlMd,
-    /** It needs the server and there is none: it looks off (as the heart does) and says so; the tap still explains. */
-    dimmed: Boolean = false,
     onClick: () -> Unit,
 ) {
     val c = CircasoTheme.colors
     Box(
-        Modifier.size(size).clip(CircasoShapes.circle).then(if (filled) Modifier.background(c.ink) else Modifier.glass(CircasoShapes.circle, edge = false))
-            .pressable(onClick = onClick).semantics(mergeDescendants = true) { contentDescription = label; if (dimmed) stateDescription = "Needs a connection" },
+        Modifier.size(CircasoSizes.controlMd).clip(CircasoShapes.circle).then(if (filled) Modifier.background(c.ink) else Modifier.glass(CircasoShapes.circle, edge = false))
+            .pressable(onClick = onClick).semantics(mergeDescendants = true) { contentDescription = label },
         contentAlignment = Alignment.Center,
     ) {
-        CircasoIconImage(icon, when { dimmed -> c.inkTertiary; filled -> c.bg; else -> c.ink }, Modifier.size(18.dp))
+        CircasoIconImage(icon, if (filled) c.bg else c.ink, Modifier.size(18.dp))
     }
 }
 

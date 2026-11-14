@@ -99,6 +99,7 @@ val statusModule = module {
             observeBlocks = get(),
             seenReactions = get(),
             directChatId = { posterId -> chats.chats.first().firstOrNull { it.chat.peerId == posterId && it.chat.viaSpaceId == null }?.chat?.chatId },
+            openChat = { posterId -> (chats.openDirect(posterId) as? com.circaso.core.common.AppResult.Success)?.value?.chatId },
             replyInChat = { posterId, text, moment ->
                 // The 1:1 chat on this phone if there is one (so a reply waits offline like any message), else open it.
                 val existing = chats.chats.first().firstOrNull { it.chat.peerId == posterId && it.chat.viaSpaceId == null }?.chat?.chatId

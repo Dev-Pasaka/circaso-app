@@ -240,6 +240,13 @@ fun PreviewScreens(name: String) {
         // The Moments viewer (V1, V4, V5) and its reaction picker: sample moments, nothing loads.
         "moment-text" -> MomentPreview(sampleMoment(com.circaso.feature.status.domain.MomentKind.Text))
         "moment-photo" -> MomentPreview(sampleMoment(com.circaso.feature.status.domain.MomentKind.Image), photo = true)
+        // Money for a moment, chat native (2026-11-14): `#500 lunch` in the reply field, the chat's money card over the shade.
+        "moment-money" -> MomentPreview(
+            sampleMoment(com.circaso.feature.status.domain.MomentKind.Image), photo = true, reply = "#500 lunch",
+            pay = payState(com.circaso.feature.wallet.presentation.PayUiState(payee = com.circaso.feature.contacts.domain.Person("w", "Wanjiru Kamau", null, null, null), chatId = "dm", amountText = "500", note = "lunch")),
+        )
+        // The chat isn't on this phone yet: the field says it is opening, and the arrow waits.
+        "moment-money-opening" -> MomentPreview(sampleMoment(com.circaso.feature.status.domain.MomentKind.Image), photo = true, reply = "#500 lunch", opening = true)
         // With `--es video <path>` (a file this app can read): the viewer playing that file, as a posted moment plays.
         "moment-video" -> MomentPreview(sampleMoment(com.circaso.feature.status.domain.MomentKind.Video), videoPath = launchValue("video"))
         // The real composer (its own view model): pick a video and trim it, to check the trimmer on a device.
@@ -687,6 +694,9 @@ private fun MomentPreview(
     viewers: List<com.circaso.feature.status.presentation.ViewerRow>? = null,
     videoPath: String? = null,
     splash: Boolean = false,
+    reply: String = "",
+    pay: com.circaso.feature.wallet.presentation.PayUiState? = null,
+    opening: Boolean = false,
 ) {
     // The splash loop: each burst plays, a short pause, then the next sample.
     val turn = androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(0) }
@@ -707,13 +717,15 @@ private fun MomentPreview(
     com.circaso.feature.status.presentation.MomentViewerContent(
         com.circaso.feature.status.presentation.MomentViewerUiState(
             rings = listOf(ring), media = media, picking = picking,
-            viewersOpen = viewers != null, viewers = viewers, paused = picking || viewers != null || splash,
-            bursts = listOfNotNull(burst.value),
+            viewersOpen = viewers != null, viewers = viewers, paused = picking || viewers != null || splash || reply.isNotEmpty(),
+            bursts = listOfNotNull(burst.value), reply = reply,
+            money = com.circaso.feature.status.presentation.MomentMoney("w", "dm".takeIf { pay != null }, opening = opening),
         ),
         if (!splash) com.circaso.feature.status.presentation.MomentViewerActions.None
         else com.circaso.feature.status.presentation.MomentViewerActions({}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {},
             splashDone = { burst.value = null; turn.value++ }),
         onClose = {},
+        quickPay = pay?.let { com.circaso.feature.messaging.presentation.QuickPay(it, {}, {}, {}, {}, {}, {}) },
     )
 }
 

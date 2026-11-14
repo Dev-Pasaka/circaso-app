@@ -136,7 +136,7 @@ private fun newGroup(walletOn: Boolean, online: Boolean = true, failed: Boolean 
     targetText = if (walletOn) "50000" else "", fiat = gwFiat, failed = failed, reference = if (failed) "req_G4mx2Q" else null,
 )
 
-private fun payState(base: PayUiState) = base.copy(
+internal fun payState(base: PayUiState) = base.copy(
     wallet = gwWallet(walletId = null, minor = "141180000"), groupWallets = true, online = true, blockchain = "BASE-SEPOLIA",
     choices = listOf(NamedWallet.Personal, NamedWallet("gw-1", "g1", "Kilimani Chama", null, WalletOwnerType.Group, true, WalletStatus.Active, "me")),
     balances = mapOf(null to gwWallet("141180000", null), "gw-1" to gwWallet()), memberNames = kilimani.members.associate { it.userId to it.displayName },

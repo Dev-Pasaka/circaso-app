@@ -245,6 +245,21 @@ class PayViewModelTest {
         assertNull(cards[1].second.moment)
     }
 
+    @Test fun payingANotSentCardAgainKeepsItsMomentAndTheNextPaymentDoesNot() = runTest(dispatcher) {
+        // The chat's own in-line payment (no moment of its own), handed a Not sent card that was money for a moment.
+        val vm = vm(PayIntent(userId = "amina", chatId = "c9", displayName = "Amina", inChat = true))
+        keep(vm)
+        vm.onQuickReset()
+        vm.onRetryExact("3875969", "USDC", "Asante", sunset)
+        vm.onPay()
+        assertEquals(sunset, cards.single().second.moment)
+        assertEquals("3875969", payments.single().amountMinor)
+        vm.onQuickReset()
+        vm.onAmount("500")
+        vm.onPay()
+        assertNull(cards[1].second.moment)
+    }
+
     @Test fun aGroupsCardNeverCarriesAMoment() = runTest(dispatcher) {
         val vm = vm(PayIntent(userId = "otieno", chatId = "g1", displayName = "Otieno", goalName = "Holiday Fund", moment = sunset))
         keep(vm)
