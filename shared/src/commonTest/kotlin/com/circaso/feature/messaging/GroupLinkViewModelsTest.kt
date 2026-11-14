@@ -24,7 +24,7 @@ import com.circaso.feature.messaging.presentation.GroupJoinViewModel
 import com.circaso.feature.messaging.presentation.GroupLinkConfirm
 import com.circaso.feature.messaging.presentation.GroupLinkViewModel
 import com.circaso.feature.messaging.presentation.GroupLinkWork
-import com.circaso.feature.messaging.presentation.JoinOffline
+import com.circaso.feature.messaging.presentation.JoinUnreachable
 import com.circaso.feature.messaging.presentation.memberCountText
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
@@ -96,7 +96,11 @@ private class LinkScreenChats(val chat: MutableStateFlow<Chat?>) : ChatsReposito
     val edits = mutableListOf<Pair<String, String>>()
     val renames = mutableListOf<String>()
     override suspend fun rename(chatId: String, name: String): AppResult<Chat> { renames += name; return AppResult.Failure(AppError.Network) }
+    var failEdits: AppError? = null
+    var beforeEdit: suspend () -> Unit = {}
     override suspend fun editGroup(chatId: String, name: String, description: String): AppResult<Chat> {
+        beforeEdit()
+        failEdits?.let { return AppResult.Failure(it) }
         edits += name to description
         val next = chat.value!!.copy(title = name, description = description.trim().ifEmpty { null })
         chat.value = next
@@ -200,6 +204,56 @@ class GroupLinkViewModelTest {
         vm.load()
         assertNull(vm.state.value.loadFailed)
         assertTrue(vm.state.value.checked)
+    }
+
+    @Test fun aServerFromBeforeGroupLinksSaysTheyAreNotAvailableYet() = runTest(dispatcher) {
+        links.refreshResult = { AppResult.Failure(api("request.not_found", 404)) }
+        val vm = vm()
+        assertTrue(vm.state.value.loadFailed!!.startsWith("Group links aren't available yet."))
+        assertNull(vm.state.value.link)
+    }
+
+    @Test fun aLoadWithNoAnswerWhileOnlineNeverSitsOnItsLoadingShapes() = runTest(dispatcher) {
+        // One timeout: the phone still counts as online, so nothing would ever retry by itself.
+        links.refreshResult = { AppResult.Failure(AppError.Network) }
+        val vm = vm()
+        val s = vm.state.value
+        assertTrue(s.online)
+        assertFalse(s.loading, "not an endless wait")
+        assertTrue(s.unreachable, "said, with Try Again")
+        assertFalse(s.unknownOffline)
+
+        links.refreshResult = { AppResult.Success(null) }
+        vm.load()
+        assertFalse(vm.state.value.unreachable)
+        assertTrue(vm.state.value.checked)
+    }
+
+    @Test fun aFailureIsShownAsAProblemAndASuccessAsDone() = runTest(dispatcher) {
+        links.stored.value = existing
+        val vm = vm()
+        links.turnOffResult = { AppResult.Failure(api("internal.error", 500)) }
+        vm.onConfirm(GroupLinkConfirm.TurnOff); vm.onConfirmed()
+        assertTrue(vm.state.value.messageIsProblem)
+
+        vm.onCopied()
+        assertFalse(vm.state.value.messageIsProblem)
+
+        links.turnOffResult = { AppResult.Success(Unit) }
+        vm.onConfirm(GroupLinkConfirm.TurnOff); vm.onConfirmed()
+        assertFalse(vm.state.value.messageIsProblem)
+    }
+
+    @Test fun aPhoneThatCannotReadTheNameCanTurnTheLinkOffButNotResetIt() = runTest(dispatcher) {
+        links.stored.value = existing
+        chat.value = group(nameKnown = false)
+        val vm = vm()
+        assertFalse(vm.state.value.canReset, "a reset publishes the name again, and this phone has none to publish")
+        vm.onConfirm(GroupLinkConfirm.Reset); vm.onConfirmed()
+        assertEquals(0, links.resets)
+
+        vm.onConfirm(GroupLinkConfirm.TurnOff); vm.onConfirmed()
+        assertEquals(1, links.turnedOff, "taking the public copy down never needs the name")
     }
 
     @Test fun resetAsksFirstThenReplacesTheLink() = runTest(dispatcher) {
@@ -387,6 +441,18 @@ class GroupJoinViewModelTest {
         assertEquals(2, links.previews)
     }
 
+    @Test fun noAnswerWhileOnlineOffersTryAgainRatherThanWaiting() = runTest(dispatcher) {
+        links.previewResult = { AppResult.Failure(AppError.Network) }
+        val vm = vm()
+        vm.open(Token)
+        assertEquals(GroupJoinStage.Offline, vm.state.value.stage)
+        assertTrue(vm.state.value.online, "the sheet shows Try Again here: nothing would retry by itself")
+
+        links.previewResult = { AppResult.Success(preview) }
+        vm.load()
+        assertEquals(GroupJoinStage.Ready(preview), vm.state.value.stage)
+    }
+
     @Test fun joiningNeverFiresOfflineAndADroppedJoinIsNotFaked() = runTest(dispatcher) {
         links.previewResult = { AppResult.Success(preview) }
         val vm = vm()
@@ -399,7 +465,7 @@ class GroupJoinViewModelTest {
         links.joinResult = { AppResult.Failure(AppError.Network) }
         vm.onJoin()
         val stage = assertIs<GroupJoinStage.Ready>(vm.state.value.stage)
-        assertEquals(JoinOffline, stage.problem)
+        assertEquals(JoinUnreachable, stage.problem, "said as a failed try, with a way to try again")
         assertNull(vm.state.value.openChatId, "not in the group, and the sheet doesn't pretend")
     }
 
@@ -440,13 +506,13 @@ class EditGroupDescriptionTest {
     @BeforeTest fun setUp() { Dispatchers.setMain(dispatcher); connection = ConnectionState(monitor, NetworkHealth(), CoroutineScope(dispatcher), offlineDelayMs = 0) }
     @AfterTest fun tearDown() = Dispatchers.resetMain()
 
-    private fun vm() = com.circaso.feature.messaging.presentation.ChatInfoViewModel(
+    private fun vm(links: GroupLinksRepository? = null) = com.circaso.feature.messaging.presentation.ChatInfoViewModel(
         "g1", ObserveChatUseCase(repo), com.circaso.feature.contacts.domain.ObserveContactsUseCase(com.circaso.feature.status.FakeContacts()),
         com.circaso.feature.messaging.domain.SecurityCodeUseCase(repo), com.circaso.feature.messaging.domain.RenameGroupUseCase(repo),
         com.circaso.feature.messaging.domain.SetMembersCanAddUseCase(repo), com.circaso.feature.messaging.domain.AddMembersUseCase(repo),
         com.circaso.feature.messaging.domain.RemoveMemberUseCase(repo), com.circaso.feature.messaging.domain.LeaveGroupUseCase(repo),
         com.circaso.feature.messaging.domain.SetRoleUseCase(repo), connection,
-        editGroup = com.circaso.feature.messaging.domain.EditGroupUseCase(repo),
+        editGroup = com.circaso.feature.messaging.domain.EditGroupUseCase(repo), links = links,
     )
 
     @Test fun theSheetOpensOnTheGroupsNameAndDescription() = runTest(dispatcher) {
@@ -495,6 +561,57 @@ class EditGroupDescriptionTest {
         assertFalse(vm.state.value.descriptionTooLong)
         vm.onRenameConfirm()
         assertEquals(1, repo.edits.size)
+    }
+
+    @Test fun aSaveThatFailsKeepsTheSheetAndWhatWasTyped() = runTest(dispatcher) {
+        repo.failEdits = AppError.Api("internal.error", 500, "req_9", null, emptyMap())
+        val vm = vm()
+        vm.onRename(true)
+        vm.onDescriptionDraft("Saturdays now.")
+        vm.onRenameConfirm()
+
+        val s = vm.state.value
+        assertTrue(s.renaming, "the sheet stays")
+        assertEquals("Saturdays now.", s.descriptionDraft, "nothing typed is lost")
+        assertTrue(s.editError!!.contains("req_9"), "said in the sheet, with its reference")
+        assertFalse(s.saving)
+
+        repo.failEdits = null
+        vm.onRenameConfirm()
+        assertFalse(vm.state.value.renaming)
+        assertEquals("Saturdays now.", vm.state.value.chat?.description)
+    }
+
+    @Test fun aSaveOnItsWayHoldsTheSheetOpen() = runTest(dispatcher) {
+        val gate = CompletableDeferred<Unit>()
+        repo.beforeEdit = { gate.await() }
+        val vm = vm()
+        vm.onRename(true)
+        vm.onDescriptionDraft("Saturdays now.")
+        vm.onRenameConfirm()
+        assertTrue(vm.state.value.saving)
+        vm.onRename(false)
+        assertTrue(vm.state.value.renaming, "it closes when the server answers, not before")
+        gate.complete(Unit)
+        assertFalse(vm.state.value.renaming)
+        assertFalse(vm.state.value.saving)
+    }
+
+    @Test fun aPhoneThatCannotReadTheNameKeepsTheDescriptionItHas() = runTest(dispatcher) {
+        chat.value = group(nameKnown = false).copy(description = "Fridays at six.")
+        val vm = vm()
+        vm.onRename(true)
+        vm.onNameDraft("Book club")
+        vm.onRenameConfirm()
+        assertEquals(listOf("Book club" to "Fridays at six."), repo.edits, "never replaced by the field it couldn't fill")
+    }
+
+    @Test fun groupInfoKnowsWhenTheLinkIsOn() = runTest(dispatcher) {
+        val links = FakeLinks()
+        val vm = vm(links)
+        assertFalse(vm.state.value.linkOn)
+        links.stored.value = GroupLink("g1", Token, Url, "Book club", null, false)
+        assertTrue(vm.state.value.linkOn, "so the Edit group sheet says the link's page shows the change too")
     }
 
     @Test fun nothingIsSentOffline() = runTest(dispatcher) {

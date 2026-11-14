@@ -1,5 +1,15 @@
 package com.circaso.feature.messaging.presentation
 
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.togetherWith
+import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.draw.clip
+import com.circaso.designsystem.motion.pressable
+import com.circaso.designsystem.theme.CircasoMotion
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -91,12 +101,15 @@ fun GroupLinkContent(
 ) {
     val toast = rememberToastState()
     LaunchedEffect(state.message) {
-        state.message?.let { toast.show(it, if (it == "Link copied") ToastKind.Done else ToastKind.Info); onMessageShown() }
+        // A failure reads as one (red, on screen longer); a change the server confirmed, or a copy, as done.
+        state.message?.let { toast.show(it, if (state.messageIsProblem) ToastKind.Problem else ToastKind.Done); onMessageShown() }
     }
+    val link = state.link
     CircasoScaffold(
         grouped = true,
         topBar = { CircasoNavBar(title = "Invite via link", onBack = onBack) },
-        banner = { ConnectionBanner(showing = if (state.link != null) "Showing the link saved on this phone" else "The link needs a connection") },
+        // With no copy of the link the body itself says the phone is offline; the banner needn't say it twice.
+        banner = { if (!state.unknownOffline) ConnectionBanner(showing = if (link != null) "Showing the link saved on this phone" else "Making a link needs a connection") },
         toast = { ToastHost(toast) },
         overlay = {
             ConfirmSheet(
@@ -113,7 +126,7 @@ fun GroupLinkContent(
                 visible = state.confirm == GroupLinkConfirm.TurnOff,
                 title = "Turn off the link?",
                 message = "Nobody new can join with it, and its page stops showing the group's name, description and photo. People who already joined stay.",
-                confirmLabel = "Turn Off",
+                confirmLabel = "Turn Off Link",
                 onConfirm = onConfirmed,
                 onDismiss = { onConfirm(null) },
                 destructive = true,
@@ -121,20 +134,30 @@ fun GroupLinkContent(
             )
         },
     ) { padding ->
-        val link = state.link
         when {
             state.loading -> LinkLoading()
             state.unknownOffline -> MessageBody(
                 CircasoIcon.Offline, "You're offline",
                 "This phone hasn't loaded the group's link yet. It shows here when you're back online.", null, {},
             )
+            // Online as far as the phone knows, but no answer came and there is nothing saved to show.
+            link == null && state.unreachable -> MessageBody(CircasoIcon.Offline, "Couldn't reach Circaso", "Check your connection and try again.", "Try Again", onRetry)
             link == null && state.loadFailed != null -> MessageBody(CircasoIcon.Warning, "Couldn't load the link", state.loadFailed, "Try Again", onRetry)
-            else -> Column(
-                Modifier.fillMaxSize().verticalScroll(rememberScrollState())
-                    .padding(horizontal = CircasoSpacing.s4).padding(top = CircasoSpacing.s4, bottom = padding.calculateBottomPadding() + CircasoSpacing.s6),
-                verticalArrangement = Arrangement.spacedBy(CircasoSpacing.s5),
-            ) {
-                if (link == null) LinkIntro(state, onCreate) else LinkOn(state, link, onShare, onCopied, onConfirm)
+            // Making the link (or turning it off) changes the whole screen: the two cross-fade, each from its own top,
+            // so the new QR code is in view rather than wherever the Create button had been scrolled to.
+            else -> AnimatedContent(
+                targetState = link != null,
+                transitionSpec = { fadeIn(tween(CircasoMotion.BaseMs)) togetherWith fadeOut(tween(CircasoMotion.QuickMs)) },
+                label = "group link",
+            ) { on ->
+                Column(
+                    Modifier.fillMaxSize().verticalScroll(rememberScrollState())
+                        .padding(horizontal = CircasoSpacing.s4).padding(top = CircasoSpacing.s4, bottom = padding.calculateBottomPadding() + CircasoSpacing.s6),
+                    verticalArrangement = Arrangement.spacedBy(CircasoSpacing.s5),
+                ) {
+                    // `link` can already be gone while the "on" side fades out: it then draws nothing.
+                    if (!on) LinkIntro(state, onCreate) else if (link != null) LinkOn(state, link, onShare, onCopied, onConfirm)
+                }
             }
         }
     }
@@ -155,6 +178,11 @@ private fun LinkGroupHead(chat: Chat?, line: String) {
     }
 }
 
+/** This phone can't read the group's name (its key is lost), so it has nothing true to publish for a link. */
+@Composable
+private fun NameUnknownBanner() =
+    Banner("This phone can't read the group's name yet, so it can't make a link. It will be able to once another member's phone is online.", CircasoIcon.Lock, tone = BannerTone.Warning)
+
 /** No link yet: what one does, what it shows to anyone who has it (said before it exists), and Create Link. */
 @Composable
 private fun LinkIntro(state: GroupLinkUiState, onCreate: () -> Unit) {
@@ -173,36 +201,53 @@ private fun LinkIntro(state: GroupLinkUiState, onCreate: () -> Unit) {
         ListGroup {
             LinkFact(CircasoIcon.Eye, "Anyone with the link can see", "The group's name, description and photo, and how many members it has.")
             RowDivider(Modifier.padding(start = FactInset))
-            LinkFact(CircasoIcon.Lock, "Stays private", "Members, messages and money. Chats stay end-to-end encrypted.")
+            LinkFact(CircasoIcon.Lock, "Hidden until someone joins", "Who is in the group, its messages and its money.")
             RowDivider(Modifier.padding(start = FactInset))
-            LinkFact(CircasoIcon.UserPlus, "People who join", "Become members straight away. They see messages sent after they join, and can't move the group's money.")
+            LinkFact(CircasoIcon.UserPlus, "People who join", "Become members straight away. They see new messages and the group's wallet, like any member. They can't move its money.")
         }
     }
-    if (state.nameUnknown) {
-        Banner("This phone can't read the group's name yet, so it can't make the link. It can once a member's phone sends it the group's key.", CircasoIcon.Lock, tone = BannerTone.Warning)
-    }
+    if (state.nameUnknown) NameUnknownBanner()
     Column(verticalArrangement = Arrangement.spacedBy(CircasoSpacing.s2), horizontalAlignment = Alignment.CenterHorizontally) {
         CircasoButton(
             "Create Link", onCreate, size = ButtonSize.Large, block = true,
             enabled = state.canChange && !state.nameUnknown, busy = state.work == GroupLinkWork.Creating,
         )
         BasicText(
-            if (!state.online) "Making a link needs a connection." else "You can reset it or turn it off at any time.",
+            when {
+                !state.amAdmin -> "Only the group's admins can manage its link."
+                !state.online -> "Making a link needs a connection."
+                else -> "You can reset it or turn it off at any time."
+            },
             Modifier.semantics { liveRegion = LiveRegionMode.Polite },
             style = t.footnote.copy(color = c.inkTertiary, textAlign = TextAlign.Center),
         )
     }
 }
 
-/** One thing the link does or doesn't show: a glyph, a short title and the plain words under it. */
+/**
+ * One thing the link does or doesn't show: a glyph, a short title and the plain words under it, however many lines
+ * they take (a list row would cut them at two, and this is the one text that must be read whole).
+ */
 @Composable
 private fun LinkFact(icon: CircasoIcon, title: String, text: String) {
     val c = CircasoTheme.colors
-    ListRow(title = title, sub = text, leading = { CircasoIconImage(icon, c.inkSecondary, Modifier.size(22.dp)) })
+    val t = CircasoTheme.typography
+    Row(
+        Modifier.fillMaxWidth().padding(horizontal = CircasoSpacing.s4, vertical = CircasoSpacing.s3).semantics(mergeDescendants = true) {},
+        horizontalArrangement = Arrangement.spacedBy(CircasoSpacing.s3),
+    ) {
+        CircasoIconImage(icon, c.inkSecondary, Modifier.size(FactGlyph))
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(CircasoSpacing.s1)) {
+            BasicText(title, style = t.body.copy(color = c.ink))
+            BasicText(text, style = t.subhead.copy(color = c.inkSecondary))
+        }
+    }
 }
 
-/** Where a fact row's text starts (the 16 dp inset, the 22 dp glyph and the row's gap), so dividers line up with it. */
-private val FactInset = 38.dp
+private val FactGlyph = 22.dp
+
+/** Where a fact's text starts past the divider's own inset (the glyph and the row's gap), so dividers line up with it. */
+private val FactInset = FactGlyph + CircasoSpacing.s3
 
 /** The link is on: scan it, copy it, share it; then the two ways to end it, and what stays public while it's on. */
 @Composable
@@ -217,55 +262,91 @@ private fun LinkOn(
     val t = CircasoTheme.typography
     val clipboard = LocalClipboardManager.current
     val copy = { clipboard.setText(AnnotatedString(link.url)); onCopied() }
-    LinkGroupHead(state.chat, "Scan or share to join")
+    LinkGroupHead(state.chat, "Scan with a phone's camera, or share")
     Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
         QrCode(link.url, "QR code to join ${state.chat?.title ?: link.name}")
     }
+    // The link itself, whole (two lines if it needs them): the address is what people check before they trust it.
     ListGroup {
-        ListRow(
-            title = link.url.removePrefix("https://"),
-            sub = "Tap to copy",
-            leading = { CircasoIconImage(CircasoIcon.Link, c.inkSecondary, Modifier.size(22.dp)) },
-            trailing = { CircasoIconImage(CircasoIcon.Copy, c.inkSecondary, Modifier.size(20.dp)) },
-            onClick = copy,
-            modifier = Modifier.semantics { contentDescription = "Group link. Tap to copy." },
-        )
+        Row(
+            Modifier.fillMaxWidth().pressable(onClickLabel = "Copy link", onClick = copy)
+                .padding(horizontal = CircasoSpacing.s4, vertical = CircasoSpacing.s3)
+                .semantics(mergeDescendants = true) { contentDescription = "Group link, ${link.url}" },
+            horizontalArrangement = Arrangement.spacedBy(CircasoSpacing.s3), verticalAlignment = Alignment.CenterVertically,
+        ) {
+            CircasoIconImage(CircasoIcon.Link, c.inkSecondary, Modifier.size(FactGlyph))
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(CircasoSpacing.s1)) {
+                BasicText(link.url.removePrefix("https://"), style = t.callout.copy(color = c.ink), maxLines = 2, overflow = TextOverflow.Ellipsis)
+                BasicText("Tap to copy", style = t.footnote.copy(color = c.inkSecondary))
+            }
+            CircasoIconImage(CircasoIcon.Copy, c.inkSecondary, Modifier.size(20.dp))
+        }
     }
-    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(CircasoSpacing.s3)) {
-        CircasoButton("Copy", copy, Modifier.weight(1f), style = ButtonStyle.Secondary, size = ButtonSize.Large, block = true, icon = CircasoIcon.Copy)
+    // As on Receive: Share first, then Copy.
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(CircasoSpacing.s2)) {
         CircasoButton("Share", onShare, Modifier.weight(1f), size = ButtonSize.Large, block = true, icon = CircasoIcon.Share)
+        CircasoButton("Copy", copy, Modifier.weight(1f), style = ButtonStyle.Secondary, size = ButtonSize.Large, block = true, icon = CircasoIcon.Copy)
     }
+    // What the link's page shows right now, as it was published from a phone: the admin sees it, not a promise of it.
+    Column {
+        SectionHeader("On the link's page")
+        ListGroup {
+            Column(Modifier.fillMaxWidth().padding(horizontal = CircasoSpacing.s4, vertical = CircasoSpacing.s3), verticalArrangement = Arrangement.spacedBy(CircasoSpacing.s1)) {
+                BasicText(link.name, style = t.body.copy(color = c.ink))
+                BasicText(link.description ?: "No description", style = t.subhead.copy(color = c.inkSecondary))
+                BasicText(
+                    when {
+                        link.hasPhoto -> "With the group's photo and how many members it has."
+                        state.chat?.avatarUrl != null -> "The photo isn't on the page yet. It's added when this phone is online with the photo."
+                        else -> "With how many members it has. The group has no photo."
+                    },
+                    style = t.footnote.copy(color = c.inkSecondary),
+                )
+            }
+        }
+    }
+    if (state.nameUnknown) NameUnknownBanner()
     Column {
         SectionHeader("Manage link")
         ListGroup {
+            // A row that can't be used right now is dimmed, and the line under the group says why.
             ListRow(
-                "Reset Link", sub = "Makes a new link. The old one stops working.",
+                "Reset link", sub = "Makes a new link. The old one stops working.",
+                modifier = Modifier.alpha(if (state.canReset || state.work == GroupLinkWork.Resetting) 1f else DisabledAlpha),
                 trailing = if (state.work == GroupLinkWork.Resetting) ({ Spinner(c.inkSecondary) }) else null,
-                onClick = if (state.canChange) ({ onConfirm(GroupLinkConfirm.Reset) }) else null,
+                onClick = if (state.canReset) ({ onConfirm(GroupLinkConfirm.Reset) }) else null,
             )
             RowDivider()
             ListRow(
-                "Turn Off Link", sub = "Nobody new can join with it. Members stay.", destructive = true,
+                "Turn off link", sub = "Nobody new can join with it. Members stay.", destructive = true,
+                modifier = Modifier.alpha(if (state.canChange || state.work == GroupLinkWork.TurningOff) 1f else DisabledAlpha),
                 trailing = if (state.work == GroupLinkWork.TurningOff) ({ Spinner(c.inkSecondary) }) else null,
                 onClick = if (state.canChange) ({ onConfirm(GroupLinkConfirm.TurnOff) }) else null,
             )
         }
-        if (!state.online) {
+        val why = when {
+            !state.amAdmin -> "Only the group's admins can manage its link."
+            !state.online -> "Resetting or turning off the link needs a connection."
+            else -> null
+        }
+        why?.let {
             BasicText(
-                "Resetting or turning off the link needs a connection.",
+                it,
                 Modifier.padding(start = CircasoSpacing.s4, end = CircasoSpacing.s4, top = CircasoSpacing.s2).semantics { liveRegion = LiveRegionMode.Polite },
                 style = t.footnote.copy(color = c.inkTertiary),
             )
         }
     }
-    BasicText(
-        "$LinkPublicNote $LinkJoinersNote",
-        Modifier.padding(horizontal = CircasoSpacing.s4),
-        style = t.footnote.copy(color = c.inkSecondary),
-    )
+    Column(Modifier.padding(horizontal = CircasoSpacing.s4), verticalArrangement = Arrangement.spacedBy(CircasoSpacing.s2)) {
+        BasicText(LinkPublicNote, style = t.footnote.copy(color = c.inkSecondary))
+        BasicText(LinkJoinersNote, style = t.footnote.copy(color = c.inkSecondary))
+    }
 }
 
-/** The first load: the screen's own shapes, so it settles into place instead of jumping. */
+/** A row that rests (offline, or not this person's to use). */
+private const val DisabledAlpha = 0.45f
+
+/** The first load, which mostly ends on the intro: its shapes (photo, name, the facts, the button), so it settles in. */
 @Composable
 private fun LinkLoading() {
     Column(
@@ -273,8 +354,11 @@ private fun LinkLoading() {
         verticalArrangement = Arrangement.spacedBy(CircasoSpacing.s5), horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         SkeletonBlock(Modifier.size(CircasoSizes.avatarXl), CircasoShapes.circle)
-        SkeletonBlock(Modifier.fillMaxWidth(0.5f).height(24.dp), CircasoShapes.sm)
-        SkeletonBlock(Modifier.fillMaxWidth().height(180.dp), CircasoShapes.lg)
-        SkeletonBlock(Modifier.fillMaxWidth().height(50.dp), CircasoShapes.lg)
+        SkeletonBlock(Modifier.fillMaxWidth(0.5f).height(SkeletonTitle), CircasoShapes.sm)
+        SkeletonBlock(Modifier.fillMaxWidth().height(SkeletonFacts), CircasoShapes.lg)
+        SkeletonBlock(Modifier.fillMaxWidth().height(CircasoSizes.controlLg), CircasoShapes.md)
     }
 }
+
+private val SkeletonTitle = 24.dp
+private val SkeletonFacts = 196.dp

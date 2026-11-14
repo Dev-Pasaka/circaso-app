@@ -1,5 +1,8 @@
 package com.circaso.feature.messaging.presentation
 
+import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.core.tween
+import com.circaso.designsystem.theme.CircasoMotion
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
@@ -66,29 +69,41 @@ fun BoxScope.GroupJoinSheet(
     onRetry: () -> Unit,
     onDismiss: () -> Unit,
 ) {
-    var shown by remember { mutableStateOf(state.stage) }
-    if (state.open) shown = state.stage
-    val label = (shown as? GroupJoinStage.Ready)?.let { "Join ${it.preview.name}" } ?: "Group link"
+    // What the sheet showed last is held while it slides away: its stage, and whether it was joining or offline, so
+    // the button never snaps back to "Join Group" on the way out.
+    var shown by remember { mutableStateOf(state) }
+    if (state.open) shown = state
+    val label = (shown.stage as? GroupJoinStage.Ready)?.let { "Join ${it.preview.name}" } ?: "Group link"
     // While a join is on its way the sheet stays: closing it then would leave them in a group they never saw open.
     CircasoSheet(visible = state.open, onDismiss = onDismiss, label = label, dismissible = !state.joining) {
-        when (val stage = shown) {
-            GroupJoinStage.Loading -> JoinLoading()
-            is GroupJoinStage.Ready -> JoinPreview(stage.preview, stage.problem, state.online, state.joining, onJoin, onDismiss)
-            GroupJoinStage.Gone -> {
-                SheetMessage("This link no longer works", "It was reset or turned off. Ask an admin of the group for a new one.", CircasoIcon.Link)
-                CircasoButton("OK", onDismiss, size = ButtonSize.Large, block = true)
-            }
-            GroupJoinStage.NotAllowed -> {
-                SheetMessage("You can't join with this link", "Ask an admin of the group to add you.", CircasoIcon.Ban)
-                CircasoButton("OK", onDismiss, size = ButtonSize.Large, block = true)
-            }
-            GroupJoinStage.Offline -> {
-                SheetMessage("You're offline", "The group shows here by itself when you're back online.", CircasoIcon.Offline)
-                CircasoButton("Close", onDismiss, style = ButtonStyle.Secondary, size = ButtonSize.Large, block = true)
-            }
-            is GroupJoinStage.Failed -> {
-                SheetMessage("Couldn't open the link", stage.text, CircasoIcon.Warning)
-                SheetActions("Try Again", onRetry, "Close", onDismiss)
+        // The group settles into the loading shapes' place: the sheet grows to it rather than jumping.
+        Column(
+            if (CircasoTheme.reduceMotion) Modifier.fillMaxWidth() else Modifier.fillMaxWidth().animateContentSize(tween(CircasoMotion.BaseMs)),
+            verticalArrangement = Arrangement.spacedBy(CircasoSpacing.s4),
+        ) {
+            when (val stage = shown.stage) {
+                GroupJoinStage.Loading -> JoinLoading()
+                is GroupJoinStage.Ready -> JoinPreview(stage.preview, stage.problem, shown.online, shown.joining, onJoin, onDismiss)
+                GroupJoinStage.Gone -> {
+                    SheetMessage("This link no longer works", "It was reset or turned off. Ask an admin of the group for a new one.", CircasoIcon.Link)
+                    CircasoButton("OK", onDismiss, size = ButtonSize.Large, block = true)
+                }
+                GroupJoinStage.NotAllowed -> {
+                    SheetMessage("You can't join with this link", "Ask an admin of the group to add you.", CircasoIcon.Ban)
+                    CircasoButton("OK", onDismiss, size = ButtonSize.Large, block = true)
+                }
+                GroupJoinStage.Offline -> if (shown.online) {
+                    // The phone says it is online, so nothing will retry by itself: the person can.
+                    SheetMessage("Couldn't reach Circaso", "Check your connection and try again.", CircasoIcon.Offline)
+                    SheetActions("Try Again", onRetry, "Close", onDismiss)
+                } else {
+                    SheetMessage("You're offline", "The group shows here by itself when you're back online.", CircasoIcon.Offline)
+                    CircasoButton("Close", onDismiss, style = ButtonStyle.Secondary, size = ButtonSize.Large, block = true)
+                }
+                is GroupJoinStage.Failed -> {
+                    SheetMessage("Couldn't open the link", stage.text, CircasoIcon.Warning)
+                    SheetActions("Try Again", onRetry, "Close", onDismiss)
+                }
             }
         }
     }
@@ -114,31 +129,38 @@ private fun JoinPreview(
         )
         BasicText("Group · ${memberCountText(preview.memberCount)}", style = t.subhead.copy(color = c.inkSecondary, textAlign = TextAlign.Center))
     }
-    preview.description?.let {
-        BasicText(it, Modifier.fillMaxWidth(), style = t.body.copy(color = c.ink), maxLines = DescriptionLines, overflow = TextOverflow.Ellipsis)
-    }
+    // The whole description is one tap away: it is what they are deciding on.
+    preview.description?.let { GroupDescription(it, Modifier.fillMaxWidth(), lines = DescriptionLines) }
     BasicText(JoinNote, style = t.footnote.copy(color = c.inkSecondary))
-    problem?.let { BasicText(it, Modifier.semantics { liveRegion = LiveRegionMode.Polite }, style = t.footnote.copy(color = c.critical)) }
+    // Offline, the one line that matters is that joining needs a connection; a failed try isn't said on top of it.
     if (!online) BasicText(JoinOffline, Modifier.semantics { liveRegion = LiveRegionMode.Polite }, style = t.footnote.copy(color = c.inkTertiary))
+    else problem?.let { BasicText(it, Modifier.semantics { liveRegion = LiveRegionMode.Polite }, style = t.footnote.copy(color = c.critical)) }
     Column(verticalArrangement = Arrangement.spacedBy(CircasoSpacing.s2)) {
         CircasoButton("Join Group", onJoin, size = ButtonSize.Large, block = true, enabled = online, busy = joining)
         CircasoButton("Not Now", onDismiss, style = ButtonStyle.Plain, size = ButtonSize.Large, block = true, enabled = !joining)
     }
 }
 
-/** While the link is looked up: the preview's own shapes, so the group settles into them. */
+/** While the link is looked up: the preview's own shapes (photo, name, size, two lines, two buttons), so the group settles into them. */
 @Composable
 private fun JoinLoading() {
+    val fill = CircasoTheme.colors.fillStrong
     Column(
         Modifier.fillMaxWidth().semantics { contentDescription = "Opening the group link" },
         horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(CircasoSpacing.s3),
     ) {
-        SkeletonBlock(Modifier.size(CircasoSizes.avatarXl), CircasoShapes.circle, color = CircasoTheme.colors.fillStrong)
-        SkeletonBlock(Modifier.fillMaxWidth(0.55f).height(24.dp), CircasoShapes.sm, color = CircasoTheme.colors.fillStrong)
-        SkeletonBlock(Modifier.fillMaxWidth(0.3f).height(16.dp), CircasoShapes.sm, color = CircasoTheme.colors.fillStrong)
-        SkeletonBlock(Modifier.fillMaxWidth().height(50.dp), CircasoShapes.lg, color = CircasoTheme.colors.fillStrong)
+        SkeletonBlock(Modifier.size(CircasoSizes.avatarXl), CircasoShapes.circle, color = fill)
+        SkeletonBlock(Modifier.fillMaxWidth(0.55f).height(SkeletonTitleLine), CircasoShapes.sm, color = fill)
+        SkeletonBlock(Modifier.fillMaxWidth(0.3f).height(SkeletonTextLine), CircasoShapes.sm, color = fill)
+        SkeletonBlock(Modifier.fillMaxWidth().height(SkeletonTextLine), CircasoShapes.sm, color = fill)
+        SkeletonBlock(Modifier.fillMaxWidth(0.8f).height(SkeletonTextLine), CircasoShapes.sm, color = fill)
+        SkeletonBlock(Modifier.fillMaxWidth().height(CircasoSizes.controlLg), CircasoShapes.md, color = fill)
+        SkeletonBlock(Modifier.fillMaxWidth().height(CircasoSizes.controlLg), CircasoShapes.md, color = fill)
     }
 }
 
-/** A long description is cut on the sheet (it reads whole in Group info once they're in). */
-private const val DescriptionLines = 6
+private val SkeletonTitleLine = 24.dp
+private val SkeletonTextLine = 16.dp
+
+/** How much of a description the sheet shows before "Show all". */
+private const val DescriptionLines = 4

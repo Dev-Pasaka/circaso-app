@@ -21,7 +21,10 @@ import kotlinx.coroutines.launch
 sealed interface GroupJoinStage {
     /** Asking the server what the link shows. */
     data object Loading : GroupJoinStage
-    /** No connection and nothing loaded: it opens by itself when the phone is back online. */
+    /**
+     * No answer and nothing loaded. Really offline, it opens by itself when the phone is back online; when the phone
+     * says it is online (a timeout, a dropped request) the sheet offers Try Again instead of a wait that may not end.
+     */
     data object Offline : GroupJoinStage
     /** The preview, with Join Group. [problem] is why a join didn't go through (said on the sheet, by the button). */
     data class Ready(val preview: GroupLinkPreview, val problem: String? = null) : GroupJoinStage
@@ -131,12 +134,15 @@ class GroupJoinViewModel(
     }
 
     private fun words(error: AppError): String =
-        if (error is AppError.Network) JoinOffline
+        if (error is AppError.Network) JoinUnreachable
         else ErrorMessages.forError(error, GroupLinkViewModel.LinkWords) + (ErrorMessages.reference(error)?.let { " Ref $it" } ?: "")
 }
 
 /** Joining needs the server; offline the button rests and this says why. */
 internal const val JoinOffline = "Joining needs a connection."
+
+/** A join that got no answer while the phone says it is online: nothing was joined, and they can try again. */
+internal const val JoinUnreachable = "Couldn't reach Circaso. Try again."
 
 /** "24 members", "1 member". */
 internal fun memberCountText(count: Int): String = if (count == 1) "1 member" else "$count members"

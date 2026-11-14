@@ -268,7 +268,7 @@ val messagingModule = module {
             sources = getOrNull(),
             editName = com.circaso.feature.names.presentation.EditNameController(get(), get()),
             verifiedCodes = com.circaso.feature.messaging.data.local.VerifiedCodesStore(get()),
-            editGroup = get(),
+            editGroup = get(), links = get(),
         )
     }
     // Group join links (2026-11-14): the admins' link screen, and the join sheet that sits over the whole app.

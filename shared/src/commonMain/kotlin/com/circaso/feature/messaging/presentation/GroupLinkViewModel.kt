@@ -39,11 +39,18 @@ data class GroupLinkUiState(
     val checked: Boolean = false,
     /** The first load failed for a reason other than being offline; said with a Try Again. */
     val loadFailed: String? = null,
+    /**
+     * The first load got no answer while the phone says it is online (a timeout, a dropped request) and there is no
+     * copy to show: said with a Try Again, so the screen never sits on its loading shapes.
+     */
+    val unreachable: Boolean = false,
     val online: Boolean = true,
     val work: GroupLinkWork? = null,
     val confirm: GroupLinkConfirm? = null,
     /** A one-line note for the toast ("Link copied", "The link is off"). */
     val message: String? = null,
+    /** [message] is a failure: shown as a problem, and for longer. */
+    val messageIsProblem: Boolean = false,
     /** Handed to the system share sheet once, then cleared. */
     val share: ShareMessage? = null,
 ) {
@@ -54,7 +61,9 @@ data class GroupLinkUiState(
     /** This phone can't read the group's name (its key is lost), so it has nothing true to publish. */
     val nameUnknown get() = chat?.nameKnown == false
     /** Nothing on this phone yet and no answer from the server: the first load. */
-    val loading get() = link == null && !checked && online && loadFailed == null
+    val loading get() = link == null && !checked && online && loadFailed == null && !unreachable
+    /** Resetting publishes the group's name again, so a phone that can't read it can't reset (it can still turn off). */
+    val canReset get() = canChange && !nameUnknown
     /** Offline with no copy of the link on this phone: nothing true to show but that. */
     val unknownOffline get() = link == null && !checked && !online
 }
@@ -86,12 +95,15 @@ class GroupLinkViewModel(
 
     /** M28, then the published preview is brought up to date if the group changed while nobody was looking. */
     fun load() {
-        _state.update { it.copy(loadFailed = null) }
+        _state.update { it.copy(loadFailed = null, unreachable = false) }
         viewModelScope.launch {
             when (val r = links.refresh(chatId)) {
                 is AppResult.Success -> { _state.update { it.copy(checked = true) }; links.republishIfStale(chatId) }
-                // Offline keeps what the phone has; anything else is said, with a way to try again.
-                is AppResult.Failure -> if (r.error !is AppError.Network) _state.update { it.copy(loadFailed = words(r.error)) }
+                // No answer keeps what the phone has. With nothing to show, the screen says so (offline, or that
+                // Circaso couldn't be reached) rather than waiting; anything else is said, with a way to try again.
+                is AppResult.Failure ->
+                    if (r.error is AppError.Network) _state.update { it.copy(unreachable = true) }
+                    else _state.update { it.copy(loadFailed = words(r.error)) }
             }
         }
     }
@@ -104,6 +116,7 @@ class GroupLinkViewModel(
     fun onConfirmed() {
         val confirm = _state.value.confirm ?: return
         _state.update { it.copy(confirm = null) }
+        if (confirm == GroupLinkConfirm.Reset && !_state.value.canReset) return
         when (confirm) {
             GroupLinkConfirm.Reset -> change(GroupLinkWork.Resetting, done = "New link made. The old one no longer works.") { links.reset(chatId) }
             GroupLinkConfirm.TurnOff -> change(GroupLinkWork.TurningOff, done = "The link is off.") { links.turnOff(chatId) }
@@ -116,13 +129,18 @@ class GroupLinkViewModel(
         _state.update { it.copy(work = work, message = null) }
         viewModelScope.launch {
             val r = call()
-            _state.update { it.copy(work = null, checked = it.checked || r is AppResult.Success, message = if (r is AppResult.Failure) words(r.error) else done) }
+            _state.update {
+                it.copy(
+                    work = null, checked = it.checked || r is AppResult.Success,
+                    message = if (r is AppResult.Failure) words(r.error) else done, messageIsProblem = r is AppResult.Failure,
+                )
+            }
         }
     }
 
     fun onShare() { val link = _state.value.link ?: return; _state.update { it.copy(share = ShareMessage(GroupLinkText.message(link), GroupLinkText.subject(link))) } }
     fun onShared() = _state.update { it.copy(share = null) }
-    fun onCopied() = _state.update { it.copy(message = "Link copied") }
+    fun onCopied() = _state.update { it.copy(message = "Link copied", messageIsProblem = false) }
     fun onMessageShown() = _state.update { it.copy(message = null) }
 
     private fun words(error: AppError): String =
@@ -134,12 +152,14 @@ class GroupLinkViewModel(
             "messaging.rate_limited" to "Too many tries. Please wait a moment.",
             "messaging.not_admin" to "Only the group's admins can manage its link.",
             GroupLinkErrors.NotFound to "This link no longer works. Ask an admin for a new one.",
+            // A server from before group links (the app and the server ship separately): the routes aren't there yet.
+            "request.not_found" to "Group links aren't available yet. Try again in a little while.",
         )
     }
 }
 
 /** What the link screen says is public, before the link is made and beside it after (the owner's words, 2026-11-14). */
-internal const val LinkPublicNote = "Anyone with the link can see the group's name, description and photo, and how many members it has. Members, messages and money stay private."
+internal const val LinkPublicNote = "Anyone with the link can see the group's name, description and photo, and how many members it has. Who is in the group, its messages and its money are hidden until someone joins."
 
 /** What joining gives, in a group that may hold money: an ordinary member, nothing more. */
-internal const val LinkJoinersNote = "People who join become members straight away. They see messages sent after they join and the group's money like any member, and can't move it."
+internal const val LinkJoinersNote = "People who join become members straight away. They see new messages and the group's wallet, like any member, and can't move its money."

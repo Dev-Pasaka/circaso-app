@@ -5,6 +5,7 @@ import com.circaso.feature.names.presentation.EditNameSheet
 import com.circaso.feature.names.presentation.ProfileNameLine
 import androidx.compose.foundation.layout.height
 import androidx.compose.runtime.setValue
+import androidx.compose.animation.animateContentSize
 import androidx.compose.ui.text.style.TextOverflow
 import com.circaso.designsystem.theme.CircasoShapes
 import androidx.compose.runtime.mutableStateOf
@@ -236,7 +237,7 @@ fun ChatInfoScreen(
             EditNameSheet(
                 editing, onDraft = { names?.onDraft(it) }, onSave = { names?.onSave() }, onUseTheirs = { names?.onUseTheirs() }, onDismiss = { names?.onDismiss() },
             )
-            CircasoSheet(visible = state.renaming, onDismiss = { viewModel.onRename(false) }, label = if (state.namingForPhoto) "Name the group" else "Edit group") {
+            CircasoSheet(visible = state.renaming, onDismiss = { viewModel.onRename(false) }, label = if (state.namingForPhoto) "Name the group" else "Edit group", dismissible = !state.saving) {
                 EditGroupContent(state, viewModel::onNameDraft, viewModel::onDescriptionDraft, viewModel::onRenameConfirm, onCancel = { viewModel.onRename(false) })
             }
             // Group wallets (GW7, CH9, §11.9, W8).
@@ -291,7 +292,7 @@ fun ChatInfoScreen(
                     if (state.isGroup) BasicText("${chat?.members?.size ?: 0} members" + if (state.money.enabled && state.money.money?.hasWallet == true) " · Group wallet" else "", style = t.subhead.copy(color = c.inkSecondary))
                     else PeerNameLines(chat?.members?.firstOrNull { it.userId == chat.peerId })
                     // The group's description (2026-11-14), under its name: what the group is for, in the admins' words.
-                    if (state.isGroup) chat?.description?.let { GroupDescription(it) }
+                    if (state.isGroup) chat?.description?.let { GroupDescription(it, Modifier.padding(horizontal = CircasoSpacing.s6, vertical = CircasoSpacing.s1)) }
                     if (state.isGroup && state.amAdmin && state.photosAvailable && !state.online) {
                         BasicText("Changing the group photo needs a connection.", style = t.footnote.copy(color = c.inkTertiary, textAlign = TextAlign.Center))
                     }
@@ -342,7 +343,7 @@ fun ChatInfoScreen(
                     if (state.amAdmin) {
                         // Group join links (2026-11-14): opens offline too, on the link this phone has.
                         RowDivider()
-                        ListRow("Invite via link", sub = "People join by themselves with a link", trailing = { RowValueChevron(null) }, onClick = onInviteLink)
+                        ListRow("Invite via link", sub = "People join by themselves with a link", trailing = { RowValueChevron(if (state.linkOn) "On" else null) }, onClick = onInviteLink)
                     }
                     if (!state.money.enabled) RowDivider()
                     if (!state.money.enabled) {
@@ -424,51 +425,71 @@ internal fun androidx.compose.foundation.layout.ColumnScope.EditGroupContent(
     }
     com.circaso.designsystem.chrome.SheetMessage(
         if (state.namingForPhoto || state.nameUnknown) "Name the group" else "Edit group",
-        why ?: "Everyone in the group sees the name and description. They are end-to-end encrypted, like your messages.",
+        // With the group's link on, a change here is published to the link's page too: said before Save, not after.
+        why ?: if (state.linkOn) "Everyone in the group sees the name and description. Anyone with the group's link sees them too."
+        else "Everyone in the group sees the name and description. They are end-to-end encrypted, like your messages.",
         if (state.nameUnknown || state.namingForPhoto) com.circaso.designsystem.components.CircasoIcon.Lock else com.circaso.designsystem.components.CircasoIcon.Pencil,
         tone = if (state.nameUnknown || state.namingForPhoto) com.circaso.designsystem.chrome.SheetTone.Warning else com.circaso.designsystem.chrome.SheetTone.Neutral,
     )
     CircasoTextField(value = state.nameDraft, onValueChange = onName, label = "Group name")
-    if (!state.namingForPhoto) {
-        // The description (2026-11-14) is edited where the name is; a photo change that only needs the name doesn't ask for it.
+    if (!state.namingForPhoto && !state.nameUnknown) {
+        // The description (2026-11-14) is edited where the name is. A photo change that only needs the name doesn't
+        // ask for it, and a phone that can't read the name can't read the description: it keeps the one there is.
         val limit = com.circaso.feature.messaging.data.repository.MaxGroupDescriptionChars
         val length = state.descriptionDraft.trim().length
         CircasoTextField(
             value = state.descriptionDraft, onValueChange = onDescription, label = "Description",
-            placeholder = "What the group is for (optional)", singleLine = false,
+            placeholder = "What the group is for (optional)", singleLine = false, enabled = !state.saving,
             error = if (state.descriptionTooLong) "A description can be up to $limit characters. This one is $length." else null,
         )
+        // Near the limit the count shows, so the end never comes as a surprise.
+        if (length >= DescriptionCountFrom && !state.descriptionTooLong) {
+            BasicText("$length/$limit", style = CircasoTheme.typography.footnote.copy(color = CircasoTheme.colors.inkTertiary))
+        }
     }
     val save = when { !state.namingForPhoto -> "Save"; state.removingPhoto -> "Remove Photo"; else -> "Save Photo" }
     com.circaso.designsystem.chrome.SheetActions(
         save, onSave, "Cancel", onCancel,
-        enabled = state.canChange && state.nameDraft.isNotBlank() && (state.namingForPhoto || (state.editChanged && !state.descriptionTooLong)),
-        note = if (!state.online) "Changing the group needs a connection." else null,
+        enabled = (state.canChange || state.saving) && state.nameDraft.isNotBlank() && (state.namingForPhoto || (state.editChanged && !state.descriptionTooLong)),
+        busy = state.saving,
+        note = state.editError ?: if (!state.online) "Changing the group needs a connection." else null,
+        noteIsError = state.editError != null,
     )
 }
 
 /**
- * A group's description under its name in Group info: centred like the header it belongs to, [GroupDescriptionLines]
- * lines until tapped, then whole. Long-pressing text isn't needed to read it; nothing here is an action.
+ * A group's description: under its name in Group info, and on the join sheet before someone joins. [lines] lines
+ * until tapped, then whole, with "Show all" / "Show less" under it when there is more, so the rest is never out of
+ * reach. The height change settles rather than snapping (not under Reduce Motion).
  */
 @Composable
-internal fun GroupDescription(text: String) {
+internal fun GroupDescription(text: String, modifier: Modifier = Modifier, lines: Int = GroupDescriptionLines) {
     val c = CircasoTheme.colors
     val t = CircasoTheme.typography
     var expanded by remember(text) { mutableStateOf(false) }
     var overflows by remember(text) { mutableStateOf(false) }
-    BasicText(
-        text,
-        Modifier.padding(horizontal = CircasoSpacing.s6, vertical = CircasoSpacing.s1)
-            .then(if (overflows || expanded) Modifier.clip(CircasoShapes.sm).pressable(onClick = { expanded = !expanded }, onClickLabel = if (expanded) "Show less" else "Show all") else Modifier),
-        style = t.body.copy(color = c.ink, textAlign = TextAlign.Center),
-        maxLines = if (expanded) Int.MAX_VALUE else GroupDescriptionLines,
-        overflow = TextOverflow.Ellipsis,
-        onTextLayout = { if (!expanded) overflows = it.hasVisualOverflow },
-    )
+    val more = overflows || expanded
+    Column(
+        modifier
+            .then(if (more) Modifier.clip(CircasoShapes.sm).pressable(onClick = { expanded = !expanded }, onClickLabel = if (expanded) "Show less" else "Show all") else Modifier)
+            .then(if (CircasoTheme.reduceMotion) Modifier else Modifier.animateContentSize(androidx.compose.animation.core.tween(com.circaso.designsystem.theme.CircasoMotion.BaseMs))),
+        horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(CircasoSpacing.s1),
+    ) {
+        BasicText(
+            text,
+            style = t.body.copy(color = c.ink, textAlign = TextAlign.Center),
+            maxLines = if (expanded) Int.MAX_VALUE else lines,
+            overflow = TextOverflow.Ellipsis,
+            onTextLayout = { if (!expanded) overflows = it.hasVisualOverflow },
+        )
+        if (more) BasicText(if (expanded) "Show less" else "Show all", style = t.footnote.copy(color = c.inkSecondary))
+    }
 }
 
 private const val GroupDescriptionLines = 4
+
+/** The description's count appears from here on. */
+private const val DescriptionCountFrom = 400
 
 @Composable
 internal fun PeerNameLines(peer: ChatMember?) {

@@ -80,6 +80,11 @@ internal fun GroupLinkPreview(name: String): Boolean {
         "group-link-turn-off" -> GroupLinkContent(linkState.copy(link = link, confirm = GroupLinkConfirm.TurnOff), {})
         "group-link-loading" -> GroupLinkContent(GroupLinkUiState(chat = linkGroup), {})
         "group-link-unknown-offline" -> GroupLinkContent(GroupLinkUiState(chat = linkGroup, online = false), {})
+        "group-link-unreachable" -> GroupLinkContent(GroupLinkUiState(chat = linkGroup, unreachable = true), {})
+        "group-link-not-admin" -> GroupLinkContent(linkState.copy(link = link, chat = linkGroup.copy(myRole = MemberRole.Member)), {})
+        "group-link-on-no-name" -> GroupLinkContent(linkState.copy(link = link, chat = linkGroup.copy(title = "Otieno, Wanjiru and 3 others", nameKnown = false)), {})
+        "group-link-on-photo-missing" -> GroupLinkContent(linkState.copy(link = link, chat = linkGroup.copy(avatarUrl = DemoPhotos.Juma)), {})
+        "group-link-on-photo" -> GroupLinkContent(linkState.copy(link = link.copy(hasPhoto = true), chat = linkGroup.copy(avatarUrl = DemoPhotos.Juma)), {})
         "group-link-failed" -> GroupLinkContent(GroupLinkUiState(chat = linkGroup, loadFailed = "Circaso is busy right now. Please try again in a moment. Ref req_K2a9"), {})
 
         "group-join" -> JoinPreview(GroupJoinStage.Ready(joinPreview()))
@@ -92,6 +97,9 @@ internal fun GroupLinkPreview(name: String): Boolean {
         "group-join-gone" -> JoinPreview(GroupJoinStage.Gone)
         "group-join-not-allowed" -> JoinPreview(GroupJoinStage.NotAllowed)
         "group-join-no-connection" -> JoinPreview(GroupJoinStage.Offline, online = false)
+        "group-join-unreachable" -> JoinPreview(GroupJoinStage.Offline)
+        "group-join-problem-offline" -> JoinPreview(GroupJoinStage.Ready(joinPreview(), problem = "Couldn't reach Circaso. Try again."), online = false)
+        "group-join-retry" -> JoinPreview(GroupJoinStage.Ready(joinPreview(), problem = "Couldn't reach Circaso. Try again."))
         "group-join-failed" -> JoinPreview(GroupJoinStage.Failed("Circaso is busy right now. Please try again in a moment. Ref req_K2a9"))
 
         "group-info-description" -> GroupInfoDescriptionPreview(linkGroup)
@@ -101,6 +109,15 @@ internal fun GroupLinkPreview(name: String): Boolean {
         }
         "group-edit-too-long" -> GroupInfoDescriptionPreview(linkGroup) {
             EditGroupContent(ChatInfoUiState(chat = linkGroup, renaming = true, nameDraft = linkGroup.title, descriptionDraft = LongDescription + " " + LongDescription), {}, {}, {}, {})
+        }
+        "group-edit-link-on" -> GroupInfoDescriptionPreview(linkGroup, linkOn = true) {
+            EditGroupContent(ChatInfoUiState(chat = linkGroup, linkOn = true, renaming = true, nameDraft = linkGroup.title, descriptionDraft = Description + "\nSubs welcome."), {}, {}, {}, {})
+        }
+        "group-edit-saving" -> GroupInfoDescriptionPreview(linkGroup) {
+            EditGroupContent(ChatInfoUiState(chat = linkGroup, renaming = true, saving = true, busy = true, nameDraft = linkGroup.title, descriptionDraft = "Subs welcome."), {}, {}, {}, {})
+        }
+        "group-edit-failed" -> GroupInfoDescriptionPreview(linkGroup) {
+            EditGroupContent(ChatInfoUiState(chat = linkGroup, renaming = true, nameDraft = linkGroup.title, descriptionDraft = "Subs welcome.", editError = "Circaso is busy right now. Please try again in a moment. Ref req_K2a9"), {}, {}, {}, {})
         }
         "group-edit-offline" -> GroupInfoDescriptionPreview(linkGroup) {
             EditGroupContent(ChatInfoUiState(chat = linkGroup, online = false, renaming = true, nameDraft = linkGroup.title, descriptionDraft = "Subs welcome."), {}, {}, {}, {})
@@ -124,7 +141,7 @@ private fun JoinPreview(stage: GroupJoinStage, online: Boolean = true, joining: 
  * link), composed from the screen's own pieces; [sheet] shows the Edit group sheet over it.
  */
 @Composable
-private fun GroupInfoDescriptionPreview(chat: Chat, sheet: (@Composable androidx.compose.foundation.layout.ColumnScope.() -> Unit)? = null) {
+private fun GroupInfoDescriptionPreview(chat: Chat, linkOn: Boolean = false, sheet: (@Composable androidx.compose.foundation.layout.ColumnScope.() -> Unit)? = null) {
     val c = CircasoTheme.colors
     val t = CircasoTheme.typography
     CircasoScaffold(
@@ -137,7 +154,7 @@ private fun GroupInfoDescriptionPreview(chat: Chat, sheet: (@Composable androidx
                 Avatar(chat.title, size = CircasoSizes.avatarXl, imageUrl = DemoPhotos.Juma)
                 BasicText(chat.title, style = t.title1.copy(color = c.ink, textAlign = TextAlign.Center))
                 BasicText("${chat.members.size} members", style = t.subhead.copy(color = c.inkSecondary))
-                chat.description?.let { GroupDescription(it) }
+                chat.description?.let { GroupDescription(it, Modifier.padding(horizontal = CircasoSpacing.s6, vertical = CircasoSpacing.s1)) }
             }
             SectionHeader("Group")
             // As the screen has them: rows straight on the grouped ground under their header.
@@ -147,7 +164,7 @@ private fun GroupInfoDescriptionPreview(chat: Chat, sheet: (@Composable androidx
             RowDivider()
             ListRow("Add members", onClick = {})
             RowDivider()
-            ListRow("Invite via link", sub = "People join by themselves with a link", onClick = {})
+            ListRow("Invite via link", sub = "People join by themselves with a link", trailing = { com.circaso.designsystem.components.RowValueChevron(if (linkOn) "On" else null) }, onClick = {})
         }
     }
 }
