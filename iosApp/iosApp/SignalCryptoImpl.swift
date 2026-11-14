@@ -224,8 +224,8 @@ final class SignalCryptoImpl: NSObject, SignalBridgeApi {
 
     /// One AES-256-GCM box a piece at a time (a moment's file up to 64 MiB, never whole in memory): libsignal's own
     /// incremental cipher, the same box as `gcmSeal` / `gcmOpen` above (nonce, then ciphertext, then the 16-byte tag).
-    func gcmStream(key: Data, nonce: Data, seal: Bool) -> BridgeGcmStream? {
-        GcmStreamImpl(key: key, nonce: nonce, seal: seal)
+    func gcmStream(key: Data, nonce: Data, sealing: Bool) -> BridgeGcmStream? {
+        GcmStreamImpl(key: key, nonce: nonce, seal: sealing)
     }
 
     func sha256Stream() -> BridgeHashStream {
