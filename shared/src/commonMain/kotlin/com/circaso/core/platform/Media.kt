@@ -10,6 +10,29 @@ data class GeoPoint(val latitude: Double, val longitude: Double, val accuracyMet
 interface LocationProvider {
     val available: Boolean
     suspend fun current(): GeoPoint?
+
+    /** Whether this phone's location can be read right now, found out without asking for anything. */
+    fun access(): LocationAccess = LocationAccess.Off
+
+    /** Shows the platform's own "while using the app" prompt when it hasn't been answered yet; what was decided. */
+    suspend fun requestAccess(): LocationAccess = access()
+
+    /**
+     * Where the phone is, for as long as the flow is collected and only while Circaso is on screen (no background
+     * updates, nothing is sent anywhere): the map's own "you are here". Needs [LocationAccess.Granted].
+     */
+    fun updates(): kotlinx.coroutines.flow.Flow<GeoPoint> = kotlinx.coroutines.flow.emptyFlow()
+}
+
+/** Whether Circaso may read where the phone is. */
+enum class LocationAccess {
+    Granted,
+    /** Never answered (on Android also "answered no before": the system doesn't say which until it is asked again). */
+    NotAsked,
+    /** Refused: only the phone's Settings can change it now. */
+    Denied,
+    /** Location is switched off for the whole phone, or this build has no location at all. */
+    Off,
 }
 
 object NoLocation : LocationProvider {
@@ -19,6 +42,18 @@ object NoLocation : LocationProvider {
 
 /** Opens the phone's maps app at a shared location. */
 expect fun openMap(latitude: Double, longitude: Double, label: String?)
+
+/**
+ * Opens the phone's maps app with directions from where the phone is to the point: the route, the travel time and
+ * the way of travelling are that app's. Circaso hands over the destination only, never the person's own position.
+ */
+expect fun openDirections(latitude: Double, longitude: Double)
+
+/** Google Maps' documented directions link (the app when installed, the website otherwise): origin is "my location". */
+internal fun googleDirectionsUrl(latitude: Double, longitude: Double) = "https://www.google.com/maps/dir/?api=1&destination=$latitude,$longitude"
+
+/** Apple Maps' directions link: no `saddr`, so it starts from where the phone is. */
+internal fun appleDirectionsUrl(latitude: Double, longitude: Double) = "https://maps.apple.com/?daddr=$latitude,$longitude"
 
 /**
  * Turns the coins sound for money received on or off. iOS plays a push's sound from the app's `Library/Sounds`, so

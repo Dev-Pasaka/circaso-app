@@ -8,18 +8,23 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Modifier
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
 import com.google.android.gms.maps.CameraUpdateFactory
 import com.google.android.gms.maps.model.CameraPosition
+import com.google.android.gms.maps.model.Dash
+import com.google.android.gms.maps.model.Gap
 import com.google.android.gms.maps.model.LatLng
 import com.google.android.gms.maps.model.LatLngBounds
 import com.google.android.gms.maps.model.MapStyleOptions
 import com.google.maps.android.compose.GoogleMap
 import com.google.maps.android.compose.MapProperties
 import com.google.maps.android.compose.MapUiSettings
+import com.google.maps.android.compose.Polyline
 import com.google.maps.android.compose.rememberCameraPositionState
 import kotlinx.coroutines.launch
 
@@ -28,7 +33,7 @@ import kotlinx.coroutines.launch
  * [MapCamera] and Compose draws them on top, so they track every pan and zoom.
  */
 @Composable
-internal actual fun PlatformMap(camera: MapCamera, styleJson: String, startLatitude: Double, startLongitude: Double, modifier: Modifier): Boolean {
+internal actual fun PlatformMap(camera: MapCamera, styleJson: String, startLatitude: Double, startLongitude: Double, line: MapLine?, lineColor: Color, modifier: Modifier): Boolean {
     val context = LocalContext.current
     val hasKey = remember {
         runCatching {
@@ -39,7 +44,10 @@ internal actual fun PlatformMap(camera: MapCamera, styleJson: String, startLatit
     if (!hasKey) return false
     val position = rememberCameraPositionState { this.position = CameraPosition.fromLatLngZoom(LatLng(startLatitude, startLongitude), 16f) }
     val scope = rememberCoroutineScope()
-    val padding = with(LocalDensity.current) { 96.dp.roundToPx() }
+    val density = LocalDensity.current
+    val padding = with(density) { FitPadding.roundToPx() }
+    val stroke = with(density) { MapLineWidth.toPx() }
+    val dashes = remember(density) { with(density) { listOf(Dash(MapLineDash.toPx()), Gap(MapLineGap.toPx())) } }
     GoogleMap(
         modifier = modifier,
         cameraPositionState = position,
@@ -47,7 +55,14 @@ internal actual fun PlatformMap(camera: MapCamera, styleJson: String, startLatit
         uiSettings = remember {
             MapUiSettings(zoomControlsEnabled = false, mapToolbarEnabled = false, myLocationButtonEnabled = false, compassEnabled = false, indoorLevelPickerEnabled = false)
         },
-    )
+        // The screen's bar and panel: framing and centring keep clear of them, and Google's mark stays in view.
+        contentPadding = PaddingValues(top = camera.topInset, bottom = camera.bottomInset),
+    ) {
+        if (line != null) Polyline(
+            points = listOf(LatLng(line.fromLatitude, line.fromLongitude), LatLng(line.toLatitude, line.toLongitude)),
+            color = lineColor, width = stroke, pattern = dashes, geodesic = true,
+        )
+    }
     SideEffect {
         camera.canMove = true
         camera.projector = { lat, lng -> position.projection?.toScreenLocation(LatLng(lat, lng))?.let { Offset(it.x.toFloat(), it.y.toFloat()) } }
@@ -65,6 +80,9 @@ internal actual fun PlatformMap(camera: MapCamera, styleJson: String, startLatit
     }
     return true
 }
+
+/** Room around a framing for the pins (62 dp tall, plus the "You" tag), on top of the screen's own insets. */
+private val FitPadding = 72.dp
 
 /** Camera moves: a touch longer than the app's "moment" so a pan across town reads as travel, not a jump. */
 private val CameraMs = com.circaso.designsystem.theme.CircasoMotion.MomentMs * 2
