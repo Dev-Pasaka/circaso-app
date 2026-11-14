@@ -30,7 +30,6 @@ import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.text.BasicText
-import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -39,7 +38,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
-import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
@@ -176,12 +174,14 @@ fun MediaComposeStage(
 
                 if (state.recordingVideo) RecordingPill(state, composer)
 
-                // Behind the review's caption, lock line and Send: a soft shade, so they read on any photo (the
-                // viewer's shade-bot, 2026-11-14). Not over the camera, which has its own dark controls.
-                if (reviewing && capture != null && customStage == null) Box(
-                    Modifier.align(Alignment.BottomCenter).fillMaxWidth().height(ReviewShade)
-                        .background(androidx.compose.ui.graphics.Brush.verticalGradient(listOf(androidx.compose.ui.graphics.Color.Transparent, CircasoTheme.colors.scrim))),
-                )
+                // Behind the review's strip, caption, lock line and Send: a soft shade, so they read on any photo
+                // (design M4's shade-bot, 340). It rides above the keyboard with them, and fades in and out. Not over
+                // the camera or a moment's own text and voice stages.
+                androidx.compose.animation.AnimatedVisibility(
+                    reviewing && capture != null && customStage == null, Modifier.align(Alignment.BottomCenter),
+                    enter = androidx.compose.animation.fadeIn(androidx.compose.animation.core.tween(CircasoMotion.BaseMs)),
+                    exit = androidx.compose.animation.fadeOut(androidx.compose.animation.core.tween(CircasoMotion.QuickMs)),
+                ) { StageShade(ReviewShade) }
 
                 Column(Modifier.align(Alignment.BottomCenter).fillMaxWidth().navigationBarsPadding().imePadding().padding(bottom = CircasoSpacing.s3), verticalArrangement = Arrangement.spacedBy(14.dp)) {
                     if (reviewing) {
@@ -477,7 +477,7 @@ fun fileKind(name: String, mime: String): String {
 /** The caption on the review (design M4): the stage's own field, growing as it is written. */
 @Composable
 private fun CaptionField(value: String, onChange: (String) -> Unit, enabled: Boolean = true) {
-    StageField(value, onChange, placeholder = "Add a caption", label = "Caption", modifier = Modifier.padding(horizontal = CircasoSpacing.s4), enabled = enabled)
+    com.circaso.designsystem.components.StageField(value, onChange, placeholder = "Add a caption", label = "Caption", modifier = Modifier.padding(horizontal = CircasoSpacing.s4), enabled = enabled)
 }
 
 /**
@@ -566,8 +566,17 @@ private fun StripTile(label: String, icon: CircasoIcon, description: String, wid
     }
 }
 
-/** How far up the review's bottom shade reaches (the viewer's is the same). */
-private val ReviewShade = 260.dp
+/** How far up the review's bottom shade reaches (design M4: taller than the viewer's, for the strip above the caption). */
+private val ReviewShade = 340.dp
+
+/** The stage's bottom shade (design shade-bot): clear to scrim, [height] tall, lifted above the keyboard. */
+@Composable
+fun StageShade(height: androidx.compose.ui.unit.Dp, modifier: Modifier = Modifier) {
+    Box(
+        modifier.fillMaxWidth().imePadding().height(height)
+            .background(androidx.compose.ui.graphics.Brush.verticalGradient(listOf(androidx.compose.ui.graphics.Color.Transparent, CircasoTheme.colors.scrim))),
+    )
+}
 
 /** The recents strip's tiles: a photo's square, and the wider glass tiles (Files, Allow access, an audio file). */
 private val StripTileSize = 56.dp

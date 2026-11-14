@@ -335,6 +335,11 @@ Nothing to show is never an error screen. The first moment was posted through th
   video at 3.5 Mbit/s so 60 s fits the 32 MiB limit, with a size check and plain copy; hold-to-record that can't leave
   the camera or mic running; the voice moment as designed with listen-back, 1:00 cap and slide to cancel). Also fixed:
   view count from the server, the heart undone when not taken, Only-share-with needs someone.
+- Moments' text inputs are the design system's (2026-11-14, Pasaka): `StageField` (designsystem/components) is the
+  chat composer's field (borderless, radius 24, 48 dp, grows) on glass, used for the viewer's reply and the review's
+  caption. Departures: V1's reply was an outlined 46 dp pill, M4's caption 44 dp radius 22; the viewer row's money,
+  heart and Send buttons are 48 dp beside it. The review has M4's 340 shade, lifted above the keyboard. The text
+  moment ("Type a moment") stays M2's large centred text.
 - The gallery is the phone's own library, as WhatsApp status (2026-11-14, Pasaka): nothing is imported and there is no
   other picker. The camera strip shows the newest photos and videos together in Photo and Video modes; the gallery is
   Close / Recents / Next with All / Photos / Videos full width, paged to the whole library. Removed: the Google Photos

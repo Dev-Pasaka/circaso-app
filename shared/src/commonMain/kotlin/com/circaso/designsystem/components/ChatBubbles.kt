@@ -546,14 +546,14 @@ fun ComposerBar(
     }
 }
 
-private val ComposerFieldMin = 48.dp
+internal val ComposerFieldMin = 48.dp
 
 /** C3's `.cx-chip-money` in the field: `padding: 0 10px`, and 26 tall on the 22 body line (2 above and below). */
 private val PillSide = 10.dp
 private val PillGrow = 2.dp
 /** The chip's ✕ when it is selected, as a share of the body size (11 dp at 17 sp), in the chip's text colour. */
 private const val CrossMarkEm = 0.65f
-private val ComposerFieldShape = RoundedCornerShape(24.dp)
+internal val ComposerFieldShape = RoundedCornerShape(24.dp)
 
 /** The 36 dp search pill on list screens (`fill`, icon, 17 pt placeholder). Tapping it focuses a real field below it. */
 @Composable

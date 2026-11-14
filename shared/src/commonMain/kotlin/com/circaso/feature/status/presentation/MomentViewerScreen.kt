@@ -18,7 +18,6 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
-import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.navigationBarsPadding
@@ -28,7 +27,6 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicText
-import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animate
 import androidx.compose.animation.core.spring
@@ -52,7 +50,6 @@ import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
@@ -80,6 +77,7 @@ import com.circaso.designsystem.chrome.CircasoSheet
 import com.circaso.designsystem.chrome.ConfirmSheet
 import com.circaso.designsystem.chrome.SheetHead
 import com.circaso.designsystem.chrome.ToastHost
+import com.circaso.designsystem.chrome.glass
 import com.circaso.designsystem.chrome.rememberToastState
 import com.circaso.designsystem.components.Avatar
 import com.circaso.designsystem.components.ButtonSize
@@ -313,7 +311,7 @@ private fun ViewerBody(state: MomentViewerUiState, vm: MomentViewerActions, onCl
         Stage(moment, state.media, vm.retryMedia, paused = paused, muted = state.muted, posterName = ring.name, posterAvatar = ring.avatarUrl)
         // Shade behind the header and the caption/reply, so white text reads on any photo (design shade-top/bot).
         Box(Modifier.fillMaxWidth().height(200.dp).background(Brush.verticalGradient(listOf(c.scrim, Color.Transparent))))
-        Box(Modifier.align(Alignment.BottomCenter).fillMaxWidth().height(260.dp).background(Brush.verticalGradient(listOf(Color.Transparent, c.scrim))))
+        com.circaso.feature.mediacompose.StageShade(260.dp, Modifier.align(Alignment.BottomCenter))
         // V7: gone while open; say so, then move on.
         LaunchedEffect(moment.momentId, state.media) { if (state.media == ViewerMedia.Gone) { kotlinx.coroutines.delay(2_000); vm.next() } }
 
@@ -381,7 +379,7 @@ private fun ViewerBody(state: MomentViewerUiState, vm: MomentViewerActions, onCl
                 // The row's gaps are spacers, so the money button can fold away without leaving one behind.
                 Row(verticalAlignment = Alignment.Bottom) {
                     // The stage's own field (the chat composer's, on glass), growing as the reply is written.
-                    com.circaso.feature.mediacompose.StageField(
+                    com.circaso.designsystem.components.StageField(
                         state.reply, vm.onReply, placeholder = "Reply to ${ring.name.substringBefore(' ')}", label = "Reply to ${ring.name}",
                         modifier = Modifier.weight(1f), maxLines = 3, onFocus = vm.onReplyFocus,
                     )
@@ -399,13 +397,13 @@ private fun ViewerBody(state: MomentViewerUiState, vm: MomentViewerActions, onCl
                         exit = androidx.compose.animation.fadeOut(leave) + androidx.compose.animation.shrinkHorizontally(tween(if (still) 0 else com.circaso.designsystem.theme.CircasoMotion.ExitMs)),
                     ) {
                         Row {
-                            GlassButton(CircasoIcon.Money, "Send money to ${ring.name.substringBefore(' ')} for this moment", dimmed = !state.online, onClick = vm.pay)
+                            GlassButton(CircasoIcon.Money, "Send money to ${ring.name.substringBefore(' ')} for this moment", dimmed = !state.online, size = com.circaso.designsystem.components.StageFieldMin, onClick = vm.pay)
                             androidx.compose.foundation.layout.Spacer(Modifier.width(10.dp))
                         }
                     }
-                    if (state.reply.isNotBlank()) GlassButton(CircasoIcon.ArrowUp, "Send reply", onClick = vm.sendReply)
+                    if (state.reply.isNotBlank()) GlassButton(CircasoIcon.ArrowUp, "Send reply", size = com.circaso.designsystem.components.StageFieldMin, onClick = vm.sendReply)
                     else Box {
-                        ReactButton(moment.reaction, state.online, vm.openPicker)
+                        ReactButton(moment.reaction, state.online, com.circaso.designsystem.components.StageFieldMin, vm.openPicker)
                         // The chats' reaction bubble (any emoji), floating just above the button at the screen's end.
                         if (state.picking) ReactionPicker(
                             current = moment.reaction, onPick = vm.react, onDismiss = vm.closePicker,
@@ -592,13 +590,15 @@ private fun Segments(moments: List<Moment>, index: Int, current: Moment, paused:
 @Composable
 private fun GlassButton(
     icon: CircasoIcon, label: String, filled: Boolean = false,
+    /** Beside the reply field it is as tall as the field, so the row is one height (design V1). */
+    size: androidx.compose.ui.unit.Dp = CircasoSizes.controlMd,
     /** It needs the server and there is none: it looks off (as the heart does) and says so; the tap still explains. */
     dimmed: Boolean = false,
     onClick: () -> Unit,
 ) {
     val c = CircasoTheme.colors
     Box(
-        Modifier.size(CircasoSizes.controlMd).clip(CircasoShapes.circle).background(if (filled) c.ink else c.glass)
+        Modifier.size(size).clip(CircasoShapes.circle).then(if (filled) Modifier.background(c.ink) else Modifier.glass(CircasoShapes.circle, edge = false))
             .pressable(onClick = onClick).semantics(mergeDescendants = true) { contentDescription = label; if (dimmed) stateDescription = "Needs a connection" },
         contentAlignment = Alignment.Center,
     ) {
@@ -686,11 +686,11 @@ private const val SheetSettleMillis = 120
 
 /** My reaction to this moment: the emoji I chose, or a heart outline that opens the reaction picker. */
 @Composable
-private fun ReactButton(reaction: String?, online: Boolean, onClick: () -> Unit) {
+private fun ReactButton(reaction: String?, online: Boolean, size: androidx.compose.ui.unit.Dp = CircasoSizes.controlMd, onClick: () -> Unit) {
     val c = CircasoTheme.colors
     // Reactions need the server: offline it looks off and says so before the tap (a tap still explains, in a toast).
     Box(
-        Modifier.size(CircasoSizes.controlMd).clip(CircasoShapes.circle).background(c.glass)
+        Modifier.size(size).clip(CircasoShapes.circle).glass(CircasoShapes.circle, edge = false)
             .pressable(onClick = onClick).semantics(mergeDescendants = true) {
                 contentDescription = reaction?.let { "Your reaction $it. Change, opens reactions" } ?: "React to this moment, opens reactions"
                 if (!online) stateDescription = "Needs a connection"
