@@ -213,6 +213,28 @@ class AndroidMediaLibrary(private val context: Context) : MediaLibrary {
         return recents(LibraryKind.Photo, limit, ask = false) to recents(LibraryKind.Video, limit, ask = false)
     }
 
+    override val limitedOffersAllowAll: Boolean get() = Build.VERSION.SDK_INT >= 34
+
+    override suspend fun manageVisual(): LibraryAccess {
+        val kinds = listOf(LibraryKind.Photo, LibraryKind.Video)
+        fun weaker() = kinds.map(::accessFor).let { a ->
+            when {
+                a.all { it == LibraryAccess.Granted } -> LibraryAccess.Granted
+                a.all { it == LibraryAccess.Denied } -> LibraryAccess.Denied
+                else -> LibraryAccess.Limited
+            }
+        }
+        if (weaker() == LibraryAccess.Granted) return LibraryAccess.Granted
+        // One prompt for both ("photos and videos"): on Android 14 it offers Allow all. Answered at once with no
+        // prompt shown (refused for good): the app's settings, where the person can allow it.
+        val started = System.currentTimeMillis()
+        PermissionBridge.requestAll(requestFor(LibraryKind.Photo))
+        kinds.forEach(::markAsked)
+        val after = weaker()
+        if (after != LibraryAccess.Granted && System.currentTimeMillis() - started < 400) openAppSettings()
+        return after
+    }
+
     override suspend fun manage(kind: LibraryKind): LibraryAccess {
         val before = accessFor(kind)
         if (before == LibraryAccess.Granted) return before

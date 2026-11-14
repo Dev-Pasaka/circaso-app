@@ -102,6 +102,12 @@ private class FakeLibrary : MediaLibrary {
         return LibraryRecents(if (a == LibraryAccess.Denied) emptyList() else items[kind].orEmpty().take(limit), a)
     }
     override suspend fun manage(kind: LibraryKind): LibraryAccess { managed += kind; afterManage?.let { access[kind] = it }; return access.getValue(kind) }
+    var visualManaged = 0
+    override suspend fun manageVisual(): LibraryAccess {
+        visualManaged++
+        afterManage?.let { access[LibraryKind.Photo] = it; access[LibraryKind.Video] = it }
+        return access.getValue(LibraryKind.Photo)
+    }
     override suspend fun load(item: LibraryItem) = media[item.id]
     override suspend fun pick(kind: LibraryKind): CapturedMedia? = systemPicks.firstOrNull()
     override suspend fun pickMany(max: Int) = systemPicks.take(max)
@@ -298,12 +304,15 @@ class MomentComposerViewModelTest {
         // Photos but not videos: the strip shows what it can and says it can't see everything.
         assertEquals(LibraryAccess.Limited, vm.state.value.recentsAccess)
         assertEquals(listOf("p1"), vm.state.value.recents.map { it.id })
+        assertEquals(com.circaso.feature.mediacompose.RecentsGap.NoVideos, vm.state.value.recentsGap, "it says videos are what it can't see")
         library.items[LibraryKind.Video] = listOf(video("v1", 5_000, at = 2))
         library.afterManage = LibraryAccess.Granted
-        library.access[LibraryKind.Video] = LibraryAccess.Granted // "Allow all" covers videos too
-        vm.manageAccess()
+        vm.manageAccess() // from Photo mode: asks for photos and videos together, so the missing videos are asked for
+        assertEquals(1, library.visualManaged)
+        assertTrue(library.managed.isEmpty(), "never photos alone, which are already allowed")
         assertEquals(listOf("v1", "p1"), vm.state.value.recents.map { it.id })
         assertEquals(LibraryAccess.Granted, vm.state.value.recentsAccess)
+        assertEquals(null, vm.state.value.recentsGap)
     }
 
     @Test fun aTapUsesOneAndSharePostsIt() = runTest(dispatcher) {
