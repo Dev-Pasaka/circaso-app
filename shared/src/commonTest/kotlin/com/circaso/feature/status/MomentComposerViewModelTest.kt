@@ -52,6 +52,7 @@ import com.circaso.feature.status.domain.PendingState
 import com.circaso.feature.mediacompose.ComposerCapture
 import com.circaso.feature.mediacompose.ComposerMode
 import com.circaso.feature.status.presentation.ForwardMedia
+import com.circaso.feature.mediacompose.GalleryPage
 import com.circaso.feature.mediacompose.GalleryTab
 import com.circaso.feature.status.presentation.MomentComposerViewModel
 import com.circaso.feature.status.presentation.MomentForwardViewModel
@@ -104,6 +105,8 @@ private class FakeLibrary : MediaLibrary {
     override suspend fun load(item: LibraryItem) = media[item.id]
     override suspend fun pick(kind: LibraryKind): CapturedMedia? = systemPicks.firstOrNull()
     override suspend fun pickMany(max: Int) = systemPicks.take(max)
+    var cloudPicks: List<CapturedMedia> = emptyList()
+    override suspend fun pickCloud(max: Int) = com.circaso.core.platform.CloudPicks(cloudPicks.take(max), (cloudPicks.size - max).coerceAtLeast(0))
     override suspend fun read(path: String) = files[path]
     override suspend fun filmstrip(path: String, count: Int) = List(count) { ByteArray(1) }
     override suspend fun trim(path: String, startMs: Long, endMs: Long, maxBytes: Long): CapturedMedia? {
@@ -353,6 +356,50 @@ class MomentComposerViewModelTest {
         assertEquals(listOf("p-new", "v-mid", "p-old"), vm.state.value.gallery!!.items.map { it.id })
         vm.galleryTab(GalleryTab.Videos)
         assertEquals(listOf("v-mid"), vm.state.value.gallery!!.items.map { it.id })
+    }
+
+    @Test fun theGalleryReadsTheWholeLibraryAPageAtATime() = runTest(dispatcher) {
+        library.items[LibraryKind.Photo] = List(650) { photo("p$it", at = 10_000L - it) }
+        library.items[LibraryKind.Video] = List(20) { video("v$it", 4_000, at = 5_000L - it) }
+        val vm = composer()
+        vm.openGallery()
+        val first = vm.state.value.gallery!!
+        assertEquals(GalleryPage, first.photos.size)
+        assertEquals(false, first.complete)
+        assertEquals(GalleryPage, first.items.size, "All holds back the older videos until the photos reach them")
+        vm.loadMoreGallery()
+        assertEquals(2 * GalleryPage, vm.state.value.gallery!!.photos.size)
+        vm.loadMoreGallery()
+        val all = vm.state.value.gallery!!
+        assertEquals(670, all.items.size, "every photo and video on the phone")
+        assertEquals(true, all.complete)
+        vm.loadMoreGallery()
+        assertEquals(670, vm.state.value.gallery!!.items.size, "nothing more is read once the library is done")
+    }
+
+    @Test fun theCloudOptionAddsWhatWasChosenAfterWhatWasTicked() = runTest(dispatcher) {
+        library.items[LibraryKind.Photo] = listOf(photo("p1", at = 2), photo("p2", at = 1))
+        library.media["p1"] = CapturedMedia(ByteArray(1), "image/jpeg", 1, 1)
+        library.media["p2"] = CapturedMedia(ByteArray(2), "image/jpeg", 2, 2)
+        library.cloudPicks = listOf(CapturedMedia(ByteArray(3), "image/jpeg", 3, 3))
+        val vm = composer()
+        vm.openGallery()
+        vm.toggle(library.items.getValue(LibraryKind.Photo)[1])
+        vm.toggle(library.items.getValue(LibraryKind.Photo)[0])
+        vm.pickFromCloud()
+        val shots = vm.state.value.items.map { (it.capture as ComposerCapture.Shot).media.width }
+        assertEquals(listOf(2, 1, 3), shots, "the ticked ones in their order, then the cloud's")
+        assertNull(vm.state.value.gallery)
+    }
+
+    @Test fun closingTheCloudPickerKeepsTheGalleryAndTheTicks() = runTest(dispatcher) {
+        library.items[LibraryKind.Photo] = listOf(photo("p1", at = 2))
+        val vm = composer()
+        vm.openGallery()
+        vm.toggle(library.items.getValue(LibraryKind.Photo)[0])
+        vm.pickFromCloud()
+        assertEquals(1, vm.state.value.selection.size)
+        assertNotNull(vm.state.value.gallery)
     }
 
     @Test fun aVideoOverAMinuteOpensTheTrimmerAndCannotBeSharedUntilTrimmed() = runTest(dispatcher) {

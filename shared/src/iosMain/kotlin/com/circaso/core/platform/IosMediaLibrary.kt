@@ -125,6 +125,15 @@ object MediaLibraryBridge {
 class IosMediaLibrary : MediaLibrary {
     override suspend fun access(): LibraryAccess = access(ask = true)
 
+    /** The system picker (PHPicker) shows the whole library, iCloud included, whatever Circaso may read. */
+    override suspend fun cloudLabel(): String = "Photo Library"
+
+    /** The next page: one lazy fetch of the whole library, read from [offset] (PHFetchResult loads only what's asked). */
+    override suspend fun page(kind: LibraryKind, offset: Int, limit: Int): List<LibraryItem> {
+        if (kind == LibraryKind.Audio || access(ask = false) == LibraryAccess.Denied) return emptyList()
+        return fetch(kind, limit, offset)
+    }
+
     private suspend fun access(ask: Boolean): LibraryAccess {
         val status = PHPhotoLibrary.authorizationStatusForAccessLevel(PHAccessLevelReadWrite)
         val answer = if (status == PHAuthorizationStatusNotDetermined && ask) {
@@ -158,15 +167,17 @@ class IosMediaLibrary : MediaLibrary {
         return access(ask = false)
     }
 
-    private suspend fun fetch(kind: LibraryKind, limit: Int): List<LibraryItem> {
+    private suspend fun fetch(kind: LibraryKind, limit: Int, offset: Int = 0): List<LibraryItem> {
         return withContext(Dispatchers.Default) {
             val options = PHFetchOptions().apply {
                 sortDescriptors = listOf(NSSortDescriptor.sortDescriptorWithKey("creationDate", ascending = false))
-                fetchLimit = limit.toULong()
+                // The first page asks for just what it shows; later ones index into the whole (lazy) result.
+                if (offset == 0) fetchLimit = limit.toULong()
             }
             val video = kind == LibraryKind.Video
             val result = PHAsset.fetchAssetsWithMediaType(if (video) PHAssetMediaTypeVideo else PHAssetMediaTypeImage, options)
-            (0 until result.count.toInt()).mapNotNull { i ->
+            val end = minOf(result.count.toInt(), offset + limit)
+            (offset until end).mapNotNull { i ->
                 val asset = result.objectAtIndex(i.toULong()) as? PHAsset ?: return@mapNotNull null
                 LibraryItem(
                     id = asset.localIdentifier, kind = kind, durationMs = if (video) (asset.duration * 1000).toLong() else null,

@@ -68,15 +68,45 @@ data class GalleryState(
     val videos: List<LibraryItem> = emptyList(),
     /** Null until the phone has answered (asking for access can take a while). */
     val access: LibraryAccess? = null,
+    /**
+     * Photos and videos together, newest first, merged when a page lands (not while drawing). While a kind has more
+     * to read, nothing older than its last read item is in it, so the next page lands below what's on screen.
+     */
+    val all: List<LibraryItem> = emptyList(),
+    /**
+     * Each kind read to its end (2026-11-14: the whole library, not the newest 120): the grid reads the next
+     * [GalleryPage] of each kind as it nears its end, until both are done.
+     */
+    val photosDone: Boolean = false,
+    val videosDone: Boolean = false,
+    val loadingMore: Boolean = false,
+    /** The cloud option's name ("Google Photos" on Android with it installed, "Photo Library" on iPhone). */
+    val cloudLabel: String = "Photos",
 ) {
     val items: List<LibraryItem>
         get() = when (tab) {
-            GalleryTab.All -> (photos + videos).sortedByDescending { it.addedAt }
+            GalleryTab.All -> all
             GalleryTab.Photos -> photos
             GalleryTab.Videos -> videos
         }
     val loading: Boolean get() = access == null
+    val complete: Boolean get() = photosDone && videosDone
+
+    companion object {
+        /** [photos] and [videos] (each newest first) as the All tab shows them. */
+        fun merge(photos: List<LibraryItem>, videos: List<LibraryItem>, photosDone: Boolean, videosDone: Boolean): List<LibraryItem> {
+            val cutoff = listOfNotNull(
+                photos.lastOrNull()?.takeIf { !photosDone }?.addedAt,
+                videos.lastOrNull()?.takeIf { !videosDone }?.addedAt,
+            ).maxOrNull()
+            val all = (photos + videos).sortedByDescending { it.addedAt }
+            return if (cutoff == null) all else all.filter { it.addedAt >= cutoff }
+        }
+    }
 }
+
+/** How many photos and how many videos the gallery reads at a time. */
+const val GalleryPage = 300
 
 /** M3b: trimming one video to a minute or less. Times are in milliseconds from the start of the original. */
 data class TrimState(
@@ -206,7 +236,7 @@ class MediaComposer(
     private val read: () -> MediaComposeState,
     private val write: ((MediaComposeState) -> MediaComposeState) -> Unit,
     /** At most this many at once, the same for moments and chats. */
-    private val maxItems: Int = MomentPickMax,
+    val maxItems: Int = MomentPickMax,
     /** The largest file that may be sent: the server's attachment limit, less encryption. */
     val maxBytes: Long = MomentMediaMaxBytes,
     /**
@@ -327,17 +357,80 @@ class MediaComposer(
         use { library.pickMany(left) }
     }
 
+    /**
+     * The gallery's cloud option (2026-11-14): Google Photos' own picker on Android (the system's photo picker where
+     * it isn't installed), the system Photos picker with iCloud on iPhone. No permission needed. What was ticked in the
+     * grid goes first, then what was chosen there, onto the review; closing the picker changes nothing.
+     */
+    fun pickFromCloud() {
+        val ticked = state.selection
+        val left = maxItems - state.items.size - ticked.size
+        if (left <= 0) { update { it.copy(error = "You can pick up to $maxItems at a time.") }; return }
+        if (state.loadingPick) return
+        scope.launch {
+            val picked = library.pickCloud(left)
+            if (picked.media.isEmpty()) return@launch
+            if (picked.more > 0) update { it.copy(error = "Added the first ${picked.media.size}. You can pick up to $maxItems at a time.") }
+            use { ticked.mapNotNull { library.load(it) } + picked.media }
+        }
+    }
+
     fun openGallery() {
         update { it.copy(gallery = GalleryState(), selecting = true) }
         loadGallery()
     }
 
+    /** The gallery's one read at a time: a new first read (after Allow access) cancels a page still loading. */
+    private var galleryJob: kotlinx.coroutines.Job? = null
+
     private fun loadGallery() {
-        scope.launch {
-            val (photos, videos) = library.recentsVisual(120, ask = true)
+        galleryJob?.cancel()
+        galleryJob = scope.launch {
+            val label = library.cloudLabel()
+            val (photos, videos) = library.recentsVisual(GalleryPage, ask = true)
             // The wider of the two answers decides what the screen says (one kind allowed is still a gallery).
             val access = listOf(photos.access, videos.access).minBy { it.ordinal }
-            update { s -> s.gallery?.let { s.copy(gallery = it.copy(photos = photos.items, videos = videos.items, access = access)) } ?: s }
+            val photosDone = photos.items.size < GalleryPage
+            val videosDone = videos.items.size < GalleryPage
+            val all = GalleryState.merge(photos.items, videos.items, photosDone, videosDone)
+            update { s ->
+                s.gallery?.let {
+                    s.copy(gallery = it.copy(
+                        photos = photos.items, videos = videos.items, access = access, all = all,
+                        photosDone = photosDone, videosDone = videosDone, loadingMore = false, cloudLabel = label,
+                    ))
+                } ?: s
+            }
+        }
+    }
+
+    /**
+     * The grid is near its end: the next [GalleryPage] of each kind not yet done, read from where it left off. A read
+     * that fails keeps what's on screen and may be tried again on the next scroll.
+     */
+    fun loadMoreGallery() {
+        val g = state.gallery ?: return
+        if (g.complete || g.loadingMore || g.loading || g.access == LibraryAccess.Denied) return
+        update { s -> s.copy(gallery = s.gallery?.copy(loadingMore = true)) }
+        galleryJob = scope.launch {
+            try {
+                val morePhotos = if (g.photosDone) emptyList() else library.page(LibraryKind.Photo, g.photos.size, GalleryPage)
+                val moreVideos = if (g.videosDone) emptyList() else library.page(LibraryKind.Video, g.videos.size, GalleryPage)
+                val photos = (g.photos + morePhotos).distinctBy { it.id }
+                val videos = (g.videos + moreVideos).distinctBy { it.id }
+                val photosDone = g.photosDone || morePhotos.size < GalleryPage
+                val videosDone = g.videosDone || moreVideos.size < GalleryPage
+                val all = GalleryState.merge(photos, videos, photosDone, videosDone)
+                update { s ->
+                    s.gallery?.let { s.copy(gallery = it.copy(photos = photos, videos = videos, all = all, photosDone = photosDone, videosDone = videosDone)) } ?: s
+                }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                // Kept as it was: the next scroll near the end tries again.
+            } finally {
+                update { s -> s.copy(gallery = s.gallery?.copy(loadingMore = false)) }
+            }
         }
     }
 
