@@ -427,8 +427,12 @@ class MomentsRepositoryImpl(
 
     /** The decrypted file on this phone as the viewer takes it: a video by its path alone, a photo or voice by its bytes. */
     private suspend fun loaded(moment: Moment, name: String): MomentMediaLoad? {
+        if (moment.kind == MomentKind.Video) {
+            // Under a name the phone's player will open (iPhone needs the extension).
+            val ext = if (moment.media?.mime?.contains("quicktime") == true) "mov" else "mp4"
+            files.playablePath(name, ext)?.let { return MomentMediaLoad.Loaded(ByteArray(0), it) }
+        }
         val path = files.path(name)
-        if (moment.kind == MomentKind.Video && path != null) return MomentMediaLoad.Loaded(ByteArray(0), path)
         return files.read(name)?.let { MomentMediaLoad.Loaded(it, path) }
     }
 
