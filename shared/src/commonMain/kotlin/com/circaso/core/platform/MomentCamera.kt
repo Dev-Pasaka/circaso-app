@@ -103,8 +103,20 @@ const val MomentThumbSide = 96
  * 720p was visibly softer than the phone's own camera).
  */
 const val MomentVideoBitRate = MomentVideoEncoding.BitRate1080p30
-/** The server's limit for a moment's encrypted media (ST1); checked before sharing so nobody waits for a refusal. */
-const val MomentMediaMaxBytes = 32L * 1024 * 1024 - 64
+/**
+ * The most a moment's file may be, the one place the number lives: the server's limit for its ciphertext (ST1, 64 MiB
+ * since 2026-11-14; Pasaka: "fast file uploads and at the same time improve the quality"), less the box around it.
+ * A minute of 1080p30 then keeps about 7.5 Mbit/s of the 8 it deserves (it was about 3.7 at 32 MiB), a minute from
+ * the in-app camera goes as it was recorded, and anything up to this goes untouched. Not more: a higher limit would
+ * buy a full minute almost nothing, and the file is one AES-GCM box that an iPhone still seals and opens in memory.
+ */
+const val MomentMediaMaxBytes = 64L * 1024 * 1024 - 64
+/**
+ * What a server that hasn't been updated yet takes (32 MiB until 2026-11-14). When it refuses a larger video
+ * (`status.media_invalid` on ST1) the video is made to fit this and sent again, so the order of the two releases
+ * never matters.
+ */
+const val MomentMediaLegacyMaxBytes = 32L * 1024 * 1024 - 64
 /**
  * The largest video file a moment can be made from (Pasaka, 2026-11-14: post like WhatsApp). A video of a minute or
  * less over [MomentMediaMaxBytes] is accepted and made smaller after Post, in the background; a minute of anything a

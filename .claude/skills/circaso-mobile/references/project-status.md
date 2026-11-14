@@ -94,6 +94,30 @@ Spaces tagged `archive/spaces-v1`; Room v20 drops its tables); the backend keeps
       be made smaller to post" was tried and left out: it read as if the video would be cut shorter.
     - Sizes at a glance use `compactSize` ("1.4 GB", "146 MB", "8.4 MB"; binary units like every other size in the
       app, so the Redmi's 145,978,653-byte clip reads "139 MB").
+  - **A moment's file up to 64 MiB (2026-11-14, Pasaka: "fast file uploads and at the same time improve the
+    quality"; was 32 MiB; where this note says 32 MiB above, read 64).** One number, `MomentMediaMaxBytes`
+    (`core/platform/MomentCamera.kt`); the backend's is `STATUS_MEDIA_MAX_BYTES` (backend PR "a moment's file up to
+    64 MiB"). What it buys: a full minute of 1080p30 keeps about 7.5 Mbit/s of the 8 it aims for (it was about 3.7),
+    a minute of 1080p60 keeps its size (it dropped to 720p), anything up to 40 s gets the full rate, a minute from the
+    in-app camera goes as recorded, and any file up to 64 MiB goes untouched. Not more than 64: a higher limit buys
+    a full minute almost nothing and costs upload time and memory. The bigger plan (chunked encryption, an original
+    and a quick version, streaming) is a later project.
+    - **Memory, which is what bounded the number.** A moment's file is one AES-GCM box that every app version must
+      open, and it was sealed and opened in memory: on Android about three to four times the file (the plaintext,
+      the JCA's own buffer, the ciphertext, the nonce-plus-ciphertext copy), with no `largeHeap`, and the viewer kept
+      the opened video's bytes while it played. Now (`core/crypto/SingleBoxFile`): Android seals and opens from file
+      to file a megabyte at a time with libsignal's incremental AES-256-GCM (already in the app; the same bytes as
+      before, checked against the JCA in `SingleBoxFileTest`); the download goes straight to a file; a video is
+      handed to the viewer by its path, never its bytes. iPhone has no streaming GCM in the app yet, so it still
+      seals and opens in memory, about four times the file (256 MB at the limit), outside any fixed heap.
+    - **Either release order works.** A server still at 32 MiB answers `status.media_invalid` to a larger video at
+      ST1: the app then makes the video fit 32 MiB (`MomentMediaLegacyMaxBytes`) and posts it, and for the rest of
+      that run makes videos fit 32 MiB straight away (`MomentsRepositoryImpl.fitOlderServer`). An older app keeps
+      sending at most 32 MiB to the new server. An older app **viewing** a new, larger moment still opens it in
+      memory: on an Android phone with a small heap a video near 64 MiB may fail to open there ("couldn't load")
+      until that phone updates.
+    - Shared in from another app, a video for a moment is still held to the post limit (now 64 MiB) by the share
+      screen's own check; picked in the app it may be up to 1 GB.
   - **No Room change:** `preparing` is a new value of the `state` text column and the rest is in the draft JSON
     (`PendingDraft.source`, `encoded`, `tries`); the database stays at version 22.
   - **Departures from M4–M6:** none in layout. M4's review loses the "Making the video smaller to share…" footnote

@@ -34,11 +34,12 @@ import com.circaso.feature.status.domain.PendingMoment
 import com.circaso.feature.status.domain.PendingState
 import io.ktor.client.HttpClient
 import com.circaso.core.platform.putFile
-import io.ktor.client.request.get
+import io.ktor.client.request.prepareGet
+import io.ktor.client.statement.bodyAsChannel
+import io.ktor.utils.io.readAvailable
 import io.ktor.client.request.header
 import io.ktor.client.request.put
 import io.ktor.client.request.setBody
-import io.ktor.client.statement.readRawBytes
 import io.ktor.http.isSuccess
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
@@ -390,10 +391,14 @@ class MomentsRepositoryImpl(
         body.media?.mediaId?.let { files.delete(it) }
     }
 
-    /** This phone's copy, else ST8, checked against the digest in the body and decrypted; kept for next time. */
+    /**
+     * This phone's copy, else ST8, checked against the digest in the body and decrypted; kept for next time. A video
+     * is handed over by its file alone (never read into memory: it is up to 64 MiB since 2026-11-14); the download
+     * goes straight to a file, and where the phone can it is opened from file to file too ([SingleBoxFile]).
+     */
     override suspend fun media(moment: Moment): MomentMediaLoad {
         val media = moment.media ?: return MomentMediaLoad.Failed(null)
-        files.read(media.mediaId)?.let { return MomentMediaLoad.Loaded(it, files.path(media.mediaId)) }
+        loaded(moment, media.mediaId)?.let { return it }
         val link = when (val r = remote.download(media.mediaId)) {
             is AppResult.Success -> r.value
             is AppResult.Failure -> return when {
@@ -402,16 +407,56 @@ class MomentsRepositoryImpl(
                 else -> MomentMediaLoad.Failed((r.error as? AppError.Api)?.requestId)
             }
         }
-        val sealed = runCatching { storage.get(link.downloadUrl).takeIf { it.status.isSuccess() }?.readRawBytes() }.getOrNull()
-            ?: return MomentMediaLoad.NeedsConnection
-        val plain = withContext(Dispatchers.Default) {
-            runCatching {
-                check(crypto.sha256(sealed).contentEquals(Base64.decode(media.digest)))
-                crypto.aesGcmOpen(Base64.decode(media.key), sealed)
-            }.getOrNull()
-        } ?: return MomentMediaLoad.Failed(null)
-        files.write(media.mediaId, plain)
-        return MomentMediaLoad.Loaded(plain, files.path(media.mediaId))
+        val sealed = "dl-${media.mediaId}"
+        if (!download(link.downloadUrl, sealed)) { files.delete(sealed); return MomentMediaLoad.NeedsConnection }
+        val key = runCatching { Base64.decode(media.key) }.getOrNull()
+        val digest = runCatching { Base64.decode(media.digest) }.getOrNull()
+        val opened = if (key == null || digest == null) false else runCatching {
+            com.circaso.core.crypto.SingleBoxFile.open(crypto, files, key, sealed, media.mediaId, digest) ?: withContext(Dispatchers.Default) {
+                // No streaming on this phone (iPhone): the one-shot, in memory.
+                val bytes = files.read(sealed) ?: return@withContext false
+                check(crypto.sha256(bytes).contentEquals(digest))
+                files.write(media.mediaId, crypto.aesGcmOpen(key, bytes))
+                true
+            }
+        }.getOrDefault(false)
+        files.delete(sealed)
+        if (!opened) return MomentMediaLoad.Failed(null)
+        return loaded(moment, media.mediaId) ?: MomentMediaLoad.Failed(null)
+    }
+
+    /** The decrypted file on this phone as the viewer takes it: a video by its path alone, a photo or voice by its bytes. */
+    private suspend fun loaded(moment: Moment, name: String): MomentMediaLoad? {
+        val path = files.path(name)
+        if (moment.kind == MomentKind.Video && path != null) return MomentMediaLoad.Loaded(ByteArray(0), path)
+        return files.read(name)?.let { MomentMediaLoad.Loaded(it, path) }
+    }
+
+    /** The ciphertext from storage into [name], a piece at a time. False when the connection or storage failed. */
+    private suspend fun download(url: String, name: String): Boolean = try {
+        files.delete(name)
+        storage.prepareGet(url).execute { response ->
+            if (!response.status.isSuccess()) return@execute false
+            val channel = response.bodyAsChannel()
+            val buffer = ByteArray(com.circaso.core.platform.StreamPieceBytes)
+            while (true) {
+                var filled = 0
+                while (filled < buffer.size) {
+                    val n = channel.readAvailable(buffer, filled, buffer.size - filled)
+                    if (n < 0) break
+                    filled += n
+                }
+                if (filled > 0) files.append(name, buffer.copyOf(filled))
+                if (filled < buffer.size) break
+            }
+            // An empty body still leaves a file, so the open says it isn't a box rather than "not there".
+            if (files.size(name) == null) files.write(name, ByteArray(0))
+            true
+        }
+    } catch (e: kotlin.coroutines.cancellation.CancellationException) {
+        throw e
+    } catch (_: Throwable) {
+        false
     }
 
     // ---- posting
@@ -523,13 +568,13 @@ class MomentsRepositoryImpl(
             val size = source?.let { files.size(it) } ?: return failPreparing(row, SourceMissing)
             val video = kindOf(draft.kind) == MomentKind.Video
             when {
-                size <= com.circaso.core.platform.MomentMediaMaxBytes -> if (!files.move(source, id)) return failPreparing(row, SourceMissing)
+                size <= limit() -> if (!files.move(source, id)) return failPreparing(row, SourceMissing)
                 !video -> return failPreparing(row, TooLarge)
                 else -> {
                     // A minute shot at a high bit rate: the same clip at the moments' bit rate, as large as the limit
                     // allows. A pass that comes out over the limit (a hardware encoder running past its bit rate) is
                     // never the person's problem: it is done again, planned smaller by as much as it overshot.
-                    val max = com.circaso.core.platform.MomentMediaMaxBytes
+                    val max = limit()
                     val path = files.path(source)
                     var budget = draft.budget?.coerceIn(1, max) ?: max
                     var made: com.circaso.core.platform.CapturedMedia? = null
@@ -578,6 +623,41 @@ class MomentsRepositoryImpl(
         return true
     }
 
+    /**
+     * The most a moment's file may be for the server this phone is talking to: [MomentMediaMaxBytes] (64 MiB), or
+     * what an older server takes once it has refused a larger one ([olderServer]).
+     */
+    private fun limit(): Long = if (olderServer) com.circaso.core.platform.MomentMediaLegacyMaxBytes else com.circaso.core.platform.MomentMediaMaxBytes
+
+    /**
+     * The server refused a video over 32 MiB at ST1 (`status.media_invalid`): it hasn't been updated to 64 MiB yet
+     * (2026-11-14). Remembered while the app runs, so the next videos are made to fit straight away; a new launch
+     * asks again, which is how the app finds out the server has been updated.
+     */
+    private var olderServer = false
+
+    /**
+     * ST1 refused this moment's video for its size, which an updated server would take: it goes back to be got ready,
+     * made to fit what the older server takes, and is posted again by the worker. The video already made ready is
+     * what it is made from (its picked file is gone by now), so against an older server it may be encoded twice.
+     * True when it was sent back; false when this isn't that case (the failure stands).
+     */
+    private suspend fun fitOlderServer(row: PendingMomentEntity, error: AppError): Boolean {
+        if ((error as? AppError.Api)?.code != "status.media_invalid" || kindOf(row.kind) != MomentKind.Video) return false
+        val size = files.size(row.localId) ?: return false
+        if (size <= com.circaso.core.platform.MomentMediaLegacyMaxBytes) return false
+        olderServer = true
+        val source = "source-${row.localId}.mp4"
+        if (!files.move(row.localId, source)) return false
+        files.delete("sealed-${row.localId}")
+        val fresh = dao.pending(row.localId) ?: run { files.delete(source); return true }
+        val draft = json.decodeFromString(PendingDraft.serializer(), fresh.draft).copy(source = source, upload = null, budget = null, tries = 0)
+        dao.savePending(fresh.copy(draft = json.encodeToString(PendingDraft.serializer(), draft), state = StatePreparing, error = null, mediaId = null, mediaKey = null, mediaDigest = null))
+        setProgress(row.localId, 0f)
+        kickPreparing()
+        return true
+    }
+
     /** Couldn't be got ready: Failed with why (M6's row offers Retry and Delete), and told if the person is away. */
     private suspend fun failPreparing(row: PendingMomentEntity, code: String): Boolean {
         setProgress(row.localId, null)
@@ -615,7 +695,11 @@ class MomentsRepositoryImpl(
 
         val kind = kindOf(draft.kind)
         if (kind != MomentKind.Text && row.mediaId == null) {
-            (upload(row, draft) as? AppResult.Failure)?.let { return outcome(row, it.error) }
+            (upload(row, draft) as? AppResult.Failure)?.let {
+                // An older server's size limit is not the person's problem: the video is made to fit it and sent again.
+                if (fitOlderServer(row, it.error)) return AppResult.Success(Unit)
+                return outcome(row, it.error)
+            }
             row = dao.pending(row.localId) ?: return AppResult.Success(Unit)
         }
         val body = MomentBody(

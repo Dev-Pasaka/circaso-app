@@ -15,13 +15,29 @@ class MomentVideoEncodingTest {
     }
 
     @Test
-    fun aFullMinuteStays1080pAtWhatTheLimitAllows() {
+    fun aFullMinuteStays1080pAtNearlyTheFullRate() {
         val plan = e.plan(1920, 1080, 30f, 12_000_000, durationMs = 60_000)
         assertEquals(1920 to 1080, plan.width to plan.height)
-        // 32 MiB at 85 %, over 60 s, less 128 kbit/s of audio: about 3.7 Mbit/s (room for an encoder that runs over).
-        assertTrue(plan.bitRate in 3_600_000..3_700_000, "${plan.bitRate}")
+        // 64 MiB (2026-11-14, was 32) at 85 %, over 60 s, less 128 kbit/s of audio: about 7.5 of the 8 Mbit/s it deserves.
+        assertTrue(plan.bitRate in 7_400_000..7_550_000, "${plan.bitRate}")
         val mp4Bytes = (plan.bitRate + e.AudioBitRate).toLong() * 60 / 8
         assertTrue(mp4Bytes < MomentMediaMaxBytes, "$mp4Bytes")
+        // Twice what the same minute got under the old limit.
+        val before = e.plan(1920, 1080, 30f, 12_000_000, durationMs = 60_000, maxBytes = MomentMediaLegacyMaxBytes)
+        assertTrue(before.bitRate in 3_600_000..3_700_000, "${before.bitRate}")
+    }
+
+    @Test
+    fun whatGoesUntouchedAndWhatAMinuteGetsAtTheNewLimit() {
+        // Forty seconds or less gets the full 8 Mbit/s target (it was about 23 s).
+        assertEquals(8_000_000, e.plan(1080, 1920, 30f, 20_000_000, durationMs = 40_000).bitRate)
+        // A minute of 1080p at 60 frames keeps its size now; under the old limit it dropped to 720p.
+        val sixty = e.plan(1920, 1080, 60f, 20_000_000, durationMs = 60_000)
+        assertEquals(1920 to 1080, sixty.width to sixty.height)
+        assertEquals(1280 to 720, e.plan(1920, 1080, 60f, 20_000_000, durationMs = 60_000, maxBytes = MomentMediaLegacyMaxBytes).let { it.width to it.height })
+        // A minute recorded by the in-app camera (8 Mbit/s and its sound) is under the limit as it is: never re-encoded.
+        assertTrue((MomentVideoBitRate + e.AudioBitRate).toLong() * 60 / 8 < MomentMediaMaxBytes)
+        assertEquals(2, (MomentMediaMaxBytes + 64) / (MomentMediaLegacyMaxBytes + 64))
     }
 
     @Test
@@ -43,11 +59,13 @@ class MomentVideoEncodingTest {
     @Test
     fun aSmallerBudgetLowersTheBitRateAndThenTheSize() {
         // The Redmi's clip (2026-11-14): 57 s of 1080x1920 at 20 Mbit/s.
-        val first = e.plan(1080, 1920, 30f, 20_000_000, durationMs = 57_000)
+        // (against the 32 MiB limit of that day)
+        val old = MomentMediaLegacyMaxBytes
+        val first = e.plan(1080, 1920, 30f, 20_000_000, durationMs = 57_000, maxBytes = old)
         assertEquals(1080 to 1920, first.width to first.height)
         assertTrue(first.bitRate in 3_800_000..3_950_000, "${first.bitRate}")
         // Its encoder came out a quarter over: the second pass is planned at 720p, where a lower rate still looks right.
-        val budget = e.smallerBudget(MomentMediaMaxBytes, MomentMediaMaxBytes * 125 / 100)
+        val budget = e.smallerBudget(old, old * 125 / 100, old)
         val second = e.plan(1080, 1920, 30f, 20_000_000, durationMs = 57_000, maxBytes = budget)
         assertEquals(720 to 1280, second.width to second.height)
         assertTrue(second.bitRate < first.bitRate * 3 / 4, "${second.bitRate}")
@@ -75,7 +93,7 @@ class MomentVideoEncodingTest {
 
     @Test
     fun aLongSixtyFpsClipDropsASizeRatherThanSmearing() {
-        val plan = e.plan(1920, 1080, 60f, 20_000_000, durationMs = 60_000)
+        val plan = e.plan(1920, 1080, 60f, 20_000_000, durationMs = 60_000, maxBytes = MomentMediaLegacyMaxBytes)
         assertEquals(1280 to 720, plan.width to plan.height)
         assertTrue(plan.bitRate >= e.MinBitsPerPixel * 1280 * 720 * 60)
     }

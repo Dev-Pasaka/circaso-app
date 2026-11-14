@@ -61,6 +61,8 @@ import com.circaso.testing.FakeSignalDao
 import com.circaso.testing.runSuspending
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.mock.MockEngine
+import io.ktor.client.engine.mock.respond
+import io.ktor.client.engine.mock.respondError
 import io.ktor.client.engine.mock.respondOk
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -100,9 +102,14 @@ class MomentPostingTest {
 
     /** A repository as one run of the app has it; a second one over the same storage is the app started again. */
     private fun repository() = MomentsRepositoryImpl(
-        dao, remote, keys, PostingContacts(listOf("amina")), crypto, files, HttpClient(MockEngine { respondOk() }), outbox, {}, json, { me },
+        dao, remote, keys, PostingContacts(listOf("amina")), crypto, files,
+        // Storage: a PUT is taken; a GET hands back what is stored there (a viewer's download).
+        HttpClient(MockEngine { request -> if (request.method == io.ktor.http.HttpMethod.Get) { downloads++; stored?.let { respond(it) } ?: respondError(io.ktor.http.HttpStatusCode.NotFound) } else respondOk() }),
+        outbox, {}, json, { me },
         now = { clock }, library = library,
     )
+    private var stored: ByteArray? = null
+    private var downloads = 0
     private val repo = repository()
     private fun processor(r: MomentsRepositoryImpl = repo) = OutboxProcessor(outbox, listOf(MomentPostHandler { r }), nowMillis = { clock })
 
@@ -371,6 +378,88 @@ class MomentPostingTest {
         assertEquals(PendingState.Posting, again.pending.first().single().state)
     }
 
+    // 64 MiB (2026-11-14). The order the server and the app are released in must not matter.
+
+    @Test fun aServerStillAt32MiBRefusesTheLargerVideoAndItIsMadeToFitAndPostedAnyway() = runSuspending {
+        remote.maxBytes = 32L * 1024 * 1024
+        // 40 MiB: under the app's limit, so it was handed over as it is.
+        repo.post(video("/cache/mid.mp4", 40 * 1024 * 1024, "mid"))
+        val id = pending().single().localId
+        repo.resume()
+        assertTrue(library.shrinks.isEmpty(), "within 64 MiB: not encoded")
+
+        assertEquals(DrainResult.Drained(1), processor().drain())
+        assertTrue(remote.posted.isEmpty())
+        assertEquals(PendingState.Preparing, pending().single().state, "refused for its size: not failed, sent back to be made smaller")
+        assertNull(pending().single().error)
+
+        repo.resume()
+        assertEquals(listOf(com.circaso.core.platform.MomentMediaLegacyMaxBytes), library.limits, "made to fit what the older server takes")
+        assertEquals(DrainResult.Drained(1), processor().drain())
+        assertEquals(listOf(id), remote.posted.map { it.clientMomentId })
+        assertTrue(remote.prepared.last() <= remote.maxBytes)
+        assertEquals("mid", repo.moments.first().single().caption)
+        assertTrue(disk.files.keys.none { id in it && ("sealed" in it || "source" in it) }, "nothing of the refused upload is left")
+
+        // The next one doesn't wait to be refused: it is made to fit straight away.
+        repo.post(video("/cache/next.mp4", 40 * 1024 * 1024))
+        repo.resume()
+        assertEquals(2, library.limits.size)
+        processor().drain()
+        assertEquals(2, remote.posted.size)
+        assertEquals(1, remote.prepared.count { it > remote.maxBytes })
+    }
+
+    @Test fun aServerAt64MiBTakesAVideoAnOlderOneWouldRefuseAsItIs() = runSuspending {
+        repo.post(video("/cache/mid.mp4", 40 * 1024 * 1024))
+        repo.resume()
+        assertEquals(DrainResult.Drained(1), processor().drain())
+        assertTrue(library.shrinks.isEmpty(), "posted as it was shot")
+        assertEquals(1, remote.posted.size)
+        assertTrue(remote.prepared.single() > 32L * 1024 * 1024)
+    }
+
+    @Test fun aRefusalThatIsNotAboutAnOlderServersSizeStillFails() = runSuspending {
+        remote.maxBytes = 10
+        repo.post(video("/cache/small.mp4", 40))
+        repo.resume()
+        processor().drain()
+        assertEquals(PendingState.Failed to "status.media_invalid", pending().single().let { it.state to it.error })
+    }
+
+    @Test fun aViewersVideoIsDownloadedToAFileOpenedAndHandedOverByItsPathNeverItsBytes() = runSuspending {
+        val plain = ByteArray(300_000) { (it % 251).toByte() }
+        val box = crypto.aesGcmSeal(ByteArray(32), plain)
+        fun moment(kind: MomentKind, id: String, digest: ByteArray = crypto.sha256(box)) = com.circaso.feature.status.domain.Moment(
+            momentId = "m-$id", posterId = "amina", kind = kind, postedAt = 1, expiresAt = Long.MAX_VALUE, mine = false, viewed = false, reacted = false,
+            media = com.circaso.feature.status.domain.MomentMedia(id, kotlin.io.encoding.Base64.encode(ByteArray(32)), kotlin.io.encoding.Base64.encode(digest), "video/mp4", box.size.toLong()),
+        )
+        remote.downloadable = true
+        stored = box
+
+        val video = repo.media(moment(MomentKind.Video, "v1")) as com.circaso.feature.status.domain.MomentMediaLoad.Loaded
+        assertEquals("/files/v1", video.path)
+        assertEquals(0, video.bytes.size, "a video is played from its file; up to 64 MiB never sits in memory for the viewer")
+        assertTrue(plain.contentEquals(files.read("v1")))
+        assertNull(files.read("dl-v1"), "the ciphertext is not kept")
+        // Again: from the phone, no download.
+        repo.media(moment(MomentKind.Video, "v1"))
+        assertEquals(1, downloads)
+
+        // A photo or a voice is small and drawn from its bytes, as before.
+        val photo = repo.media(moment(MomentKind.Image, "p1")) as com.circaso.feature.status.domain.MomentMediaLoad.Loaded
+        assertTrue(plain.contentEquals(photo.bytes))
+
+        // Not what the body promised: nothing is kept, and it says so.
+        assertTrue(repo.media(moment(MomentKind.Video, "v2", digest = ByteArray(32))) is com.circaso.feature.status.domain.MomentMediaLoad.Failed)
+        assertNull(files.read("v2"))
+        assertNull(files.read("dl-v2"))
+        // Storage has nothing (or the connection dropped): try again later, nothing kept.
+        stored = null
+        assertTrue(repo.media(moment(MomentKind.Video, "v3")) is com.circaso.feature.status.domain.MomentMediaLoad.NeedsConnection)
+        assertNull(files.read("dl-v3"))
+    }
+
     @Test fun aTextMomentStillGoesStraightToTheQueue() = runSuspending {
         repo.post(MomentDraft.Text("Habari", "Ink", MomentTextStyle.Bold))
         assertEquals(PendingState.Posting, pending().single().state)
@@ -423,6 +512,8 @@ private class Encoder(private val disk: Disk) : MediaLibrary {
     override suspend fun size(path: String) = disk.files[path]?.size?.toLong()
     /** The budgets asked for, pass by pass. */
     val budgets = mutableListOf<Long>()
+    /** The limit each pass was held to. */
+    val limits = mutableListOf<Long>()
     /** What each pass comes out at, given its budget; by default it fits easily. */
     var outSize: (budget: Long) -> Int = { SmallerSize }
     var beforePass: () -> Unit = {}
@@ -432,6 +523,7 @@ private class Encoder(private val disk: Disk) : MediaLibrary {
         shrinks += Triple(path, startMs, endMs)
         beforePass()
         budgets += budgetBytes
+        limits += maxBytes
         if (unreadable || path !in disk.files) return null
         steps.forEach { onProgress(it); onStep() }
         val out = "/cache/moment-trim-${shrinks.size}.mp4"
@@ -444,6 +536,9 @@ private class Encoder(private val disk: Disk) : MediaLibrary {
 
 private class PostingRemote : MomentsRemote {
     var online = true
+    /** The most ciphertext this server takes at ST1: 64 MiB, or 32 for one that hasn't been updated. */
+    var maxBytes = 64L * 1024 * 1024
+    val prepared = mutableListOf<Long>()
     val posted = mutableListOf<PostMomentRequest>()
     var onStep: suspend () -> Unit = {}
     private var nextMedia = 1
@@ -454,6 +549,8 @@ private class PostingRemote : MomentsRemote {
     override suspend fun shareKeyCopies(copies: List<MomentKeyCopyDto>, answered: List<String>, idempotencyKey: String) = AppResult.Success(KeyCopiesSentDto(1))
     override suspend fun prepareMedia(sizeBytes: Long, kind: String, idempotencyKey: String): AppResult<MomentMediaUploadDto> {
         onStep()
+        if (online) prepared += sizeBytes
+        if (online && sizeBytes > maxBytes) return AppResult.Failure(AppError.Api("status.media_invalid", 400, null, null, emptyMap()))
         return if (online) AppResult.Success(MomentMediaUploadDto("media-${nextMedia++}", "https://storage.test/put", MomentUploadHeaders("application/octet-stream"), "2099-01-01T00:00:00Z")) else offline()
     }
     override suspend fun completeMedia(mediaId: String, idempotencyKey: String): AppResult<MomentMediaCompletedDto> {
@@ -469,7 +566,9 @@ private class PostingRemote : MomentsRemote {
     override suspend fun view(momentId: String, reacted: Boolean?, idempotencyKey: String, reaction: String?) = AppResult.Success(ViewedDto(true))
     override suspend fun views(momentId: String) = AppResult.Success(MomentViewsDto())
     override suspend fun delete(momentId: String, idempotencyKey: String) = AppResult.Success(MomentDeletedDto(true))
-    override suspend fun download(mediaId: String): AppResult<MomentMediaDownloadDto> = offline()
+    var downloadable = false
+    override suspend fun download(mediaId: String): AppResult<MomentMediaDownloadDto> =
+        if (downloadable) AppResult.Success(MomentMediaDownloadDto("https://storage.test/get/$mediaId", "2099-01-01T00:00:00Z", 1)) else offline()
 }
 
 private class PostingContacts(ids: List<String>) : ContactsRepository {
