@@ -5,6 +5,10 @@ import com.circaso.feature.names.presentation.EditNameSheet
 import com.circaso.feature.names.presentation.ProfileNameLine
 import androidx.compose.foundation.layout.height
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.text.style.TextOverflow
+import com.circaso.designsystem.theme.CircasoShapes
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import kotlinx.coroutines.flow.first
 import androidx.compose.foundation.layout.Box
 import androidx.compose.ui.semantics.semantics
@@ -233,36 +237,7 @@ fun ChatInfoScreen(
                 editing, onDraft = { names?.onDraft(it) }, onSave = { names?.onSave() }, onUseTheirs = { names?.onUseTheirs() }, onDismiss = { names?.onDismiss() },
             )
             CircasoSheet(visible = state.renaming, onDismiss = { viewModel.onRename(false) }, label = if (state.namingForPhoto) "Name the group" else "Edit group") {
-                // This phone can't read the name (its key is lost): say why it's asked for, and what a new key costs.
-                val why = when {
-                    state.namingForPhoto && state.removingPhoto -> "This phone lost the group's key, so it can't read the name. Type it to remove the photo."
-                    state.namingForPhoto -> "This phone lost the group's key, so it can't read the name. Type it to save the new photo."
-                    state.nameUnknown -> "This phone lost the group's key, so it can't read the name. If the group gets a new key, its photo is removed too; you can add it again after."
-                    else -> null
-                }
-                com.circaso.designsystem.chrome.SheetMessage(
-                    if (state.namingForPhoto || state.nameUnknown) "Name the group" else "Edit group",
-                    why ?: "Everyone in the group sees the name and description. They are end-to-end encrypted, like your messages.",
-                    if (state.nameUnknown || state.namingForPhoto) com.circaso.designsystem.components.CircasoIcon.Lock else com.circaso.designsystem.components.CircasoIcon.Pencil,
-                    tone = if (state.nameUnknown || state.namingForPhoto) com.circaso.designsystem.chrome.SheetTone.Warning else com.circaso.designsystem.chrome.SheetTone.Neutral,
-                )
-                CircasoTextField(value = state.nameDraft, onValueChange = viewModel::onNameDraft, label = "Group name")
-                if (!state.namingForPhoto) {
-                    // The description (2026-11-14) is edited where the name is; a photo change that only needs the name doesn't ask for it.
-                    val limit = com.circaso.feature.messaging.data.repository.MaxGroupDescriptionChars
-                    val length = state.descriptionDraft.trim().length
-                    CircasoTextField(
-                        value = state.descriptionDraft, onValueChange = viewModel::onDescriptionDraft, label = "Description",
-                        placeholder = "What the group is for (optional)", singleLine = false,
-                        error = if (state.descriptionTooLong) "A description can be up to $limit characters. This one is $length." else null,
-                    )
-                }
-                val save = when { !state.namingForPhoto -> "Save"; state.removingPhoto -> "Remove Photo"; else -> "Save Photo" }
-                com.circaso.designsystem.chrome.SheetActions(
-                    save, viewModel::onRenameConfirm, "Cancel", { viewModel.onRename(false) },
-                    enabled = state.canChange && state.nameDraft.isNotBlank() && (state.namingForPhoto || (state.editChanged && !state.descriptionTooLong)),
-                    note = if (!state.online) "Changing the group needs a connection." else null,
-                )
+                EditGroupContent(state, viewModel::onNameDraft, viewModel::onDescriptionDraft, viewModel::onRenameConfirm, onCancel = { viewModel.onRename(false) })
             }
             // Group wallets (GW7, CH9, §11.9, W8).
             val sheet = state.moneySheet
@@ -428,6 +403,50 @@ fun ChatInfoScreen(
 }
 
 /** Under a direct chat's name in its info: their own name when I saved one ("~ John Kamau"), then their @username. */
+/**
+ * The Edit group sheet's content (the name, and since 2026-11-14 the description), also the "Name the group" sheet a
+ * photo change opens on a phone that lost the group's key. Both fields are sealed on the phone before they leave it.
+ */
+@Composable
+internal fun androidx.compose.foundation.layout.ColumnScope.EditGroupContent(
+    state: ChatInfoUiState,
+    onName: (String) -> Unit,
+    onDescription: (String) -> Unit,
+    onSave: () -> Unit,
+    onCancel: () -> Unit,
+) {
+    // This phone can't read the name (its key is lost): say why it's asked for, and what a new key costs.
+    val why = when {
+        state.namingForPhoto && state.removingPhoto -> "This phone lost the group's key, so it can't read the name. Type it to remove the photo."
+        state.namingForPhoto -> "This phone lost the group's key, so it can't read the name. Type it to save the new photo."
+        state.nameUnknown -> "This phone lost the group's key, so it can't read the name. If the group gets a new key, its photo is removed too; you can add it again after."
+        else -> null
+    }
+    com.circaso.designsystem.chrome.SheetMessage(
+        if (state.namingForPhoto || state.nameUnknown) "Name the group" else "Edit group",
+        why ?: "Everyone in the group sees the name and description. They are end-to-end encrypted, like your messages.",
+        if (state.nameUnknown || state.namingForPhoto) com.circaso.designsystem.components.CircasoIcon.Lock else com.circaso.designsystem.components.CircasoIcon.Pencil,
+        tone = if (state.nameUnknown || state.namingForPhoto) com.circaso.designsystem.chrome.SheetTone.Warning else com.circaso.designsystem.chrome.SheetTone.Neutral,
+    )
+    CircasoTextField(value = state.nameDraft, onValueChange = onName, label = "Group name")
+    if (!state.namingForPhoto) {
+        // The description (2026-11-14) is edited where the name is; a photo change that only needs the name doesn't ask for it.
+        val limit = com.circaso.feature.messaging.data.repository.MaxGroupDescriptionChars
+        val length = state.descriptionDraft.trim().length
+        CircasoTextField(
+            value = state.descriptionDraft, onValueChange = onDescription, label = "Description",
+            placeholder = "What the group is for (optional)", singleLine = false,
+            error = if (state.descriptionTooLong) "A description can be up to $limit characters. This one is $length." else null,
+        )
+    }
+    val save = when { !state.namingForPhoto -> "Save"; state.removingPhoto -> "Remove Photo"; else -> "Save Photo" }
+    com.circaso.designsystem.chrome.SheetActions(
+        save, onSave, "Cancel", onCancel,
+        enabled = state.canChange && state.nameDraft.isNotBlank() && (state.namingForPhoto || (state.editChanged && !state.descriptionTooLong)),
+        note = if (!state.online) "Changing the group needs a connection." else null,
+    )
+}
+
 /**
  * A group's description under its name in Group info: centred like the header it belongs to, [GroupDescriptionLines]
  * lines until tapped, then whole. Long-pressing text isn't needed to read it; nothing here is an action.

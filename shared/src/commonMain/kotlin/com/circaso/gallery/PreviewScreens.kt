@@ -542,7 +542,7 @@ fun PreviewScreens(name: String) {
             }
             com.circaso.feature.wallet.presentation.ActivityContent(state, {}, {}, {}, {})
         }
-        else -> if (!GroupWalletPreview(name) && !ChatMoneyPreview(name) && !MomentsChatsPreview(name) && !AshaPreview(name) && !VaultPreview(name) && !SavedNamesPreview(name) && !SecurityCodePreview(name) && !SheetsPreview(name) && !HelpLogPreview(name) && !CallPreviews(name)) BasicText("Unknown preview: $name")
+        else -> if (!GroupWalletPreview(name) && !ChatMoneyPreview(name) && !MomentsChatsPreview(name) && !AshaPreview(name) && !VaultPreview(name) && !SavedNamesPreview(name) && !GroupLinkPreview(name) && !SecurityCodePreview(name) && !SheetsPreview(name) && !HelpLogPreview(name) && !CallPreviews(name)) BasicText("Unknown preview: $name")
     }
 }
 

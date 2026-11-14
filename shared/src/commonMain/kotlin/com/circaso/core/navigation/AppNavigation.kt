@@ -1,5 +1,6 @@
 package com.circaso.core.navigation
 
+import com.circaso.feature.messaging.presentation.GroupJoinLayer
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.ui.input.pointer.pointerInput
 import com.circaso.feature.share.presentation.ShareLinkLayer
@@ -705,7 +706,7 @@ fun AppNavigation(forceUpdate: Boolean, home: @Composable () -> Unit) {
     if (state == AuthState.Active) {
         val scope = androidx.compose.runtime.rememberCoroutineScope()
         ShareLinkLayer(shareLinks) { text: String -> scope.launch { toast.show(text) } }
-        com.circaso.feature.messaging.presentation.GroupJoinLayer(groupJoin, onOpenChat = ::openChatFromList)
+        GroupJoinLayer(groupJoin, onOpenChat = ::openChatFromList)
     }
     ToastHost(toast, Modifier.align(Alignment.TopCenter).statusBarsPadding().padding(top = 56.dp))
     // Calls (designs H1–H5) live above every screen: one can ring anywhere, and it keeps going while money is sent from it.
