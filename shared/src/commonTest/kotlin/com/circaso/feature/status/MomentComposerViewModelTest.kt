@@ -110,9 +110,6 @@ private class FakeLibrary : MediaLibrary {
     }
     override suspend fun load(item: LibraryItem) = media[item.id]
     override suspend fun pick(kind: LibraryKind): CapturedMedia? = systemPicks.firstOrNull()
-    override suspend fun pickMany(max: Int) = systemPicks.take(max)
-    var cloudPicks: List<CapturedMedia> = emptyList()
-    override suspend fun pickCloud(max: Int) = com.circaso.core.platform.CloudPicks(cloudPicks.take(max), (cloudPicks.size - max).coerceAtLeast(0))
     override suspend fun read(path: String) = files[path]
     override suspend fun filmstrip(path: String, count: Int) = List(count) { ByteArray(1) }
     override suspend fun trim(path: String, startMs: Long, endMs: Long, maxBytes: Long): CapturedMedia? {
@@ -395,31 +392,6 @@ class MomentComposerViewModelTest {
         assertEquals(670, vm.state.value.gallery!!.items.size, "nothing more is read once the library is done")
     }
 
-    @Test fun theCloudOptionAddsWhatWasChosenAfterWhatWasTicked() = runTest(dispatcher) {
-        library.items[LibraryKind.Photo] = listOf(photo("p1", at = 2), photo("p2", at = 1))
-        library.media["p1"] = CapturedMedia(ByteArray(1), "image/jpeg", 1, 1)
-        library.media["p2"] = CapturedMedia(ByteArray(2), "image/jpeg", 2, 2)
-        library.cloudPicks = listOf(CapturedMedia(ByteArray(3), "image/jpeg", 3, 3))
-        val vm = composer()
-        vm.openGallery()
-        vm.toggle(library.items.getValue(LibraryKind.Photo)[1])
-        vm.toggle(library.items.getValue(LibraryKind.Photo)[0])
-        vm.pickFromCloud()
-        val shots = vm.state.value.items.map { (it.capture as ComposerCapture.Shot).media.width }
-        assertEquals(listOf(2, 1, 3), shots, "the ticked ones in their order, then the cloud's")
-        assertNull(vm.state.value.gallery)
-    }
-
-    @Test fun closingTheCloudPickerKeepsTheGalleryAndTheTicks() = runTest(dispatcher) {
-        library.items[LibraryKind.Photo] = listOf(photo("p1", at = 2))
-        val vm = composer()
-        vm.openGallery()
-        vm.toggle(library.items.getValue(LibraryKind.Photo)[0])
-        vm.pickFromCloud()
-        assertEquals(1, vm.state.value.selection.size)
-        assertNotNull(vm.state.value.gallery)
-    }
-
     @Test fun aVideoOverAMinuteOpensTheTrimmerAndCannotBeSharedUntilTrimmed() = runTest(dispatcher) {
         library.media["long"] = clip("/tmp/long.mp4", 134_000)
         val vm = composer()
@@ -493,15 +465,34 @@ class MomentComposerViewModelTest {
         assertEquals(7, (moments.posted.single() as MomentDraft.Media).bytes.size)
     }
 
-    @Test fun theSystemPickerIsThereWhenAccessIsOff() = runTest(dispatcher) {
+    @Test fun theGalleryAsksForAccessAndFillsWhenItIsAllowed() = runTest(dispatcher) {
         library.access[LibraryKind.Photo] = LibraryAccess.Denied
         library.access[LibraryKind.Video] = LibraryAccess.Denied
-        library.systemPicks = listOf(jpeg(1), jpeg(2))
         val vm = composer()
         vm.openGallery()
         assertEquals(LibraryAccess.Denied, vm.state.value.gallery!!.access)
-        vm.closeGallery(); vm.pickWithSystem()
-        assertEquals(2, vm.state.value.items.size)
+        assertEquals(null, vm.state.value.gallery!!.gap)
+        // Allowed in the phone's Settings: coming back reads it again, without another prompt.
+        library.access[LibraryKind.Photo] = LibraryAccess.Granted
+        library.access[LibraryKind.Video] = LibraryAccess.Granted
+        library.items[LibraryKind.Photo] = listOf(photo("p1", at = 1))
+        vm.refreshAccess()
+        assertEquals(LibraryAccess.Granted, vm.state.value.gallery!!.access)
+        assertEquals(listOf("p1"), vm.state.value.gallery!!.items.map { it.id })
+        assertEquals(LibraryKind.Video to false, library.asked.last())
+    }
+
+    @Test fun theGallerySaysWhichKindItCannotSee() = runTest(dispatcher) {
+        library.items[LibraryKind.Photo] = listOf(photo("p1", at = 1))
+        library.access[LibraryKind.Video] = LibraryAccess.Denied
+        val vm = composer()
+        vm.openGallery()
+        assertEquals(LibraryAccess.Limited, vm.state.value.gallery!!.access)
+        assertEquals(com.circaso.feature.mediacompose.RecentsGap.NoVideos, vm.state.value.gallery!!.gap)
+        library.afterManage = LibraryAccess.Granted
+        vm.manageAccess()
+        assertEquals(LibraryAccess.Granted, vm.state.value.gallery!!.access)
+        assertEquals(null, vm.state.value.gallery!!.gap)
     }
 
     @Test fun theReviewForwardsTheItemOnTheStage() = runTest(dispatcher) {

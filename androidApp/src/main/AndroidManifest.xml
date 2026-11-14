@@ -44,11 +44,6 @@
     <!-- Uploads (photos, videos, voice notes, moments) carry on after Circaso is left: a dataSync foreground service. -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
 
-    <!-- Moments' gallery offers Google Photos' own picker when it's installed (2026-11-14). -->
-    <queries>
-        <package android:name="com.google.android.apps.photos" />
-    </queries>
-
     <application
         android:name=".CircasoApplication"
         android:allowBackup="false"

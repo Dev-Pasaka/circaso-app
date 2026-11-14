@@ -76,25 +76,12 @@ import kotlin.math.roundToInt
 /** The system pickers for moments, registered by the activity like [ImagePickerBridge]; neither needs a permission. */
 object MomentPickerBridge {
     private var visual: ActivityResultLauncher<PickVisualMediaRequest>? = null
-    private var visualMany: ActivityResultLauncher<PickVisualMediaRequest>? = null
     private var audio: ActivityResultLauncher<String>? = null
     private var document: ActivityResultLauncher<Array<String>>? = null
     private var pending: CompletableDeferred<Uri?>? = null
-    private var pendingMany: CompletableDeferred<List<Uri>>? = null
-    private var cloud: ActivityResultLauncher<android.content.Intent>? = null
 
     fun register(activity: ComponentActivity) {
-        cloud = activity.registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
-            val data = result.data
-            val uris = if (result.resultCode != android.app.Activity.RESULT_OK || data == null) emptyList() else buildList {
-                val clip = data.clipData
-                if (clip != null) for (i in 0 until clip.itemCount) clip.getItemAt(i).uri?.let(::add)
-                else data.data?.let(::add)
-            }
-            pendingMany?.complete(uris)
-        }
         visual = activity.registerForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri -> pending?.complete(uri) }
-        visualMany = activity.registerForActivityResult(ActivityResultContracts.PickMultipleVisualMedia(MomentPickMax)) { uris -> pendingMany?.complete(uris) }
         audio = activity.registerForActivityResult(ActivityResultContracts.GetContent()) { uri -> pending?.complete(uri) }
         document = activity.registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> pending?.complete(uri) }
     }
@@ -113,37 +100,6 @@ object MomentPickerBridge {
             LibraryKind.Video -> visual?.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.VideoOnly)) ?: return null
             LibraryKind.Audio -> audio?.launch("audio/*") ?: return null
         }
-        return answer.await()
-    }
-
-    /**
-     * Google Photos' own picker (its sheet, with everything in the person's Google Photos, cloud included), several at
-     * once; null when Google Photos isn't on this phone (the caller then uses the system's photo picker).
-     */
-    suspend fun pickGooglePhotos(): List<Uri>? {
-        val launcher = cloud ?: return null
-        val intent = googlePhotosIntent()
-        val answer = CompletableDeferred<List<Uri>>().also { pendingMany = it }
-        val started = runCatching { launcher.launch(intent) }.isSuccess
-        if (!started) { pendingMany = null; return null }
-        return answer.await()
-    }
-
-    /** Photos and videos, several at once, from Google Photos' own picker. */
-    fun googlePhotosIntent(): android.content.Intent = android.content.Intent(android.content.Intent.ACTION_GET_CONTENT)
-        .setType("*/*")
-        .putExtra(android.content.Intent.EXTRA_MIME_TYPES, arrayOf("image/*", "video/*"))
-        .putExtra(android.content.Intent.EXTRA_ALLOW_MULTIPLE, true)
-        .addCategory(android.content.Intent.CATEGORY_OPENABLE)
-        .setPackage(GooglePhotos)
-
-    /** Google Photos' package, named in the manifest's `<queries>` so the app may see whether it's installed. */
-    const val GooglePhotos = "com.google.android.apps.photos"
-
-    /** Photos and videos together, up to [MomentPickMax], in the order they were ticked. */
-    suspend fun pickMany(): List<Uri> {
-        val answer = CompletableDeferred<List<Uri>>().also { pendingMany = it }
-        visualMany?.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageAndVideo)) ?: return emptyList()
         return answer.await()
     }
 }
@@ -225,7 +181,14 @@ class AndroidMediaLibrary(private val context: Context) : MediaLibrary {
             }
         }
         if (weaker() == LibraryAccess.Granted) return LibraryAccess.Granted
-        // One prompt for both ("photos and videos"): on Android 14 it offers Allow all. Answered at once with no
+        // "Selected photos" already chosen: asking again only reopens the system's selection screen, which has no
+        // Allow all (Redmi, Android 16, 2026-11-14). Everything is allowed from the app's settings (Permissions →
+        // Photos and videos → Allow all); coming back re-reads the library.
+        if (Build.VERSION.SDK_INT >= 34 && granted(Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED) && kinds.any(::asked)) {
+            openAppSettings()
+            return weaker()
+        }
+        // Never answered, or one kind off: one prompt for both ("photos and videos"). Answered at once with no
         // prompt shown (refused for good): the app's settings, where the person can allow it.
         val started = System.currentTimeMillis()
         PermissionBridge.requestAll(requestFor(LibraryKind.Photo))
@@ -300,36 +263,10 @@ class AndroidMediaLibrary(private val context: Context) : MediaLibrary {
         return load(uri, kind)
     }
 
-    /** Google Photos can open its picker here (installed and enabled): resolved for the exact intent it gets. */
-    private fun canOpenGooglePhotos(): Boolean = runCatching {
-        context.packageManager.resolveActivity(MomentPickerBridge.googlePhotosIntent(), 0) != null
-    }.getOrDefault(false)
-
-    override suspend fun cloudLabel(): String = withContext(Dispatchers.IO) { if (canOpenGooglePhotos()) "Google Photos" else "Photos" }
-
-    /** Google Photos' picker when it can open, else the system's photo picker (which shows cloud items too). */
-    override suspend fun pickCloud(max: Int): CloudPicks {
-        val uris = (if (withContext(Dispatchers.IO) { canOpenGooglePhotos() }) MomentPickerBridge.pickGooglePhotos() else null)
-            ?: return CloudPicks(pickMany(max))
-        val media = uris.take(max).mapNotNull { uri ->
-            val video = withContext(Dispatchers.IO) { context.contentResolver.getType(uri) }?.startsWith("video") == true
-            load(uri, if (video) LibraryKind.Video else LibraryKind.Photo)
-        }
-        return CloudPicks(media, more = (uris.size - max).coerceAtLeast(0))
-    }
-
     /** The next page straight from MediaStore, from [offset] on; a read that fails throws (the gallery keeps its page). */
     override suspend fun page(kind: LibraryKind, offset: Int, limit: Int): List<LibraryItem> {
         if (accessFor(kind) == LibraryAccess.Denied) return emptyList()
         return query(kind, limit, offset, strict = true)
-    }
-
-    override suspend fun pickMany(max: Int): List<CapturedMedia> {
-        val uris = MomentPickerBridge.pickMany().take(max)
-        return uris.mapNotNull { uri ->
-            val video = withContext(Dispatchers.IO) { context.contentResolver.getType(uri) }?.startsWith("video") == true
-            load(uri, if (video) LibraryKind.Video else LibraryKind.Photo)
-        }
     }
 
     /**

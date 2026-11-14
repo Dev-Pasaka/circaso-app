@@ -93,8 +93,6 @@ interface MediaLibraryProvider {
     fun load(id: String, video: Boolean, completion: (LibraryMedia?) -> Unit)
     /** [kind]: 0 photo (PHPicker), 1 video (PHPicker), 2 audio (Files), 3 any document (Files). Null when the person cancels. */
     fun pick(kind: Int, completion: (LibraryMedia?) -> Unit)
-    /** PHPicker for photos and videos, up to [max] in the order ticked; empty when the person cancels. */
-    fun pickMany(max: Int, completion: (List<LibraryMedia>) -> Unit)
     /** Limited library: the system's picker to choose more photos (iOS 15+), then [completion]. */
     fun manageLimited(completion: () -> Unit)
     /** [count] small JPEGs spread through the video at [path] (AVAssetImageGenerator), for the trim bar. */
@@ -125,9 +123,6 @@ object MediaLibraryBridge {
 class IosMediaLibrary : MediaLibrary {
     override suspend fun access(): LibraryAccess = access(ask = true)
 
-    /** The system picker (PHPicker) shows the whole library, iCloud included, whatever Circaso may read. */
-    override suspend fun cloudLabel(): String = "Photo Library"
-
     /** The next page: one lazy fetch of the whole library, read from [offset] (PHFetchResult loads only what's asked). */
     override suspend fun page(kind: LibraryKind, offset: Int, limit: Int): List<LibraryItem> {
         if (kind == LibraryKind.Audio || access(ask = false) == LibraryAccess.Denied) return emptyList()
@@ -155,6 +150,8 @@ class IosMediaLibrary : MediaLibrary {
         if (access == LibraryAccess.Denied || limit <= 0) return LibraryRecents(emptyList(), access)
         return LibraryRecents(fetch(kind, limit), access)
     }
+
+    override val deniedOpensSettings: Boolean get() = true
 
     override suspend fun manage(kind: LibraryKind): LibraryAccess {
         when (access(ask = true)) {
@@ -266,11 +263,6 @@ class IosMediaLibrary : MediaLibrary {
             (platform.Foundation.NSFileManager.defaultManager.attributesOfItemAtPath(path, null)?.get(platform.Foundation.NSFileSize) as? platform.Foundation.NSNumber)?.longLongValue
         } ?: return null
         return PickedFile(path.substringAfterLast('/').ifBlank { "File" }, media.mime, size, path = path)
-    }
-
-    override suspend fun pickMany(max: Int): List<CapturedMedia> {
-        val p = MediaLibraryBridge.provider ?: return emptyList()
-        return suspendCancellableCoroutine<List<LibraryMedia>> { cont -> p.pickMany(max) { if (cont.isActive) cont.resume(it) } }.map { it.toCaptured() }
     }
 
     override suspend fun read(path: String): ByteArray? = withContext(Dispatchers.Default) { NSData.dataWithContentsOfFile(path)?.toByteArray() }

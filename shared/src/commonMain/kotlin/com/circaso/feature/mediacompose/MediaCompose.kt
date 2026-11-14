@@ -69,6 +69,8 @@ data class GalleryState(
     val videos: List<LibraryItem> = emptyList(),
     /** Null until the phone has answered (asking for access can take a while). */
     val access: LibraryAccess? = null,
+    /** What the grid can't show when [access] is short of everything: says which, beside the way to allow it. */
+    val gap: RecentsGap? = null,
     /**
      * Photos and videos together, newest first, merged when a page lands (not while drawing). While a kind has more
      * to read, nothing older than its last read item is in it, so the next page lands below what's on screen.
@@ -81,8 +83,6 @@ data class GalleryState(
     val photosDone: Boolean = false,
     val videosDone: Boolean = false,
     val loadingMore: Boolean = false,
-    /** The cloud option's name ("Google Photos" on Android with it installed, "Photo Library" on iPhone). */
-    val cloudLabel: String = "Photos",
 ) {
     val items: List<LibraryItem>
         get() = when (tab) {
@@ -112,7 +112,7 @@ const val GalleryPage = 300
 /** How many of the newest photos and videos the strip above the shutter shows. */
 const val RecentsSize = 30
 
-/** What the photo and video strip can't show. */
+/** What the photo and video strip, and the gallery, can't show. */
 enum class RecentsGap { OnlyChosen, NoPhotos, NoVideos }
 
 /** M3b: trimming one video to a minute or less. Times are in milliseconds from the start of the original. */
@@ -186,8 +186,10 @@ data class MediaComposeState(
     val recentsAccess: LibraryAccess? = null,
     /** Why the photo and video strip falls short, when it does: says what Circaso can't see. */
     val recentsGap: RecentsGap? = null,
-    /** The limited-access tile can promise "Allow all" (Android 14+), else "Choose more" (iPhone). */
+    /** The strip's tile and the gallery's line can promise "Allow all" (Android 14+), else "Choose more" (iPhone). */
     val limitedOffersAllowAll: Boolean = false,
+    /** Access refused once is turned on in the phone's Settings (iPhone): the gallery's button says "Open Settings". */
+    val deniedOpensSettings: Boolean = false,
     /** Several at once (M3): a long press on the strip starts it, the gallery always picks this way. In order. */
     val selection: List<LibraryItem> = emptyList(),
     val selecting: Boolean = false,
@@ -312,7 +314,7 @@ class MediaComposer(
                     visualAccess(photos.access, videos.access),
                 )
             }
-            if (state.mode == mode) update { it.copy(recents = r.items, recentsAccess = r.access, recentsGap = gap, limitedOffersAllowAll = library.limitedOffersAllowAll) }
+            if (state.mode == mode) update { it.copy(recents = r.items, recentsAccess = r.access, recentsGap = gap, limitedOffersAllowAll = library.limitedOffersAllowAll, deniedOpensSettings = library.deniedOpensSettings) }
         }
     }
 
@@ -343,12 +345,25 @@ class MediaComposer(
      * strip is theirs together). The strip and the gallery read the library again afterwards.
      */
     fun manageAccess() {
+        if (managing?.isActive == true) return // a second tap while the prompt is coming up
         val kind = libraryKind(state.mode) ?: LibraryKind.Photo
-        scope.launch {
+        managing = scope.launch {
             if (kind == LibraryKind.Audio) library.manage(kind) else library.manageVisual()
             loadRecents(state.mode, ask = false)
             if (state.gallery != null) loadGallery()
         }
+    }
+
+    private var managing: Job? = null
+
+    /**
+     * Back on screen (from the phone's Settings, where access may just have been allowed): what was short of
+     * everything is read again, without asking, so the strip and the gallery fill by themselves.
+     */
+    fun refreshAccess() {
+        if (state.recentsAccess != null && state.recentsAccess != LibraryAccess.Granted) loadRecents(state.mode, ask = false)
+        val g = state.gallery
+        if (g != null && g.access != null && g.access != LibraryAccess.Granted) loadGallery(ask = false)
     }
 
     // ---- picking from the library
@@ -389,31 +404,6 @@ class MediaComposer(
         openGallery()
     }
 
-    /** The phone's own picker, several at once and no permission needed (from the gallery when access is off). */
-    fun pickWithSystem() {
-        val left = maxItems - state.items.size
-        if (left <= 0) return
-        use { library.pickMany(left) }
-    }
-
-    /**
-     * The gallery's cloud option (2026-11-14): Google Photos' own picker on Android (the system's photo picker where
-     * it isn't installed), the system Photos picker with iCloud on iPhone. No permission needed. What was ticked in the
-     * grid goes first, then what was chosen there, onto the review; closing the picker changes nothing.
-     */
-    fun pickFromCloud() {
-        val ticked = state.selection
-        val left = maxItems - state.items.size - ticked.size
-        if (left <= 0) { update { it.copy(error = "You can pick up to $maxItems at a time.") }; return }
-        if (state.loadingPick) return
-        scope.launch {
-            val picked = library.pickCloud(left)
-            if (picked.media.isEmpty()) return@launch
-            if (picked.more > 0) update { it.copy(error = "Added the first ${picked.media.size}. You can pick up to $maxItems at a time.") }
-            use { ticked.mapNotNull { library.load(it) } + picked.media }
-        }
-    }
-
     fun openGallery() {
         update { it.copy(gallery = GalleryState(), selecting = true) }
         loadGallery()
@@ -422,21 +412,21 @@ class MediaComposer(
     /** The gallery's one read at a time: a new first read (after Allow access) cancels a page still loading. */
     private var galleryJob: kotlinx.coroutines.Job? = null
 
-    private fun loadGallery() {
+    private fun loadGallery(ask: Boolean = true) {
         galleryJob?.cancel()
         galleryJob = scope.launch {
-            val label = library.cloudLabel()
-            val (photos, videos) = library.recentsVisual(GalleryPage, ask = true)
-            // The wider of the two answers decides what the screen says (one kind allowed is still a gallery).
-            val access = listOf(photos.access, videos.access).minBy { it.ordinal }
+            val (photos, videos) = library.recentsVisual(GalleryPage, ask = ask)
+            // One answer for both, as the strip: everything, nothing, or only some (which the screen says).
+            val access = visualAccess(photos.access, videos.access)
+            val gap = recentsGap(photos.access, videos.access)
             val photosDone = photos.items.size < GalleryPage
             val videosDone = videos.items.size < GalleryPage
             val all = GalleryState.merge(photos.items, videos.items, photosDone, videosDone)
             update { s ->
                 s.gallery?.let {
-                    s.copy(gallery = it.copy(
-                        photos = photos.items, videos = videos.items, access = access, all = all,
-                        photosDone = photosDone, videosDone = videosDone, loadingMore = false, cloudLabel = label,
+                    s.copy(limitedOffersAllowAll = library.limitedOffersAllowAll, deniedOpensSettings = library.deniedOpensSettings, gallery = it.copy(
+                        photos = photos.items, videos = videos.items, access = access, gap = gap, all = all,
+                        photosDone = photosDone, videosDone = videosDone, loadingMore = false,
                     ))
                 } ?: s
             }
