@@ -176,6 +176,13 @@ fun MediaComposeStage(
 
                 if (state.recordingVideo) RecordingPill(state, composer)
 
+                // Behind the review's caption, lock line and Send: a soft shade, so they read on any photo (the
+                // viewer's shade-bot, 2026-11-14). Not over the camera, which has its own dark controls.
+                if (reviewing && capture != null && customStage == null) Box(
+                    Modifier.align(Alignment.BottomCenter).fillMaxWidth().height(ReviewShade)
+                        .background(androidx.compose.ui.graphics.Brush.verticalGradient(listOf(androidx.compose.ui.graphics.Color.Transparent, CircasoTheme.colors.scrim))),
+                )
+
                 Column(Modifier.align(Alignment.BottomCenter).fillMaxWidth().navigationBarsPadding().imePadding().padding(bottom = CircasoSpacing.s3), verticalArrangement = Arrangement.spacedBy(14.dp)) {
                     if (reviewing) {
                         // Just above the strip, beside the marked tile (clear of the toasts at the top).
@@ -467,14 +474,10 @@ fun fileKind(name: String, mime: String): String {
     }
 }
 
+/** The caption on the review (design M4): the stage's own field, growing as it is written. */
 @Composable
 private fun CaptionField(value: String, onChange: (String) -> Unit, enabled: Boolean = true) {
-    val c = CircasoTheme.colors
-    val t = CircasoTheme.typography
-    Box(Modifier.fillMaxWidth().padding(horizontal = CircasoSpacing.s4).clip(CircasoShapes.lg).background(c.glass).padding(horizontal = 16.dp, vertical = 12.dp)) {
-        if (value.isEmpty()) BasicText("Add a caption", style = t.body.copy(color = c.inkSecondary))
-        BasicTextField(value, com.circaso.designsystem.components.ashaAware(value, onChange), enabled = enabled, textStyle = t.body.copy(color = c.ink), cursorBrush = SolidColor(c.ink), modifier = Modifier.fillMaxWidth().semantics { contentDescription = "Caption" })
-    }
+    StageField(value, onChange, placeholder = "Add a caption", label = "Caption", modifier = Modifier.padding(horizontal = CircasoSpacing.s4), enabled = enabled)
 }
 
 /**
@@ -562,6 +565,9 @@ private fun StripTile(label: String, icon: CircasoIcon, description: String, wid
         }
     }
 }
+
+/** How far up the review's bottom shade reaches (the viewer's is the same). */
+private val ReviewShade = 260.dp
 
 /** The recents strip's tiles: a photo's square, and the wider glass tiles (Files, Allow access, an audio file). */
 private val StripTileSize = 56.dp
