@@ -920,7 +920,7 @@ private fun PaymentMessage(
                 // A card that can't take a reaction yet (no message id: the wallet added it) opens its details on a long press.
                 onClick = onOpen, onLongClick = react?.onOpen ?: onOpen, symbol = m.asset, announce = announce,
                 attachment = momentQuote?.let { q -> { ink ->
-                    MomentQuoteCard(q, m.outgoing, if (m.outgoing) peerName else m.senderName, Modifier.fillMaxWidth(), ink, lead = "Money for") { onOpenMoment(q) }
+                    MomentQuoteCard(q, m.outgoing, if (m.outgoing) peerName else m.senderName, Modifier.fillMaxWidth(), ink, lead = "Money for", onLongClick = react?.onOpen ?: onOpen) { onOpenMoment(q) }
                 } },
             ) }
             if (react != null) Reacted(react, m.outgoing, card) else card()
@@ -1826,6 +1826,8 @@ private fun MomentQuoteCard(
     ink: androidx.compose.ui.graphics.Color = if (outgoing) CircasoTheme.colors.onAction else CircasoTheme.colors.ink,
     /** How it is read out: "Reply to your moment", "Money for your moment". */
     lead: String = "Reply to",
+    /** On a money card, a long press does what it does on the rest of the card (its reactions). */
+    onLongClick: (() -> Unit)? = null,
     onOpen: () -> Unit,
 ) {
     val c = CircasoTheme.colors
@@ -1834,9 +1836,11 @@ private fun MomentQuoteCard(
     val thumb = androidx.compose.runtime.remember(quote.thumb, gone) { if (gone) null else quote.thumb?.let { runCatching { kotlin.io.encoding.Base64.decode(it) }.getOrNull() } }
     Row(
         modifier.clip(com.circaso.designsystem.theme.CircasoShapes.md).background(ink.copy(alpha = 0.12f))
+            // High contrast: its own edge, as the money card has, since it takes its own taps.
+            .then(if (c.isHighContrast) Modifier.border(1.dp, ink, com.circaso.designsystem.theme.CircasoShapes.md) else Modifier)
             // Tap to open that moment in the viewer (Pasaka, 2026-11-03); an ended one says so where it is.
-            .pressable(role = androidx.compose.ui.semantics.Role.Button, onClick = onOpen).padding(6.dp)
-            .semantics(mergeDescendants = true) { contentDescription = "$lead ${if (outgoing) "a" else "your"} moment" + (quote.text?.let { ": $it" } ?: "") + if (gone) ", no longer available" else ", open it" },
+            .pressable(role = androidx.compose.ui.semantics.Role.Button, onLongClick = onLongClick, onClick = onOpen).padding(6.dp)
+            .semantics(mergeDescendants = true) { contentDescription = "$lead ${if (!outgoing) "your" else posterName?.substringBefore(' ')?.takeIf { it.isNotBlank() }?.let { "$it’s" } ?: "a"} moment" + (quote.text?.let { ": $it" } ?: "") + if (gone) ", no longer available" else ", open it" },
         verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         if (thumb != null) Box(Modifier.size(44.dp, 60.dp).clip(com.circaso.designsystem.theme.CircasoShapes.xs), contentAlignment = Alignment.Center) {
@@ -1846,7 +1850,7 @@ private fun MomentQuoteCard(
             }
         } else if (quote.kind == "VOICE") CircasoIconImage(CircasoIcon.Waveform, ink, Modifier.size(22.dp))
         Column(Modifier.padding(end = 4.dp)) {
-            BasicText(if (outgoing) "${posterName?.substringBefore(' ') ?: "Their"} · Moment" else "Your moment", style = t.footnote.copy(color = ink, fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold))
+            BasicText(if (outgoing) "${posterName?.substringBefore(' ') ?: "Their"} · Moment" else "Your moment", style = t.footnote.copy(color = ink, fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold), maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
             BasicText(if (gone) "No longer available" else quote.text ?: when (quote.kind) { "IMAGE" -> "Photo"; "VIDEO" -> "Video"; "VOICE" -> "Voice"; else -> "Moment" }, style = t.footnote.copy(color = ink), maxLines = 2)
         }
     }

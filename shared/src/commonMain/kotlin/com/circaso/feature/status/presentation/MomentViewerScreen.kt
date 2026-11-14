@@ -24,6 +24,7 @@ import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicText
@@ -119,7 +120,8 @@ fun MomentViewerScreen(
     covered: Boolean = false,
 ) {
     val state by viewModel.state.collectAsState()
-    LaunchedEffect(state.closed) { if (state.closed) onClose() }
+    // Never while the pay flow is on top: closing then would take the pay flow away, not the viewer.
+    LaunchedEffect(state.closed, covered) { if (state.closed && !covered) onClose() }
     LaunchedEffect(state.pay) { state.pay?.let { onPay(it); viewModel.payOpened() } }
     // Back from the pay flow: the moment carries on.
     LaunchedEffect(covered) { if (!covered) viewModel.payClosed() }
@@ -302,7 +304,7 @@ private fun ViewerBody(state: MomentViewerUiState, vm: MomentViewerActions, onCl
     val toast = rememberToastState()
     LaunchedEffect(state.notice) { state.notice?.let { toast.show(it); vm.noticeShown() } }
     // The moment waits while it is held, dragged, or the picker or a sheet is open.
-    val paused = state.paused || dragging
+    val paused = state.waiting || dragging
     Box(Modifier.fillMaxSize().background(c.bg)) {
         if (moment == null || ring == null) {
             Spinner(c.inkSecondary, Modifier.align(Alignment.Center))
@@ -376,24 +378,39 @@ private fun ViewerBody(state: MomentViewerUiState, vm: MomentViewerActions, onCl
                     BasicText("Seen by ${moment.viewCount}" + if (moment.reactionCount > 0) " · ${moment.reactionCount} reaction${if (moment.reactionCount == 1) "" else "s"}" else "", style = t.subhead.copy(color = c.ink, fontWeight = FontWeight.SemiBold))
                 }
             } else {
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                // The row's gaps are spacers, so the money button can fold away without leaving one behind.
+                Row(verticalAlignment = Alignment.CenterVertically) {
                     Box(
-                        Modifier.weight(1f).height(46.dp).clip(CircasoShapes.pill).border(1.dp, c.inkSecondary, CircasoShapes.pill).padding(horizontal = 18.dp),
+                        Modifier.weight(1f).heightIn(min = 46.dp).clip(CircasoShapes.pill).border(1.dp, c.inkSecondary, CircasoShapes.pill).padding(horizontal = 18.dp),
                         contentAlignment = Alignment.CenterStart,
                     ) {
-                        if (state.reply.isEmpty()) BasicText("Reply to ${ring.name.substringBefore(' ')}", style = t.body.copy(color = c.inkSecondary))
+                        if (state.reply.isEmpty()) BasicText("Reply to ${ring.name.substringBefore(' ')}", style = t.body.copy(color = c.inkSecondary), maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
                         BasicTextField(
                             state.reply, com.circaso.designsystem.components.ashaAware(state.reply, vm.onReply), singleLine = true, textStyle = t.body.copy(color = c.ink), cursorBrush = SolidColor(c.ink),
                             modifier = Modifier.fillMaxWidth().semantics { contentDescription = "Reply to ${ring.name}" }
                                 .onFocusChanged { vm.onReplyFocus(it.isFocused) },
                         )
                     }
-                    if (state.reply.isNotBlank()) GlassButton(CircasoIcon.ArrowUp, "Send reply", onClick = vm.sendReply)
+                    androidx.compose.foundation.layout.Spacer(Modifier.width(10.dp))
                     // Money for this moment (not in a frame; Pasaka, 2026-11-14): the chats' money mark on the same
-                    // glass as the heart, between the field and the heart. While a reply is being written both give
-                    // way to Send, as the heart already did.
-                    else if (state.canPay) GlassButton(CircasoIcon.Money, "Send money to ${ring.name.substringBefore(' ')} for this moment", onClick = vm.pay)
-                    if (state.reply.isBlank()) Box {
+                    // glass as the heart, between the field and the heart. While a reply is being written it folds
+                    // away (the field grows into its place) and the heart gives way to Send, as it already did.
+                    // Offline it looks off like the heart and still opens: the pay flow says money needs a connection.
+                    val still = CircasoTheme.reduceMotion
+                    val arrive = tween<Float>(if (still) 0 else com.circaso.designsystem.theme.CircasoMotion.BaseMs)
+                    val leave = tween<Float>(if (still) 0 else com.circaso.designsystem.theme.CircasoMotion.ExitMs)
+                    androidx.compose.animation.AnimatedVisibility(
+                        state.canPay && state.reply.isBlank(),
+                        enter = androidx.compose.animation.fadeIn(arrive) + androidx.compose.animation.expandHorizontally(tween(if (still) 0 else com.circaso.designsystem.theme.CircasoMotion.BaseMs)),
+                        exit = androidx.compose.animation.fadeOut(leave) + androidx.compose.animation.shrinkHorizontally(tween(if (still) 0 else com.circaso.designsystem.theme.CircasoMotion.ExitMs)),
+                    ) {
+                        Row {
+                            GlassButton(CircasoIcon.Money, "Send money to ${ring.name.substringBefore(' ')} for this moment", dimmed = !state.online, onClick = vm.pay)
+                            androidx.compose.foundation.layout.Spacer(Modifier.width(10.dp))
+                        }
+                    }
+                    if (state.reply.isNotBlank()) GlassButton(CircasoIcon.ArrowUp, "Send reply", onClick = vm.sendReply)
+                    else Box {
                         ReactButton(moment.reaction, state.online, vm.openPicker)
                         // The chats' reaction bubble (any emoji), floating just above the button at the screen's end.
                         if (state.picking) ReactionPicker(
@@ -579,14 +596,19 @@ private fun Segments(moments: List<Moment>, index: Int, current: Moment, paused:
 }
 
 @Composable
-private fun GlassButton(icon: CircasoIcon, label: String, filled: Boolean = false, onClick: () -> Unit) {
+private fun GlassButton(
+    icon: CircasoIcon, label: String, filled: Boolean = false,
+    /** It needs the server and there is none: it looks off (as the heart does) and says so; the tap still explains. */
+    dimmed: Boolean = false,
+    onClick: () -> Unit,
+) {
     val c = CircasoTheme.colors
     Box(
         Modifier.size(CircasoSizes.controlMd).clip(CircasoShapes.circle).background(if (filled) c.ink else c.glass)
-            .pressable(onClick = onClick).semantics(mergeDescendants = true) { contentDescription = label },
+            .pressable(onClick = onClick).semantics(mergeDescendants = true) { contentDescription = label; if (dimmed) stateDescription = "Needs a connection" },
         contentAlignment = Alignment.Center,
     ) {
-        CircasoIconImage(icon, if (filled) c.bg else c.ink, Modifier.size(18.dp))
+        CircasoIconImage(icon, when { dimmed -> c.inkTertiary; filled -> c.bg; else -> c.ink }, Modifier.size(18.dp))
     }
 }
 

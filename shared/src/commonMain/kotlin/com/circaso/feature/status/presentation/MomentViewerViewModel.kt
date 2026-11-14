@@ -85,6 +85,8 @@ data class MomentViewerUiState(
      * Money can be sent for this moment: someone else's, and not Circaso support's (that account has no wallet), as
      * the chat decides it. Whether the person can be paid right now (their wallet, a connection) is the pay flow's to say.
      */
+    /** The moment waits: paused (held, a sheet, a reply being written) or the pay flow is open, whatever else lets go. */
+    val waiting: Boolean get() = paused || paying
     val canPay: Boolean get() = moment?.let { !it.mine && it.posterId != com.circaso.feature.support.Support.UserId } == true
     val burst: ReactionBurst? get() = bursts.firstOrNull()
     val current: MomentRing? get() = rings.getOrNull(ring)

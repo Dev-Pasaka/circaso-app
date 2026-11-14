@@ -89,9 +89,13 @@ class MomentViewerViewModelTest {
 
         vm.payOpened()
         assertNull(vm.state.value.pay)
-        assertTrue(vm.state.value.paused, "it waits while the pay flow is open")
+        assertTrue(vm.state.value.waiting, "it waits while the pay flow is open")
+        // The reply field losing the keyboard to the pay screen, or a finger lifting, doesn't start it again.
+        vm.onReplyFocus(false)
+        vm.setPaused(false)
+        assertTrue(vm.state.value.waiting)
         vm.payClosed()
-        assertFalse(vm.state.value.paused)
+        assertFalse(vm.state.value.waiting)
     }
 
     @Test fun withNoChatYetPayStillOpensAndThePayFlowOpensTheChat() = runTest(dispatcher) {
