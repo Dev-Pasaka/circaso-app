@@ -204,6 +204,8 @@ data class MediaComposeState(
     /** Re-encoding a video that is too large to send as it is. */
     val preparing: Boolean = false,
     val error: String? = null,
+    /** A line for a quiet toast: something to know, nothing that went wrong (why a greyed tile can't be picked). */
+    val info: String? = null,
     /** The longest video that may go untrimmed: a moment's minute; null in a chat, where any length goes ([ChatVideoMaxMs]). */
     val maxVideoMs: Long? = MomentMediaMaxMs,
 ) {
@@ -266,36 +268,41 @@ class MediaComposer(
     val limitLabel: String get() = limitLabel(maxBytes)
 
     /**
-     * The largest video that can be picked at all (2026-11-14, Pasaka: "grey them out ... early feedback, no annoying
-     * errors later"). A chat sends a video as it is, so its own limit; a moment makes a video smaller after Post, so
-     * only a file past [MomentSourceMaxBytes]. Photos are never too large: the library hands every one over as a JPEG
-     * of at most [com.circaso.core.platform.MomentPhotoMaxSide], whatever the original weighs.
+     * The largest video that can be picked at all, or null when any can (2026-11-14, Pasaka: "grey them out ... early
+     * feedback, no annoying errors later"). A moment makes a video smaller after Post, so only a file past
+     * [MomentSourceMaxBytes] can't go. A chat has none: a video over its limit can still be sent once it is trimmed
+     * shorter on the review (the trimmer cuts it to fit), so there it is marked on its tile ([overLimit]) and stays
+     * pickable, and the review says to trim it. Photos are never too large: the library hands every one over as a
+     * JPEG of at most [com.circaso.core.platform.MomentPhotoMaxSide], whatever the original weighs.
      */
-    val pickLimit: Long get() = if (sendAsIs) maxBytes else com.circaso.core.platform.MomentSourceMaxBytes
+    val pickLimit: Long? get() = if (sendAsIs) null else com.circaso.core.platform.MomentSourceMaxBytes
 
     /** [item] can't be picked: a video whose file is known to be over [pickLimit]. Unknown sizes can always be picked. */
-    fun tooLarge(item: LibraryItem): Boolean = item.kind == LibraryKind.Video && (item.sizeBytes ?: 0) > pickLimit
+    fun tooLarge(item: LibraryItem): Boolean = item.kind == LibraryKind.Video && pickLimit?.let { (item.sizeBytes ?: 0) > it } == true
+
+    /** A chat's video known to be over what a chat sends: marked on its tile; picking it leads to the trimmer's note. */
+    fun overLimit(item: LibraryItem): Boolean = sendAsIs && item.kind == LibraryKind.Video && (item.sizeBytes ?: 0) > maxBytes
+
+    /** "Videos up to 1 GB can be posted.": the limit, for the toast and for a screen reader on a greyed tile. */
+    val tooLargeLimit: String get() = "Videos up to ${compactSize(pickLimit ?: maxBytes)} can be ${if (sendAsIs) "sent" else "posted"}."
 
     /** Why, in one line with the limit: "This video is 1.4 GB. Videos up to 1 GB can be posted." */
-    fun tooLargeReason(item: LibraryItem): String =
-        "This video is ${compactSize(item.sizeBytes ?: 0)}. Videos up to ${compactSize(pickLimit)} can be ${if (sendAsIs) "sent" else "posted"}."
+    fun tooLargeReason(item: LibraryItem): String = "This video is ${overSize(item.sizeBytes ?: 0, pickLimit ?: maxBytes)}. $tooLargeLimit"
 
-    /** A greyed tile was tapped: nothing is picked, and the toast says why. True when [item] was refused. */
+    /** A greyed tile was tapped: nothing is picked, and a quiet line says why (not an error: nothing went wrong). True when [item] was refused. */
     private fun refused(item: LibraryItem): Boolean {
         if (!tooLarge(item)) return false
-        update { it.copy(error = tooLargeReason(item)) }
+        update { it.copy(info = tooLargeReason(item)) }
         return true
     }
 
-    /**
-     * Under a video on the review: its length and size, and for a moment's video over the post limit that it will be
-     * made smaller (after Post, in the background). Null for anything but a video whose size is known.
-     */
+    fun infoShown() = update { it.copy(info = null) }
+
+    /** A picked video's length and size, for the review ("0:57 · 139 MB"); null for anything but a video whose size is known. */
     fun reviewNote(item: ComposerItem): String? {
         val video = item.video ?: return null
         val size = item.sizeBytes ?: return null
-        val length = video.durationMs?.takeIf { it > 0 }?.let { com.circaso.feature.mediacompose.longClock(it) + " · " }.orEmpty()
-        return length + compactSize(size) + if (!sendAsIs && size > maxBytes) " · Will be made smaller to post" else ""
+        return video.durationMs?.takeIf { it > 0 }?.let { longClock(it) + " · " }.orEmpty() + compactSize(size)
     }
 
     // The video limit lives in the state ([MediaComposeState.maxVideoMs]), so the screen and Send read the same one.
@@ -836,19 +843,29 @@ fun sizeLabel(bytes: Long): String = when {
 }
 
 /**
- * A size at a glance, for a tile's corner and the review's line: "1.4 GB", "146 MB", "8.4 MB", "820 KB" (a decimal
- * only where it tells something; [sizeLabel] keeps one for a file's exact size in a message).
+ * A size at a glance, for a tile's corner and the review's pill: "1.4 GB", "146 MB", "8.4 MB", "820 KB" (a decimal
+ * only where it tells something; [sizeLabel] keeps one for a file's exact size in a message). The unit is chosen
+ * after rounding, so nothing reads "1024 MB" or "10.0 MB".
  */
 fun compactSize(bytes: Long): String {
     val mb = 1024L * 1024
     val gb = 1024 * mb
+    val wholeMb = (bytes + mb / 2) / mb
+    val tenthsMb = (bytes * 10 + mb / 2) / mb
+    val kb = (bytes + 512) / 1024
     return when {
-        bytes >= gb -> { val tenths = (bytes * 10 + gb / 2) / gb; if (tenths % 10 == 0L) "${tenths / 10} GB" else "${tenths / 10}.${tenths % 10} GB" }
-        bytes >= 10 * mb -> "${(bytes + mb / 2) / mb} MB"
-        bytes >= mb -> { val tenths = (bytes * 10 + mb / 2) / mb; "${tenths / 10}.${tenths % 10} MB" }
-        else -> "${((bytes + 512) / 1024).coerceAtLeast(1)} KB"
+        wholeMb >= 1024 -> { val tenths = (bytes * 10 + gb / 2) / gb; if (tenths % 10 == 0L) "${tenths / 10} GB" else "${tenths / 10}.${tenths % 10} GB" }
+        tenthsMb >= 100 -> "$wholeMb MB"
+        kb >= 1024 -> "${tenthsMb / 10}.${tenthsMb % 10} MB"
+        else -> "${kb.coerceAtLeast(1)} KB"
     }
 }
+
+/**
+ * A size over [limit] at a glance, never reading as if it fits: a video a little over 1 GB would round to "1 GB"
+ * beside "up to 1 GB", so it says "just over 1 GB" (as [overLimitLabel] does for a message's file).
+ */
+fun overSize(bytes: Long, limit: Long): String = compactSize(bytes).let { if (it == compactSize(limit)) "just over $it" else it }
 
 /** "100 MB": an attachment limit as people read it. */
 fun limitLabel(maxBytes: Long): String = "${(maxBytes + 512 * 1024) / (1024 * 1024)} MB"

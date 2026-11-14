@@ -148,6 +148,8 @@ fun MediaComposeStage(
             // The stage is dark in every theme: the status bar's icons go light while it is up.
             com.circaso.core.platform.StatusBarIcons(light = true)
             LaunchedEffect(state.error) { state.error?.let { toast.show(it, com.circaso.designsystem.chrome.ToastKind.Problem); composer.errorShown() } }
+            // Something to know, not a problem (why a greyed tile can't be picked): the quiet toast.
+            LaunchedEffect(state.info) { state.info?.let { toast.show(it, com.circaso.designsystem.chrome.ToastKind.Info); composer.infoShown() } }
             Box(Modifier.fillMaxSize().background(c.bg)) {
                 val capture = state.capture
                 when {
@@ -175,6 +177,17 @@ fun MediaComposeStage(
                 }
 
                 if (state.recordingVideo) RecordingPill(state, composer)
+                // A picked video's length and size (2026-11-14; no frame): a quiet glass pill at the top of the stage,
+                // where the recording pill sits while recording, so nothing under the finger moves when the item on
+                // the stage changes. It fades with the item.
+                val note = state.item?.takeIf { capture != null && state.trim == null && !state.recordingVideo }?.let { composer.reviewNote(it) }
+                var lastNote by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf("") }
+                if (note != null) lastNote = note
+                androidx.compose.animation.AnimatedVisibility(
+                    note != null, Modifier.align(Alignment.TopCenter),
+                    enter = androidx.compose.animation.fadeIn(androidx.compose.animation.core.tween(CircasoMotion.BaseMs)),
+                    exit = androidx.compose.animation.fadeOut(androidx.compose.animation.core.tween(CircasoMotion.QuickMs)),
+                ) { ReviewNote(lastNote) }
 
                 // Behind the review's strip, caption, lock line and Send: a soft shade, so they read on any photo
                 // (design M4's shade-bot, 340). It rides above the keyboard with them, and fades in and out. Not over
@@ -198,9 +211,6 @@ fun MediaComposeStage(
                             exit = if (CircasoTheme.reduceMotion) androidx.compose.animation.fadeOut(androidx.compose.animation.core.tween(CircasoMotion.QuickMs))
                                 else androidx.compose.animation.fadeOut(androidx.compose.animation.core.tween(CircasoMotion.QuickMs)) + androidx.compose.animation.shrinkVertically(androidx.compose.animation.core.tween(CircasoMotion.QuickMs)),
                         ) { OverLimitNote(lastOver, state.item?.video != null, alone = state.items.size == 1, composer) }
-                        // A picked video's length and size, quietly, above the strip (2026-11-14; no frame: M4's lock-line
-                        // type); for a moment's video over the post limit, that it will be made smaller.
-                        state.item?.takeIf { capture != null && state.trim == null && it.overLimit == null }?.let { composer.reviewNote(it) }?.let { ReviewNote(it) }
                         if (state.items.size > 1) PickedStrip(state, copy, composer, locked)
                         if (capture != null) CaptionField(state.caption, composer::onCaption, enabled = !locked)
                         // Under the caption, once (design M4): what happens to it.
@@ -322,14 +332,20 @@ private fun OverLimitNote(size: Long, video: Boolean, alone: Boolean, composer: 
     }
 }
 
-/** The picked video's length and size on the review ("0:57 · 146 MB · Will be made smaller to post"), in the lock line's quiet type. */
+/** The picked video's length and size on the review ("0:57 · 139 MB"): a glass pill at the top of the stage, between Close and the tools. */
 @Composable
 private fun ReviewNote(text: String) {
+    val c = CircasoTheme.colors
     BasicText(
-        text, Modifier.fillMaxWidth().padding(horizontal = CircasoSpacing.s4),
-        style = CircasoTheme.typography.footnote.copy(color = CircasoTheme.colors.inkSecondary, fontFeatureSettings = "tnum"), maxLines = 2,
+        text,
+        Modifier.statusBarsPadding().padding(top = CircasoSpacing.s2).padding(horizontal = CircasoSizes.controlMd + CircasoSpacing.s6)
+            .clip(CircasoShapes.pill).background(c.glass).padding(horizontal = CircasoSpacing.s3, vertical = ReviewNotePad)
+            .semantics { contentDescription = "Video, $text" },
+        style = CircasoTheme.typography.footnote.copy(color = c.ink, fontFeatureSettings = "tnum"), maxLines = 1, overflow = TextOverflow.Ellipsis,
     )
 }
+
+private val ReviewNotePad = 6.dp
 
 /** M4: several picked; tap one to put it on the stage (and edit its caption), the bin takes it out. */
 @Composable
@@ -555,7 +571,8 @@ private fun RecentsStrip(state: MediaComposeState, composer: MediaComposer) {
                 LibraryTile(
                     item, Modifier.size(StripTileSize), number = if (order >= 0) order + 1 else null, showTick = state.selecting,
                     onClick = { composer.useRecent(item) }, onLongClick = { composer.startSelecting(item) },
-                    tooLarge = if (composer.tooLarge(item)) composer.tooLargeReason(item) else null,
+                    tooLarge = if (composer.tooLarge(item)) composer.tooLargeLimit else null,
+                    marked = if (composer.overLimit(item)) "over ${composer.limitLabel}, trim it to send" else null,
                 )
             }
         }
@@ -601,34 +618,36 @@ private val StripWideTile = 120.dp
  * One photo or video in the strip or the gallery: its thumbnail, a video's length, and when picking several the
  * round tick with its number (design M3). Since 2026-11-14 (Pasaka: "show the duration and the file size before the
  * user selects; those larger than the maximum, grey them out"; no frame): the gallery's tile says a video's size
- * beside its length ("0:57 · 146 MB"; [showSize]; the strip's 56 dp tile has room for the length only, and photos
- * say nothing, to keep the grid calm), and a video too large to send ([tooLarge], the reason) is dimmed under the
- * stage's scrim with the over-limit mark where the tick would be and, in the gallery, "Too large" across it. It can't
- * be ticked; a tap says why, with the limit.
+ * under its length ([showSize]; two short lines, so neither is ever cut at large text; the strip's 56 dp tile has
+ * room for the length only, and photos say nothing, to keep the grid calm), over a short shade so they read on any
+ * picture. A video too large to send at all ([tooLarge]: the limit, in a sentence) is dimmed under the stage's scrim
+ * with the over-limit mark where the tick would be and, in the gallery, "Too large" across it; it can't be ticked,
+ * and a tap says why. [marked]: a chat's video over its limit, which can still be trimmed to fit: the mark alone.
  */
 @Composable
 private fun LibraryTile(
     item: LibraryItem, modifier: Modifier, number: Int?, showTick: Boolean, onClick: () -> Unit,
     onLongClick: (() -> Unit)? = null, shape: androidx.compose.ui.graphics.Shape = CircasoShapes.sm,
-    showSize: Boolean = false, tooLarge: String? = null,
+    showSize: Boolean = false, tooLarge: String? = null, marked: String? = null, sizeText: String? = null,
 ) {
     val c = CircasoTheme.colors
     val t = CircasoTheme.typography
     val video = item.kind == LibraryKind.Video
-    val size = item.sizeBytes?.takeIf { video && it > 0 }?.let { compactSize(it) }
+    val size = sizeText ?: item.sizeBytes?.takeIf { video && it > 0 }?.let { compactSize(it) }
+    val density = androidx.compose.ui.platform.LocalDensity.current
     // On the picture in every theme: the light stage ink with a soft shadow (design M3), never the theme's ink.
     val onPicture = t.caption1.copy(
         color = com.circaso.designsystem.theme.DarkColors.ink, fontWeight = FontWeight.SemiBold, fontFeatureSettings = "tnum",
-        shadow = androidx.compose.ui.graphics.Shadow(com.circaso.designsystem.theme.DarkColors.scrim, androidx.compose.ui.geometry.Offset(0f, 1f), 4f),
+        shadow = androidx.compose.ui.graphics.Shadow(com.circaso.designsystem.theme.DarkColors.scrim, androidx.compose.ui.geometry.Offset(0f, 1f), with(density) { 2.dp.toPx() }),
     )
     Box(
         modifier.clip(shape).background(c.fill).pressable(onLongClick = onLongClick.takeIf { tooLarge == null }, onClick = onClick)
             .semantics(mergeDescendants = true) {
                 contentDescription = (if (video) "Video, ${longClock(item.durationMs ?: 0)}" + (size?.let { ", $it" } ?: "") else "Photo") + when {
-                    tooLarge != null -> ". Too large: $tooLarge"
-                    number != null -> ", selected, $number"
+                    tooLarge != null -> ", too large. $tooLarge"
+                    marked != null -> ", $marked"
                     else -> ""
-                }
+                } + if (number != null) ", selected, $number" else ""
                 role = if (showTick) Role.Checkbox else Role.Button
                 if (tooLarge != null) disabled() else if (showTick) selected = number != null
             },
@@ -636,21 +655,38 @@ private fun LibraryTile(
         com.circaso.core.platform.LibraryThumbnail(item, Modifier.fillMaxSize())
         if (tooLarge != null) Box(Modifier.fillMaxSize().background(com.circaso.designsystem.theme.DarkColors.scrim))
         item.durationMs?.let {
-            BasicText(
-                longClock(it) + if (showSize && size != null) " · $size" else "",
-                Modifier.align(Alignment.BottomStart).padding(start = 6.dp, end = 6.dp, bottom = 5.dp).alpha(if (tooLarge != null) 0.7f else 1f),
-                style = onPicture, maxLines = 1, softWrap = false, overflow = TextOverflow.Clip,
+            // Two lines of text need more than a shadow on a bright picture: a short shade under them.
+            if (showSize && size != null && tooLarge == null) Box(
+                Modifier.align(Alignment.BottomCenter).fillMaxWidth().height(TileShade)
+                    .background(androidx.compose.ui.graphics.Brush.verticalGradient(listOf(androidx.compose.ui.graphics.Color.Transparent, com.circaso.designsystem.theme.DarkColors.scrim))),
             )
+            Column(Modifier.align(Alignment.BottomStart).padding(start = TileInset, end = TileInset, bottom = TileInset)) {
+                BasicText(longClock(it), style = onPicture, maxLines = 1, softWrap = false, overflow = TextOverflow.Ellipsis)
+                if (showSize && size != null) BasicText(size, style = onPicture.copy(fontWeight = FontWeight.Normal), maxLines = 1, softWrap = false, overflow = TextOverflow.Ellipsis)
+            }
         }
+        // The mark sits in the tick's own box, so the two line up down the grid.
         when {
             tooLarge != null -> {
-                OverLimitBadge(Modifier.align(Alignment.TopEnd).padding(if (showSize) 6.dp else OverLimitBadgeInset))
-                if (showSize) BasicText("Too large", Modifier.align(Alignment.Center), style = onPicture, maxLines = 1)
+                Box(Modifier.align(Alignment.TopEnd).padding(4.dp).size(if (showSize) 24.dp else OverLimitBadgeSize), contentAlignment = Alignment.Center) {
+                    OverLimitBadge(size = if (showSize) CircasoSpacing.s5 else OverLimitBadgeSize)
+                }
+                if (showSize) BasicText(
+                    "Too large", Modifier.align(Alignment.Center).padding(horizontal = CircasoSpacing.s2),
+                    style = onPicture.copy(textAlign = TextAlign.Center), maxLines = 2,
+                )
             }
             showTick -> Box(Modifier.align(Alignment.TopEnd).padding(4.dp)) { Tick(number != null, number, onMedia = true) }
+            marked != null -> Box(Modifier.align(Alignment.TopEnd).padding(4.dp)) { OverLimitBadge() }
         }
+        // A chat's over-limit video being ticked keeps its mark, beside the tick.
+        if (marked != null && showTick && tooLarge == null) Box(Modifier.align(Alignment.TopStart).padding(4.dp)) { OverLimitBadge() }
     }
 }
+
+/** A tile's corner label sits this far in (design M3); the shade under a two-line label is this tall. */
+private val TileInset = 6.dp
+private val TileShade = 44.dp
 
 /**
  * The round tick (as the design's selection circles): filled with a check, or the pick's [number], when chosen.
@@ -883,7 +919,10 @@ private fun GalleryScreen(gallery: GalleryState, state: MediaComposeState, compo
                             LibraryTile(
                                 item, Modifier.fillMaxWidth().aspectRatio(1f), number = if (order >= 0) order + 1 else null, showTick = true, onClick = { composer.toggle(item) },
                                 shape = androidx.compose.ui.graphics.RectangleShape, showSize = true,
-                                tooLarge = if (composer.tooLarge(item)) composer.tooLargeReason(item) else null,
+                                tooLarge = if (composer.tooLarge(item)) composer.tooLargeLimit else null,
+                                marked = if (composer.overLimit(item)) "over ${composer.limitLabel}, trim it to send" else null,
+                                // "Over 1 GB" for one a little over, which would otherwise read "1 GB" beside the 1 GB limit.
+                                sizeText = item.sizeBytes?.takeIf { composer.tooLarge(item) }?.let { n -> overSize(n, composer.pickLimit ?: composer.maxBytes).replace("just over", "Over") },
                             )
                         }
                         // More to come: a row of blank tiles, so the grid never looks as if the library ends here.

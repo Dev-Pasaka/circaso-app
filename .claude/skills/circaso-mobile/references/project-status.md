@@ -59,6 +59,41 @@ Spaces tagged `archive/spaces-v1`; Room v20 drops its tables); the backend keeps
     waiting or failed is never counted as posted (`postingIds`). While anything is still on its way the arc shows
     even if another of the batch failed (its card is under the row). Offline it is Waiting, as designed, though
     getting ready carries on. Reduced motion: the arc steps, no easing.
+  - **An encode that comes out over the limit is done again smaller, never failed on the person (2026-11-14, the
+    Redmi):** a 57 s, 1080x1920 video (139 MB) passed the preview and then failed "too large", because the phone's
+    (MediaTek) hardware encoder ran well past the bit rate it was asked for. Now: the plan aims at 85 % of the limit
+    (`MomentVideoEncoding.BudgetShare`, was 92 %); Android's encoder, over the limit, gets one more go lower by as much
+    as it overshot and a tenth more (was a fixed 80 %); and if the file handed back is still over 32 MiB the worker
+    asks again with a smaller byte budget, `budget × limit ÷ size it came out at × 0.9`
+    (`MomentVideoEncoding.smallerBudget`), which through the same plan lowers the bit rate and then the picture size
+    (1080p → 720p → 540p → 360p). Up to 4 passes (`EncodePasses`); each rejected file is deleted; the budget reached
+    is kept in the draft (`PendingDraft.budget`) so a restart doesn't repeat a pass. Only if all four come out over
+    is it Failed, with "This phone couldn’t make the video small enough to post. Trim it shorter and post it again."
+    (`moment.video_too_large`). The ring: the first pass fills four fifths of the encoding half, each later pass four
+    fifths of what is left, so it never goes back. Retry on a moment failed before this fix (`status.moment_too_large`
+    with its source still there) gets it ready again with the new rule.
+  - **Said before it is picked (2026-11-14, Pasaka: "show the duration and the file size before the user selects;
+    those larger than the maximum, grey them out"; no frame):** `LibraryItem.sizeBytes` (Android: MediaStore `SIZE`
+    in the same query; iPhone: the Photos resource's file size, read in `IosMediaLibrary`; null when unknown, never
+    held against a video).
+    - **Tiles:** the gallery's video tiles say the size under the length ("0:57" over "139 MB", two short lines so
+      neither is cut at large text, on a short shade); the 56 dp strip tile keeps the length alone; **photos say
+      nothing** (every photo is handed over as a JPEG of at most 2048 px whatever the original weighs, so its size
+      tells nothing and the grid stays calm).
+    - **A moment:** a video that can't be posted at all (its file over 1 GB, `MomentSourceMaxBytes`) is greyed out
+      (scrim, the over-limit mark in the tick's place, "Too large" across the gallery tile), can't be ticked or used
+      from the strip, and a tap says why in a quiet toast (Info, not Problem): "This video is 1.4 GB. Videos up to
+      1 GB can be posted." ("just over 1 GB" for one a little over). Videos over a minute are not greyed: they go
+      to the trimmer.
+    - **A chat: marked, not greyed.** A chat's video over its limit can still be sent once trimmed shorter on the
+      review (the trimmer cuts it to fit, and the review's note says so), so greying it would take that away. Its
+      tile carries the over-limit mark and its size, it stays pickable, and the existing review note takes over.
+      (`MediaComposer.pickLimit` is null in a chat; `overLimit(item)` marks.)
+    - **The review** shows the picked video's length and size in a small glass pill at the top of the stage (where
+      the recording pill sits), so nothing under the finger moves as the item on the stage changes. The line "will
+      be made smaller to post" was tried and left out: it read as if the video would be cut shorter.
+    - Sizes at a glance use `compactSize` ("1.4 GB", "146 MB", "8.4 MB"; binary units like every other size in the
+      app, so the Redmi's 145,978,653-byte clip reads "139 MB").
   - **No Room change:** `preparing` is a new value of the `state` text column and the rest is in the draft JSON
     (`PendingDraft.source`, `encoded`, `tries`); the database stays at version 22.
   - **Departures from M4–M6:** none in layout. M4's review loses the "Making the video smaller to share…" footnote

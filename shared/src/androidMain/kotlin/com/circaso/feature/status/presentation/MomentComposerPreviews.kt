@@ -184,7 +184,14 @@ private fun StripTooLargePreview() = PreviewComposer(MomentComposerUiState(Media
     mode = ComposerMode.Video, recents = (previewVideos.reversed() + previewPhotos.take(4)), recentsAccess = LibraryAccess.Granted,
 )))
 
-@Preview(name = "M4 · A video over the post limit: its length and size, and that it will be made smaller")
+@Preview(name = "M3 · Gallery with sizes, light theme, large text", fontScale = 1.5f)
+@Composable
+private fun GallerySizesLargeTextPreview() = PreviewComposer(MomentComposerUiState(MediaComposeState(
+    selecting = true, selection = listOf(previewVideos[0]),
+    gallery = GalleryState(photos = previewPhotos, videos = previewVideos, access = LibraryAccess.Granted, all = (previewPhotos + previewVideos).sortedByDescending { it.addedAt }, photosDone = true, videosDone = true),
+)), dark = false)
+
+@Preview(name = "M4 · A picked video's length and size (139 MB) in the pill at the top")
 @Composable
 private fun ReviewNotePreview() = PreviewComposer(MomentComposerUiState(MediaComposeState(
     items = listOf(ComposerItem(ComposerCapture.Shot(CapturedMedia(ByteArray(0), "video/mp4", 1080, 1920, durationMs = 56_995, path = "/preview/big.mp4")), sizeBytes = 145_978_653)),

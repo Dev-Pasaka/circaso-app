@@ -552,8 +552,11 @@ class MomentComposerViewModelTest {
         vm.useRecent(huge)
         assertTrue(vm.state.value.items.isEmpty())
         assertFalse(vm.state.value.loadingPick)
-        assertEquals("This video is 1.4 GB. Videos up to 1 GB can be posted.", vm.state.value.error)
-        vm.errorShown()
+        assertEquals("This video is 1.4 GB. Videos up to 1 GB can be posted.", vm.state.value.media.info)
+        assertNull(vm.state.value.error, "nothing went wrong: a quiet line, not a problem")
+        vm.composer.infoShown()
+        // One a few bytes over never reads as if it fits.
+        assertEquals("This video is just over 1 GB. Videos up to 1 GB can be posted.", vm.composer.tooLargeReason(huge.copy(sizeBytes = gb + 1)))
         // A long press doesn't start picking with it either.
         vm.startSelecting(huge)
         assertFalse(vm.state.value.selecting)
@@ -565,7 +568,7 @@ class MomentComposerViewModelTest {
         vm.useSelection()
         val item = vm.state.value.items.single()
         assertEquals(146L * 1024 * 1024, item.sizeBytes)
-        assertEquals("0:57 · 146 MB · Will be made smaller to post", vm.composer.reviewNote(item))
+        assertEquals("0:57 · 146 MB", vm.composer.reviewNote(item))
     }
 
     @Test fun sizesReadAtAGlance() {
@@ -575,6 +578,12 @@ class MomentComposerViewModelTest {
         assertEquals("820 KB", com.circaso.feature.mediacompose.compactSize(820 * 1024))
         assertEquals("1 GB", com.circaso.feature.mediacompose.compactSize(1024 * mb))
         assertEquals("1.4 GB", com.circaso.feature.mediacompose.compactSize(1024 * mb * 14 / 10))
+        // The unit is chosen after rounding.
+        assertEquals("1 GB", com.circaso.feature.mediacompose.compactSize(1024 * mb - 300_000))
+        assertEquals("10 MB", com.circaso.feature.mediacompose.compactSize(mb * 996 / 100))
+        assertEquals("1.0 MB", com.circaso.feature.mediacompose.compactSize(mb - 100))
+        assertEquals("just over 1 GB", com.circaso.feature.mediacompose.overSize(1024 * mb + 1, 1024 * mb))
+        assertEquals("1.4 GB", com.circaso.feature.mediacompose.overSize(1024 * mb * 14 / 10, 1024 * mb))
     }
 
     @Test fun aTrimmedVideoPostsItsCutByFileAndATextMomentStillPostsAtOnce() = runTest(dispatcher) {
