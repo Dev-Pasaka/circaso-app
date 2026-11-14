@@ -42,9 +42,11 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.customActions
+import androidx.compose.ui.semantics.disabled
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.onClick
@@ -196,6 +198,9 @@ fun MediaComposeStage(
                             exit = if (CircasoTheme.reduceMotion) androidx.compose.animation.fadeOut(androidx.compose.animation.core.tween(CircasoMotion.QuickMs))
                                 else androidx.compose.animation.fadeOut(androidx.compose.animation.core.tween(CircasoMotion.QuickMs)) + androidx.compose.animation.shrinkVertically(androidx.compose.animation.core.tween(CircasoMotion.QuickMs)),
                         ) { OverLimitNote(lastOver, state.item?.video != null, alone = state.items.size == 1, composer) }
+                        // A picked video's length and size, quietly, above the strip (2026-11-14; no frame: M4's lock-line
+                        // type); for a moment's video over the post limit, that it will be made smaller.
+                        state.item?.takeIf { capture != null && state.trim == null && it.overLimit == null }?.let { composer.reviewNote(it) }?.let { ReviewNote(it) }
                         if (state.items.size > 1) PickedStrip(state, copy, composer, locked)
                         if (capture != null) CaptionField(state.caption, composer::onCaption, enabled = !locked)
                         // Under the caption, once (design M4): what happens to it.
@@ -315,6 +320,15 @@ private fun OverLimitNote(size: Long, video: Boolean, alone: Boolean, composer: 
             style = CircasoTheme.typography.subhead.copy(color = c.ink),
         )
     }
+}
+
+/** The picked video's length and size on the review ("0:57 · 146 MB · Will be made smaller to post"), in the lock line's quiet type. */
+@Composable
+private fun ReviewNote(text: String) {
+    BasicText(
+        text, Modifier.fillMaxWidth().padding(horizontal = CircasoSpacing.s4),
+        style = CircasoTheme.typography.footnote.copy(color = CircasoTheme.colors.inkSecondary, fontFeatureSettings = "tnum"), maxLines = 2,
+    )
 }
 
 /** M4: several picked; tap one to put it on the stage (and edit its caption), the bin takes it out. */
@@ -541,6 +555,7 @@ private fun RecentsStrip(state: MediaComposeState, composer: MediaComposer) {
                 LibraryTile(
                     item, Modifier.size(StripTileSize), number = if (order >= 0) order + 1 else null, showTick = state.selecting,
                     onClick = { composer.useRecent(item) }, onLongClick = { composer.startSelecting(item) },
+                    tooLarge = if (composer.tooLarge(item)) composer.tooLargeReason(item) else null,
                 )
             }
         }
@@ -584,34 +599,56 @@ private val StripWideTile = 120.dp
 
 /**
  * One photo or video in the strip or the gallery: its thumbnail, a video's length, and when picking several the
- * round tick with its number (design M3).
+ * round tick with its number (design M3). Since 2026-11-14 (Pasaka: "show the duration and the file size before the
+ * user selects; those larger than the maximum, grey them out"; no frame): the gallery's tile says a video's size
+ * beside its length ("0:57 · 146 MB"; [showSize]; the strip's 56 dp tile has room for the length only, and photos
+ * say nothing, to keep the grid calm), and a video too large to send ([tooLarge], the reason) is dimmed under the
+ * stage's scrim with the over-limit mark where the tick would be and, in the gallery, "Too large" across it. It can't
+ * be ticked; a tap says why, with the limit.
  */
 @Composable
 private fun LibraryTile(
     item: LibraryItem, modifier: Modifier, number: Int?, showTick: Boolean, onClick: () -> Unit,
     onLongClick: (() -> Unit)? = null, shape: androidx.compose.ui.graphics.Shape = CircasoShapes.sm,
+    showSize: Boolean = false, tooLarge: String? = null,
 ) {
     val c = CircasoTheme.colors
     val t = CircasoTheme.typography
     val video = item.kind == LibraryKind.Video
+    val size = item.sizeBytes?.takeIf { video && it > 0 }?.let { compactSize(it) }
+    // On the picture in every theme: the light stage ink with a soft shadow (design M3), never the theme's ink.
+    val onPicture = t.caption1.copy(
+        color = com.circaso.designsystem.theme.DarkColors.ink, fontWeight = FontWeight.SemiBold, fontFeatureSettings = "tnum",
+        shadow = androidx.compose.ui.graphics.Shadow(com.circaso.designsystem.theme.DarkColors.scrim, androidx.compose.ui.geometry.Offset(0f, 1f), 4f),
+    )
     Box(
-        modifier.clip(shape).background(c.fill).pressable(onLongClick = onLongClick, onClick = onClick)
+        modifier.clip(shape).background(c.fill).pressable(onLongClick = onLongClick.takeIf { tooLarge == null }, onClick = onClick)
             .semantics(mergeDescendants = true) {
-                contentDescription = (if (video) "Video, ${longClock(item.durationMs ?: 0)}" else "Photo") + if (number != null) ", selected, $number" else ""
+                contentDescription = (if (video) "Video, ${longClock(item.durationMs ?: 0)}" + (size?.let { ", $it" } ?: "") else "Photo") + when {
+                    tooLarge != null -> ". Too large: $tooLarge"
+                    number != null -> ", selected, $number"
+                    else -> ""
+                }
                 role = if (showTick) Role.Checkbox else Role.Button
-                if (showTick) selected = number != null
+                if (tooLarge != null) disabled() else if (showTick) selected = number != null
             },
     ) {
         com.circaso.core.platform.LibraryThumbnail(item, Modifier.fillMaxSize())
-        // On the picture in every theme: the light stage ink with a soft shadow (design M3), never the theme's ink.
+        if (tooLarge != null) Box(Modifier.fillMaxSize().background(com.circaso.designsystem.theme.DarkColors.scrim))
         item.durationMs?.let {
-            BasicText(longClock(it), Modifier.align(Alignment.BottomStart).padding(start = 6.dp, bottom = 5.dp),
-                style = t.caption1.copy(
-                    color = com.circaso.designsystem.theme.DarkColors.ink, fontWeight = FontWeight.SemiBold, fontFeatureSettings = "tnum",
-                    shadow = androidx.compose.ui.graphics.Shadow(com.circaso.designsystem.theme.DarkColors.scrim, androidx.compose.ui.geometry.Offset(0f, 1f), 4f),
-                ))
+            BasicText(
+                longClock(it) + if (showSize && size != null) " · $size" else "",
+                Modifier.align(Alignment.BottomStart).padding(start = 6.dp, end = 6.dp, bottom = 5.dp).alpha(if (tooLarge != null) 0.7f else 1f),
+                style = onPicture, maxLines = 1, softWrap = false, overflow = TextOverflow.Clip,
+            )
         }
-        if (showTick) Box(Modifier.align(Alignment.TopEnd).padding(4.dp)) { Tick(number != null, number, onMedia = true) }
+        when {
+            tooLarge != null -> {
+                OverLimitBadge(Modifier.align(Alignment.TopEnd).padding(if (showSize) 6.dp else OverLimitBadgeInset))
+                if (showSize) BasicText("Too large", Modifier.align(Alignment.Center), style = onPicture, maxLines = 1)
+            }
+            showTick -> Box(Modifier.align(Alignment.TopEnd).padding(4.dp)) { Tick(number != null, number, onMedia = true) }
+        }
     }
 }
 
@@ -843,7 +880,11 @@ private fun GalleryScreen(gallery: GalleryState, state: MediaComposeState, compo
                         items(items.size, key = { items[it].id }) { i ->
                             val item = items[i]
                             val order = state.selection.indexOfFirst { it.id == item.id }
-                            LibraryTile(item, Modifier.fillMaxWidth().aspectRatio(1f), number = if (order >= 0) order + 1 else null, showTick = true, onClick = { composer.toggle(item) }, shape = androidx.compose.ui.graphics.RectangleShape)
+                            LibraryTile(
+                                item, Modifier.fillMaxWidth().aspectRatio(1f), number = if (order >= 0) order + 1 else null, showTick = true, onClick = { composer.toggle(item) },
+                                shape = androidx.compose.ui.graphics.RectangleShape, showSize = true,
+                                tooLarge = if (composer.tooLarge(item)) composer.tooLargeReason(item) else null,
+                            )
                         }
                         // More to come: a row of blank tiles, so the grid never looks as if the library ends here.
                         if (!gallery.complete) items(GalleryMoreTiles, key = { "more-$it" }) {

@@ -225,6 +225,8 @@ class AndroidMediaLibrary(private val context: Context) : MediaLibrary {
             add(MediaStore.MediaColumns.DATE_ADDED)
             if (kind != LibraryKind.Photo) add(MediaStore.MediaColumns.DURATION)
             if (kind == LibraryKind.Audio) add(MediaStore.MediaColumns.TITLE)
+            // A video's size, from the same row (no file is opened): shown on its tile, and greys out one too large.
+            if (kind == LibraryKind.Video) add(MediaStore.MediaColumns.SIZE)
         }.toTypedArray()
         val items = mutableListOf<LibraryItem>()
         val read = runCatching {
@@ -235,6 +237,7 @@ class AndroidMediaLibrary(private val context: Context) : MediaLibrary {
                 val addedCol = c.getColumnIndex(MediaStore.MediaColumns.DATE_ADDED)
                 val durCol = if (kind != LibraryKind.Photo) c.getColumnIndex(MediaStore.MediaColumns.DURATION) else -1
                 val titleCol = if (kind == LibraryKind.Audio) c.getColumnIndex(MediaStore.MediaColumns.TITLE) else -1
+                val sizeCol = if (kind == LibraryKind.Video) c.getColumnIndex(MediaStore.MediaColumns.SIZE) else -1
                 while (c.moveToNext() && items.size < limit) {
                     val uri = ContentUris.withAppendedId(collection, c.getLong(idCol))
                     items += LibraryItem(
@@ -242,6 +245,7 @@ class AndroidMediaLibrary(private val context: Context) : MediaLibrary {
                         durationMs = if (durCol >= 0) c.getLong(durCol) else null,
                         title = if (titleCol >= 0) c.getString(titleCol) else null,
                         addedAt = if (addedCol >= 0) c.getLong(addedCol) * 1000 else 0,
+                        sizeBytes = if (sizeCol >= 0 && !c.isNull(sizeCol)) c.getLong(sizeCol).takeIf { it > 0 } else null,
                     )
                 }
             } ?: if (strict) error("MediaStore gave no cursor") else Unit
@@ -400,14 +404,14 @@ class AndroidMediaLibrary(private val context: Context) : MediaLibrary {
      * side, its frame rate, and a bit rate for that size that the 32 MiB limit allows for this length.
      */
     @OptIn(UnstableApi::class)
-    override suspend fun trim(path: String, startMs: Long, endMs: Long, maxBytes: Long): CapturedMedia? = shrink(path, startMs, endMs, maxBytes) {}
+    override suspend fun trim(path: String, startMs: Long, endMs: Long, maxBytes: Long): CapturedMedia? = shrink(path, startMs, endMs, maxBytes, maxBytes) {}
 
     @OptIn(UnstableApi::class)
-    override suspend fun shrink(path: String, startMs: Long, endMs: Long, maxBytes: Long, onProgress: (Float) -> Unit): CapturedMedia? {
+    override suspend fun shrink(path: String, startMs: Long, endMs: Long, maxBytes: Long, budgetBytes: Long, onProgress: (Float) -> Unit): CapturedMedia? {
         val out = File(context.cacheDir, "moment-trim-${System.nanoTime()}.mp4")
         val source = withContext(Dispatchers.IO) { probeVideo(path) }
         val plan = MomentVideoEncoding.plan(
-            source?.width ?: 720, source?.height ?: 1280, source?.frameRate, source?.videoBitRate, (endMs - startMs).coerceAtLeast(1), maxBytes,
+            source?.width ?: 720, source?.height ?: 1280, source?.frameRate, source?.videoBitRate, (endMs - startMs).coerceAtLeast(1), minOf(maxBytes, budgetBytes),
         )
         val item = MediaItem.Builder().setUri(Uri.fromFile(File(path)))
             .setClippingConfiguration(MediaItem.ClippingConfiguration.Builder().setStartPositionMs(startMs).setEndPositionMs(endMs).build())
@@ -418,7 +422,9 @@ class AndroidMediaLibrary(private val context: Context) : MediaLibrary {
             .build()
         // A decoder that fails on this phone (the emulator's goldfish H.264 one, some phones' hardware ones) is left
         // out and the export starts again with the next, as the player does ([failedDecoders]). A hardware encoder that
-        // overshoots its bit rate past the limit gets one more go at four fifths of it.
+        // overshoots its bit rate past the limit gets one more go, lower by as much as it overshot (and a tenth more;
+        // a Redmi's MediaTek encoder ran more than a fifth over, 2026-11-14). Still over after that, the caller plans
+        // a smaller encode ([MomentVideoEncoding.smallerBudget]), which lowers the size as well.
         var ok = false
         var bitRate = plan.bitRate
         var shrunk = false
@@ -429,8 +435,9 @@ class AndroidMediaLibrary(private val context: Context) : MediaLibrary {
             val failed = export(edited, encoder, out, onProgress)
             if (failed == null) {
                 if (out.length() > maxBytes && !shrunk) {
-                    Log.i("MomentVideo", "trim: ${out.length()} bytes is over the limit at ${bitRate / 1000} kbit/s, once more at 80 %")
-                    bitRate = bitRate * 4 / 5; shrunk = true; continue
+                    val lower = (bitRate.toLong() * maxBytes / out.length() * 9 / 10).toInt().coerceIn(MomentVideoEncoding.MinBitRate / 2, bitRate * 4 / 5)
+                    Log.i("MomentVideo", "trim: ${out.length()} bytes is over the limit at ${bitRate / 1000} kbit/s, once more at ${lower / 1000} kbit/s")
+                    bitRate = lower; shrunk = true; continue
                 }
                 ok = true; break
             }

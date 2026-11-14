@@ -66,6 +66,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
+import kotlin.math.roundToInt
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -106,6 +107,7 @@ class MomentPostingTest {
     private fun processor(r: MomentsRepositoryImpl = repo) = OutboxProcessor(outbox, listOf(MomentPostHandler { r }), nowMillis = { clock })
 
     private val big = (MomentMediaMaxBytes + 1).toInt()
+    private val SmallEnough = 128
 
     /** A picked video as the composer hands it over: on disk, by its path. */
     private fun video(path: String, size: Int, caption: String? = null): MomentDraft.Media {
@@ -283,9 +285,90 @@ class MomentPostingTest {
         val shown = seen.filterNotNull()
         assertTrue(shown.size >= 6, "the encoder's steps, then the upload's: $seen")
         assertEquals(shown.sorted(), shown, "never backwards: $shown")
-        assertEquals(0.1f, shown.first(), "the encoder's own progress fills the first half")
+        assertEquals(8, (shown.first() * 100).roundToInt(), "the encoder's own progress fills the first half")
         assertTrue(shown.any { it == 0.5f }, "ready: half-way, before a byte is sent")
         assertEquals(0.95f, shown.last(), "sent: the rest is the post itself")
+    }
+
+    // The Redmi, 2026-11-14: a 57 s video passed the preview, then failed "too large" because the phone's encoder ran
+    // past the bit rate it was asked for. A pass that comes out over is done again smaller, never handed to the person.
+
+    @Test fun anEncoderThatRunsAFifthOverIsAskedAgainSmallerAndTheVideoPosts() = runSuspending {
+        repo.post(video("/cache/big.mp4", big))
+        val id = pending().single().localId
+        library.outSize = { budget -> (budget * 12 / 10).toInt() } // always a fifth over what it was asked for
+
+        repo.resume()
+        assertEquals(2, library.budgets.size, "the first pass came out over; the second fits")
+        assertEquals(MomentMediaMaxBytes, library.budgets[0])
+        assertEquals(com.circaso.core.platform.MomentVideoEncoding.smallerBudget(MomentMediaMaxBytes, MomentMediaMaxBytes * 12 / 10), library.budgets[1])
+        assertEquals(PendingState.Posting, pending().single().state)
+        assertTrue(files.size(id)!! <= MomentMediaMaxBytes)
+        assertTrue(disk.files.keys.none { it.startsWith("/cache/") || "over-" in it }, "the pass that was over is deleted, not left behind")
+
+        assertEquals(DrainResult.Drained(1), processor().drain())
+        assertEquals(listOf(id), remote.posted.map { it.clientMomentId })
+    }
+
+    @Test fun anEncoderThatNeverFitsFailsAfterItsPassesWithWhyAndLeavesNothingBehind() = runSuspending {
+        repo.post(video("/cache/big.mp4", big))
+        val id = pending().single().localId
+        library.outSize = { big } // whatever it is asked for, over the limit
+
+        repo.resume()
+        assertEquals(4, library.budgets.size)
+        assertEquals(library.budgets.sortedDescending(), library.budgets, "each pass is asked for less than the one before")
+        assertTrue(library.budgets.zipWithNext().all { (a, b) -> b < a })
+        assertEquals(PendingState.Failed to "moment.video_too_large", pending().single().let { it.state to it.error })
+        assertTrue(outboxDao.rows.value.isEmpty())
+        assertTrue(disk.files.keys.none { it.startsWith("/cache/") || "over-" in it })
+        assertEquals(big, files.size("source-$id.mp4")?.toInt(), "the picked video is kept, so Retry can try again")
+    }
+
+    @Test fun retryOnAVideoThatFailedAsTooLargeGetsItReadyAgainFromItsSource() = runSuspending {
+        // As on the owner's phone: failed by the earlier build with the server's code, its source still there.
+        repo.post(video("/cache/big.mp4", big))
+        val id = pending().single().localId
+        dao.setPendingState(id, "failed", "status.moment_too_large")
+
+        library.outSize = { budget -> if (budget == MomentMediaMaxBytes) big else SmallEnough }
+        repo.retry(id)
+        assertEquals(PendingState.Preparing, pending().single().state)
+        repo.resume()
+        assertEquals(PendingState.Posting, pending().single().state)
+        processor().drain()
+        assertEquals(listOf(id), remote.posted.map { it.clientMomentId })
+    }
+
+    @Test fun theRingKeepsGrowingThroughASecondEncodePass() = runSuspending {
+        repo.post(video("/cache/big.mp4", big))
+        val seen = mutableListOf<Float?>()
+        library.steps = listOf(0.5f, 1f)
+        library.onStep = { seen += pending().singleOrNull()?.progress }
+        library.outSize = { budget -> if (budget == MomentMediaMaxBytes) big else SmallEnough }
+
+        repo.resume()
+        seen += pending().single().progress
+        val shown = seen.filterNotNull().map { (it * 100).roundToInt() }
+        assertEquals(listOf(20, 40, 44, 48, 50), shown, "the first pass to four fifths of the half, the second in what is left, then ready")
+    }
+
+    @Test fun aSmallerBudgetIsRememberedAcrossARestart() = runSuspending {
+        repo.post(video("/cache/big.mp4", big))
+        library.outSize = { big }
+        library.unreadable = false
+        // The first pass came out over, then the process died during the second.
+        var passes = 0
+        library.beforePass = { if (++passes == 2) throw kotlin.coroutines.cancellation.CancellationException("the process died") }
+        runCatching { repo.resume() }
+        assertEquals(PendingState.Preparing, pending().single().state)
+
+        library.beforePass = {}
+        library.outSize = { SmallEnough }
+        val again = repository()
+        again.resume()
+        assertTrue(library.budgets.last() < MomentMediaMaxBytes, "the next run starts from the smaller budget, not from the pass that was over")
+        assertEquals(PendingState.Posting, again.pending.first().single().state)
     }
 
     @Test fun aTextMomentStillGoesStraightToTheQueue() = runSuspending {
@@ -338,13 +421,21 @@ private class Encoder(private val disk: Disk) : MediaLibrary {
     override suspend fun load(item: LibraryItem): CapturedMedia? = null
     override suspend fun pick(kind: LibraryKind): CapturedMedia? = null
     override suspend fun size(path: String) = disk.files[path]?.size?.toLong()
-    override suspend fun shrink(path: String, startMs: Long, endMs: Long, maxBytes: Long, onProgress: (Float) -> Unit): CapturedMedia? {
+    /** The budgets asked for, pass by pass. */
+    val budgets = mutableListOf<Long>()
+    /** What each pass comes out at, given its budget; by default it fits easily. */
+    var outSize: (budget: Long) -> Int = { SmallerSize }
+    var beforePass: () -> Unit = {}
+
+    override suspend fun shrink(path: String, startMs: Long, endMs: Long, maxBytes: Long, budgetBytes: Long, onProgress: (Float) -> Unit): CapturedMedia? {
         if (dieOnce) { dieOnce = false; throw kotlin.coroutines.cancellation.CancellationException("the process died") }
         shrinks += Triple(path, startMs, endMs)
+        beforePass()
+        budgets += budgetBytes
         if (unreadable || path !in disk.files) return null
         steps.forEach { onProgress(it); onStep() }
         val out = "/cache/moment-trim-${shrinks.size}.mp4"
-        disk.files[out] = ByteArray(SmallerSize)
+        disk.files[out] = ByteArray(outSize(budgetBytes))
         return CapturedMedia(ByteArray(0), "video/mp4", 720, 1280, durationMs = endMs - startMs, thumb = ByteArray(2), path = out)
     }
 

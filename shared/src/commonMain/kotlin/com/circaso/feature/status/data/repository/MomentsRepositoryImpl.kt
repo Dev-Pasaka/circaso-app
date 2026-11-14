@@ -96,6 +96,11 @@ internal data class PendingDraft(
     val encoded: Boolean = false,
     /** How many times the encoder has been tried and couldn't (it is tried again before the moment is failed). */
     val tries: Int = 0,
+    /**
+     * The size the next encode is planned for, once a pass has come out over the limit on this phone
+     * ([com.circaso.core.platform.MomentVideoEncoding.smallerBudget]); kept so a restart doesn't repeat that pass.
+     */
+    val budget: Long? = null,
 )
 
 @Serializable
@@ -453,7 +458,7 @@ class MomentsRepositoryImpl(
         val row = dao.pending(localId) ?: return
         val draft = runCatching { json.decodeFromString(PendingDraft.serializer(), row.draft) }.getOrNull()
         if (draft?.source != null) {
-            dao.savePending(row.copy(draft = json.encodeToString(PendingDraft.serializer(), draft.copy(tries = 0)), state = StatePreparing, error = null))
+            dao.savePending(row.copy(draft = json.encodeToString(PendingDraft.serializer(), draft.copy(tries = 0, budget = null)), state = StatePreparing, error = null))
             kickPreparing()
             return
         }
@@ -521,24 +526,41 @@ class MomentsRepositoryImpl(
                 size <= com.circaso.core.platform.MomentMediaMaxBytes -> if (!files.move(source, id)) return failPreparing(row, SourceMissing)
                 !video -> return failPreparing(row, TooLarge)
                 else -> {
-                    // A minute shot at a high bit rate: the same clip at the moments' bit rate, as large as the limit allows.
-                    setProgress(id, 0f)
+                    // A minute shot at a high bit rate: the same clip at the moments' bit rate, as large as the limit
+                    // allows. A pass that comes out over the limit (a hardware encoder running past its bit rate) is
+                    // never the person's problem: it is done again, planned smaller by as much as it overshot.
+                    val max = com.circaso.core.platform.MomentMediaMaxBytes
                     val path = files.path(source)
-                    val smaller = if (path == null || library == null) null else library.shrink(
-                        path, 0, draft.durationMs ?: com.circaso.core.platform.MomentMediaMaxMs, com.circaso.core.platform.MomentMediaMaxBytes,
-                    ) { done -> setProgress(id, PrepareShare * done.coerceIn(0f, 1f)) }
-                    val out = smaller?.path
-                    val outSize = out?.let { library?.size(it) } ?: 0
-                    if (out == null || outSize <= 0) {
-                        // Couldn't this time. Not yet the person's problem: it is tried again before it is failed.
-                        val tries = draft.tries + 1
-                        if (tries >= PrepareTries) return failPreparing(row, VideoUnreadable)
-                        saveDraft(id) { it.copy(tries = tries) }
-                        return false
+                    var budget = draft.budget?.coerceIn(1, max) ?: max
+                    var made: com.circaso.core.platform.CapturedMedia? = null
+                    for (pass in 0 until EncodePasses) {
+                        // Each pass has its own stretch of the ring's first half, so the arc never goes back.
+                        val from = encodeShare(pass)
+                        val to = encodeShare(pass + 1)
+                        setProgress(id, from)
+                        val smaller = if (path == null || library == null) null else library.shrink(
+                            path, 0, draft.durationMs ?: com.circaso.core.platform.MomentMediaMaxMs, max, budget,
+                        ) { done -> setProgress(id, from + (to - from) * done.coerceIn(0f, 1f)) }
+                        val out = smaller?.path
+                        val outSize = out?.let { library?.size(it) } ?: 0
+                        if (smaller == null || out == null || outSize <= 0) {
+                            // Couldn't this time. Not yet the person's problem: it is tried again before it is failed.
+                            val tries = draft.tries + 1
+                            if (tries >= PrepareTries) return failPreparing(row, VideoUnreadable)
+                            saveDraft(id) { it.copy(tries = tries) }
+                            return false
+                        }
+                        if (outSize <= max) {
+                            if (!files.moveIn(out, id)) return failPreparing(row, VideoUnreadable)
+                            made = smaller
+                            break
+                        }
+                        // Over: the encoder's file is taken in and deleted (so out of the cache), and the next pass is smaller.
+                        files.moveIn(out, "over-$id"); files.delete("over-$id")
+                        budget = com.circaso.core.platform.MomentVideoEncoding.smallerBudget(budget, outSize, max)
+                        saveDraft(id) { it.copy(budget = budget) }
                     }
-                    // The encoder's file is taken in (and so out of the cache) whether or not it is kept.
-                    if (outSize > com.circaso.core.platform.MomentMediaMaxBytes) { files.moveIn(out, "ready-$id"); files.delete("ready-$id"); return failPreparing(row, TooLarge) }
-                    if (!files.moveIn(out, id)) return failPreparing(row, VideoUnreadable)
+                    val smaller = made ?: return failPreparing(row, VideoTooLarge)
                     draft = draft.copy(
                         mime = smaller.mime, thumb = smaller.thumb?.let { Base64.encode(it) } ?: draft.thumb, durationMs = smaller.durationMs ?: draft.durationMs,
                         width = smaller.width ?: draft.width, height = smaller.height ?: draft.height, encoded = true,
@@ -749,6 +771,14 @@ class MomentsRepositoryImpl(
         /** The same unreadable moments are asked about again after this, in case the poster's phone missed it. */
         const val KeyRequestAgainMillis = 30 * 60 * 1000L
         const val KeyRequestBatch = 100
+        /**
+         * A video is encoded at most this many times, each planned smaller than the last came out, before it is
+         * failed as one this phone can't make small enough (which a minute of video should never reach: the third
+         * pass is planned at well under half the limit, at a smaller size).
+         */
+        const val EncodePasses = 4
+        /** Where the ring is as encode pass [pass] begins: the first takes four fifths of [PrepareShare], each later one four fifths of what is left. */
+        fun encodeShare(pass: Int): Float { var left = 1f; repeat(pass) { left *= 0.2f }; return PrepareShare * (1f - left) }
         /** The encoder is tried this many times in all before a video is failed as one this phone can't get ready. */
         const val PrepareTries = 3
         /** How long after the encoder couldn't it is tried again (also at the next launch and reconnect). */
@@ -763,6 +793,8 @@ class MomentsRepositoryImpl(
         const val SourceMissing = "moment.source_missing"
         const val VideoUnreadable = "moment.video_unreadable"
         const val PrepareFailed = "moment.prepare_failed"
+        /** Every encode pass came out over the limit. */
+        const val VideoTooLarge = "moment.video_too_large"
         const val TooLarge = "status.moment_too_large"
     }
 }

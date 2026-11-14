@@ -55,6 +55,7 @@ import platform.CoreGraphics.CGSizeMake
 import platform.Foundation.NSData
 import platform.Foundation.dataWithContentsOfFile
 import platform.Foundation.timeIntervalSince1970
+import platform.Foundation.valueForKey
 import platform.AVFoundation.currentItem
 import platform.Foundation.NSSortDescriptor
 import platform.Foundation.NSURL
@@ -179,9 +180,21 @@ class IosMediaLibrary : MediaLibrary {
                 LibraryItem(
                     id = asset.localIdentifier, kind = kind, durationMs = if (video) (asset.duration * 1000).toLong() else null,
                     addedAt = asset.creationDate?.let { (it.timeIntervalSince1970 * 1000).toLong() } ?: 0,
+                    sizeBytes = if (video) videoSize(asset) else null,
                 )
             }
         }
+    }
+
+    /**
+     * A video's size as Photos has it, without opening or downloading the file: its first resource's `fileSize`.
+     * Photos keeps that on the resource but not in the public headers, so it is asked for only when the resource
+     * answers to it; null otherwise (the tile then shows the length alone, and the video is never greyed out).
+     */
+    private fun videoSize(asset: PHAsset): Long? {
+        val resource = platform.Photos.PHAssetResource.assetResourcesForAsset(asset).firstOrNull() as? platform.Photos.PHAssetResource ?: return null
+        if (!resource.respondsToSelector(platform.objc.sel_registerName("fileSize"))) return null
+        return (resource.valueForKey("fileSize") as? platform.Foundation.NSNumber)?.longLongValue?.takeIf { it > 0 }
     }
 
     override suspend fun load(item: LibraryItem): CapturedMedia? {

@@ -533,6 +533,50 @@ class MomentComposerViewModelTest {
         assertEquals("This video isn’t on the phone any more. Pick it again. The one before it is posting.", vm.state.value.error)
     }
 
+    // Said before it is picked (2026-11-14): a video's size is on its tile, and one too large is greyed out.
+
+    @Test fun aVideoTooLargeForAMomentCannotBeTickedOrUsedFromTheStripAndSaysWhy() = runTest(dispatcher) {
+        val gb = 1024L * 1024 * 1024
+        val huge = LibraryItem("huge", LibraryKind.Video, durationMs = 40_000, sizeBytes = gb * 14 / 10)
+        val fine = LibraryItem("fine", LibraryKind.Video, durationMs = 57_000, sizeBytes = 146L * 1024 * 1024) // over the post limit: made smaller after Post
+        val unknown = LibraryItem("unknown", LibraryKind.Video, durationMs = 9_000)
+        library.media["fine"] = clip("/tmp/fine.mp4", 57_000)
+        library.sizes["/tmp/fine.mp4"] = 146L * 1024 * 1024
+        val vm = composer()
+        assertTrue(vm.composer.tooLarge(huge))
+        assertFalse(vm.composer.tooLarge(fine))
+        assertFalse(vm.composer.tooLarge(unknown), "a size nobody knows is never held against a video")
+        assertFalse(vm.composer.tooLarge(LibraryItem("raw", LibraryKind.Photo, sizeBytes = gb * 2)), "a photo is handed over as a JPEG whatever it weighs")
+
+        // From the strip: nothing is loaded, and the toast says why with the limit.
+        vm.useRecent(huge)
+        assertTrue(vm.state.value.items.isEmpty())
+        assertFalse(vm.state.value.loadingPick)
+        assertEquals("This video is 1.4 GB. Videos up to 1 GB can be posted.", vm.state.value.error)
+        vm.errorShown()
+        // A long press doesn't start picking with it either.
+        vm.startSelecting(huge)
+        assertFalse(vm.state.value.selecting)
+        // In the gallery it can't be ticked; the others can.
+        vm.openGallery()
+        vm.toggle(huge)
+        vm.toggle(fine)
+        assertEquals(listOf("fine"), vm.state.value.selection.map { it.id })
+        vm.useSelection()
+        val item = vm.state.value.items.single()
+        assertEquals(146L * 1024 * 1024, item.sizeBytes)
+        assertEquals("0:57 · 146 MB · Will be made smaller to post", vm.composer.reviewNote(item))
+    }
+
+    @Test fun sizesReadAtAGlance() {
+        val mb = 1024L * 1024
+        assertEquals("139 MB", com.circaso.feature.mediacompose.compactSize(145_978_653)) // the Redmi's 57 s clip; binary units, as every other size in the app
+        assertEquals("8.4 MB", com.circaso.feature.mediacompose.compactSize(mb * 84 / 10))
+        assertEquals("820 KB", com.circaso.feature.mediacompose.compactSize(820 * 1024))
+        assertEquals("1 GB", com.circaso.feature.mediacompose.compactSize(1024 * mb))
+        assertEquals("1.4 GB", com.circaso.feature.mediacompose.compactSize(1024 * mb * 14 / 10))
+    }
+
     @Test fun aTrimmedVideoPostsItsCutByFileAndATextMomentStillPostsAtOnce() = runTest(dispatcher) {
         library.media["long"] = clip("/tmp/long.mp4", 134_000)
         val vm = composer()

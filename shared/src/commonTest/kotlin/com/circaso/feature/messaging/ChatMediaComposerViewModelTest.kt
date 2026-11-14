@@ -148,6 +148,23 @@ class ChatMediaComposerViewModelTest {
         assertTrue(vm.state.value.canSend)
     }
 
+    @Test fun aVideoOverTheChatLimitIsGreyedOutBeforeItIsPickedAndOneAMomentWouldRefuseIsNot() = runTest(dispatcher) {
+        val limit = com.circaso.core.platform.ChatFileMaxBytes
+        val vm = composer(ChatComposeStart.Gallery)
+        // A chat sends a video as it is, so its own limit is the rule here (a moment's is 1 GB, made smaller later).
+        val over = LibraryItem("over", LibraryKind.Video, durationMs = 300_000, sizeBytes = limit * 3 / 2)
+        val under = LibraryItem("under", LibraryKind.Video, durationMs = 300_000, sizeBytes = limit - 1)
+        assertEquals(limit, vm.composer.pickLimit)
+        assertTrue(vm.composer.tooLarge(over))
+        assertFalse(vm.composer.tooLarge(under))
+        assertFalse(vm.composer.tooLarge(LibraryItem("unknown", LibraryKind.Video, durationMs = 300_000)))
+        vm.composer.toggle(over)
+        assertTrue(vm.state.value.media.selection.isEmpty(), "it can't be ticked")
+        assertEquals("This video is 150 MB. Videos up to 100 MB can be sent.", vm.state.value.media.error)
+        vm.composer.toggle(under)
+        assertEquals(listOf("under"), vm.state.value.media.selection.map { it.id })
+    }
+
     @Test fun severalFromTheGalleryGoInOrderEachWithItsOwnCaption() = runTest(dispatcher) {
         library.media += mapOf("a" to jpeg(3), "b" to clip("/v", 20_000), "c" to jpeg(5))
         library.files["/v"] = ByteArray(9)

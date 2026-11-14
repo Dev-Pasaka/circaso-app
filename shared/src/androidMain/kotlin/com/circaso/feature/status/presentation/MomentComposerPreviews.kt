@@ -64,7 +64,10 @@ import kotlinx.coroutines.flow.flowOf
 // follows the person's theme. The stage itself is dark in every theme. Preview-only fakes: nothing here ships logic.
 
 private val previewPhotos = List(12) { LibraryItem("preview-photo-$it", LibraryKind.Photo, addedAt = 100L - it) }
-private val previewVideos = List(3) { LibraryItem("preview-video-$it", LibraryKind.Video, durationMs = 42_000L + it * 61_000L, addedAt = 99L - it * 4) }
+// Each video says its size (2026-11-14); the last is over a moment's 1 GB, so its tile is greyed out and can't be ticked.
+private val previewVideos = List(3) {
+    LibraryItem("preview-video-$it", LibraryKind.Video, durationMs = 42_000L + it * 61_000L, addedAt = 99L - it * 4, sizeBytes = listOf(146L, 8L, 1_434L)[it] * 1024 * 1024 + 300_000)
+}
 
 private object PreviewLibrary : MediaLibrary {
     override suspend fun access() = LibraryAccess.Granted
@@ -167,6 +170,25 @@ private fun PreviewComposer(initial: MomentComposerUiState, dark: Boolean = true
 
 private val twoPhotos = List(2) { ComposerItem(ComposerCapture.Shot(CapturedMedia(ByteArray(0), "image/jpeg", 1080, 1920)), caption = if (it == 0) "Graduation day!" else "") }
 private val longVideo = CapturedMedia(ByteArray(0), "video/mp4", 720, 1280, durationMs = 134_000, path = "/preview/long.mp4")
+
+@Preview(name = "M3 · Gallery, videos with their sizes, one too large greyed out")
+@Composable
+private fun GallerySizesPreview() = PreviewComposer(MomentComposerUiState(MediaComposeState(
+    selecting = true, selection = listOf(previewPhotos[1], previewVideos[0]),
+    gallery = GalleryState(photos = previewPhotos, videos = previewVideos, access = LibraryAccess.Granted, all = (previewPhotos + previewVideos).sortedByDescending { it.addedAt }, photosDone = true, videosDone = true),
+)))
+
+@Preview(name = "M1 · Strip, a video too large greyed out")
+@Composable
+private fun StripTooLargePreview() = PreviewComposer(MomentComposerUiState(MediaComposeState(
+    mode = ComposerMode.Video, recents = (previewVideos.reversed() + previewPhotos.take(4)), recentsAccess = LibraryAccess.Granted,
+)))
+
+@Preview(name = "M4 · A video over the post limit: its length and size, and that it will be made smaller")
+@Composable
+private fun ReviewNotePreview() = PreviewComposer(MomentComposerUiState(MediaComposeState(
+    items = listOf(ComposerItem(ComposerCapture.Shot(CapturedMedia(ByteArray(0), "video/mp4", 1080, 1920, durationMs = 56_995, path = "/preview/big.mp4")), sizeBytes = 145_978_653)),
+)))
 
 @Preview(name = "M1 · Photo, several ticked on the strip")
 @Composable
