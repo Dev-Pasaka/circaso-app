@@ -335,7 +335,8 @@ Nothing to show is never an error screen. The first moment was posted through th
   / Photo Library pill, the ⋯ "Photo access" sheet, the system photo picker fallback and its code on both platforms.
   Departures from M3c: with access off the screen is one ask with a primary button ("Allow access"; "Open Settings" on
   iPhone, where only Settings can turn it on); with only some access (chosen items, or one kind off) a banner line
-  above the grid says what's missing with "Allow all" (Android 14+), "Choose more" (iPhone limited library) or
+  above the grid says what's missing with "Allow all in Settings" (Android 14+: asking again only reopens the
+  system's selection screen, so it opens the app's settings), "Choose more" (iPhone limited library) or
   "Allow" (one kind off), instead of the Manage card. Android asks for photos and videos in one prompt. Coming back
   from Settings re-reads the library. This applies to a chat's Photos and Videos too (same composer). Play Console's
   photo and video permissions declaration must cover READ_MEDIA_IMAGES / READ_MEDIA_VIDEO (core use: the gallery).

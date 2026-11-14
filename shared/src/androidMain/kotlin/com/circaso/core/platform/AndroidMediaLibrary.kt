@@ -181,7 +181,14 @@ class AndroidMediaLibrary(private val context: Context) : MediaLibrary {
             }
         }
         if (weaker() == LibraryAccess.Granted) return LibraryAccess.Granted
-        // One prompt for both ("photos and videos"): on Android 14 it offers Allow all. Answered at once with no
+        // "Selected photos" already chosen: asking again only reopens the system's selection screen, which has no
+        // Allow all (Redmi, Android 16, 2026-11-14). Everything is allowed from the app's settings (Permissions →
+        // Photos and videos → Allow all); coming back re-reads the library.
+        if (Build.VERSION.SDK_INT >= 34 && granted(Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED) && kinds.any(::asked)) {
+            openAppSettings()
+            return weaker()
+        }
+        // Never answered, or one kind off: one prompt for both ("photos and videos"). Answered at once with no
         // prompt shown (refused for good): the app's settings, where the person can allow it.
         val started = System.currentTimeMillis()
         PermissionBridge.requestAll(requestFor(LibraryKind.Photo))

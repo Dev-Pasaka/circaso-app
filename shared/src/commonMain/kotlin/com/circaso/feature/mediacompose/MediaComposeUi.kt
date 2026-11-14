@@ -518,7 +518,7 @@ private fun RecentsStrip(state: MediaComposeState, composer: MediaComposer) {
                 RecentsGap.NoPhotos -> "Circaso can't see your photos."
                 else -> "Circaso can see only the photos and videos you chose."
             }
-            StripTile(action, CircasoIcon.Lock, "$why $action", wide = false, onClick = composer::manageAccess)
+            StripTile(action, CircasoIcon.Lock, "$why $action${if (action == "Allow all") " in Settings" else ""}", wide = false, onClick = composer::manageAccess)
         }
         items(state.recents.size, key = { state.recents[it].id }) { i ->
             val item = state.recents[i]
@@ -764,11 +764,11 @@ private fun GalleryScreen(gallery: GalleryState, state: MediaComposeState, compo
             }
             val denied = gallery.access == LibraryAccess.Denied
             val limited = gallery.access == LibraryAccess.Limited
-            // What fills the gap: one kind switched off is allowed; only chosen items is "all" where the phone's
-            // prompt offers it (Android 14+), else choosing more (iPhone's limited library).
+            // What fills the gap: one kind switched off is allowed; only chosen items is everything, in Settings
+            // (Android 14+), else choosing more (iPhone's limited library).
             val action = when {
                 gallery.gap == RecentsGap.NoVideos || gallery.gap == RecentsGap.NoPhotos -> "Allow"
-                state.limitedOffersAllowAll -> "Allow all"
+                state.limitedOffersAllowAll -> "Allow all in Settings" // where Android keeps that choice
                 else -> "Choose more"
             }
             // This tab is empty because of the gap (not because the phone has none of that kind).

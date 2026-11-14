@@ -52,7 +52,10 @@ interface MediaLibrary {
      */
     suspend fun manageVisual(): LibraryAccess = manage(LibraryKind.Photo)
 
-    /** True where the system's prompt for limited access offers "Allow all" (Android 14+); iPhone only chooses more. */
+    /**
+     * True where limited access leads to allowing everything (Android 14+, in the app's settings: asking again there
+     * only reopens the selection screen); iPhone's limited library chooses more.
+     */
     val limitedOffersAllowAll: Boolean get() = false
 
     /** True where access refused once can only be turned on in the phone's Settings (iPhone): the button says so. */
