@@ -108,8 +108,21 @@ Spaces tagged `archive/spaces-v1`; Room v20 drops its tables); the backend keeps
       the opened video's bytes while it played. Now (`core/crypto/SingleBoxFile`): Android seals and opens from file
       to file a megabyte at a time with libsignal's incremental AES-256-GCM (already in the app; the same bytes as
       before, checked against the JCA in `SingleBoxFileTest`); the download goes straight to a file; a video is
-      handed to the viewer by its path, never its bytes. iPhone has no streaming GCM in the app yet, so it still
-      seals and opens in memory, about four times the file (256 MB at the limit), outside any fixed heap.
+      handed to the viewer by its path, never its bytes. iPhone at first still sealed and opened in memory, about
+      four times the file (256 MB at the limit); see the next point.
+    - **iPhone seals and opens from a file too (2026-11-15).** After 56 MB videos were posted, an iPhone's moments
+      "didn't load" and its log showed the app starting again as the first was opened: most likely closed for memory
+      (about four times the file per open, and the viewer fetched the next one at the same time). Now
+      `IosSignalCrypto.gcmStream` / `sha256Stream` go through the Swift bridge to libsignal's incremental
+      `Aes256GcmEncryption` / `Aes256GcmDecryption` (the same Rust code and version, 0.106.1, as Android's) and
+      CryptoKit's `SHA256`, so both phones run the same `SingleBoxFile` a megabyte at a time. Once per run, before it
+      is trusted, the phone checks on a small box that the pieces and the one-shot (CryptoKit) agree both ways and
+      that a changed tag is refused; if not, it keeps the one-shot and says so in the diagnostics
+      ("crypto: file sealing in pieces ...").
+    - **Fetching ahead (2026-11-15):** the viewer fetches the next moment while one plays only when its file is at
+      most 8 MiB (`MomentPreloadMaxBytes`: photos, voice, clips of a few seconds); a larger video loads when it is
+      shown, so nobody's data is spent on 64 MiB they may never reach and two large files are never opened at once.
+      A video whose size an older phone didn't say waits too.
     - **Either release order works.** A server still at 32 MiB answers `status.media_invalid` to a larger video at
       ST1: the app then makes the video fit 32 MiB (`MomentMediaLegacyMaxBytes`) and posts it, and for the rest of
       that run makes videos fit 32 MiB straight away (`MomentsRepositoryImpl.fitOlderServer`). An older app keeps

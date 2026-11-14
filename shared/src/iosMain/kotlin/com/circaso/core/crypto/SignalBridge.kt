@@ -58,6 +58,32 @@ interface SignalBridgeApi {
     fun digestSha256(bytes: NSData): NSData
     @Throws(Throwable::class)
     fun secureRandomBytes(count: Int): NSData
+
+    /**
+     * One AES-256-GCM box worked through a piece at a time (2026-11-15: a moment's file up to 64 MiB never sits in an
+     * iPhone's memory): libsignal's `Aes256GcmEncryption` / `Aes256GcmDecryption` under [key] (32 bytes) and [nonce]
+     * (12 bytes), no associated data. Null when it can't be made. Nothing here throws: a failure is a null or a false.
+     */
+    fun gcmStream(key: NSData, nonce: NSData, seal: Boolean): BridgeGcmStream?
+
+    /** SHA-256 fed a piece at a time (CryptoKit). */
+    fun sha256Stream(): BridgeHashStream
+}
+
+/** A box in progress on the Swift side ([SignalBridgeApi.gcmStream]). */
+interface BridgeGcmStream {
+    /** [piece] encrypted (or decrypted), the same length; null when the cipher failed. */
+    fun update(piece: NSData): NSData?
+    /** Sealing, after the last piece: the 16-byte tag; null when it failed. */
+    fun tag(): NSData?
+    /** Opening, after the last piece: whether [tag] is the box's own. */
+    fun verify(tag: NSData): Boolean
+}
+
+/** A SHA-256 in progress on the Swift side ([SignalBridgeApi.sha256Stream]). */
+interface BridgeHashStream {
+    fun update(bytes: NSData)
+    fun finish(): NSData
 }
 
 class BridgeIdentity(val keyPair: NSData, val publicKey: NSData, val registrationId: Int)

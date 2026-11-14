@@ -24,7 +24,17 @@ object SingleBoxFile {
      * Seals [plainFile] into [sealedFile] (replacing it). Null when this platform can't stream, the key isn't an
      * AES-256 one, or [plainFile] isn't there: the caller falls back to the one-shot, which says which.
      */
-    suspend fun seal(crypto: SignalCrypto, files: MediaFiles, key: ByteArray, plainFile: String, sealedFile: String): Sealed? = withContext(Dispatchers.Default) {
+    suspend fun seal(crypto: SignalCrypto, files: MediaFiles, key: ByteArray, plainFile: String, sealedFile: String): Sealed? = try {
+        sealing(crypto, files, key, plainFile, sealedFile)
+    } catch (e: kotlin.coroutines.cancellation.CancellationException) {
+        throw e
+    } catch (_: Throwable) {
+        // The streaming cipher failed part-way: nothing half-made is left, and the caller's one-shot takes over.
+        files.delete(sealedFile)
+        null
+    }
+
+    private suspend fun sealing(crypto: SignalCrypto, files: MediaFiles, key: ByteArray, plainFile: String, sealedFile: String): Sealed? = withContext(Dispatchers.Default) {
         val size = files.size(plainFile) ?: return@withContext null
         val hash = crypto.sha256Stream() ?: return@withContext null
         val nonce = crypto.randomBytes(NonceBytes)
@@ -51,7 +61,16 @@ object SingleBoxFile {
      * [digest] (when given) and GCM's own tag. True when it opened; false when it is not what was sealed (nothing is
      * left behind); null when this platform can't stream (the caller uses the one-shot).
      */
-    suspend fun open(crypto: SignalCrypto, files: MediaFiles, key: ByteArray, sealedFile: String, plainFile: String, digest: ByteArray? = null): Boolean? = withContext(Dispatchers.Default) {
+    suspend fun open(crypto: SignalCrypto, files: MediaFiles, key: ByteArray, sealedFile: String, plainFile: String, digest: ByteArray? = null): Boolean? = try {
+        opening(crypto, files, key, sealedFile, plainFile, digest)
+    } catch (e: kotlin.coroutines.cancellation.CancellationException) {
+        throw e
+    } catch (_: Throwable) {
+        files.delete("$plainFile.part")
+        false
+    }
+
+    private suspend fun opening(crypto: SignalCrypto, files: MediaFiles, key: ByteArray, sealedFile: String, plainFile: String, digest: ByteArray?): Boolean? = withContext(Dispatchers.Default) {
         val size = files.size(sealedFile) ?: return@withContext false
         val hash = crypto.sha256Stream() ?: return@withContext null
         if (size < NonceBytes + TagBytes) return@withContext false

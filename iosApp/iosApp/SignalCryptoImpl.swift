@@ -222,6 +222,16 @@ final class SignalCryptoImpl: NSObject, SignalBridgeApi {
         Data(SHA256.hash(data: bytes))
     }
 
+    /// One AES-256-GCM box a piece at a time (a moment's file up to 64 MiB, never whole in memory): libsignal's own
+    /// incremental cipher, the same box as `gcmSeal` / `gcmOpen` above (nonce, then ciphertext, then the 16-byte tag).
+    func gcmStream(key: Data, nonce: Data, seal: Bool) -> BridgeGcmStream? {
+        GcmStreamImpl(key: key, nonce: nonce, seal: seal)
+    }
+
+    func sha256Stream() -> BridgeHashStream {
+        HashStreamImpl()
+    }
+
     func secureRandomBytes(count: Int32) throws -> Data {
         var bytes = [UInt8](repeating: 0, count: Int(count))
         _ = SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes)
@@ -275,5 +285,66 @@ final class SignalCryptoImpl: NSObject, SignalBridgeApi {
         // "duplicatedMessage(\"…\")" -> "duplicatedMessage"
         let text = String(describing: error)
         return String(text.prefix { $0 != "(" })
+    }
+}
+
+/// libsignal's incremental AES-256-GCM behind `BridgeGcmStream` (see `SignalBridge.kt`). Sealing or opening, never
+/// both; no associated data. Nothing throws across the bridge: a failure is a nil or a false.
+private final class GcmStreamImpl: NSObject, BridgeGcmStream {
+    private let sealing: Aes256GcmEncryption?
+    private let opening: Aes256GcmDecryption?
+
+    init?(key: Data, nonce: Data, seal: Bool) {
+        guard key.count == 32, nonce.count == 12 else { return nil }
+        let none = Data()
+        if seal {
+            guard let cipher = try? Aes256GcmEncryption(key: key, nonce: nonce, associatedData: none) else { return nil }
+            sealing = cipher
+            opening = nil
+        } else {
+            guard let cipher = try? Aes256GcmDecryption(key: key, nonce: nonce, associatedData: none) else { return nil }
+            sealing = nil
+            opening = cipher
+        }
+        super.init()
+    }
+
+    func update(piece: Data) -> Data? {
+        var bytes = piece
+        do {
+            if let sealing {
+                try sealing.encrypt(&bytes)
+            } else if let opening {
+                try opening.decrypt(&bytes)
+            } else {
+                return nil
+            }
+            return bytes
+        } catch {
+            return nil
+        }
+    }
+
+    func tag() -> Data? {
+        guard let sealing else { return nil }
+        return try? sealing.computeTag()
+    }
+
+    func verify(tag: Data) -> Bool {
+        guard let opening else { return false }
+        return (try? opening.verifyTag(tag)) ?? false
+    }
+}
+
+/// CryptoKit's SHA-256 fed a piece at a time, behind `BridgeHashStream`.
+private final class HashStreamImpl: NSObject, BridgeHashStream {
+    private var hasher = SHA256()
+
+    func update(bytes: Data) {
+        hasher.update(data: bytes)
+    }
+
+    func finish() -> Data {
+        Data(hasher.finalize())
     }
 }
