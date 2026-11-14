@@ -169,6 +169,8 @@ class MomentComposerViewModel(
     fun pickWithSystem() = composer.pickWithSystem()
     fun openGallery() = composer.openGallery()
     fun galleryTab(tab: GalleryTab) = composer.galleryTab(tab)
+    fun loadMoreGallery() = composer.loadMoreGallery()
+    fun pickFromCloud() = composer.pickFromCloud()
     fun closeGallery() = composer.closeGallery()
 
     /** M4's strip: put another picked item on the stage. */

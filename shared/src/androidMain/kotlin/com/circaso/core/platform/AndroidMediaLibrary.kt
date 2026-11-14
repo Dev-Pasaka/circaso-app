@@ -81,8 +81,18 @@ object MomentPickerBridge {
     private var document: ActivityResultLauncher<Array<String>>? = null
     private var pending: CompletableDeferred<Uri?>? = null
     private var pendingMany: CompletableDeferred<List<Uri>>? = null
+    private var cloud: ActivityResultLauncher<android.content.Intent>? = null
 
     fun register(activity: ComponentActivity) {
+        cloud = activity.registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+            val data = result.data
+            val uris = if (result.resultCode != android.app.Activity.RESULT_OK || data == null) emptyList() else buildList {
+                val clip = data.clipData
+                if (clip != null) for (i in 0 until clip.itemCount) clip.getItemAt(i).uri?.let(::add)
+                else data.data?.let(::add)
+            }
+            pendingMany?.complete(uris)
+        }
         visual = activity.registerForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri -> pending?.complete(uri) }
         visualMany = activity.registerForActivityResult(ActivityResultContracts.PickMultipleVisualMedia(MomentPickMax)) { uris -> pendingMany?.complete(uris) }
         audio = activity.registerForActivityResult(ActivityResultContracts.GetContent()) { uri -> pending?.complete(uri) }
@@ -105,6 +115,30 @@ object MomentPickerBridge {
         }
         return answer.await()
     }
+
+    /**
+     * Google Photos' own picker (its sheet, with everything in the person's Google Photos, cloud included), several at
+     * once; null when Google Photos isn't on this phone (the caller then uses the system's photo picker).
+     */
+    suspend fun pickGooglePhotos(): List<Uri>? {
+        val launcher = cloud ?: return null
+        val intent = googlePhotosIntent()
+        val answer = CompletableDeferred<List<Uri>>().also { pendingMany = it }
+        val started = runCatching { launcher.launch(intent) }.isSuccess
+        if (!started) { pendingMany = null; return null }
+        return answer.await()
+    }
+
+    /** Photos and videos, several at once, from Google Photos' own picker. */
+    fun googlePhotosIntent(): android.content.Intent = android.content.Intent(android.content.Intent.ACTION_GET_CONTENT)
+        .setType("*/*")
+        .putExtra(android.content.Intent.EXTRA_MIME_TYPES, arrayOf("image/*", "video/*"))
+        .putExtra(android.content.Intent.EXTRA_ALLOW_MULTIPLE, true)
+        .addCategory(android.content.Intent.CATEGORY_OPENABLE)
+        .setPackage(GooglePhotos)
+
+    /** Google Photos' package, named in the manifest's `<queries>` so the app may see whether it's installed. */
+    const val GooglePhotos = "com.google.android.apps.photos"
 
     /** Photos and videos together, up to [MomentPickMax], in the order they were ticked. */
     suspend fun pickMany(): List<Uri> {
@@ -191,7 +225,7 @@ class AndroidMediaLibrary(private val context: Context) : MediaLibrary {
         return after
     }
 
-    private suspend fun query(kind: LibraryKind, limit: Int): List<LibraryItem> = withContext(Dispatchers.IO) {
+    private suspend fun query(kind: LibraryKind, limit: Int, offset: Int = 0, strict: Boolean = false): List<LibraryItem> = withContext(Dispatchers.IO) {
         val collection = when (kind) {
             LibraryKind.Photo -> MediaStore.Images.Media.EXTERNAL_CONTENT_URI
             LibraryKind.Video -> MediaStore.Video.Media.EXTERNAL_CONTENT_URI
@@ -204,8 +238,10 @@ class AndroidMediaLibrary(private val context: Context) : MediaLibrary {
             if (kind == LibraryKind.Audio) add(MediaStore.MediaColumns.TITLE)
         }.toTypedArray()
         val items = mutableListOf<LibraryItem>()
-        runCatching {
+        val read = runCatching {
             context.contentResolver.query(collection, columns, null, null, "${MediaStore.MediaColumns.DATE_ADDED} DESC")?.use { c ->
+                // A later page starts where the last one ended (the cursor's window moves there, nothing is read twice).
+                if (offset > 0 && !c.moveToPosition(offset - 1)) return@use
                 val idCol = c.getColumnIndexOrThrow(MediaStore.MediaColumns._ID)
                 val addedCol = c.getColumnIndex(MediaStore.MediaColumns.DATE_ADDED)
                 val durCol = if (kind != LibraryKind.Photo) c.getColumnIndex(MediaStore.MediaColumns.DURATION) else -1
@@ -219,8 +255,9 @@ class AndroidMediaLibrary(private val context: Context) : MediaLibrary {
                         addedAt = if (addedCol >= 0) c.getLong(addedCol) * 1000 else 0,
                     )
                 }
-            }
+            } ?: if (strict) error("MediaStore gave no cursor") else Unit
         }
+        if (strict) read.getOrThrow()
         items
     }
 
@@ -235,6 +272,30 @@ class AndroidMediaLibrary(private val context: Context) : MediaLibrary {
     override suspend fun pick(kind: LibraryKind): CapturedMedia? {
         val uri = MomentPickerBridge.pick(kind) ?: return null
         return load(uri, kind)
+    }
+
+    /** Google Photos can open its picker here (installed and enabled): resolved for the exact intent it gets. */
+    private fun canOpenGooglePhotos(): Boolean = runCatching {
+        context.packageManager.resolveActivity(MomentPickerBridge.googlePhotosIntent(), 0) != null
+    }.getOrDefault(false)
+
+    override suspend fun cloudLabel(): String = withContext(Dispatchers.IO) { if (canOpenGooglePhotos()) "Google Photos" else "Photos" }
+
+    /** Google Photos' picker when it can open, else the system's photo picker (which shows cloud items too). */
+    override suspend fun pickCloud(max: Int): CloudPicks {
+        val uris = (if (withContext(Dispatchers.IO) { canOpenGooglePhotos() }) MomentPickerBridge.pickGooglePhotos() else null)
+            ?: return CloudPicks(pickMany(max))
+        val media = uris.take(max).mapNotNull { uri ->
+            val video = withContext(Dispatchers.IO) { context.contentResolver.getType(uri) }?.startsWith("video") == true
+            load(uri, if (video) LibraryKind.Video else LibraryKind.Photo)
+        }
+        return CloudPicks(media, more = (uris.size - max).coerceAtLeast(0))
+    }
+
+    /** The next page straight from MediaStore, from [offset] on; a read that fails throws (the gallery keeps its page). */
+    override suspend fun page(kind: LibraryKind, offset: Int, limit: Int): List<LibraryItem> {
+        if (accessFor(kind) == LibraryAccess.Denied) return emptyList()
+        return query(kind, limit, offset, strict = true)
     }
 
     override suspend fun pickMany(max: Int): List<CapturedMedia> {

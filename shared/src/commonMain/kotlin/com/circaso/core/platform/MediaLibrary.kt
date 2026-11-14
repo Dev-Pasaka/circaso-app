@@ -65,6 +65,24 @@ interface MediaLibrary {
     suspend fun pickMany(max: Int): List<CapturedMedia> = listOfNotNull(pick(LibraryKind.Photo))
 
     /**
+     * The gallery's cloud option (2026-11-14): photos and videos from the person's whole library and its cloud, several
+     * at once (at most [max]), no permission needed. Android opens Google Photos' own picker when it can; iPhone's
+     * system picker already covers iCloud. Empty when the person closes it. [CloudPicks.more] counts any chosen past
+     * [max] (Google Photos has no limit of its own), left out so the screen can say so.
+     */
+    suspend fun pickCloud(max: Int): CloudPicks = CloudPicks(pickMany(max))
+
+    /** What the gallery calls [pickCloud]: "Google Photos" on Android when it can open it; the phone's own name else. */
+    suspend fun cloudLabel(): String = "Photos"
+
+    /**
+     * [limit] items of [kind] after the newest [offset], newest first, for the gallery's next page. Throws when the
+     * library can't be read (the gallery keeps what it has); fewer than [limit] means that's all of them.
+     */
+    suspend fun page(kind: LibraryKind, offset: Int, limit: Int): List<LibraryItem> =
+        recents(kind, offset + limit, ask = false).items.drop(offset)
+
+    /**
      * The bytes of a file this library handed over by path. Picked videos come with empty [CapturedMedia.bytes] and a
      * path, so several can wait in the composer without all being held in memory; each is read when it is posted.
      */
@@ -103,6 +121,9 @@ interface MediaLibrary {
      */
     suspend fun loadFile(path: String, mime: String): CapturedMedia? = null
 }
+
+/** What the cloud option brought back: [media] to add, and how many more were chosen than fit ([more]). */
+class CloudPicks(val media: List<CapturedMedia>, val more: Int = 0)
 
 /** A document picked from Files: its own name, type and size; [path] is this app's copy (or [bytes] in memory). */
 class PickedFile(val name: String, val mime: String, val size: Long, val path: String? = null, val bytes: ByteArray? = null)
