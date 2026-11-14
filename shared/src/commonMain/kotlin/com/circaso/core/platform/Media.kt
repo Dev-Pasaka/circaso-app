@@ -71,6 +71,13 @@ interface MediaFiles {
     /** Where [name] is on disk, for a player that reads a file; null when it isn't there. */
     suspend fun path(name: String): String? = null
 
+    /**
+     * Where [name] is on disk for a video player, under a name that ends in [extension] ("mp4", "mov"). iPhone's
+     * player refuses a file with no extension ("Cannot Open"), and files are kept under their id alone, so there it
+     * is a second name for the same file (a hard link, no copy), removed with it. Null when the file isn't there.
+     */
+    suspend fun playablePath(name: String, extension: String): String? = path(name)
+
     /** Removes one file (a moment's media once its 24 hours are over). */
     suspend fun delete(name: String) {}
 

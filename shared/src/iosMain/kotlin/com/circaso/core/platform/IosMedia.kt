@@ -88,7 +88,26 @@ class IosMediaFiles : MediaFiles {
     }
 
     override suspend fun path(name: String): String? = filePath(name).takeIf { NSFileManager.defaultManager.fileExistsAtPath(it) }
-    override suspend fun delete(name: String) { NSFileManager.defaultManager.removeItemAtPath(filePath(name), error = null) }
+    override suspend fun delete(name: String) {
+        val fm = NSFileManager.defaultManager
+        fm.removeItemAtPath(filePath(name), error = null)
+        // And its player names (see playablePath).
+        for (ext in PlayableExtensions) fm.removeItemAtPath(filePath("$name.$ext"), error = null)
+    }
+
+    override suspend fun playablePath(name: String, extension: String): String? {
+        val fm = NSFileManager.defaultManager
+        val file = filePath(name)
+        if (!fm.fileExistsAtPath(file)) return null
+        val ext = extension.lowercase().takeIf { it in PlayableExtensions } ?: "mp4"
+        val named = filePath("$name.$ext")
+        // A second name for the same bytes; made again if the file under it was replaced.
+        if (!fm.fileExistsAtPath(named) || fileSizeAt(named) != fileSizeAt(file)) {
+            fm.removeItemAtPath(named, error = null)
+            if (!fm.linkItemAtPath(file, toPath = named, error = null)) return file
+        }
+        return named
+    }
 
     // Streaming through POSIX file calls: only the piece asked for is in memory, and nothing waits on an autorelease
     // pool (a loop of NSData pieces would keep every piece alive until the pool drained).
@@ -147,6 +166,8 @@ class IosMediaFiles : MediaFiles {
         return if (mine) fm.moveItemAtPath(path, toPath = filePath(name), error = null) else fm.copyItemAtPath(path, toPath = filePath(name), error = null)
     }
 }
+
+private val PlayableExtensions = listOf("mp4", "mov", "m4v")
 
 actual fun fileSizeAt(path: String): Long? = kotlinx.cinterop.memScoped {
     val st = alloc<platform.posix.stat>()
