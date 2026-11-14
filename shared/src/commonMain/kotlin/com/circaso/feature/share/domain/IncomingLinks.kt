@@ -5,8 +5,8 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 
 /**
- * Share links opened from outside the app: `https://<share host>/s/{code}` (Android App Links, iOS Universal Links)
- * and `circaso://s/{code}` (the page's "Open in Circaso" button). The platform hands every URL here; the code waits in
+ * Share links and group join links opened from outside the app: `https://<share host>/s/{code}` (Android App Links,
+ * iOS Universal Links) and `circaso://s/{code}` (the page's "Open in Circaso" or "Join group" button). The platform hands every URL here; the code waits in
  * [pending] until someone is signed in, then the navigation opens it once. An object, not a Koin binding, because the
  * system can hand over a link before Koin has started.
  */
@@ -36,6 +36,15 @@ object IncomingLinks {
     private val CodePattern = Regex("^[A-Za-z0-9]{8,32}$")
 
     fun isCode(code: String): Boolean = CodePattern.matches(code)
+
+    /**
+     * A group's join link (2026-11-14) lives on the same path as a share link, `/s/{token}`, so the same App Links,
+     * Universal Links and `circaso://s/…` open it. Its token is exactly [GroupTokenLength] base62 characters (a share
+     * code is 12): the server makes them so, and that is how the two are told apart.
+     */
+    fun isGroupToken(code: String): Boolean = code.length == GroupTokenLength && isCode(code)
+
+    const val GroupTokenLength = 22
 
     /**
      * The code in a share link, or null for anything else. Strict: https only on a known host (or the circaso scheme),

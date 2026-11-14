@@ -70,6 +70,8 @@ fun ChatInfoScreen(
     onBack: () -> Unit,
     onLeft: () -> Unit,
     onGroupWallet: () -> Unit = {},
+    /** Invite via link (2026-11-14): the group's join link, for its admins. */
+    onInviteLink: () -> Unit = {},
     /** A direct chat's profile actions (WhatsApp's row): calls and, Circaso's own, Send money. */
     onCall: ((video: Boolean) -> Unit)? = null,
     onPay: (() -> Unit)? = null,
@@ -230,7 +232,7 @@ fun ChatInfoScreen(
             EditNameSheet(
                 editing, onDraft = { names?.onDraft(it) }, onSave = { names?.onSave() }, onUseTheirs = { names?.onUseTheirs() }, onDismiss = { names?.onDismiss() },
             )
-            CircasoSheet(visible = state.renaming, onDismiss = { viewModel.onRename(false) }, label = if (state.namingForPhoto) "Name the group" else "Rename group") {
+            CircasoSheet(visible = state.renaming, onDismiss = { viewModel.onRename(false) }, label = if (state.namingForPhoto) "Name the group" else "Edit group") {
                 // This phone can't read the name (its key is lost): say why it's asked for, and what a new key costs.
                 val why = when {
                     state.namingForPhoto && state.removingPhoto -> "This phone lost the group's key, so it can't read the name. Type it to remove the photo."
@@ -239,16 +241,26 @@ fun ChatInfoScreen(
                     else -> null
                 }
                 com.circaso.designsystem.chrome.SheetMessage(
-                    if (state.namingForPhoto || state.nameUnknown) "Name the group" else "Rename group",
-                    why ?: "Everyone in the group sees the new name.",
+                    if (state.namingForPhoto || state.nameUnknown) "Name the group" else "Edit group",
+                    why ?: "Everyone in the group sees the name and description. They are end-to-end encrypted, like your messages.",
                     if (state.nameUnknown || state.namingForPhoto) com.circaso.designsystem.components.CircasoIcon.Lock else com.circaso.designsystem.components.CircasoIcon.Pencil,
                     tone = if (state.nameUnknown || state.namingForPhoto) com.circaso.designsystem.chrome.SheetTone.Warning else com.circaso.designsystem.chrome.SheetTone.Neutral,
                 )
                 CircasoTextField(value = state.nameDraft, onValueChange = viewModel::onNameDraft, label = "Group name")
+                if (!state.namingForPhoto) {
+                    // The description (2026-11-14) is edited where the name is; a photo change that only needs the name doesn't ask for it.
+                    val limit = com.circaso.feature.messaging.data.repository.MaxGroupDescriptionChars
+                    val length = state.descriptionDraft.trim().length
+                    CircasoTextField(
+                        value = state.descriptionDraft, onValueChange = viewModel::onDescriptionDraft, label = "Description",
+                        placeholder = "What the group is for (optional)", singleLine = false,
+                        error = if (state.descriptionTooLong) "A description can be up to $limit characters. This one is $length." else null,
+                    )
+                }
                 val save = when { !state.namingForPhoto -> "Save"; state.removingPhoto -> "Remove Photo"; else -> "Save Photo" }
                 com.circaso.designsystem.chrome.SheetActions(
                     save, viewModel::onRenameConfirm, "Cancel", { viewModel.onRename(false) },
-                    enabled = state.canChange && state.nameDraft.isNotBlank(),
+                    enabled = state.canChange && state.nameDraft.isNotBlank() && (state.namingForPhoto || (state.editChanged && !state.descriptionTooLong)),
                     note = if (!state.online) "Changing the group needs a connection." else null,
                 )
             }
@@ -303,6 +315,8 @@ fun ChatInfoScreen(
                     BasicText(chat?.title ?: "", style = t.title1.copy(color = c.ink, textAlign = TextAlign.Center))
                     if (state.isGroup) BasicText("${chat?.members?.size ?: 0} members" + if (state.money.enabled && state.money.money?.hasWallet == true) " · Group wallet" else "", style = t.subhead.copy(color = c.inkSecondary))
                     else PeerNameLines(chat?.members?.firstOrNull { it.userId == chat.peerId })
+                    // The group's description (2026-11-14), under its name: what the group is for, in the admins' words.
+                    if (state.isGroup) chat?.description?.let { GroupDescription(it) }
                     if (state.isGroup && state.amAdmin && state.photosAvailable && !state.online) {
                         BasicText("Changing the group photo needs a connection.", style = t.footnote.copy(color = c.inkTertiary, textAlign = TextAlign.Center))
                     }
@@ -344,12 +358,17 @@ fun ChatInfoScreen(
                 item {
                     SectionHeader("Group")
                     if (state.amAdmin) {
-                        ListRow("Rename group", onClick = if (state.canChange) ({ viewModel.onRename(true) }) else null)
+                        ListRow("Edit group", sub = "Name and description", onClick = if (state.canChange) ({ viewModel.onRename(true) }) else null)
                         RowDivider()
                         ListRow("Members can add people", trailing = { RowValue(if (chat?.membersCanAdd == true) "On" else "Off") }, onClick = if (state.canChange) ({ viewModel.onMembersCanAdd(chat?.membersCanAdd != true) }) else null)
                         RowDivider()
                     }
                     ListRow("Add members", onClick = if (state.canAdd) ({ viewModel.onAdding(true) }) else null)
+                    if (state.amAdmin) {
+                        // Group join links (2026-11-14): opens offline too, on the link this phone has.
+                        RowDivider()
+                        ListRow("Invite via link", sub = "People join by themselves with a link", trailing = { RowValueChevron(null) }, onClick = onInviteLink)
+                    }
                     if (!state.money.enabled) RowDivider()
                     if (!state.money.enabled) {
                         // Designs D4 and D1: the shared goal lives behind the group; admins set it there, everyone can read it.
@@ -409,6 +428,29 @@ fun ChatInfoScreen(
 }
 
 /** Under a direct chat's name in its info: their own name when I saved one ("~ John Kamau"), then their @username. */
+/**
+ * A group's description under its name in Group info: centred like the header it belongs to, [GroupDescriptionLines]
+ * lines until tapped, then whole. Long-pressing text isn't needed to read it; nothing here is an action.
+ */
+@Composable
+internal fun GroupDescription(text: String) {
+    val c = CircasoTheme.colors
+    val t = CircasoTheme.typography
+    var expanded by remember(text) { mutableStateOf(false) }
+    var overflows by remember(text) { mutableStateOf(false) }
+    BasicText(
+        text,
+        Modifier.padding(horizontal = CircasoSpacing.s6, vertical = CircasoSpacing.s1)
+            .then(if (overflows || expanded) Modifier.clip(CircasoShapes.sm).pressable(onClick = { expanded = !expanded }, onClickLabel = if (expanded) "Show less" else "Show all") else Modifier),
+        style = t.body.copy(color = c.ink, textAlign = TextAlign.Center),
+        maxLines = if (expanded) Int.MAX_VALUE else GroupDescriptionLines,
+        overflow = TextOverflow.Ellipsis,
+        onTextLayout = { if (!expanded) overflows = it.hasVisualOverflow },
+    )
+}
+
+private const val GroupDescriptionLines = 4
+
 @Composable
 internal fun PeerNameLines(peer: ChatMember?) {
     val c = CircasoTheme.colors

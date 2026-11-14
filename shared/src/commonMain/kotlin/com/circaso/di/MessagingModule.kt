@@ -53,6 +53,7 @@ import com.circaso.feature.messaging.presentation.NewChatViewModel
 import com.circaso.feature.messaging.presentation.NewGroupViewModel
 import com.circaso.feature.messaging.presentation.ThreadViewModel
 import org.koin.core.module.dsl.viewModel
+import kotlinx.coroutines.launch
 import org.koin.core.qualifier.named
 import org.koin.dsl.bind
 import org.koin.dsl.module
@@ -136,7 +137,21 @@ val messagingModule = module {
             get(), get(), get(), get(), com.circaso.feature.messaging.data.repository.PreferencesInviteCache(get()), get(), photos = get(), names = get(),
         )
     } bind com.circaso.feature.messaging.domain.GroupInvitesRepository::class
-    single { MessagingFrameHandler(get(), get(), get(), get(), get(), get(), invites = get()) }
+    // Group join links (2026-11-14): an admin's link, its published preview, and joining with one.
+    single<com.circaso.feature.messaging.data.remote.GroupLinksRemote> { com.circaso.feature.messaging.data.remote.KtorGroupLinksRemote(get()) }
+    single {
+        val chats = get<ChatsRepositoryImpl>()
+        val scope = get<kotlinx.coroutines.CoroutineScope>()
+        com.circaso.feature.messaging.data.repository.GroupLinksRepositoryImpl(
+            get(), chats, get(), get(), com.circaso.feature.messaging.data.repository.PreferencesGroupLinkCache(get()), get(), get(named("ownUserId")),
+            photos = get(), encoder = getOrNull<com.circaso.core.platform.GroupPhotoEncoder>() ?: com.circaso.core.platform.NoGroupPhotoEncoder,
+        ).also { links ->
+            // The link's page shows what an admin's phone published: when the name, description or photo change, the
+            // preview follows, off the caller's path so a rename never waits for it.
+            chats.metaChanged = { chatId -> scope.launch { links.republishIfStale(chatId) } }
+        }
+    } bind com.circaso.feature.messaging.domain.GroupLinksRepository::class
+    single { MessagingFrameHandler(get(), get(), get(), get(), get(), get(), invites = get(), links = get()) }
     // Notifications (2026-11-06): pushes worded on the phone with privacy, and where a tap lands.
     // iOS's notification extension words pushes from this snapshot (2026-11-13); Android words them in the app.
     single {
@@ -170,6 +185,7 @@ val messagingModule = module {
     factory { AddMembersUseCase(get()) }
     factory { RemoveMemberUseCase(get()) }
     factory { LeaveGroupUseCase(get()) }
+    factory { com.circaso.feature.messaging.domain.EditGroupUseCase(get()) }
     factory { SetRoleUseCase(get()) }
     factory { SecurityCodeUseCase(get()) }
     factory { ObserveThreadUseCase(get()) }
@@ -252,8 +268,12 @@ val messagingModule = module {
             sources = getOrNull(),
             editName = com.circaso.feature.names.presentation.EditNameController(get(), get()),
             verifiedCodes = com.circaso.feature.messaging.data.local.VerifiedCodesStore(get()),
+            editGroup = get(),
         )
     }
+    // Group join links (2026-11-14): the admins' link screen, and the join sheet that sits over the whole app.
+    viewModel { params -> com.circaso.feature.messaging.presentation.GroupLinkViewModel(params.get(), get(), get(), get()) }
+    single { com.circaso.feature.messaging.presentation.GroupJoinViewModel(get(), get()) }
 }
 
 /**

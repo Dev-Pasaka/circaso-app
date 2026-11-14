@@ -56,6 +56,8 @@ data class ChatInfoUiState(
     val pending: InfoAction? = null,
     val renaming: Boolean = false,
     val nameDraft: String = "",
+    /** The description being typed in the Edit group sheet (2026-11-14); blank removes it. */
+    val descriptionDraft: String = "",
     val adding: Boolean = false,
     val contacts: List<Contact> = emptyList(),
     val toAdd: Set<String> = emptySet(),
@@ -93,6 +95,11 @@ data class ChatInfoUiState(
 ) {
     /** An admin, or whoever sent it, may take an invite back. */
     fun mayCancel(invite: com.circaso.feature.messaging.domain.PendingInvite) = amAdmin || invite.invitedBy.userId == myUserId
+    /** The Edit group sheet has something to save: a name, and a name or description that differs from the group's. */
+    val editChanged get() = nameDraft.trim().isNotEmpty() &&
+        (nameDraft.trim() != chat?.title || descriptionDraft.trim() != chat.description.orEmpty() || nameUnknown)
+    /** Over the limit: said under the field, and Save rests. */
+    val descriptionTooLong get() = descriptionDraft.trim().length > com.circaso.feature.messaging.data.repository.MaxGroupDescriptionChars
     /** A group whose name this phone can't read: the name sheet starts empty and says why. */
     val nameUnknown get() = isGroup && chat?.nameKnown == false
     /** Admins change the group's photo (M8); it needs a connection, like every change to the group. */
@@ -152,6 +159,8 @@ class ChatInfoViewModel(
     val editName: com.circaso.feature.names.presentation.EditNameController? = null,
     /** Which security codes this phone has checked (2026-11-13); null in previews and tests. */
     private val verifiedCodes: com.circaso.feature.messaging.domain.VerifiedCodes? = null,
+    /** The name and description together (2026-11-14); null in older tests, which rename only. */
+    private val editGroup: com.circaso.feature.messaging.domain.EditGroupUseCase? = null,
 ) : ViewModel() {
     private val _state = MutableStateFlow(
         ChatInfoUiState(myUserId = myUserId, photosAvailable = setGroupPhoto != null && sources != null && encoder !== com.circaso.core.platform.NoGroupPhotoEncoder),
@@ -357,9 +366,16 @@ class ChatInfoViewModel(
     fun onRename(start: Boolean) {
         if (!start) awaitingName = null
         // A name this phone can't read is not prefilled: "Group" is only the placeholder, not the group's name.
-        _state.update { it.copy(renaming = start, namingForPhoto = false, removingPhoto = false, nameDraft = if (start && !it.nameUnknown) it.chat?.title.orEmpty() else "") }
+        _state.update {
+            it.copy(
+                renaming = start, namingForPhoto = false, removingPhoto = false,
+                nameDraft = if (start && !it.nameUnknown) it.chat?.title.orEmpty() else "",
+                descriptionDraft = if (start) it.chat?.description.orEmpty() else "",
+            )
+        }
     }
     fun onNameDraft(text: String) = _state.update { it.copy(nameDraft = text) }
+    fun onDescriptionDraft(text: String) = _state.update { it.copy(descriptionDraft = text) }
     fun onRenameConfirm() {
         val name = _state.value.nameDraft.trim()
         if (name.isEmpty() || !_state.value.canChange) return
@@ -370,9 +386,11 @@ class ChatInfoViewModel(
             viewModelScope.launch { sendPhoto(set, change, name) }
             return
         }
+        if (_state.value.descriptionTooLong) return
+        val description = _state.value.descriptionDraft
         _state.update { it.copy(renaming = false, namingForPhoto = false, busy = true) }
         viewModelScope.launch {
-            val r = rename(chatId, name)
+            val r = editGroup?.invoke(chatId, name, description) ?: rename(chatId, name)
             _state.update { it.copy(busy = false, message = (r as? AppResult.Failure)?.let { f -> ErrorMessages.forError(f.error) }) }
         }
     }
