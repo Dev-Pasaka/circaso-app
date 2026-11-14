@@ -10,6 +10,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.ContextCompat
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.withContext
 
 /**
@@ -52,6 +53,15 @@ class AndroidContactsReader(private val context: Context) : ContactsReader {
         ContextCompat.checkSelfPermission(context, Manifest.permission.READ_CONTACTS) == PackageManager.PERMISSION_GRANTED
 
     override suspend fun requestAccess(): Boolean = hasAccess() || PermissionBridge.request(Manifest.permission.READ_CONTACTS)
+
+    /** Android tells every app watching the contacts provider when a contact is saved, edited or removed. */
+    override fun changes(): kotlinx.coroutines.flow.Flow<Unit> = kotlinx.coroutines.flow.callbackFlow {
+        val observer = object : android.database.ContentObserver(null) {
+            override fun onChange(selfChange: Boolean) { trySend(Unit) }
+        }
+        context.contentResolver.registerContentObserver(ContactsContract.Contacts.CONTENT_URI, true, observer)
+        awaitClose { context.contentResolver.unregisterContentObserver(observer) }
+    }
 
     override suspend fun readNumbers(): List<String> = withContext(Dispatchers.IO) {
         if (!hasAccess()) return@withContext emptyList()

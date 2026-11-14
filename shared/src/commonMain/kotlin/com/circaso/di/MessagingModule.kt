@@ -96,6 +96,12 @@ val messagingModule = module {
         )
     }
     single { ChatsRepositoryImpl(get(), get(), get(), get(), get(), get(named("ownUserId")), photos = get(), names = get()) } bind ChatsRepository::class
+    single {
+        com.circaso.feature.messaging.data.repository.ChatListWarmup(
+            get<com.circaso.core.session.AuthManager>().state, get(), get<com.circaso.feature.names.domain.PeopleNames>().loaded,
+            get<com.circaso.core.common.StartupGate>(), get(),
+        )
+    }
     single { get<CircasoDatabase>().recoveryDao() }
     single { com.circaso.feature.messaging.data.repository.ChatPaymentCards(get(), get(), get(), get(named("ownUserId")), { id -> get<ChatsRepositoryImpl>().refreshChat(id) }) }
     single { com.circaso.feature.messaging.data.repository.RetryReceipts(get(), get(), get(), get(), get(), get(), get(), get(named("ownUserId"))) }
@@ -177,7 +183,7 @@ val messagingModule = module {
     factory { ObserveTypingUseCase(get()) }
     factory { MessagingSettingsUseCase(get()) }
 
-    viewModel { ChatsViewModel(get(), get(), get(), get(), get(), get(), get(), getOrNull(), invites = get(), observeBlocks = get()) }
+    viewModel { ChatsViewModel(get(), get(), get(), get(), get(), get(), get(), getOrNull(), invites = get(), observeBlocks = get(), warm = get<com.circaso.feature.messaging.data.repository.ChatListWarmup>().list) }
     viewModel {
         NewChatViewModel(
             get(), get(), get(), observeChats = get(), connect = get(), createShareLink = get(),

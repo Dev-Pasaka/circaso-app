@@ -161,6 +161,16 @@ fun initKoin(platform: Module) {
     // crash left half-sent back in line (its Idempotency-Key makes the retry safe).
     val scope = koin.get<CoroutineScope>()
     scope.launch { koin.get<AuthManager>().restore() } // the session first: it decides what the person sees
+    // Everything else is built off the main thread (2026-11-14): building the realtime, messaging and network graph
+    // here held the first frame for seconds on a Redmi. The chat list goes first, since the first screen shows it.
+    scope.launch {
+        koin.get<com.circaso.feature.messaging.data.repository.ChatListWarmup>().start()
+        startServices(koin)
+    }
+}
+
+private fun startServices(koin: org.koin.core.Koin) {
+    val scope = koin.get<CoroutineScope>()
     koin.get<RealtimeDispatcher>().start()
     koin.get<com.circaso.feature.chama.data.repository.GroupMoneyLive>().start() // a group's money moves live on every screen
     koin.get<RealtimeSupervisor>().start()

@@ -16,6 +16,9 @@ interface ContactsReader {
 
     /** Every number in the phone book, as typed there (unnormalised). Empty when access is not allowed. */
     suspend fun readNumbers(): List<String>
+
+    /** Emits whenever the phone book changes (a contact saved, edited or removed), while collected. */
+    fun changes(): kotlinx.coroutines.flow.Flow<Unit> = kotlinx.coroutines.flow.emptyFlow()
 }
 
 /**

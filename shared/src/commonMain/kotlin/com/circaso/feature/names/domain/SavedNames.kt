@@ -29,7 +29,11 @@ interface SavedNames {
  * The one place a person's shown name is decided: the name I saved for them, else their own profile name. Mappers
  * that build what the screens show take this, so a saved name reaches chats, contacts, calls, money and notices alike.
  */
-class PeopleNames(val saved: StateFlow<Map<String, String>>) {
+class PeopleNames(
+    val saved: StateFlow<Map<String, String>>,
+    /** True once [saved] holds what's on this phone (it starts empty while Room is read). */
+    val loaded: StateFlow<Boolean> = MutableStateFlow(true),
+) {
     /** The name to show for [userId], whose own name is [profileName]. */
     fun of(userId: String?, profileName: String): String = resolve(saved.value, userId, profileName)
 

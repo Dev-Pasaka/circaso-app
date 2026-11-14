@@ -4,6 +4,7 @@ package com.circaso.core.platform
 
 import kotlinx.cinterop.BetaInteropApi
 import kotlinx.cinterop.ExperimentalForeignApi
+import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.suspendCancellableCoroutine
 import platform.Contacts.CNAuthorizationStatusAuthorized
 import platform.Contacts.CNContact
@@ -24,6 +25,13 @@ class IosContactsReader : ContactsReader {
 
     override suspend fun requestAccess(): Boolean = hasAccess() || suspendCancellableCoroutine { continuation ->
         store.requestAccessForEntityType(CNEntityType.CNEntityTypeContacts) { granted, _ -> if (continuation.isActive) continuation.resume(granted) }
+    }
+
+    /** iOS posts this whenever the phone book changes, in Contacts or any other app. */
+    override fun changes(): kotlinx.coroutines.flow.Flow<Unit> = kotlinx.coroutines.flow.callbackFlow {
+        val center = platform.Foundation.NSNotificationCenter.defaultCenter
+        val token = center.addObserverForName(platform.Contacts.CNContactStoreDidChangeNotification, null, null) { _ -> trySend(Unit) }
+        awaitClose { center.removeObserver(token) }
     }
 
     override suspend fun readNumbers(): List<String> {

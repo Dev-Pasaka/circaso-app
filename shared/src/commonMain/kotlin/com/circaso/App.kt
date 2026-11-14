@@ -68,11 +68,14 @@ fun App() {
         // Leaving the screen is the last moment the chat keys change before iOS suspends Circaso: its notification
         // extension words pushes from what is written now (Android: nothing to write).
         val notificationSnapshot: com.circaso.core.notifications.NotificationSnapshotWriter = koinInject()
+        // A number saved in the phone book while Circaso was away is ready to chat with when it comes back.
+        // Fetched off the main thread: it pulls in the contacts and network graph.
+        val phoneBook = androidx.compose.runtime.remember { lazy { org.koin.mp.KoinPlatform.getKoin().get<com.circaso.feature.contacts.data.repository.PhoneBookAutoSync>() } }
         val lifecycle = androidx.lifecycle.compose.LocalLifecycleOwner.current
         androidx.compose.runtime.DisposableEffect(lifecycle) {
             val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
                 when (event) {
-                    androidx.lifecycle.Lifecycle.Event.ON_START -> { liveNotices.onForeground(); presence.onForeground() }
+                    androidx.lifecycle.Lifecycle.Event.ON_START -> { liveNotices.onForeground(); presence.onForeground(); scope.launch(kotlinx.coroutines.Dispatchers.Default) { phoneBook.value.onForeground() } }
                     androidx.lifecycle.Lifecycle.Event.ON_STOP -> { liveNotices.onBackground(); presence.onBackground(); notificationSnapshot.onBackground() }
                     else -> Unit
                 }

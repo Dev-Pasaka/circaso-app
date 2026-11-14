@@ -77,8 +77,8 @@ fun initKoinAndroid(context: Context) {
             single<com.circaso.core.qr.QrScanner> { com.circaso.core.qr.AndroidQrScanner(currentActivityProvider()) }
             single<com.circaso.core.calls.CallEngine> { com.circaso.core.calls.AndroidCallEngine(app) }
             single { com.circaso.core.calls.AndroidCallNotifier(app, get()).also { n -> ringing = { id -> n.clear(id) } } }
-            single(createdAtStart = true) { com.circaso.core.calls.CallKeepAlive(app, get(), get()).also { it.start() } }
-            single(createdAtStart = true) {
+            single { com.circaso.core.calls.CallKeepAlive(app, get(), get()).also { it.start() } }
+            single {
                 val notices = get<com.circaso.core.notifications.PushNotices>()
                 com.circaso.core.calls.CallRinger(app, get(), get(), get(), get(), words = { name, video -> notices.incomingCall(name, video) }).also { it.start() }
             }
@@ -108,7 +108,14 @@ fun initKoinAndroid(context: Context) {
         },
     )
     // Created now, not at the first tap: it has to be watching before the first activity resumes, or it never sees one.
-    KoinPlatform.getKoin().get<CurrentActivity>()
+    val koin = KoinPlatform.getKoin()
+    koin.get<CurrentActivity>()
+    // The call keep-alive and ringer watch calls from launch on, built off the main thread (2026-11-14): they pull in
+    // the calls and network graph, which held the first frame when they were created inside startKoin.
+    koin.get<kotlinx.coroutines.CoroutineScope>().launch {
+        koin.get<com.circaso.core.calls.CallKeepAlive>()
+        koin.get<com.circaso.core.calls.CallRinger>()
+    }
 }
 
 /** For modules outside `shared` that must present over the Activity in front (the Circle SDK's PIN screens). */
