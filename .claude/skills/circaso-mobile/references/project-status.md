@@ -162,6 +162,33 @@ Media3 1.4.1, multiplatform-markdown-renderer 0.46.0.
 - D-C6 Live location WhatsApp-style (15 min / 1 h / 8 h), keeps updating in the background (Android foreground service
   with Stop; iOS background location), updates travel encrypted; full-screen map with profile-photo pins.
 - D-C7 Maps styled monochrome from theme tokens. **The Static Maps key never ships in the app**: previews come from the backend proxy `GET /v1/maps/static`.
+- D-C7a Location map: me, distance, a line, directions (Pasaka, 2026-11-15; app branch `feat/location-map-distance`).
+  No canvas frame; built from the map's own glass panel, `Avatar`, `CircasoButton` and tokens. Decisions:
+  - **Me on the map.** My photo pin with an **ink ring and a "You" tag** (others keep the action ring). The pulse means
+    "others can see this moving", so my pin pulses only while I share live; then my share's pin *is* my pin and the
+    phone isn't read a second time. Otherwise my position is read on this screen only (about every 5 s / 5 m, stopped
+    when the screen closes, never in the background) and **never sent**; the panel says "Only you can see where you are."
+  - **Asking.** Nothing pops up on opening the map. The panel's last row gives the reason ("Uses your location on this
+    screen only. It isn't shared with anyone.") with **Turn on**, which brings up the phone's own prompt. Refused: one
+    row, "Location is off for Circaso", with **Settings**; never asked again. Phone-wide location off: a plain line.
+  - **Distance.** Straight line (haversine), **metric everywhere** (the app has no unit setting): "under 10 m",
+    tens of metres to 990 m, one decimal to 9.9 km, whole km after, thousands grouped. Worded "2.4 km away", never
+    "route"; "About …" when the fix is rougher than 100 m (Android "Approximate"). It leads each row's second line in
+    ink, before "Live until … · updated …".
+  - **Order.** Unchanged: the tapped one first, then the others as their shares started. Not nearest-first: rows are
+    tap targets and would shuffle under a finger as people move; every row has its own distance instead.
+  - **Focus and the line.** Tapping a row or pin focuses it (marked with `fillSelected` when there is more than one)
+    and recentres as before. A **dashed ink line** (3 dp, 8/6 dash, 80% ink, geodesic) runs from me to the focus; it is
+    dashed so it never reads as a road route. Drawn by Google Maps on both platforms (a Compose line on the fallback picture).
+  - **Framing.** Opened on a live share, the first framing includes me. Opened on a place, the map stays on the place.
+    Top bar: frame brackets = "Show you and {name}"; the people icon = "Show everyone" (only when that differs). Points
+    under 150 m apart get street level (zoom 17) around their middle, not the deepest zoom. The map is told the bar's
+    and panel's heights, so framing keeps clear of them and Google's mark stays visible above the panel.
+  - **Directions** open the phone's maps app from "my location" to the pin (Android: Google Maps, else any maps app at
+    the place, else the browser; iOS: Apple Maps, else Google's link). Only the destination is handed over. For a live
+    share the panel says "Directions lead to where {name} is now."
+  - **Not built: a road route drawn inside the map.** It needs Google's Routes API behind the backend (key, billing,
+    both people's coordinates through Circaso's server and Google). Proposal in the PR; Pasaka decides.
 - D-C8 Group invites (Pasaka, 2026-11-09; backend PR #83, app branch `feat/group-invites`): adding someone to a group
   invites them; they accept or decline from a card at the top of Chats (All/Groups), with a preview sheet. The inviter's
   phone seals the group's metadata key 1:1 for each invitee (`inviteKeys`) so the card shows the real name and photo;
