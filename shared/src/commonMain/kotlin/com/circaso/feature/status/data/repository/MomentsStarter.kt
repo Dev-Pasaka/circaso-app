@@ -30,6 +30,8 @@ class MomentsStarter(
 ) {
     fun start() {
         signedIn?.let { s -> scope.launch { s.distinctUntilChanged().filter { it }.collect { repository().resume() } } }
+        // Each reconnect too (coming back to Circaso is one): an encoder that couldn't in the background is tried again.
+        scope.launch { merge(ready.distinctUntilChanged(), socket.distinctUntilChanged()).filter { it }.collect { repository().resume() } }
         scope.launch {
             merge(ready.distinctUntilChanged(), socket.distinctUntilChanged()).filter { it }.collect { repository().refresh() }
         }

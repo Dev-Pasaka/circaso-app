@@ -94,6 +94,8 @@ internal data class PendingDraft(
     val source: String? = null,
     /** The video was made smaller before uploading: that took the first part of the ring ([MomentsRepositoryImpl.PrepareShare]). */
     val encoded: Boolean = false,
+    /** How many times the encoder has been tried and couldn't (it is tried again before the moment is failed). */
+    val tries: Int = 0,
 )
 
 @Serializable
@@ -451,7 +453,7 @@ class MomentsRepositoryImpl(
         val row = dao.pending(localId) ?: return
         val draft = runCatching { json.decodeFromString(PendingDraft.serializer(), row.draft) }.getOrNull()
         if (draft?.source != null) {
-            dao.setPendingState(localId, StatePreparing, null)
+            dao.savePending(row.copy(draft = json.encodeToString(PendingDraft.serializer(), draft.copy(tries = 0)), state = StatePreparing, error = null))
             kickPreparing()
             return
         }
@@ -477,28 +479,37 @@ class MomentsRepositoryImpl(
      * so they post in the order they were picked. Runs as background work ([BackgroundUploads.keep]: Android's
      * foreground service, iOS's background time), so leaving Circaso doesn't stop it. A process that dies part-way
      * loses nothing: the row is still `preparing` with its file in the app's private files, and the next launch
-     * ([resume]) starts that one again. Each row leaves `preparing` (ready, or failed with why) before the next.
+     * ([resume]) starts that one again. Each row leaves `preparing` (ready, or failed with why) before the next; an
+     * encoder that couldn't this time (an iPhone stops encoding once Circaso is in the background) leaves its row
+     * `preparing`, the ones behind it waiting their turn, and is tried again a little later ([PrepareAgainMillis])
+     * and on the next launch or reconnect, [PrepareTries] times in all before it is failed.
      */
-    internal suspend fun prepareWaiting() = preparing.withLock {
+    internal suspend fun prepareWaiting(): Unit = preparing.withLock {
         if (nextPreparing() == null) return@withLock
-        uploads.keep(com.circaso.core.platform.UploadKind.Moment) {
+        val again = uploads.keep(com.circaso.core.platform.UploadKind.Moment) {
             while (true) {
-                val row = nextPreparing() ?: break
-                try {
+                val row = nextPreparing() ?: return@keep false
+                val moved = try {
                     prepare(row)
                 } catch (e: kotlin.coroutines.cancellation.CancellationException) {
                     throw e
                 } catch (_: Throwable) {
-                    failPreparing(row, PrepareFailed)
+                    failPreparing(row, PrepareFailed); true
                 }
+                if (!moved) return@keep true
             }
+            @Suppress("UNREACHABLE_CODE") false
         }
+        if (again) scope?.launch { kotlinx.coroutines.delay(PrepareAgainMillis); prepareWaiting() }
     }
 
     private suspend fun nextPreparing(): PendingMomentEntity? = dao.observePending().first().firstOrNull { it.state == StatePreparing }
 
-    /** One moment: its file under the pending id at a size the server takes, then the outbox. */
-    private suspend fun prepare(row: PendingMomentEntity) {
+    /**
+     * One moment: its file under the pending id at a size the server takes, then the outbox. False when it is still
+     * `preparing` afterwards (the encoder is to be tried again later); true when it is ready, failed or gone.
+     */
+    private suspend fun prepare(row: PendingMomentEntity): Boolean {
         val id = row.localId
         var draft = json.decodeFromString(PendingDraft.serializer(), row.draft)
         val source = draft.source
@@ -516,9 +527,16 @@ class MomentsRepositoryImpl(
                     val smaller = if (path == null || library == null) null else library.shrink(
                         path, 0, draft.durationMs ?: com.circaso.core.platform.MomentMediaMaxMs, com.circaso.core.platform.MomentMediaMaxBytes,
                     ) { done -> setProgress(id, PrepareShare * done.coerceIn(0f, 1f)) }
-                    val out = smaller?.path ?: return failPreparing(row, VideoUnreadable)
-                    val outSize = library?.size(out) ?: 0
-                    if (outSize <= 0) return failPreparing(row, VideoUnreadable)
+                    val out = smaller?.path
+                    val outSize = out?.let { library?.size(it) } ?: 0
+                    if (out == null || outSize <= 0) {
+                        // Couldn't this time. Not yet the person's problem: it is tried again before it is failed.
+                        val tries = draft.tries + 1
+                        if (tries >= PrepareTries) return failPreparing(row, VideoUnreadable)
+                        saveDraft(id) { it.copy(tries = tries) }
+                        return false
+                    }
+                    // The encoder's file is taken in (and so out of the cache) whether or not it is kept.
                     if (outSize > com.circaso.core.platform.MomentMediaMaxBytes) { files.moveIn(out, "ready-$id"); files.delete("ready-$id"); return failPreparing(row, TooLarge) }
                     if (!files.moveIn(out, id)) return failPreparing(row, VideoUnreadable)
                     draft = draft.copy(
@@ -530,18 +548,20 @@ class MomentsRepositoryImpl(
         }
         source?.let { files.delete(it) }
         // Discarded while it was being made: nothing of it stays.
-        val fresh = dao.pending(id) ?: run { files.delete(id); setProgress(id, null); return }
+        val fresh = dao.pending(id) ?: run { files.delete(id); setProgress(id, null); return true }
         dao.savePending(fresh.copy(draft = json.encodeToString(PendingDraft.serializer(), draft.copy(source = null)), state = StatePosting, error = null))
         setProgress(id, if (draft.encoded) PrepareShare else 0f)
         outbox.enqueue(MomentOutbox.Post, json.encodeToString(MomentJob.serializer(), MomentJob(id)))
         kickOutbox()
+        return true
     }
 
     /** Couldn't be got ready: Failed with why (M6's row offers Retry and Delete), and told if the person is away. */
-    private suspend fun failPreparing(row: PendingMomentEntity, code: String) {
+    private suspend fun failPreparing(row: PendingMomentEntity, code: String): Boolean {
         setProgress(row.localId, null)
         dao.setPendingState(row.localId, StateFailed, code)
         if (dao.pending(row.localId) != null) uploads.failed(com.circaso.core.platform.UploadKind.Moment)
+        return true
     }
 
     /**
@@ -729,6 +749,10 @@ class MomentsRepositoryImpl(
         /** The same unreadable moments are asked about again after this, in case the poster's phone missed it. */
         const val KeyRequestAgainMillis = 30 * 60 * 1000L
         const val KeyRequestBatch = 100
+        /** The encoder is tried this many times in all before a video is failed as one this phone can't get ready. */
+        const val PrepareTries = 3
+        /** How long after the encoder couldn't it is tried again (also at the next launch and reconnect). */
+        const val PrepareAgainMillis = 20_000L
         const val StatePreparing = "preparing"
         const val StatePosting = "posting"
         const val StateWaiting = "waiting"

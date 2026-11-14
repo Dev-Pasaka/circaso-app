@@ -448,5 +448,8 @@ Pasaka asked for Circle's social login to go. Android: the SDK's Facebook depend
   Chats banner says "Showing moments saved on this phone"); S1f the quiet "Couldn't check for new moments" line with
   Try Again and the reference. Privacy stays under You → Security → Moments.
 - **Previews:** `chats-moments`, `chats-moments-muted`, `chats-moments-empty`, `chats-moments-loading`,
-  `chats-moments-offline`, `chats-moments-error`, `chats-moments-posting`, `chats-moments-failed`, `chats-rings`
-  (`gallery/MomentsPreviews.kt`).
+  `chats-moments-offline`, `chats-moments-error`, `chats-moments-posting`, `chats-moments-preparing`,
+  `chats-moments-failed`, `chats-moments-prepare-failed`, `chats-rings` (`gallery/MomentsPreviews.kt`).
+- **Posting (2026-11-14, like WhatsApp status):** Post records the moment and closes the composer; a video is got
+  ready (made smaller when over 32 MiB) and sent by `MomentsRepositoryImpl` in the app's scope, in order, resumed
+  after a restart, with one determinate ring for the batch. See `project-status.md` → "Posting a moment".

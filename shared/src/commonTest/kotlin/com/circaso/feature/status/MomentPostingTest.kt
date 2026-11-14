@@ -197,7 +197,13 @@ class MomentPostingTest {
         val id = pending().single().localId
         library.unreadable = true
         repo.resume()
+        // The encoder couldn't this time (an iPhone in the background): not failed yet, tried again later.
+        assertEquals(PendingState.Preparing, pending().single().state)
+        repo.resume()
+        assertEquals(PendingState.Preparing, pending().single().state)
+        repo.resume()
         assertEquals(PendingState.Failed to "moment.video_unreadable", pending().single().let { it.state to it.error })
+        assertEquals(3, library.shrinks.size)
         assertTrue(outboxDao.rows.value.isEmpty(), "nothing half-made is ever queued")
 
         library.unreadable = false
@@ -207,6 +213,20 @@ class MomentPostingTest {
         assertEquals(PendingState.Posting, pending().single().state)
         processor().drain()
         assertEquals(listOf(id), remote.posted.map { it.clientMomentId })
+    }
+
+    @Test fun anEncoderThatCouldNotInTheBackgroundIsTriedAgainAndTheRestKeepTheirPlaceBehindIt() = runSuspending {
+        repo.post(video("/cache/big.mp4", big))
+        repo.post(photo())
+        val ids = pending().map { it.localId }
+        library.unreadable = true
+        repo.resume()
+        assertEquals(listOf(PendingState.Preparing, PendingState.Preparing), pending().map { it.state }, "the photo never jumps ahead of the video")
+
+        library.unreadable = false // back in Circaso
+        repo.resume()
+        processor().drain()
+        assertEquals(ids, remote.posted.map { it.clientMomentId })
     }
 
     @Test fun aSourceClearedBeforePreparingFailsPlainlyAndDeleteLeavesNothing() = runSuspending {

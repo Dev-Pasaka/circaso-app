@@ -26,6 +26,49 @@ Spaces tagged `archive/spaces-v1`; Room v20 drops its tables); the backend keeps
   support's moments, never on a group's card. A Not sent card paid again keeps its moment. The notification reads
   "Sent you KES 500 for your moment" (Kotlin and the iOS extension). The transfer itself is unchanged; the server
   never sees the moment.
+- **Posting a moment (2026-11-14, Pasaka): like WhatsApp status, in the background.** "The only things to check on the
+  preview are the video's duration (under a minute) and the file size limit. Once that's fine they tap post and do not
+  have to stay on the preview. They track progress on the ring around their own moment."
+  - **The preview checks only that** (`momentRefusal` in `MomentComposerViewModel.kt`): a video is a minute or less
+    (the trimmer, as before), each file is still on the phone, and the size rule holds. **The size rule:** a photo or
+    a voice goes as it is, so it must fit the post limit (32 MiB, `MomentMediaMaxBytes`); a video over that limit is
+    **accepted**, because a minute always fits once encoded and it is made smaller after Post; only a video file over
+    1 GB (`MomentSourceMaxBytes`: more than a minute of anything a phone's camera records) is refused, with its size
+    ("This video is 1.4 GB. Videos up to 1 GB can be posted: trim it shorter or pick another."). Every item is checked
+    before any is recorded, so a batch is never half posted and half refused.
+  - **Post returns at once**, for a video too: `MomentsRepository.post` writes the pending row (`moment_pending`,
+    state `preparing`) and takes the file into the app's private files (a photo's bytes written; a video **moved**, a
+    rename however large, as `source-{localId}.mp4`, so a picker's or the camera's cache copy can't be cleared from
+    under it). No "Making the video smaller…" on the preview any more.
+  - **Getting ready and sending happen in the data layer, in the app's scope** (`MomentsRepositoryImpl.prepareWaiting`,
+    under `uploads.keep(UploadKind.Moment)`): one moment at a time, oldest first; a video over the limit goes through
+    `MediaLibrary.shrink` (the trimmer's encoder, from the file, never through memory), the result is moved under the
+    pending id, the row becomes `posting` and the outbox job `moment.post` is queued. So several picked post in the
+    order picked. A video the encoder couldn't do this time stays `preparing` (the ones behind wait their turn) and is
+    tried again 20 s later and at each launch or reconnect, three times in all, because an iPhone stops encoding once
+    Circaso is in the background; then it is Failed with why. Failed in preparing uses M6's failed row with plain
+    words (`moment.source_missing`, `moment.video_unreadable`), and Retry gets it ready again.
+  - **Resume:** anything `preparing` is picked up at launch once signed in (online or not), at each reconnect, and
+    whenever the outbox sends a moment (`MomentsStarter`, `MomentsRepository.resume`). The process dying mid-encode
+    loses nothing: the row and the private source file are still there, and the encode starts again from the start.
+  - **The ring (M6)** is a determinate arc from the moment Post is tapped, over the whole batch: a video made smaller
+    fills the first half of its share (Android: Media3 Transformer's own progress; iPhone: no progress from the
+    encoder yet, so it moves to half when the video is ready), then the bytes sent fill to 95 %, and the post itself
+    the rest. It never runs back (`MomentsUiState.postingFloor`). Only a batch of text moments shows the turning arc.
+    Offline it is Waiting, as designed, though getting ready carries on. Reduced motion: the arc steps, no easing.
+  - **No Room change:** `preparing` is a new value of the `state` text column and the rest is in the draft JSON
+    (`PendingDraft.source`, `encoded`, `tries`); the database stays at version 22.
+  - **Departures from M4–M6:** none in layout. M4's review loses the "Making the video smaller to share…" footnote
+    and the Post button's wait (the owner's request); M6's ring is as drawn (a determinate arc with "Posting… n%"),
+    now from 0 % instead of a turning arc before the first byte. No frame for a failure in preparing: M6's "Your
+    moment didn't post" card with the two reasons above in its place.
+  - **Not done:** the trimmer's Done (M3b) still cuts the video there and then (a video over a minute waits on the
+    trimmer, not on the preview); deferring the cut to the background needs the review's player to play only the
+    chosen part on both phones. The encoder's progress on iPhone needs a Swift change (MomentVideoTranscoder).
+    A posted moment's media is still sealed whole in memory for the upload (32 MiB at most; the encrypted body is
+    one AES-GCM box). My own viewer doesn't show a pending moment (it never did).
+  - Tests: `MomentPostingTest` (the repository's worker), `MomentComposerViewModelTest`, `MomentsViewModelTest`,
+    `MomentsStateTest`, `MomentsStarterTest`. Previews: `chats-moments-preparing`, `chats-moments-prepare-failed`.
 - **Stays from the Spaces plan:** groups with optional wallets, the one Circaso fee, daily caps, Paying from, the
   wallet PIN and biometrics per wallet.
 
