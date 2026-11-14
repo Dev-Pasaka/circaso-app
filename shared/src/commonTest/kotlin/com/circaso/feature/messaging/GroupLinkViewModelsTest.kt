@@ -93,7 +93,15 @@ private class LinkScreenChats(val chat: MutableStateFlow<Chat?>) : ChatsReposito
     override suspend fun refreshChat(chatId: String): AppResult<Chat> = AppResult.Failure(AppError.Network)
     override suspend fun openDirect(userId: String): AppResult<Chat> = AppResult.Failure(AppError.Network)
     override suspend fun createGroup(draft: GroupDraft, idempotencyKey: String): AppResult<GroupCreated> = AppResult.Failure(AppError.Network)
-    override suspend fun rename(chatId: String, name: String): AppResult<Chat> = AppResult.Failure(AppError.Network)
+    val edits = mutableListOf<Pair<String, String>>()
+    val renames = mutableListOf<String>()
+    override suspend fun rename(chatId: String, name: String): AppResult<Chat> { renames += name; return AppResult.Failure(AppError.Network) }
+    override suspend fun editGroup(chatId: String, name: String, description: String): AppResult<Chat> {
+        edits += name to description
+        val next = chat.value!!.copy(title = name, description = description.trim().ifEmpty { null })
+        chat.value = next
+        return AppResult.Success(next)
+    }
     override suspend fun setMembersCanAdd(chatId: String, allowed: Boolean): AppResult<Chat> = AppResult.Failure(AppError.Network)
     override suspend fun addMembers(chatId: String, userIds: List<String>): AppResult<GroupCreated> = AppResult.Failure(AppError.Network)
     override suspend fun removeMember(chatId: String, userId: String): AppResult<Unit> = AppResult.Failure(AppError.Network)
@@ -413,5 +421,89 @@ class GroupJoinViewModelTest {
     @Test fun membersAreCountedInWords() {
         assertEquals("1 member", memberCountText(1))
         assertEquals("24 members", memberCountText(24))
+    }
+}
+
+/**
+ * Group info's Edit group sheet (2026-11-14): the description is edited where the name is, saved with it in one
+ * change, limited to 500 characters, and never sent offline.
+ */
+@OptIn(ExperimentalCoroutinesApi::class)
+class EditGroupDescriptionTest {
+    private val dispatcher = UnconfinedTestDispatcher()
+    private val os = MutableStateFlow(ConnectionStatus.Online)
+    private val monitor = object : ConnectivityMonitor { override val osStatus = os }
+    private lateinit var connection: ConnectionState
+    private val chat = MutableStateFlow<Chat?>(group().copy(description = "Fridays at six."))
+    private val repo = LinkScreenChats(chat)
+
+    @BeforeTest fun setUp() { Dispatchers.setMain(dispatcher); connection = ConnectionState(monitor, NetworkHealth(), CoroutineScope(dispatcher), offlineDelayMs = 0) }
+    @AfterTest fun tearDown() = Dispatchers.resetMain()
+
+    private fun vm() = com.circaso.feature.messaging.presentation.ChatInfoViewModel(
+        "g1", ObserveChatUseCase(repo), com.circaso.feature.contacts.domain.ObserveContactsUseCase(com.circaso.feature.status.FakeContacts()),
+        com.circaso.feature.messaging.domain.SecurityCodeUseCase(repo), com.circaso.feature.messaging.domain.RenameGroupUseCase(repo),
+        com.circaso.feature.messaging.domain.SetMembersCanAddUseCase(repo), com.circaso.feature.messaging.domain.AddMembersUseCase(repo),
+        com.circaso.feature.messaging.domain.RemoveMemberUseCase(repo), com.circaso.feature.messaging.domain.LeaveGroupUseCase(repo),
+        com.circaso.feature.messaging.domain.SetRoleUseCase(repo), connection,
+        editGroup = com.circaso.feature.messaging.domain.EditGroupUseCase(repo),
+    )
+
+    @Test fun theSheetOpensOnTheGroupsNameAndDescription() = runTest(dispatcher) {
+        val vm = vm()
+        vm.onRename(true)
+        val s = vm.state.value
+        assertTrue(s.renaming)
+        assertEquals("Book club", s.nameDraft)
+        assertEquals("Fridays at six.", s.descriptionDraft)
+        assertFalse(s.editChanged, "nothing to save yet")
+    }
+
+    @Test fun aNewDescriptionIsSavedWithTheNameInOneChange() = runTest(dispatcher) {
+        val vm = vm()
+        vm.onRename(true)
+        vm.onDescriptionDraft("Fridays at six. Bring a book.")
+        assertTrue(vm.state.value.editChanged)
+
+        vm.onRenameConfirm()
+
+        assertEquals(listOf("Book club" to "Fridays at six. Bring a book."), repo.edits)
+        assertTrue(repo.renames.isEmpty(), "one change, not a rename and then another")
+        assertFalse(vm.state.value.renaming)
+        assertEquals("Fridays at six. Bring a book.", vm.state.value.chat?.description)
+    }
+
+    @Test fun clearingTheDescriptionRemovesIt() = runTest(dispatcher) {
+        val vm = vm()
+        vm.onRename(true)
+        vm.onDescriptionDraft("  ")
+        assertTrue(vm.state.value.editChanged)
+        vm.onRenameConfirm()
+        assertNull(vm.state.value.chat?.description)
+    }
+
+    @Test fun aDescriptionOverFiveHundredCharactersIsNotSent() = runTest(dispatcher) {
+        val vm = vm()
+        vm.onRename(true)
+        vm.onDescriptionDraft("d".repeat(501))
+        assertTrue(vm.state.value.descriptionTooLong)
+        vm.onRenameConfirm()
+        assertTrue(repo.edits.isEmpty())
+        assertTrue(vm.state.value.renaming, "the sheet stays, saying why")
+
+        vm.onDescriptionDraft("d".repeat(500))
+        assertFalse(vm.state.value.descriptionTooLong)
+        vm.onRenameConfirm()
+        assertEquals(1, repo.edits.size)
+    }
+
+    @Test fun nothingIsSentOffline() = runTest(dispatcher) {
+        val vm = vm()
+        vm.onRename(true)
+        vm.onDescriptionDraft("Saturdays now.")
+        os.value = ConnectionStatus.Offline
+        vm.onRenameConfirm()
+        assertTrue(repo.edits.isEmpty())
+        assertFalse(vm.state.value.canChange)
     }
 }
