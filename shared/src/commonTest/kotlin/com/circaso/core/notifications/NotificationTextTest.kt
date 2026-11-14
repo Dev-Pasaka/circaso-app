@@ -10,6 +10,16 @@ class NotificationTextTest {
 
     private fun text(event: NotificationEvent, private: Boolean = false, fiat: FiatValue? = kes) = NotificationText.compose(event, private, fiat)
 
+    @Test fun moneyForMyMomentSaysSo() {
+        assertEquals(NotificationContent("Amina", "Sent you KES 2,000 for your moment"), text(NotificationEvent.MoneyReceived("Amina", twentyDollars, forMoment = true)))
+        assertEquals("Sent you KES 2,000 for your moment · love this", text(NotificationEvent.MoneyReceived("Amina", twentyDollars, "love this", forMoment = true)).text)
+        assertEquals("You received KES 2,000 for your moment", text(NotificationEvent.MoneyReceived(null, twentyDollars, forMoment = true)).text)
+        // Privacy on: nothing about what it was for.
+        assertEquals(NotificationContent(NotificationText.AppName, NotificationText.PrivateMoney), text(NotificationEvent.MoneyReceived("Amina", twentyDollars, forMoment = true), private = true))
+        // A group's card never says it.
+        assertEquals("Amina sent you KES 2,000", text(NotificationEvent.MoneyReceived("Amina", twentyDollars, groupName = "Diani", forMoment = true)).text)
+    }
+
     @Test fun moneyIsInThePersonsCurrencyWithTheSenderAndNote() {
         assertEquals(NotificationContent("Amina Wanjiku", "Sent you KES 2,000 · for lunch"), text(NotificationEvent.MoneyReceived("Amina Wanjiku", twentyDollars, "for lunch")))
     }

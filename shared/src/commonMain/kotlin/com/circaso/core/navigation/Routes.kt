@@ -119,11 +119,14 @@ data class ChatInfoRoute(val chatId: String, val security: Boolean = false) : Ro
  * Pay a person (design C4/C5): [userId] null means pick one first; [chatId] when paying from that chat. Group wallets
  * (phase 2): [groupId] pays into that group's wallet (a contribution, GW9d); [fromWalletId] with [requestId] pays an
  * approved payout from the group wallet (GW9); [fromWalletId] alone starts from that wallet (Request Payout, GW9c).
+ * [momentQuote] (2026-11-14): money sent from someone's moment; the moment's quote as JSON
+ * ([com.circaso.core.crypto.MomentQuote]), which the payment's card in the chat then carries.
  */
 @Serializable
 data class PayRoute(
     val userId: String? = null, val chatId: String? = null, val displayName: String? = null, val amount: String? = null, val address: String? = null,
     val goalName: String? = null, val requestId: String? = null, val groupId: String? = null, val fromWalletId: String? = null, val note: String? = null,
+    val momentQuote: String? = null,
 ) : Route
 
 /** Set up (or finish setting up) a group's wallet (GW2–GW5c), carrying what New Group chose (GW1b). */

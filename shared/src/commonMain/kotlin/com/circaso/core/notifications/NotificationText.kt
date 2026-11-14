@@ -25,8 +25,9 @@ sealed interface NotificationEvent {
     /**
      * Money to me: a payment card in a chat or the wallet's own `payment.received`. [groupName] is set when the card
      * sits in a group chat (a payout from the group wallet), so the title names the group and the text the sender.
+     * [forMoment] (2026-11-14): the card carries one of my moments, so it reads "Sent you KES 500 for your moment".
      */
-    data class MoneyReceived(val fromName: String?, val amount: Money?, val note: String? = null, val groupName: String? = null) : NotificationEvent
+    data class MoneyReceived(val fromName: String?, val amount: Money?, val note: String? = null, val groupName: String? = null, val forMoment: Boolean = false) : NotificationEvent
 
     /** Someone put money into a group I'm in (design F4: "Holiday Fund · Wanjiru added KES 1,000"). */
     data class GroupContribution(val groupName: String?, val memberName: String?, val amount: Money?) : NotificationEvent
@@ -75,6 +76,8 @@ object NotificationText {
     const val PrivateMissedCall = "Missed call"
     const val PrivateGroupInvite = "You have a new group invite"
     const val GroupInviteTitle = "Group invite"
+    /** After the amount when money came for a moment of mine: "Sent you KES 500 for your moment". */
+    const val ForMoment = " for your moment"
     const val PrivateMomentReaction = "Someone reacted to your moment"
     const val PrivateContactJoined = "Someone you know joined Circaso"
     const val PrivateConnection = "You have a new connection"
@@ -147,7 +150,9 @@ object NotificationText {
 
             is NotificationEvent.MoneyReceived -> if (private) NotificationContent(AppName, PrivateMoney) else {
                 val sum = amount(event.amount)
-                val note = event.note?.trim()?.takeIf { it.isNotEmpty() && !it.startsWith("Paid from") }?.let { " · $it" }.orEmpty()
+                // iOS's notification extension mirrors these words (NotificationService.swift, paymentCard): change both together.
+                val note = (if (event.forMoment && event.groupName == null) ForMoment else "") +
+                    event.note?.trim()?.takeIf { it.isNotEmpty() && !it.startsWith("Paid from") }?.let { " · $it" }.orEmpty()
                 when {
                     event.groupName != null -> NotificationContent(
                         event.groupName,

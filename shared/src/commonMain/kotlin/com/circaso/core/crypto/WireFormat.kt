@@ -79,7 +79,11 @@ data class ChatPayload(
     val type: String,
     val text: String? = null,
     val replyTo: String? = null,
-    /** A reply to a moment (design V8): the moment it answers, quoted so the chat keeps it after the moment expires. */
+    /**
+     * A reply to a moment (design V8): the moment it answers, quoted so the chat keeps it after the moment expires.
+     * On a payment card (type [Payment], 2026-11-14) it is the moment the money was sent for; phones from before
+     * that ignore it there and show the plain card.
+     */
     val moment: MomentQuote? = null,
     /** Base64 sender-key distribution (type [SenderKey]) handed over a 1:1 session. */
     val senderKey: String? = null,

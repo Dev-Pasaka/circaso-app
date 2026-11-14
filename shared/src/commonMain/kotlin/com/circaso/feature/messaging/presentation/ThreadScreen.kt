@@ -670,20 +670,23 @@ fun ThreadContent(
                     Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(CircasoSpacing.s2)) {
                     val previous = state.messages.getOrNull(index - 1)
                     if (previous == null || localDayIndex(previous.orderAt) != localDayIndex(m.orderAt)) DayLabel(threadDayLabel(m.orderAt, now))
+                    // A quoted moment was tapped (on a reply, or on money sent for it): my message quotes their moment; theirs quotes mine.
+                    val openMoment = { q: com.circaso.core.crypto.MomentQuote, outgoing: Boolean ->
+                        if (q.expiresAt?.let { it <= com.circaso.core.sync.nowMillis() } == true) { quoteScope.launch { toast.show("This moment is no longer available") }; Unit }
+                        else onOpenMoment(if (outgoing) state.chat?.peerId else null, q.momentId)
+                    }
                     Box(Modifier.fillMaxWidth().graphicsLayer { if (reduce) alpha = pulse.value else { scaleX = pulse.value; scaleY = pulse.value } }) {
                     when (m) {
                         is Message.Text -> {
                             val firstOfRun = previous !is Message.Text || previous.senderId != m.senderId || previous.outgoing != m.outgoing
                             SwipeToReply(m.messageId?.let { { onReply(m); focusComposer() } }) {
-                            TextMessage(m, state.isGroup, firstOfRun, peerName = state.chat?.title, react = reactUi(m.messageId), quote = quoteFor(m), onOpenMoment = { q, outgoing ->
-                                // My reply quotes their moment; their reply quotes mine.
-                                if (q.expiresAt?.let { it <= com.circaso.core.sync.nowMillis() } == true) quoteScope.launch { toast.show("This moment is no longer available") }
-                                else onOpenMoment(if (outgoing) state.chat?.peerId else null, q.momentId)
-                            }) { onSelect(m) }
+                            TextMessage(m, state.isGroup, firstOfRun, peerName = state.chat?.title, react = reactUi(m.messageId), quote = quoteFor(m), onOpenMoment = openMoment) { onSelect(m) }
                             }
                         }
                         is Message.Payment -> SwipeToReply(m.messageId?.let { { onReply(m); focusComposer() } }) { PaymentMessage(m, onOpen = { onOpenTransfer(m.transferId) }, moment = !m.outgoing && !groupPayoutCard(m, state.groupMoney) && index == state.messages.lastIndex && now - m.orderAt < MoneyMomentMillis, onThanks = { onQuickReply("Asante!") }, chama = chama, fiat = state.fiat, coinRates = coinRates, groupName = state.chat?.title?.takeIf { state.groupMoney?.hasWallet == true }, groupPayout = groupPayoutCard(m, state.groupMoney),
                             react = reactUi(m.messageId), transfer = state.paymentStates[m.transferId], pendingPayment = state.paymentPending(m, now),
+                            // Money sent for a moment: only ever between the two people (a group's members may not be in its audience).
+                            momentQuote = m.momentQuote?.takeIf { !state.isGroup }, peerName = state.chat?.title, onOpenMoment = { q -> openMoment(q, m.outgoing) },
                             // Only a payment made just now is read out (not old cards a new phone's sync brings back).
                             announce = m.outgoing && m.localId == lastOutgoingPayment && now - m.orderAt < AnnounceWithinMillis,
                             // Only my own payment from here comes back to the card; a payout is paid again from its request.
@@ -833,7 +836,19 @@ internal fun amountShortcut(text: String): Pair<String, String>? {
     return amount to text.removeRange(token.start, token.end).replace(Regex("""\s+"""), " ").trim()
 }
 
-/** A payment card in the thread (designs C3–C7): the money colour for money received, `fill` for money sent. */
+/**
+ * A payment card in the thread (designs C3–C7): the money colour for money received, `fill` for money sent.
+ *
+ * Money sent for a moment ([momentQuote]; no frame, decided 2026-11-14 at the owner's request: "the money comes with
+ * the moment attached and the amount, well formatted in a very nice design"). One card, not two: the moment sits
+ * inside the metal, above "Sent" / "Received", exactly as [MomentQuoteCard] draws it over a reply's words (its
+ * placeholder picture with the play mark for a video, the waveform for a voice, the words for a text, "No longer
+ * available" once it has ended), tinted with the card's own ink so it holds on titanium, pearl and graphite, in the
+ * high-contrast themes and at large text. Then the card as ever: head, the amount large, the note, the coin and time.
+ * The picture stays the quote's small size because it is the moment's tiny blurred placeholder, which doesn't bear
+ * enlarging. Tapping the moment opens it (or says it has ended), as a reply's quote does; tapping anywhere else opens
+ * the payment, as every money card does. Nothing new in colour, shape or size: the two existing pieces, joined.
+ */
 @Composable
 private fun PaymentMessage(
     m: Message.Payment, onOpen: () -> Unit, moment: Boolean = false, onThanks: () -> Unit = {}, chama: Chama? = null, fiat: FiatValue? = null, react: ReactUi? = null, groupName: String? = null,
@@ -849,6 +864,10 @@ private fun PaymentMessage(
     pendingPayment: Boolean = transfer?.inFlight == true,
     /** My latest card: its head is read out as it changes (Sending → Sent). */
     announce: Boolean = false,
+    /** The moment this money was sent for, drawn attached to the card; [peerName] names whose it is on my own card. */
+    momentQuote: com.circaso.core.crypto.MomentQuote? = null,
+    peerName: String? = null,
+    onOpenMoment: (com.circaso.core.crypto.MomentQuote) -> Unit = {},
 ) {
     val waiting = m.state == DeliveryState.Waiting || m.state == DeliveryState.Sending
     val failed = m.state == DeliveryState.Failed
@@ -900,6 +919,9 @@ private fun PaymentMessage(
                 outgoing = m.outgoing || payout != null, pending = if (confirmed) inFlight else waiting || inFlight, failed = if (confirmed) notSent else failed || notSent,
                 // A card that can't take a reaction yet (no message id: the wallet added it) opens its details on a long press.
                 onClick = onOpen, onLongClick = react?.onOpen ?: onOpen, symbol = m.asset, announce = announce,
+                attachment = momentQuote?.let { q -> { ink ->
+                    MomentQuoteCard(q, m.outgoing, if (m.outgoing) peerName else m.senderName, Modifier.fillMaxWidth(), ink, lead = "Money for") { onOpenMoment(q) }
+                } },
             ) }
             if (react != null) Reacted(react, m.outgoing, card) else card()
             if (notSent) NotSentLine(m.outgoing, onRetry)
@@ -1796,17 +1818,25 @@ private fun androidx.compose.foundation.lazy.LazyListScope.threadTail(
 
 /** Design V8: a reply to a moment shows the moment quoted (its picture and words); it stays after the moment expires. */
 @Composable
-private fun MomentQuoteCard(quote: com.circaso.core.crypto.MomentQuote, outgoing: Boolean, posterName: String?, onOpen: () -> Unit) {
+private fun MomentQuoteCard(
+    quote: com.circaso.core.crypto.MomentQuote, outgoing: Boolean, posterName: String?,
+    /** Over a bubble's words by default; a money card places it itself. */
+    modifier: Modifier = Modifier.padding(bottom = 6.dp),
+    /** The ink of what it sits on: the bubble's by default, a money card's metal otherwise. */
+    ink: androidx.compose.ui.graphics.Color = if (outgoing) CircasoTheme.colors.onAction else CircasoTheme.colors.ink,
+    /** How it is read out: "Reply to your moment", "Money for your moment". */
+    lead: String = "Reply to",
+    onOpen: () -> Unit,
+) {
     val c = CircasoTheme.colors
     val t = CircasoTheme.typography
-    val ink = if (outgoing) c.onAction else c.ink
     val gone = quote.expiresAt?.let { it <= com.circaso.core.sync.nowMillis() } == true
     val thumb = androidx.compose.runtime.remember(quote.thumb, gone) { if (gone) null else quote.thumb?.let { runCatching { kotlin.io.encoding.Base64.decode(it) }.getOrNull() } }
     Row(
-        Modifier.padding(bottom = 6.dp).clip(com.circaso.designsystem.theme.CircasoShapes.md).background(ink.copy(alpha = 0.12f))
+        modifier.clip(com.circaso.designsystem.theme.CircasoShapes.md).background(ink.copy(alpha = 0.12f))
             // Tap to open that moment in the viewer (Pasaka, 2026-11-03); an ended one says so where it is.
             .pressable(role = androidx.compose.ui.semantics.Role.Button, onClick = onOpen).padding(6.dp)
-            .semantics(mergeDescendants = true) { contentDescription = "Reply to ${if (outgoing) "a" else "your"} moment" + (quote.text?.let { ": $it" } ?: "") + if (gone) ", no longer available" else ", open it" },
+            .semantics(mergeDescendants = true) { contentDescription = "$lead ${if (outgoing) "a" else "your"} moment" + (quote.text?.let { ": $it" } ?: "") + if (gone) ", no longer available" else ", open it" },
         verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         if (thumb != null) Box(Modifier.size(44.dp, 60.dp).clip(com.circaso.designsystem.theme.CircasoShapes.xs), contentAlignment = Alignment.Center) {

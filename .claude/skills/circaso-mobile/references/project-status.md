@@ -16,6 +16,12 @@ Spaces tagged `archive/spaces-v1`; Room v20 drops its tables); the backend keeps
   moments) swaps the list for My moment, Recent, Viewed and Muted (folded); the floating + becomes the camera; a person
   with an unseen moment has a ring on their chat avatar, and the avatar opens it. Privacy: You → Security → Moments.
   See `app-architecture.md` → "Moments in Chats".
+- **Money for a moment (2026-11-14, Pasaka):** on someone else's moment a money button sits between the reply field
+  and the heart; it opens the chats' pay flow for whoever posted it (`PayRoute.momentQuote`). The payment's card in
+  the 1:1 chat carries the moment's quote (`ChatPayload.moment` on a `payment`), drawn inside the money card above
+  "Sent" / "Received" (no frame: `PaymentMessage` KDoc in `ThreadScreen.kt` records the design). Never on my own or
+  support's moments, never on a group's card. The notification reads "Sent you KES 500 for your moment" (Kotlin and
+  the iOS extension). The transfer itself is unchanged; the server never sees the moment.
 - **Stays from the Spaces plan:** groups with optional wallets, the one Circaso fee, daily caps, Paying from, the
   wallet PIN and biometrics per wallet.
 

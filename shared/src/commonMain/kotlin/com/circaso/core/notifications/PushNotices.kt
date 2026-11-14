@@ -287,7 +287,7 @@ class PushNotices(
         val money = Money(row.amountMinor ?: "0", row.asset ?: "USDC")
         val note = row.text
         val event = when {
-            !group -> NotificationEvent.MoneyReceived(sender, money, note)
+            !group -> NotificationEvent.MoneyReceived(sender, money, note, forMoment = row.momentQuote != null)
             // Group wallets (GW18): the card's note says the money left the group's wallet; otherwise it went in.
             note?.startsWith("Paid from") == true -> NotificationEvent.MoneyReceived(sender, money, null, groupName = chatName ?: "Your group")
             else -> NotificationEvent.GroupContribution(chatName, sender, money)

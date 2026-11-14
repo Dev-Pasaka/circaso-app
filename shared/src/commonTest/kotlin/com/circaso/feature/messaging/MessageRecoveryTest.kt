@@ -175,6 +175,28 @@ class MessageRecoveryTest {
         assertEquals(DeliveryState.Waiting, one.state)
     }
 
+    private val sunset = com.circaso.core.crypto.MomentQuote("mo-1", "IMAGE", "Sunset at Diani", "dGh1bWI=", 1_800_000_000_000)
+
+    @Test fun aWalletMadeCardTakesTheMomentFromTheEndToEndCardWhenItArrives() = runSuspending {
+        directChat()
+        cards.fromWallet(seen())
+        assertNull(assertIs<Message.Payment>(messages.thread("c1").first().single()).momentQuote, "the wallet knows nothing of moments")
+        inboxOf(dto("m-pay", sealed(payment.copy(moment = sunset))))
+        inbox.sync()
+        val card = assertIs<Message.Payment>(messages.thread("c1").first().single())
+        assertEquals(sunset, card.momentQuote)
+        assertEquals("m-pay", card.messageId)
+    }
+
+    @Test fun mySendTakingOverAWalletMadeCardKeepsTheMoment() = runSuspending {
+        directChat()
+        cards.fromWallet(seen(outgoing = true))
+        messages.sendPayment("c1", PaymentCard("t-1", "7699911", "USDC", "BASE-SEPOLIA", "Asante", sunset))
+        val one = assertIs<Message.Payment>(messages.thread("c1").first().single())
+        assertEquals(sunset, one.momentQuote)
+        assertEquals("Asante", one.note)
+    }
+
     @Test fun aGroupsMoneyGetsNoFallbackCard() = runSuspending {
         groupChat()
         cards.fromWallet(seen().copy(chatId = "g1"))

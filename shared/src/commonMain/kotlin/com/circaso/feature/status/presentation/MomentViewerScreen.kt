@@ -113,9 +113,16 @@ fun MomentViewerScreen(
     onMessage: (posterId: String) -> Unit = {},
     /** Closed by dragging it down: the viewer leaves downward, so the navigation shouldn't slide it sideways. */
     onDragClose: () -> Unit = onClose,
+    /** The money button: open the pay flow for whoever posted the moment, carrying its quote. */
+    onPay: (MomentPay) -> Unit = {},
+    /** Another screen (the pay flow) is over the viewer. */
+    covered: Boolean = false,
 ) {
     val state by viewModel.state.collectAsState()
     LaunchedEffect(state.closed) { if (state.closed) onClose() }
+    LaunchedEffect(state.pay) { state.pay?.let { onPay(it); viewModel.payOpened() } }
+    // Back from the pay flow: the moment carries on.
+    LaunchedEffect(covered) { if (!covered) viewModel.payClosed() }
     var forward by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf<ForwardMedia?>(null) }
     androidx.compose.ui.backhandler.BackHandler(onBack = onClose)
     val actions = remember(viewModel) { viewModel.actions() }
@@ -153,6 +160,8 @@ class MomentViewerActions(
     val noticeShown: () -> Unit,
     /** A reaction splash over my moment finished (or was cut short). */
     val splashDone: (Long) -> Unit = {},
+    /** Send money to whoever posted this moment. */
+    val pay: () -> Unit = {},
 ) {
     companion object {
         val None = MomentViewerActions({}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {})
@@ -163,7 +172,7 @@ private fun MomentViewerViewModel.actions() = MomentViewerActions(
     next = ::next, previous = ::previous, nextRing = ::nextRing, setPaused = ::setPaused, toggleMute = ::toggleMute,
     retryMedia = ::retryMedia, openPicker = ::openPicker, closePicker = ::closePicker, react = ::react, onReply = ::onReply,
     onReplyFocus = ::onReplyFocus, sendReply = ::sendReply, openMore = ::openMore, mute = ::mute, openViewers = ::openViewers,
-    askDelete = ::askDelete, delete = ::delete, noticeShown = ::noticeShown, splashDone = ::splashDone,
+    askDelete = ::askDelete, delete = ::delete, noticeShown = ::noticeShown, splashDone = ::splashDone, pay = ::pay,
 )
 
 /** Past this share of the screen's height, letting go closes the viewer (a fast fling closes it from anywhere). */
@@ -352,7 +361,7 @@ private fun ViewerBody(state: MomentViewerUiState, vm: MomentViewerActions, onCl
             }
         }
 
-        // Bottom: caption, then the reply field and heart (someone else's) or Seen by (mine).
+        // Bottom: caption, then the reply field, money and heart (someone else's) or Seen by (mine).
         Column(Modifier.align(Alignment.BottomCenter).fillMaxWidth().navigationBarsPadding().imePadding().padding(CircasoSpacing.s3), verticalArrangement = Arrangement.spacedBy(CircasoSpacing.s3)) {
             moment.caption?.let {
                 BasicText(it, Modifier.fillMaxWidth().padding(horizontal = CircasoSpacing.s5), style = t.body.copy(color = c.ink, textAlign = TextAlign.Center))
@@ -380,7 +389,11 @@ private fun ViewerBody(state: MomentViewerUiState, vm: MomentViewerActions, onCl
                         )
                     }
                     if (state.reply.isNotBlank()) GlassButton(CircasoIcon.ArrowUp, "Send reply", onClick = vm.sendReply)
-                    else Box {
+                    // Money for this moment (not in a frame; Pasaka, 2026-11-14): the chats' money mark on the same
+                    // glass as the heart, between the field and the heart. While a reply is being written both give
+                    // way to Send, as the heart already did.
+                    else if (state.canPay) GlassButton(CircasoIcon.Money, "Send money to ${ring.name.substringBefore(' ')} for this moment", onClick = vm.pay)
+                    if (state.reply.isBlank()) Box {
                         ReactButton(moment.reaction, state.online, vm.openPicker)
                         // The chats' reaction bubble (any emoji), floating just above the button at the screen's end.
                         if (state.picking) ReactionPicker(

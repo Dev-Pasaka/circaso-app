@@ -17,6 +17,7 @@ import com.circaso.feature.status.domain.MomentRing
 import com.circaso.feature.status.domain.MomentViewer
 import com.circaso.feature.status.domain.MomentsRepository
 import com.circaso.feature.status.domain.SeenReactions
+import com.circaso.feature.status.domain.toQuote
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -37,6 +38,18 @@ sealed interface ViewerMedia {
     /** V7: deleted or expired while open; the viewer moves on by itself. */
     data object Gone : ViewerMedia
 }
+
+/**
+ * Money for the moment on screen (2026-11-14): who posted it, their chat on this phone if there is one (the pay flow
+ * opens it otherwise, once the money has gone), and the moment's quote as JSON for [com.circaso.core.navigation.PayRoute].
+ */
+data class MomentPay(val userId: String, val displayName: String, val chatId: String?, val quoteJson: String)
+
+private val QuoteJson = kotlinx.serialization.json.Json { ignoreUnknownKeys = true }
+
+/** A route's moment quote back from its JSON; null when there is none or it can't be read (the payment still goes). */
+fun momentQuoteOf(json: String?): com.circaso.core.crypto.MomentQuote? =
+    json?.let { runCatching { QuoteJson.decodeFromString(com.circaso.core.crypto.MomentQuote.serializer(), it) }.getOrNull() }
 
 /** One row of Seen by (V4). */
 data class ViewerRow(val viewer: MomentViewer, val name: String, val avatarUrl: String?)
@@ -63,7 +76,16 @@ data class MomentViewerUiState(
     val notice: String? = null,
     /** On my moment: reactions to splash, the first playing and at most one more waiting (later ones merge into it). */
     val bursts: List<ReactionBurst> = emptyList(),
+    /** The money button was tapped: the pay flow to open, once. */
+    val pay: MomentPay? = null,
+    /** The pay flow is open over the viewer: the moment waits until it closes. */
+    val paying: Boolean = false,
 ) {
+    /**
+     * Money can be sent for this moment: someone else's, and not Circaso support's (that account has no wallet), as
+     * the chat decides it. Whether the person can be paid right now (their wallet, a connection) is the pay flow's to say.
+     */
+    val canPay: Boolean get() = moment?.let { !it.mine && it.posterId != com.circaso.feature.support.Support.UserId } == true
     val burst: ReactionBurst? get() = bursts.firstOrNull()
     val current: MomentRing? get() = rings.getOrNull(ring)
     val moment: Moment? get() = current?.moments?.getOrNull(index)
@@ -78,6 +100,8 @@ class MomentViewerViewModel(
     connection: ConnectionState,
     /** Opens (or finds) the 1:1 chat with someone and sends a text there quoting a moment (V8). */
     private val replyInChat: suspend (posterId: String, text: String, moment: Moment) -> AppResult<String>,
+    /** The 1:1 chat with someone on this phone, if there is one (money for a moment starts from it). */
+    private val directChatId: suspend (posterId: String) -> String? = { null },
     /** Open at this moment (a reply's quote in a chat was tapped); gone already means V7. */
     private val startAt: String? = null,
     /** Blocked people (2026-11-10): their Moments can't be opened or swiped to. */
@@ -156,7 +180,7 @@ class MomentViewerViewModel(
         if (shownId == m.momentId) return
         shownId = m.momentId
         // A half-typed reply belongs to the moment it was typed on, never the next one.
-        _state.update { it.copy(reply = "", paused = false, picking = false, bursts = emptyList()) }
+        _state.update { it.copy(reply = "", paused = it.paying, picking = false, bursts = emptyList()) }
         load?.cancel()
         if (m.media == null || m.kind == MomentKind.Text) {
             _state.update { it.copy(media = ViewerMedia.None) }
@@ -263,6 +287,33 @@ class MomentViewerViewModel(
                 })
             }
         }
+    }
+
+    /**
+     * The money button (2026-11-14): the moment waits and the chats' pay flow opens for whoever posted it, carrying
+     * this moment's quote (the same one a text reply carries) for the payment's card. Offline it opens all the same:
+     * the pay flow says money needs a connection, as it does from a chat.
+     */
+    fun pay() {
+        val s = _state.value
+        val m = s.moment?.takeIf { s.canPay } ?: return
+        val name = s.current?.name ?: return
+        if (s.paying) return
+        _state.update { it.copy(paying = true, paused = true, picking = false) }
+        viewModelScope.launch {
+            val chatId = directChatId(m.posterId)
+            val quote = QuoteJson.encodeToString(com.circaso.core.crypto.MomentQuote.serializer(), m.toQuote())
+            _state.update { it.copy(pay = MomentPay(m.posterId, name, chatId, quote)) }
+        }
+    }
+
+    /** The pay flow was opened for [MomentViewerUiState.pay]. */
+    fun payOpened() = _state.update { it.copy(pay = null) }
+
+    /** Back on the viewer from the pay flow (paid or not): the moment carries on, unless a reply is half written. */
+    fun payClosed() {
+        if (!_state.value.paying || _state.value.pay != null) return
+        _state.update { it.copy(paying = false, paused = it.reply.isNotEmpty()) }
     }
 
     fun noticeShown() = _state.update { it.copy(notice = null) }

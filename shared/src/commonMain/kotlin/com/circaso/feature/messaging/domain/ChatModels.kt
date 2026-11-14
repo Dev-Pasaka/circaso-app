@@ -96,6 +96,8 @@ sealed interface Message {
         val note: String?,
         val state: DeliveryState,
         val errorCode: String?,
+        /** Money sent from a moment (2026-11-14): the moment it was sent for, shown attached to the card. */
+        val momentQuote: com.circaso.core.crypto.MomentQuote? = null,
     ) : Message
 
     /** A message the sender deleted for everyone. */
@@ -204,5 +206,11 @@ data class GroupInvite(
 /** An open invite in group info's "Invited" list: who, and who invited them. */
 data class PendingInvite(val inviteId: String, val person: InvitePerson, val invitedBy: InvitePerson)
 
-/** What a payment card carries into the chat; the wallet already knows the transfer. */
-data class PaymentCard(val transferId: String, val amountMinor: String, val asset: String, val blockchain: String, val note: String?)
+/**
+ * What a payment card carries into the chat; the wallet already knows the transfer. [moment] is the moment the money
+ * was sent for (from the Moment viewer, 2026-11-14): only ever context on the card, never part of the transfer.
+ */
+data class PaymentCard(
+    val transferId: String, val amountMinor: String, val asset: String, val blockchain: String, val note: String?,
+    val moment: com.circaso.core.crypto.MomentQuote? = null,
+)

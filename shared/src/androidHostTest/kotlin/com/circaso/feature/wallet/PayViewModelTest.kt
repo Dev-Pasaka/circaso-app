@@ -224,6 +224,35 @@ class PayViewModelTest {
         assertTrue(vm.state.value.error != null)
     }
 
+    private val sunset = com.circaso.core.crypto.MomentQuote("mo-1", "IMAGE", "Sunset at Diani", "dGh1bWI=", 1_800_000_000_000)
+
+    @Test fun moneyFromAMomentPutsTheMomentOnTheCardAndLeavesThePaymentAsItIs() = runTest(dispatcher) {
+        val vm = vm(PayIntent(userId = "amina", chatId = "c9", displayName = "Amina", moment = sunset))
+        keep(vm)
+        vm.onAmount("500")
+        vm.onPay()
+        assertEquals(PayStep.Done, vm.state.value.step)
+        val (chat, card) = cards.single()
+        assertEquals("c9", chat)
+        assertEquals(sunset, card.moment)
+        assertEquals("amina", payments.single().toUserId)
+        // The same payment a chat makes: the moment is only on the card.
+        val plain = vm(PayIntent(userId = "amina", chatId = "c9", displayName = "Amina"))
+        keep(plain)
+        plain.onAmount("500")
+        plain.onPay()
+        assertEquals(payments[0], payments[1])
+        assertNull(cards[1].second.moment)
+    }
+
+    @Test fun aGroupsCardNeverCarriesAMoment() = runTest(dispatcher) {
+        val vm = vm(PayIntent(userId = "otieno", chatId = "g1", displayName = "Otieno", goalName = "Holiday Fund", moment = sunset))
+        keep(vm)
+        vm.onAmount("1000")
+        vm.onPay()
+        assertNull(cards.single().second.moment)
+    }
+
     @Test fun anOutsidePayeeIsPaidByAddress() = runTest(dispatcher) {
         val vm = vm(PayIntent(chatId = "g1", displayName = "Coast Bus", amount = "12", address = "0xcoast", goalName = "Holiday Fund", requestId = "r1"))
         keep(vm)

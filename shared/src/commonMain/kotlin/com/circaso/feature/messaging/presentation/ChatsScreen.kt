@@ -341,7 +341,7 @@ private fun ChatRow(
             val units = com.circaso.feature.wallet.domain.MinorUnits
             com.circaso.feature.wallet.domain.coinFiatText(latest.amountMinor, latest.asset, fiat, coinRates)
                 ?: units.coinText(latest.amountMinor, latest.asset)
-        }
+        } + paymentForMoment(latest, summary.chat.kind == com.circaso.feature.messaging.domain.ChatKind.Group)
         is Message.Deleted -> "This message was deleted"
         is Message.Unreadable -> "A message this phone can't show"
         is Message.System -> latest.text
@@ -445,3 +445,10 @@ private fun ChatsBrand() {
  * 16 dp, the same line as the logo, search and chips above (Pasaka, 2026-11-07).
  */
 internal val ChatRowInnerInset = CircasoSpacing.s2
+
+/**
+ * Money sent for a moment (2026-11-14) says so in the chat list: "You sent KES 500 for their moment", "Amina sent
+ * KES 500 for your moment". Only between two people; a group's cards never carry a moment.
+ */
+internal fun paymentForMoment(m: Message.Payment, group: Boolean): String =
+    if (m.momentQuote == null || group) "" else if (m.outgoing) " for their moment" else " for your moment"

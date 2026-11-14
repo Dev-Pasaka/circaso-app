@@ -3,6 +3,7 @@ package com.circaso.di
 import com.circaso.core.database.CircasoDatabase
 import com.circaso.core.sync.OutboxHandler
 import com.circaso.feature.status.data.remote.KtorMomentsRemote
+import com.circaso.feature.status.domain.toQuote
 import com.circaso.feature.status.data.remote.MomentsRemote
 import com.circaso.feature.status.data.repository.MomentKeyCopiesHandler
 import com.circaso.feature.status.data.repository.MomentKeys
@@ -97,6 +98,7 @@ val statusModule = module {
             startAt = params.values.getOrNull(1) as? String,
             observeBlocks = get(),
             seenReactions = get(),
+            directChatId = { posterId -> chats.chats.first().firstOrNull { it.chat.peerId == posterId && it.chat.viaSpaceId == null }?.chat?.chatId },
             replyInChat = { posterId, text, moment ->
                 // The 1:1 chat on this phone if there is one (so a reply waits offline like any message), else open it.
                 val existing = chats.chats.first().firstOrNull { it.chat.peerId == posterId && it.chat.viaSpaceId == null }?.chat?.chatId
@@ -104,8 +106,7 @@ val statusModule = module {
                     is com.circaso.core.common.AppResult.Success -> r.value.chatId
                     is com.circaso.core.common.AppResult.Failure -> return@MomentViewerViewModel r
                 }
-                val quote = com.circaso.core.crypto.MomentQuote(moment.momentId, moment.kind.name.uppercase(), (moment.text ?: moment.caption)?.take(140), moment.thumb, moment.expiresAt)
-                messages.sendMomentReply(chatId, text, quote)
+                messages.sendMomentReply(chatId, text, moment.toQuote())
                 com.circaso.core.common.AppResult.Success(chatId)
             },
         )

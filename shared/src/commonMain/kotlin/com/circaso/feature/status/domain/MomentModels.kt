@@ -47,6 +47,12 @@ data class Moment(
     val levels: List<Float>? = null,
 )
 
+/**
+ * This moment as a chat quotes it (V8): a text reply and money sent for it (2026-11-14) both carry this, so the chat
+ * keeps the picture and the words after the moment ends.
+ */
+fun Moment.toQuote() = com.circaso.core.crypto.MomentQuote(momentId, kind.name.uppercase(), (text ?: caption)?.take(140), thumb, expiresAt)
+
 /** How many bars a voice moment's waveform keeps (sampled while recording, sent in the encrypted body). */
 const val VoiceLevelCount = 48
 

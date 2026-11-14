@@ -157,12 +157,13 @@ class MessagesRepositoryImpl(
     override suspend fun sendPayment(chatId: String, card: PaymentCard) {
         val me = ownUserId() ?: return
         val at = now()
+        val quote = card.moment?.let { json.encodeToString(com.circaso.core.crypto.MomentQuote.serializer(), it) }
         val write = suspend {
             // The wallet may already have put this payment's card in the chat (it confirmed before this ran): that
             // card is sent instead of a second one.
             val walletCard = paymentCards?.walletCardFor(chatId, card.transferId)
             if (walletCard != null) {
-                dao.upsert(walletCard.copy(clientMessageId = newClientMessageId(), text = card.note, status = MessageStatus.Waiting, createdAt = at))
+                dao.upsert(walletCard.copy(clientMessageId = newClientMessageId(), text = card.note, status = MessageStatus.Waiting, createdAt = at, momentQuote = quote ?: walletCard.momentQuote))
                 walletCard.localId
             } else {
                 dao.insert(
@@ -171,6 +172,7 @@ class MessagesRepositoryImpl(
                         kind = MessageKind.Payment, text = card.note, replyTo = null, status = MessageStatus.Waiting, errorCode = null,
                         cachedRequest = null, sentAt = null, orderAt = at, createdAt = at,
                         transferId = card.transferId, amountMinor = card.amountMinor, asset = card.asset, blockchain = card.blockchain,
+                        momentQuote = quote,
                     ),
                 )
             }
@@ -435,14 +437,14 @@ class ChatSendHandler(
  */
 internal fun MessageEntity.toChatPayload(json: Json): ChatPayload? {
     val sentAt = Instant.fromEpochMilliseconds(createdAt).toString()
+    val moment = momentQuote?.let { runCatching { json.decodeFromString(com.circaso.core.crypto.MomentQuote.serializer(), it) }.getOrNull() }
     return when {
         kind == MessageKind.System || kind == MessageKind.Call -> null
         kind == MessageKind.Payment ->
-            ChatPayload(type = ChatPayload.Payment, text = text, clientSentAt = sentAt, transferId = transferId, amountMinor = amountMinor, asset = asset, blockchain = blockchain)
+            ChatPayload(type = ChatPayload.Payment, text = text, clientSentAt = sentAt, transferId = transferId, amountMinor = amountMinor, asset = asset, blockchain = blockchain, moment = moment)
         isMediaKind(kind) -> MediaDetails.read(text)?.toPayload(sentAt)
         kind == MessageKind.Reaction -> ChatPayload(type = ChatPayload.Reaction, text = text, replyTo = replyTo, clientSentAt = sentAt)
-        else -> ChatPayload(type = ChatPayload.Text, text = text, replyTo = replyTo, clientSentAt = sentAt,
-            moment = momentQuote?.let { runCatching { json.decodeFromString(com.circaso.core.crypto.MomentQuote.serializer(), it) }.getOrNull() })
+        else -> ChatPayload(type = ChatPayload.Text, text = text, replyTo = replyTo, clientSentAt = sentAt, moment = moment)
     }
 }
 
@@ -858,15 +860,22 @@ internal fun MessageEntity.toDomain(members: List<ChatMemberEntity>, me: String?
             localId = localId, chatId = chatId, orderAt = orderAt, sentAt = sentAt, messageId = messageId, senderId = senderId, senderName = name,
             outgoing = outgoing, transferId = transferId, amountMinor = amountMinor ?: "0", asset = asset ?: "USDC", blockchain = blockchain.orEmpty(),
             note = text?.takeIf { it.isNotBlank() }, errorCode = errorCode, state = deliveryState(status),
+            momentQuote = momentQuote(),
         )
         else -> Message.Text(
             localId = localId, chatId = chatId, orderAt = orderAt, sentAt = sentAt, messageId = messageId, senderId = senderId, senderName = name,
             outgoing = outgoing, text = text.orEmpty(), replyTo = replyTo, errorCode = errorCode,
             state = deliveryState(status),
-            momentQuote = momentQuote?.let { runCatching { kotlinx.serialization.json.Json { ignoreUnknownKeys = true }.decodeFromString(com.circaso.core.crypto.MomentQuote.serializer(), it) }.getOrNull() },
+            momentQuote = momentQuote(),
         )
     }
 }
+
+private val QuoteJson = kotlinx.serialization.json.Json { ignoreUnknownKeys = true }
+
+/** The moment this row quotes (a reply to it, or money sent for it); null when there is none or it can't be read. */
+private fun MessageEntity.momentQuote(): com.circaso.core.crypto.MomentQuote? =
+    momentQuote?.let { runCatching { QuoteJson.decodeFromString(com.circaso.core.crypto.MomentQuote.serializer(), it) }.getOrNull() }
 
 private fun deliveryState(status: String): DeliveryState = when (status) {
     MessageStatus.Waiting -> DeliveryState.Waiting

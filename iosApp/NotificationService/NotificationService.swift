@@ -199,7 +199,9 @@ private struct Worder {
         // The coins chime (2026-11-14): the card's push is a message's, with the usual sound, and the wallet's
         // `payment.received` that brings the chime arrives after it and stays quiet, so the chime must be here.
         content.sound = Info.moneySound
-        let note = p.text?.trimmingCharacters(in: .whitespacesAndNewlines).nonEmpty.flatMap { $0.hasPrefix("Paid from") ? nil : " · \($0)" } ?? ""
+        // Money sent for a moment of mine (2026-11-14) says so, as Android words it (NotificationText.ForMoment); never in a group.
+        let forMoment = p.moment != nil && chat?.group != true ? " for your moment" : ""
+        let note = forMoment + (p.text?.trimmingCharacters(in: .whitespacesAndNewlines).nonEmpty.flatMap { $0.hasPrefix("Paid from") ? nil : " · \($0)" } ?? "")
         let name = sender?.name
         if chat?.group == true {
             content.title = chat?.title ?? "Your group"

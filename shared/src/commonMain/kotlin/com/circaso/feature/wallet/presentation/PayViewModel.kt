@@ -71,6 +71,11 @@ data class PayIntent(
      * the thread carries Sending → Sent and this resets for the next payment, rather than waiting here (GW17).
      */
     val inChat: Boolean = false,
+    /**
+     * Money sent from [userId]'s moment (the Moment viewer's money button, 2026-11-14): the payment's card in the
+     * chat with them carries it. Context only: it never reaches the wallet or changes the transfer.
+     */
+    val moment: com.circaso.core.crypto.MomentQuote? = null,
 ) {
     val contribution get() = groupId != null || (goalName != null && requestId == null)
     val payout get() = requestId != null
@@ -860,7 +865,10 @@ class PayViewModel(
                 is AppResult.Success -> {
                     idempotencyKey = newIdempotencyKey()
                     val transfer = r.value
-                    val card = PaymentCard(transfer.transferId, transfer.amount.amountMinor, transfer.amount.asset, transfer.blockchain, note)
+                    // The moment goes only on the card in the 1:1 chat with the person who posted it: never to a group
+                    // (its members may not be in the moment's audience), an address, or someone picked instead.
+                    val moment = intent.moment?.takeIf { intent.goalName == null && intent.requestId == null && !s.directPayout && !s.toGroup && toAddress == null && payee.userId.isNotEmpty() && payee.userId == userId }
+                    val card = PaymentCard(transfer.transferId, transfer.amount.amountMinor, transfer.amount.asset, transfer.blockchain, note, moment)
                     val target = if (s.directPayout) sendPayoutCards(s, payee, toAddress, card)
                     else (chatId ?: if (toAddress == null && !s.toGroup) (openDirectChat(payee.userId) as? AppResult.Success)?.value?.chatId else null)
                         ?.also { sendCard(it, card) }

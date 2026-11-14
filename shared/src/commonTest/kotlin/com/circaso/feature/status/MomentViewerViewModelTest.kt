@@ -29,7 +29,9 @@ import com.circaso.feature.status.domain.MomentPrivacy
 import com.circaso.feature.status.domain.MomentViewer
 import com.circaso.feature.status.domain.MomentsRepository
 import com.circaso.feature.status.domain.PendingMoment
+import com.circaso.feature.status.domain.toQuote
 import com.circaso.feature.status.presentation.MomentViewerViewModel
+import com.circaso.feature.status.presentation.momentQuoteOf
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -62,6 +64,70 @@ class MomentViewerViewModelTest {
         posterId = "w", repository = repo, observeContacts = ObserveContactsUseCase(FakeContacts()), observeProfile = ObserveProfileUseCase(FakeProfile()),
         connection = connection, replyInChat = { _, _, _ -> AppResult.Success("c") },
     )
+
+    // ---- money for a moment (2026-11-14)
+
+    @Test fun theMoneyButtonOpensPayForWhoeverPostedItWithTheMomentQuotedAndTheMomentWaits() = runTest(dispatcher) {
+        repo.list.value = listOf(moment("m1").copy(caption = "Sunset at Diani", thumb = "dGh1bWI="))
+        val asked = mutableListOf<String>()
+        val vm = MomentViewerViewModel(
+            posterId = "w", repository = repo, observeContacts = ObserveContactsUseCase(FakeContacts()), observeProfile = ObserveProfileUseCase(FakeProfile()),
+            connection = connection, replyInChat = { _, _, _ -> AppResult.Success("c") }, directChatId = { asked += it; "chat-w" },
+        )
+        assertTrue(vm.state.value.canPay)
+        vm.pay()
+        val pay = vm.state.value.pay!!
+        assertEquals("w", pay.userId)
+        assertEquals("Wanjiru Kamau", pay.displayName)
+        assertEquals("chat-w", pay.chatId)
+        assertEquals(listOf("w"), asked)
+        val m = vm.state.value.moment!!
+        // The same quote a text reply carries.
+        assertEquals(m.toQuote(), momentQuoteOf(pay.quoteJson))
+        assertEquals(com.circaso.core.crypto.MomentQuote("m1", m.kind.name.uppercase(), m.text ?: "Sunset at Diani", "dGh1bWI=", m.expiresAt), momentQuoteOf(pay.quoteJson))
+        assertTrue(vm.state.value.paused)
+
+        vm.payOpened()
+        assertNull(vm.state.value.pay)
+        assertTrue(vm.state.value.paused, "it waits while the pay flow is open")
+        vm.payClosed()
+        assertFalse(vm.state.value.paused)
+    }
+
+    @Test fun withNoChatYetPayStillOpensAndThePayFlowOpensTheChat() = runTest(dispatcher) {
+        val vm = viewer()
+        vm.pay()
+        assertEquals("w", vm.state.value.pay?.userId)
+        assertNull(vm.state.value.pay?.chatId)
+    }
+
+    @Test fun moneyIsNotOfferedOnMyOwnMoment() = runTest(dispatcher) {
+        repo.list.value = listOf(moment("mine").copy(mine = true, posterId = "me"))
+        val vm = MomentViewerViewModel(
+            posterId = null, repository = repo, observeContacts = ObserveContactsUseCase(FakeContacts()), observeProfile = ObserveProfileUseCase(FakeProfile()),
+            connection = connection, replyInChat = { _, _, _ -> AppResult.Success("c") },
+        )
+        assertFalse(vm.state.value.canPay)
+        vm.pay()
+        assertNull(vm.state.value.pay)
+        assertFalse(vm.state.value.paused)
+    }
+
+    @Test fun moneyIsNotOfferedOnCircasoSupportsMoment() = runTest(dispatcher) {
+        val before = com.circaso.feature.support.Support.UserId
+        com.circaso.feature.support.Support.UserId = "w"
+        try {
+            val vm = viewer()
+            assertFalse(vm.state.value.canPay)
+            vm.pay()
+            assertNull(vm.state.value.pay)
+        } finally { com.circaso.feature.support.Support.UserId = before }
+    }
+
+    @Test fun aRouteWithoutAQuoteOrWithOneThatCantBeReadStillPays() {
+        assertNull(momentQuoteOf(null))
+        assertNull(momentQuoteOf("{not json"))
+    }
 
     @Test fun openingThePickerPausesTheMomentAndClosingItCarriesOn() = runTest(dispatcher) {
         val vm = viewer()
