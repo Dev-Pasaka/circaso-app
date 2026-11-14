@@ -28,7 +28,8 @@ import com.circaso.designsystem.theme.CircasoSpacing
 import com.circaso.designsystem.theme.CircasoTheme
 
 /**
- * The text field on the dark stage (a moment's caption, a reply to a moment): the chat composer's field (decision
+ * The text field on the dark stage (a moment's caption; the reply to a moment is the chat composer itself, drawn the
+ * same way by `ComposerBar(onStage = true)`): the chat composer's field (decision
  * 2026-10-30: bigger, borderless, radius 24, at least 48 dp; the same shape and height as [ComposerBar]'s) on glass
  * instead of `fill`, since it sits over a photo or video rather than a bar (2026-11-14, Pasaka: the moments' inputs
  * should be the design system's, not one-offs). This departs from V1's outlined 46 dp pill and M4's 44 dp caption.
