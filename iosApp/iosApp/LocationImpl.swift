@@ -8,11 +8,25 @@ final class LocationImpl: NSObject, LocationBridgeProvider, CLLocationManagerDel
     private var pending: [(KotlinDouble?, KotlinDouble?, KotlinDouble?) -> Void] = []
     private let live = CLLocationManager()
     private var onFix: ((KotlinDouble, KotlinDouble, KotlinDouble) -> Void)?
+    /// The map's "you are here": a third manager that only runs while the map is on screen (never in the background).
+    private let nearby = CLLocationManager()
+    private var onNearby: ((KotlinDouble, KotlinDouble, KotlinDouble) -> Void)?
+    private var pendingAccess: [(String) -> Void] = []
+    /// Location Services for the whole phone. Asking can block, so it is read off the main thread and kept.
+    private var servicesOn = true
 
     override init() {
         super.init()
         manager.delegate = self
         manager.desiredAccuracy = kCLLocationAccuracyBest
+        refreshServices()
+    }
+
+    private func refreshServices() {
+        DispatchQueue.global(qos: .utility).async {
+            let on = CLLocationManager.locationServicesEnabled()
+            DispatchQueue.main.async { self.servicesOn = on }
+        }
     }
 
     func current(completion: @escaping (KotlinDouble?, KotlinDouble?, KotlinDouble?) -> Void) {
@@ -31,10 +45,55 @@ final class LocationImpl: NSObject, LocationBridgeProvider, CLLocationManagerDel
     }
 
     func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
+        refreshServices()
         switch manager.authorizationStatus {
-        case .authorizedWhenInUse, .authorizedAlways: if !pending.isEmpty { manager.requestLocation() }
+        case .authorizedWhenInUse, .authorizedAlways: if !pending.isEmpty { self.manager.requestLocation() }
         case .denied, .restricted: finish(nil)
         default: break
+        }
+        if manager.authorizationStatus != .notDetermined, !pendingAccess.isEmpty {
+            let waiting = pendingAccess
+            pendingAccess.removeAll()
+            let answer = access()
+            for done in waiting { done(answer) }
+        }
+    }
+
+    func access() -> String {
+        // Off for the whole phone: Circaso's own page in Settings can't change that, so it is told apart.
+        if !servicesOn { return "off" }
+        switch manager.authorizationStatus {
+        case .authorizedWhenInUse, .authorizedAlways: return "granted"
+        case .notDetermined: return "notAsked"
+        default: return "denied"
+        }
+    }
+
+    func requestAccess(completion: @escaping (String) -> Void) {
+        DispatchQueue.main.async {
+            if self.manager.authorizationStatus == .notDetermined {
+                self.pendingAccess.append(completion)
+                self.manager.requestWhenInUseAuthorization()
+            } else {
+                completion(self.access())
+            }
+        }
+    }
+
+    func startNearby(onFix: @escaping (KotlinDouble, KotlinDouble, KotlinDouble) -> Void) {
+        DispatchQueue.main.async {
+            self.onNearby = onFix
+            self.nearby.delegate = self
+            self.nearby.desiredAccuracy = kCLLocationAccuracyNearestTenMeters
+            self.nearby.distanceFilter = 5
+            self.nearby.startUpdatingLocation()
+        }
+    }
+
+    func stopNearby() {
+        DispatchQueue.main.async {
+            self.nearby.stopUpdatingLocation()
+            self.onNearby = nil
         }
     }
 
@@ -67,11 +126,17 @@ final class LocationImpl: NSObject, LocationBridgeProvider, CLLocationManagerDel
             }
             return
         }
+        if manager === nearby {
+            if let l = locations.last, let fix = onNearby {
+                fix(KotlinDouble(value: l.coordinate.latitude), KotlinDouble(value: l.coordinate.longitude), KotlinDouble(value: l.horizontalAccuracy))
+            }
+            return
+        }
         finish(locations.last)
     }
 
     func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {
-        if manager === live { return }
+        if manager === live || manager === nearby { return }
         finish(manager.location)
     }
 

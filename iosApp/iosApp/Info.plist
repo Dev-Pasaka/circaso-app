@@ -46,7 +46,7 @@
 	<key>NSFaceIDUsageDescription</key>
 	<string>Circaso uses Face ID to approve your payments instead of your PIN, when you turn it on.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
-	<string>Circaso uses your location only when you choose to share it in a chat.</string>
+	<string>Circaso uses your location when you choose to share it in a chat, and to show how far you are from a person or place on the map. It leaves your phone only when you share it.</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Circaso uses the microphone during calls you start or answer, while you talk to Asha, and for the sound of a video moment you record. Voice to Asha is turned into text and not kept.</string>
 	<key>NSPhotoLibraryUsageDescription</key>

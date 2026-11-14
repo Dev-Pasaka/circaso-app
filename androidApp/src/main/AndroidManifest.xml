@@ -16,7 +16,8 @@
     <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" />
     <uses-permission android:name="android.permission.READ_MEDIA_VISUAL_USER_SELECTED" />
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
-    <!-- "Share location" in a chat: asked only when the person taps it. -->
+    <!-- "Share location" in a chat, and "you are here" with distances on the location map (read on that screen only,
+         never sent): asked only when the person taps it. -->
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <!-- The chat's attach sheet shows recent photos and videos, WhatsApp-style (Pasaka, 2026-10-30). Android 14+
          lets the person allow only a selection. -->

@@ -6,6 +6,9 @@ import kotlinx.cinterop.addressOf
 import kotlinx.cinterop.alloc
 import kotlinx.cinterop.ptr
 import kotlinx.cinterop.usePinned
+import kotlinx.coroutines.channels.awaitClose
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.suspendCancellableCoroutine
 import platform.Foundation.NSData
 import platform.Foundation.NSFileManager
@@ -28,6 +31,19 @@ interface LocationBridgeProvider {
      */
     fun startUpdates(onFix: (Double, Double, Double) -> Unit)
     fun stopUpdates()
+
+    /** CoreLocation's answer so far, without asking: "granted", "notAsked", "denied" or "off" (Location Services off). */
+    fun access(): String
+
+    /** Shows the "while using the app" prompt when it hasn't been answered; [completion] gets the same words as [access]. */
+    fun requestAccess(completion: (String) -> Unit)
+
+    /**
+     * The map's "you are here": fixes while the app is on screen only (no background updates, no blue pill), until
+     * [stopNearby]. [onFix]: latitude, longitude, accuracy in metres.
+     */
+    fun startNearby(onFix: (Double, Double, Double) -> Unit)
+    fun stopNearby()
 }
 
 object LocationBridge {
@@ -42,12 +58,41 @@ class IosLocation : LocationProvider {
             p.current { lat, lng, acc -> if (cont.isActive) cont.resume(if (lat != null && lng != null) GeoPoint(lat, lng, acc) else null) }
         }
     }
+
+    override fun access(): LocationAccess = LocationBridge.provider?.access().toAccess()
+
+    override suspend fun requestAccess(): LocationAccess {
+        val p = LocationBridge.provider ?: return LocationAccess.Off
+        return suspendCancellableCoroutine { cont -> p.requestAccess { if (cont.isActive) cont.resume(it.toAccess()) } }
+    }
+
+    override fun updates(): Flow<GeoPoint> = callbackFlow {
+        val p = LocationBridge.provider
+        p?.startNearby { lat, lng, acc -> trySend(GeoPoint(lat, lng, acc)) }
+        awaitClose { p?.stopNearby() }
+    }
+
+    private fun String?.toAccess() = when (this) {
+        "granted" -> LocationAccess.Granted
+        "notAsked" -> LocationAccess.NotAsked
+        "denied" -> LocationAccess.Denied
+        else -> LocationAccess.Off
+    }
 }
 
 actual fun openMap(latitude: Double, longitude: Double, label: String?) {
     val q = label?.let { "&q=" + it.encodeUrl() } ?: ""
     val url = NSURL.URLWithString("https://maps.apple.com/?ll=$latitude,$longitude$q") ?: return
     UIApplication.sharedApplication.openURL(url, options = emptyMap<Any?, Any?>(), completionHandler = null)
+}
+
+actual fun openDirections(latitude: Double, longitude: Double) {
+    val app = UIApplication.sharedApplication
+    val apple = NSURL.URLWithString(appleDirectionsUrl(latitude, longitude)) ?: return
+    // Apple Maps, like openMap; if it has been removed from the phone, Google's link (its app, or the website).
+    app.openURL(apple, options = emptyMap<Any?, Any?>()) { opened ->
+        if (!opened) NSURL.URLWithString(googleDirectionsUrl(latitude, longitude))?.let { app.openURL(it, options = emptyMap<Any?, Any?>(), completionHandler = null) }
+    }
 }
 
 actual fun exitApp(): Boolean = false

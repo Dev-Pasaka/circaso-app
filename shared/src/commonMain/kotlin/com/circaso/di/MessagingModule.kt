@@ -257,7 +257,11 @@ val messagingModule = module {
     }
     viewModel { params -> ThreadViewModel(params.get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), contacts = get(), payments = get(), onScreen = params.getOrNull<Boolean>() ?: true) }
     viewModel { params ->
-        com.circaso.feature.messaging.presentation.map.LocationMapViewModel(params.get(), params.get(), get(), get(), getOrNull())
+        com.circaso.feature.messaging.presentation.map.LocationMapViewModel(
+            params.get<Long>(1), get<ObserveChatUseCase>()(params.get<String>(0)), get<ObserveThreadUseCase>()(params.get<String>(0)), getOrNull(),
+            location = getOrNull<com.circaso.core.platform.LocationProvider>() ?: com.circaso.core.platform.NoLocation,
+            myUserId = get<com.circaso.core.session.AuthManager>().userId,
+        )
     }
     viewModel { params ->
         ChatInfoViewModel(

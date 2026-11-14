@@ -14,6 +14,9 @@ import android.os.CancellationSignal
 import android.os.Looper
 import androidx.core.content.ContextCompat
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.channels.awaitClose
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
@@ -37,6 +40,65 @@ class AndroidLocation(private val context: Context) : LocationProvider {
             .filter { System.currentTimeMillis() - it.time < 10 * 60_000 }
             .minByOrNull { it.accuracy }
         return best?.let { GeoPoint(it.latitude, it.longitude, it.accuracy.toDouble()) }
+    }
+
+    private fun allowed(permission: String) = ContextCompat.checkSelfPermission(context, permission) == PackageManager.PERMISSION_GRANTED
+
+    private fun manager() = context.getSystemService(Context.LOCATION_SERVICE) as LocationManager
+
+    /** The providers to listen to: the system's fused one where it exists, else GPS (precise access only) and network. */
+    private fun providers(manager: LocationManager): List<String> {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && runCatching { manager.hasProvider(LocationManager.FUSED_PROVIDER) && manager.isProviderEnabled(LocationManager.FUSED_PROVIDER) }.getOrDefault(false)) {
+            return listOf(LocationManager.FUSED_PROVIDER)
+        }
+        return listOfNotNull(LocationManager.GPS_PROVIDER.takeIf { allowed(Manifest.permission.ACCESS_FINE_LOCATION) }, LocationManager.NETWORK_PROVIDER)
+            .filter { runCatching { manager.isProviderEnabled(it) }.getOrDefault(false) }
+    }
+
+    override fun access(): LocationAccess = when {
+        // "Approximate" is enough for a distance; the screen says "about" when the fix is rough.
+        !allowed(Manifest.permission.ACCESS_FINE_LOCATION) && !allowed(Manifest.permission.ACCESS_COARSE_LOCATION) -> LocationAccess.NotAsked
+        providers(manager()).isEmpty() -> LocationAccess.Off
+        else -> LocationAccess.Granted
+    }
+
+    override suspend fun requestAccess(): LocationAccess {
+        if (access() == LocationAccess.NotAsked) {
+            // Both together, so Android 12+ offers "Precise" and "Approximate".
+            val answer = PermissionBridge.requestAll(arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION))
+            if (answer.values.none { it }) return LocationAccess.Denied
+        }
+        return access()
+    }
+
+    /**
+     * Fixes every few seconds while collected, starting with the last known one when it is recent. Balanced for a
+     * map that is being looked at: [NearbyIntervalMs] apart and only after [NearbyMinMoveMeters] of movement, and
+     * the listener is removed the moment collection stops.
+     */
+    @SuppressLint("MissingPermission")
+    override fun updates(): Flow<GeoPoint> = callbackFlow {
+        val manager = manager()
+        var best: Location? = null
+        fun offer(l: Location) {
+            val b = best
+            // A rougher fix (network after GPS) doesn't replace a good recent one: the pin would jump about.
+            if (b != null && l.accuracy > b.accuracy * 2 && l.time - b.time < 20_000) return
+            best = l
+            trySend(GeoPoint(l.latitude, l.longitude, l.accuracy.toDouble()))
+        }
+        val listener = object : LocationListener {
+            override fun onLocationChanged(location: Location) = offer(location)
+            @Deprecated("Deprecated in Java") override fun onStatusChanged(provider: String?, status: Int, extras: android.os.Bundle?) = Unit
+            override fun onProviderEnabled(provider: String) = Unit
+            override fun onProviderDisabled(provider: String) = Unit
+        }
+        val providers = providers(manager)
+        providers.mapNotNull { runCatching { manager.getLastKnownLocation(it) }.getOrNull() }
+            .filter { System.currentTimeMillis() - it.time < 2 * 60_000 }
+            .minByOrNull { it.accuracy }?.let(::offer)
+        providers.forEach { runCatching { manager.requestLocationUpdates(it, NearbyIntervalMs, NearbyMinMoveMeters, listener, Looper.getMainLooper()) } }
+        awaitClose { runCatching { manager.removeUpdates(listener) } }
     }
 
     @SuppressLint("MissingPermission")
@@ -63,6 +125,20 @@ actual fun openMap(latitude: Double, longitude: Double, label: String?) {
     val q = "$latitude,$longitude" + (label?.let { "(${Uri.encode(it)})" } ?: "")
     runCatching { activity.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("geo:$latitude,$longitude?q=$q"))) }
         .onFailure { runCatching { activity.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://maps.google.com/?q=$latitude,$longitude"))) } }
+}
+
+/** The map's "you are here": a fix about every five seconds, and only once the phone has moved a few metres. */
+private const val NearbyIntervalMs = 5_000L
+private const val NearbyMinMoveMeters = 5f
+
+actual fun openDirections(latitude: Double, longitude: Double) {
+    val activity = runCatching { KoinPlatform.getKoin().get<CurrentActivity>().get() }.getOrNull() ?: return
+    val directions = Uri.parse(googleDirectionsUrl(latitude, longitude))
+    // Google Maps when it's installed; else any maps app at the place (its own Directions is one tap away); else the
+    // directions page in the browser.
+    runCatching { activity.startActivity(Intent(Intent.ACTION_VIEW, directions).setPackage("com.google.android.apps.maps")) }
+        .recoverCatching { activity.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("geo:0,0?q=$latitude,$longitude"))) }
+        .recoverCatching { activity.startActivity(Intent(Intent.ACTION_VIEW, directions)) }
 }
 
 actual fun setMoneySound(on: Boolean) = Unit
