@@ -181,6 +181,18 @@ private val thread = listOf(
     text(4, "2", "Sawa. Greet everyone for me", false, 30),
 )
 
+private fun momentPayment(id: Long, outgoing: Boolean, amountMinor: String, note: String?, quote: com.circaso.core.crypto.MomentQuote) =
+    com.circaso.feature.messaging.domain.Message.Payment(
+        localId = id, chatId = "2", orderAt = now - (20 - id) * 1_000, sentAt = null, messageId = "mm$id", senderId = if (outgoing) "me" else "2", senderName = if (outgoing) "You" else "Mum",
+        outgoing = outgoing, transferId = "moment-$id", amountMinor = amountMinor, asset = "USDC", blockchain = "BASE-SEPOLIA", note = note,
+        state = com.circaso.feature.messaging.domain.DeliveryState.Delivered, errorCode = null, momentQuote = quote,
+    )
+
+private val momentMoney = listOf(
+    momentPayment(11, true, "3875969", "Enjoy the hike!", com.circaso.core.crypto.MomentQuote("s1", "IMAGE", "Evening at Ngong Hills", SamplePhoto, now + 3_600_000)),
+    momentPayment(12, false, "7751938", null, com.circaso.core.crypto.MomentQuote("s2", "TEXT", "First day at the new shop. Come through!", null, now + 3_600_000)),
+)
+
 /** Debug only: screens drawn from sample data so each can be checked on a device without a signed-in session (`-preview=<name>`). */
 @Composable
 fun PreviewScreens(name: String) {
@@ -398,6 +410,8 @@ fun PreviewScreens(name: String) {
         "chats-empty" -> ChatsContent(ChatsUiState(loaded = true), PaddingValues(0.dp), {}, {}, {})
         "chats-offline" -> ChatsContent(ChatsUiState(chats = chatList, loaded = true, online = false, waitingToSend = 2), PaddingValues(0.dp), {}, {}, {})
         "chat" -> ThreadContent(ThreadUiState(chat = direct("2", "Mum"), messages = thread, draft = ""), {}, {}, null, {}, {}, {}, {}, {}, {}, {})
+        // Money sent for a moment (2026-11-14): the card carries the moment, both ways, photo and text.
+        "chat-moment-money" -> ThreadContent(ThreadUiState(chat = direct("2", "Mum"), messages = thread + momentMoney, draft = ""), {}, {}, null, {}, {}, {}, {}, {}, {}, {})
         "chat-offline" -> ThreadContent(
             ThreadUiState(chat = direct("2", "Mum"), online = false, messages = thread + listOf(text(5, "2", "Not yet, on my way home", true, 2, DeliveryState.Waiting), text(6, "2", "I'll send lunch money once I have network", true, 1, DeliveryState.Waiting))),
             {}, {}, null, {}, {}, {}, {}, {}, {}, {},

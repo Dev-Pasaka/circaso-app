@@ -379,18 +379,12 @@ private fun ViewerBody(state: MomentViewerUiState, vm: MomentViewerActions, onCl
                 }
             } else {
                 // The row's gaps are spacers, so the money button can fold away without leaving one behind.
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Box(
-                        Modifier.weight(1f).heightIn(min = 46.dp).clip(CircasoShapes.pill).border(1.dp, c.inkSecondary, CircasoShapes.pill).padding(horizontal = 18.dp),
-                        contentAlignment = Alignment.CenterStart,
-                    ) {
-                        if (state.reply.isEmpty()) BasicText("Reply to ${ring.name.substringBefore(' ')}", style = t.body.copy(color = c.inkSecondary), maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
-                        BasicTextField(
-                            state.reply, com.circaso.designsystem.components.ashaAware(state.reply, vm.onReply), singleLine = true, textStyle = t.body.copy(color = c.ink), cursorBrush = SolidColor(c.ink),
-                            modifier = Modifier.fillMaxWidth().semantics { contentDescription = "Reply to ${ring.name}" }
-                                .onFocusChanged { vm.onReplyFocus(it.isFocused) },
-                        )
-                    }
+                Row(verticalAlignment = Alignment.Bottom) {
+                    // The stage's own field (the chat composer's, on glass), growing as the reply is written.
+                    com.circaso.feature.mediacompose.StageField(
+                        state.reply, vm.onReply, placeholder = "Reply to ${ring.name.substringBefore(' ')}", label = "Reply to ${ring.name}",
+                        modifier = Modifier.weight(1f), maxLines = 3, onFocus = vm.onReplyFocus,
+                    )
                     androidx.compose.foundation.layout.Spacer(Modifier.width(10.dp))
                     // Money for this moment (not in a frame; Pasaka, 2026-11-14): the chats' money mark on the same
                     // glass as the heart, between the field and the heart. While a reply is being written it folds
