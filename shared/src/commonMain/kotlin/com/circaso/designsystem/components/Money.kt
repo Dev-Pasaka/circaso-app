@@ -116,6 +116,10 @@ fun SegmentedControl(options: List<String>, selected: Int, onSelect: (Int) -> Un
  *   a soft lift instead of an outline.
  *
  * Head ("Received" / "Sent"), the amount in the rounded face, the note, then the coin amount and time in the foot.
+ *
+ * [attachment] is what the money was sent for (a moment, 2026-11-14): it sits inside the metal above the head, the way
+ * a quote sits above a bubble's words, and is handed the card's own ink so it reads on titanium, pearl and graphite.
+ * It takes its own taps; the rest of the card keeps [onClick].
  */
 @Composable
 fun MoneyCard(
@@ -133,6 +137,7 @@ fun MoneyCard(
     symbol: String? = null,
     /** Read the head out when it changes (Sending → Sent), for the card the person just sent. */
     announce: Boolean = false,
+    attachment: (@Composable (ink: Color) -> Unit)? = null,
 ) {
     val c = CircasoTheme.colors
     val t = CircasoTheme.typography
@@ -182,6 +187,7 @@ fun MoneyCard(
             },
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
+        attachment?.invoke(ink)
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             androidx.compose.animation.Crossfade(head, Modifier.weight(1f), androidx.compose.animation.core.tween(if (still) 0 else CircasoMotion.BaseMs), label = "head") { h ->
                 BasicText(h, style = t.footnote.copy(color = soft, fontWeight = FontWeight.SemiBold))

@@ -56,11 +56,27 @@ class ChatComposerMoney {
     var payChip by mutableStateOf<String?>(null)
 }
 
+/**
+ * The composer on the dark stage, replying to a moment (2026-11-14, Pasaka: money in Moments works as it does in
+ * chats): the field on glass in [embedded]'s layout, where the arrow sends a plain reply as well as money.
+ */
+class StageComposer(
+    val placeholder: String,
+    /** What a screen reader calls the field, and the arrow while it sends words ("Send reply to Wanjiru"). */
+    val label: String,
+    val sendLabel: String,
+    /** The typed text can go as a reply now (the screen decides: it sends it, with the moment quoted). */
+    val canSendText: Boolean,
+    val onFocus: (Boolean) -> Unit = {},
+    /** Beside the empty field, where a chat has its mic (the moment's heart). */
+    val trailing: (@Composable androidx.compose.foundation.layout.RowScope.() -> Unit)? = null,
+)
+
 /** The chat's in-line payment for [vm], as the composer drives it; null without one. */
 @Composable
 internal fun rememberQuickPay(vm: PayViewModel?): QuickPay? = vm?.let {
     val payState by it.state.collectAsState()
-    QuickPay(payState, it::onAmount, it::onNote, it::onPay, it::onQuickReset, it::onErrorShown, it::onAssetTag, it::onChoosing, it::onPayFrom, it::onRetryExact, it::onRetryQuote, it::onUseMax, it::onRetryPrice)
+    QuickPay(payState, it::onAmount, it::onNote, it::onPay, it::onQuickReset, it::onErrorShown, it::onAssetTag, it::onChoosing, it::onPayFrom, { amountMinor, asset, note, moment -> it.onRetryExact(amountMinor, asset, note, moment) }, it::onRetryQuote, it::onUseMax, it::onRetryPrice)
 }
 
 /**
@@ -83,7 +99,8 @@ internal fun composerAmount(text: String, pay: PayUiState?): ComposerAmount? {
 /**
  * The chat composer with its money (designs C2/C3/D2): text, `/asha`, `#500` drawn as money then a pill, the `@coin`
  * picker, the money card the arrow pays from, and a request's payout card. The thread uses it under the conversation;
- * the call's money sheet uses the same one ([embedded]), bound to the call's chat, so money works the same in both.
+ * the call's money sheet uses the same one ([embedded]), bound to the call's chat, so money works the same in both;
+ * and so does the reply to a moment ([stage]), where `#500` is money for that moment.
  */
 @Composable
 internal fun ChatComposer(
@@ -108,7 +125,9 @@ internal fun ChatComposer(
     embedded: Boolean = false,
     /** The money card's payment was signed (or its request sent): called with its last state, before the card resets. */
     onPaid: (PayUiState) -> Unit = {},
+    stage: StageComposer? = null,
 ) {
+    @Suppress("NAME_SHADOWING") val embedded = embedded || stage != null
     val c = CircasoTheme.colors
     val t = CircasoTheme.typography
     val chipHaptics = androidx.compose.ui.platform.LocalHapticFeedback.current
@@ -162,18 +181,19 @@ internal fun ChatComposer(
             }
         },
         // In the call's sheet the arrow only pays: a plain message would land in a chat nobody can see from there.
-        placeholder = if (embedded) "#amount and a note" else if (canAdd) "Message, or #amount to add" else if (!state.isGroup && !state.isSupport && (onPay != null || payable)) "Message, or #amount to send" else "Message",
+        placeholder = stage?.placeholder ?: if (embedded) "#amount and a note" else if (canAdd) "Message, or #amount to add" else if (!state.isGroup && !state.isSupport && (onPay != null || payable)) "Message, or #amount to send" else "Message",
         onAttach = onAttach,
         focusRequester = focusRequester,
-        sendLabel = if (paying) quickPay?.state?.let { q -> payLabel(q) + (q.payee?.displayName?.takeIf { !q.toGroup && q.failure == null && q.step != PayStep.Signing }?.let { " to $it" } ?: "") } ?: "Send" else "Send",
-        showSend = paying || media == null || state.draft.isNotBlank(),
-        trailing = if (payChip == null && media != null && state.draft.isBlank()) ({ VoiceButton(state.recording, media.onVoiceStart, media.onVoiceEnd) }) else null,
-        canSend = if (paying) quickPay?.state?.canPay == true else !embedded && state.canSend,
+        sendLabel = if (paying) quickPay?.state?.let { q -> payLabel(q) + (q.payee?.displayName?.takeIf { !q.toGroup && q.failure == null && q.step != PayStep.Signing }?.let { " to $it" } ?: "") } ?: "Send" else stage?.sendLabel ?: "Send",
+        showSend = paying || state.draft.isNotBlank() || (media == null && stage?.trailing == null),
+        trailing = if (payChip == null && media != null && state.draft.isBlank()) ({ VoiceButton(state.recording, media.onVoiceStart, media.onVoiceEnd) })
+        else stage?.trailing?.takeIf { !paying && state.draft.isBlank() },
+        canSend = if (paying) quickPay?.state?.canPay == true else stage?.canSendText ?: (!embedded && state.canSend),
         // From the tap until Circle's PIN (or Face ID) is up, and while it sends: the arrow spins, so the wait reads as
         // work, not a frozen screen (Pasaka, 2026-11-08).
         sendBusy = paying && quickPay?.state?.step.let { it == PayStep.Signing || it == PayStep.Sending },
         // The composer's arrow is the card's Pay: straight to the PIN, nothing in between.
-        onSend = if (paying) ({ quickPay?.onPay?.invoke(); Unit }) else if (embedded) ({}) else onSend,
+        onSend = if (paying) ({ quickPay?.onPay?.invoke(); Unit }) else if (embedded && stage == null) ({}) else onSend,
         // A retried card's chip (its exact coin amount), at the start of the field; a typed amount is drawn in place.
         chip = payChip?.removePrefix("#"),
         onChipEdit = {
@@ -183,13 +203,16 @@ internal fun ChatComposer(
         },
         amount = if (payChip == null && payable) ({ text -> composerAmount(text, quickPay?.state) }) else null,
         embedded = embedded,
+        onStage = stage != null,
+        onFocusChange = stage?.onFocus,
+        fieldLabel = stage?.label,
         floating = {
             AnimatedVisibility(
                 coinChoices.isNotEmpty(),
                 enter = if (CircasoTheme.reduceMotion) fadeIn(tween(CircasoMotion.QuickMs)) else fadeIn(tween(CircasoMotion.QuickMs)) + expandVertically(tween(CircasoMotion.QuickMs)),
                 exit = if (CircasoTheme.reduceMotion) fadeOut(tween(CircasoMotion.QuickMs)) else fadeOut(tween(CircasoMotion.QuickMs)) + shrinkVertically(tween(CircasoMotion.QuickMs)),
             ) {
-                CoinSuggestions(coinChoices) { coin ->
+                CoinSuggestions(coinChoices, sideInset = if (stage != null) 0.dp else CircasoSpacing.s3) { coin ->
                     chipHaptics.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.TextHandleMove)
                     val text = state.draft.replace(Regex("""@[A-Za-z]*$"""), "@${coin.symbol.lowercase()} ")
                     onDraft(text)
@@ -203,7 +226,7 @@ internal fun ChatComposer(
                 paying && quickPay != null,
                 enter = if (CircasoTheme.reduceMotion) fadeIn(tween(CircasoMotion.QuickMs)) else fadeIn(tween(CircasoMotion.QuickMs)) + slideInVertically(tween(CircasoMotion.QuickMs)) { it / 2 },
                 exit = fadeOut(tween(CircasoMotion.QuickMs / 2)),
-            ) { quickPay?.let { q -> ChatMoneyCard(q.state, q.onPay, { q.onChoosing(true) }, cardMotion, maxHeight = cardMaxHeight(), onRetryQuote = q.onRetryQuote, onUseMax = q.onUseMax, onRetryPrice = q.onRetryPrice) } }
+            ) { quickPay?.let { q -> ChatMoneyCard(q.state, q.onPay, { q.onChoosing(true) }, cardMotion, sideInset = if (stage != null) 0.dp else CircasoSpacing.s3, maxHeight = cardMaxHeight(), onRetryQuote = q.onRetryQuote, onUseMax = q.onUseMax, onRetryPrice = q.onRetryPrice) } }
             // An approved request's Pay (D5/GW9): the same card, the amount and payee locked by the approval.
             AnimatedVisibility(
                 payout != null,
@@ -233,7 +256,8 @@ internal fun ChatComposer(
                 enter = if (still) fadeIn(tween(CircasoMotion.BaseMs)) else fadeIn(tween(CircasoMotion.BaseMs)) + expandVertically(tween(CircasoMotion.BaseMs)),
                 exit = if (still) fadeOut(tween(CircasoMotion.QuickMs)) else fadeOut(tween(CircasoMotion.QuickMs)) + shrinkVertically(tween(CircasoMotion.QuickMs)),
             ) { RecordingStrip(stripSince) }
-            if (!state.online) {
+            // On the stage the screen says it itself, on glass over the photo, and only for money (a reply waits and sends).
+            if (!state.online && stage == null) {
                 BasicText(
                     // Money is online only (offline-first.md): the sheet, which is only for money, says so.
                     if (embedded) "You're offline. Money needs a connection." else "You're offline. Messages send when you reconnect.",

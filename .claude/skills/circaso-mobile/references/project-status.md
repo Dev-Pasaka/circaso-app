@@ -16,6 +16,16 @@ Spaces tagged `archive/spaces-v1`; Room v20 drops its tables); the backend keeps
   moments) swaps the list for My moment, Recent, Viewed and Muted (folded); the floating + becomes the camera; a person
   with an unseen moment has a ring on their chat avatar, and the avatar opens it. Privacy: You → Security → Moments.
   See `app-architecture.md` → "Moments in Chats".
+- **Money for a moment (2026-11-14, Pasaka): chat native.** No money button in the viewer (built, then removed the
+  same day: "money in Moments the same way as in the chats and groups"). The viewer's reply field is the chat's own
+  composer on the stage (`ChatComposer` with `StageComposer`, `ComposerBar(onStage = true)`): plain words are a reply
+  quoting the moment; `#500 lunch @coin` is drawn as money, the chat's money card comes up, and the arrow pays straight
+  to the PIN through the chat's in-line `PayViewModel` (`PayIntent.moment`, one per moment). The payment's card in the
+  1:1 chat carries the moment's quote (`ChatPayload.moment` on a `payment`), drawn inside the money card above
+  "Sent" / "Received" (no frame: `PaymentMessage` KDoc in `ThreadScreen.kt` records the design). Never on my own or
+  support's moments, never on a group's card. A Not sent card paid again keeps its moment. The notification reads
+  "Sent you KES 500 for your moment" (Kotlin and the iOS extension). The transfer itself is unchanged; the server
+  never sees the moment.
 - **Stays from the Spaces plan:** groups with optional wallets, the one Circaso fee, daily caps, Paying from, the
   wallet PIN and biometrics per wallet.
 
@@ -329,6 +339,11 @@ Nothing to show is never an error screen. The first moment was posted through th
   video at 3.5 Mbit/s so 60 s fits the 32 MiB limit, with a size check and plain copy; hold-to-record that can't leave
   the camera or mic running; the voice moment as designed with listen-back, 1:00 cap and slide to cancel). Also fixed:
   view count from the server, the heart undone when not taken, Only-share-with needs someone.
+- Moments' text inputs are the design system's (2026-11-14, Pasaka): `StageField` (designsystem/components) is the
+  chat composer's field (borderless, radius 24, 48 dp, grows) on glass, used for the viewer's reply and the review's
+  caption. Departures: V1's reply was an outlined 46 dp pill, M4's caption 44 dp radius 22; the viewer row's money,
+  heart and Send buttons are 48 dp beside it. The review has M4's 340 shade, lifted above the keyboard. The text
+  moment ("Type a moment") stays M2's large centred text.
 - The gallery is the phone's own library, as WhatsApp status (2026-11-14, Pasaka): nothing is imported and there is no
   other picker. The camera strip shows the newest photos and videos together in Photo and Video modes; the gallery is
   Close / Recents / Next with All / Photos / Videos full width, paged to the whole library. Removed: the Google Photos

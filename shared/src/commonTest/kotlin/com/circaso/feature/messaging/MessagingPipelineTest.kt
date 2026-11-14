@@ -214,6 +214,63 @@ class MessagingPipelineTest {
         assertTrue(messagesRemote.sent.isEmpty())
     }
 
+    // ---- money sent for a moment (2026-11-14)
+
+    private val sunset = com.circaso.core.crypto.MomentQuote("mo-1", "IMAGE", "Sunset at Diani", "dGh1bWI=", 1_800_000_000_000)
+
+    private fun sealedPayload(payload: ChatPayload) = Base64.encode(WireFormat.encode(WireFormat.Type.WhisperMessage, "ct:".encodeToByteArray() + ChatPayload.encode(payload)))
+
+    @Test fun moneyForAMomentCarriesTheMomentOnMyCardInThePayloadAndOnTheirCard() = runSuspending {
+        directChat()
+        messages.sendPayment("c1", com.circaso.feature.messaging.domain.PaymentCard("t-9", "5000000", "USDC", "BASE-SEPOLIA", "Asante", sunset))
+        val mine = assertIs<Message.Payment>(messages.thread("c1").first().single())
+        assertEquals(sunset, mine.momentQuote)
+        assertEquals("Asante", mine.note)
+
+        processor.drain()
+        val frame = WireFormat.decode(Base64.decode(messagesRemote.sent.single().second.recipients!!.single().ciphertext))!!
+        val payload = ChatPayload.decode(frame.body.copyOfRange(3, frame.body.size))!!
+        assertEquals(ChatPayload.Payment, payload.type)
+        assertEquals(sunset, payload.moment)
+        assertEquals("t-9", payload.transferId)
+        assertEquals("5000000", payload.amountMinor)
+        assertEquals("Asante", payload.text)
+
+        // The other phone: the very payload that left this one (another transfer id, so it is their card).
+        messagesRemote.inboxPages += InboxResponse(listOf(InboxMessageDto("m-in", "c1", amina, MessagingWire.KindMessage, sealedPayload(payload.copy(transferId = "t-10")), emptyList(), "2026-11-14T09:00:00Z")), null)
+        messages.syncInbox()
+        val theirs = messages.thread("c1").first().filterIsInstance<Message.Payment>().single { !it.outgoing }
+        assertEquals(sunset, theirs.momentQuote)
+        assertEquals("5000000", theirs.amountMinor)
+    }
+
+    @Test fun aPaymentCardWithoutAMomentReadsAsBefore() = runSuspending {
+        directChat()
+        // What a phone from before this sends: no `moment` at all.
+        val old = """{"v":1,"type":"payment","text":"Lunch","transferId":"t-1","amountMinor":"1000000","asset":"USDC","blockchain":"BASE-SEPOLIA"}"""
+        val parsed = json.decodeFromString(ChatPayload.serializer(), old)
+        assertNull(parsed.moment)
+        messagesRemote.inboxPages += InboxResponse(listOf(InboxMessageDto("m-old", "c1", amina, MessagingWire.KindMessage, sealedPayload(parsed), emptyList(), "2026-11-14T09:00:00Z")), null)
+        messages.syncInbox()
+        val card = assertIs<Message.Payment>(messages.thread("c1").first().single())
+        assertNull(card.momentQuote)
+        assertEquals("Lunch", card.note)
+
+        // And my own plain card sends no `moment` key, so nothing changes for anyone.
+        messages.sendPayment("c1", com.circaso.feature.messaging.domain.PaymentCard("t-2", "1000000", "USDC", "BASE-SEPOLIA", null))
+        processor.drain()
+        val frame = WireFormat.decode(Base64.decode(messagesRemote.sent.single().second.recipients!!.single().ciphertext))!!
+        assertNull(ChatPayload.decode(frame.body.copyOfRange(3, frame.body.size))!!.moment)
+    }
+
+    @Test fun aPhoneThatDoesntKnowTheFieldStillReadsTheCard() {
+        // An older reader's view of the payload: unknown keys are skipped, the payment is all there.
+        val bytes = ChatPayload.encode(ChatPayload(type = ChatPayload.Payment, text = "Asante", transferId = "t-9", amountMinor = "5000000", asset = "USDC", blockchain = "BASE-SEPOLIA", moment = sunset))
+        val text = com.circaso.core.crypto.Padding.unpad(bytes).decodeToString()
+        val old = kotlinx.serialization.json.Json { ignoreUnknownKeys = true }.decodeFromString(OldPayload.serializer(), text)
+        assertEquals(OldPayload(1, "payment", "Asante", "t-9", "5000000", "USDC"), old)
+    }
+
     @Test fun theInboxIsDecryptedSavedAcknowledgedAndADuplicateIsOnlyAcknowledged() = runSuspending {
         directChat()
         messagesRemote.inboxPages += InboxResponse(listOf(InboxMessageDto("m1", "c1", amina, MessagingWire.KindMessage, wire("Niaje"), emptyList(), "2026-10-28T09:00:00Z")), null)
@@ -324,3 +381,7 @@ class MessagingPipelineTest {
         assertTrue(messagesRemote.sent.isEmpty())
     }
 }
+
+/** A payment card as a reader that has never heard of `moment` on it sees it. */
+@kotlinx.serialization.Serializable
+private data class OldPayload(val v: Int = 1, val type: String, val text: String? = null, val transferId: String? = null, val amountMinor: String? = null, val asset: String? = null)

@@ -80,6 +80,8 @@ internal fun ChatMoneyCard(
     onUseMax: () -> Unit = {},
     /** Try Again when a fresh coin price couldn't be had. */
     onRetryPrice: () -> Unit = {},
+    /** Its inset from the sides: the thread's by default; none where the screen already insets it (the stage). */
+    sideInset: androidx.compose.ui.unit.Dp = CircasoSpacing.s3,
 ) {
     val c = CircasoTheme.colors
     val t = CircasoTheme.typography
@@ -101,7 +103,7 @@ internal fun ChatMoneyCard(
     val ownButton = onClose != null
     val shape = CircasoShapes.md
     Column(
-        modifier.fillMaxWidth().padding(horizontal = CircasoSpacing.s3).padding(bottom = CircasoSpacing.s2)
+        modifier.fillMaxWidth().padding(horizontal = sideInset).padding(bottom = CircasoSpacing.s2)
             .then(if (maxHeight != androidx.compose.ui.unit.Dp.Unspecified) Modifier.heightIn(max = maxHeight) else Modifier)
             .shadow(4.dp, shape, ambientColor = androidx.compose.ui.graphics.Color.Black.copy(alpha = 0.18f), spotColor = androidx.compose.ui.graphics.Color.Black.copy(alpha = 0.18f))
             .clip(shape).background(c.surfaceRaised)

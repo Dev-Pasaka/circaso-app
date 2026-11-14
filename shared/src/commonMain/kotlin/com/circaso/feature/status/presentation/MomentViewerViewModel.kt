@@ -17,6 +17,7 @@ import com.circaso.feature.status.domain.MomentRing
 import com.circaso.feature.status.domain.MomentViewer
 import com.circaso.feature.status.domain.MomentsRepository
 import com.circaso.feature.status.domain.SeenReactions
+import com.circaso.feature.status.domain.toQuote
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -37,6 +38,24 @@ sealed interface ViewerMedia {
     /** V7: deleted or expired while open; the viewer moves on by itself. */
     data object Gone : ViewerMedia
 }
+
+/**
+ * Where the 1:1 chat with whoever posted the moment stands, for money typed in the reply field (`#500`): money goes
+ * from a chat, so the chat is found on this phone, or opened, as soon as a `#` is typed.
+ */
+data class MomentMoney(
+    val posterId: String? = null,
+    val chatId: String? = null,
+    val opening: Boolean = false,
+    /** The chat isn't on this phone and couldn't be opened (offline, or the server said no). */
+    val failed: Boolean = false,
+)
+
+/**
+ * Who `#500` in the reply field pays and what its card carries: the chat's own in-line payment is made for exactly
+ * this (one per moment, so each card carries its own moment).
+ */
+data class MomentMoneyTarget(val userId: String, val displayName: String, val chatId: String, val momentId: String, val quote: com.circaso.core.crypto.MomentQuote)
 
 /** One row of Seen by (V4). */
 data class ViewerRow(val viewer: MomentViewer, val name: String, val avatarUrl: String?)
@@ -63,7 +82,52 @@ data class MomentViewerUiState(
     val notice: String? = null,
     /** On my moment: reactions to splash, the first playing and at most one more waiting (later ones merge into it). */
     val bursts: List<ReactionBurst> = emptyList(),
+    /** Money typed in the reply field: the chat it goes from. */
+    val money: MomentMoney = MomentMoney(),
+    /** A payment from the reply field is being signed (the PIN is up) or sent: the moment waits and the viewer stays. */
+    val payBusy: Boolean = false,
+    /** The reply field has the keyboard. */
+    val replyFocused: Boolean = false,
 ) {
+    /** The moment waits: paused (held, a sheet, a reply being written) or a payment is going through, whatever else lets go. */
+    val waiting: Boolean get() = paused || payBusy
+    /**
+     * `#500` in the reply field is money here: someone else's moment, and not Circaso support's (that account has no
+     * wallet), as the chat decides it. Whether the person can be paid right now is the money card's to say.
+     */
+    val canPay: Boolean get() = moment?.let { !it.mine && it.posterId != com.circaso.feature.support.Support.UserId } == true
+    /** The reply has an amount in it that the chat's composer pays ("#500"; "#0" is only words, as in a chat). */
+    val moneyTyped: Boolean get() = com.circaso.feature.messaging.presentation.typingAmount(reply) != null
+
+    /** The in-line payment to make for the moment on screen, once its chat is known. */
+    val moneyTarget: MomentMoneyTarget?
+        get() {
+            val m = moment?.takeIf { canPay } ?: return null
+            val chatId = money.chatId?.takeIf { money.posterId == m.posterId } ?: return null
+            return MomentMoneyTarget(m.posterId, current?.name ?: return null, chatId, m.momentId, m.toQuote())
+        }
+    /**
+     * The arrow sends the typed text as a reply. Never while it holds an amount that is meant as money: then the arrow
+     * pays, or waits for the chat, and "#500" is not sent as words by accident.
+     */
+    val canReply: Boolean get() = reply.isNotBlank() && !(canPay && moneyTyped)
+    /** Why `#` isn't money yet, said by the field (never silently nothing): the chat is opening, or couldn't be. */
+    val moneyLine: String?
+        get() {
+            if (!moneyStarted(reply) || moment?.mine != false) return null
+            val first = current?.name?.substringBefore(' ') ?: "them"
+            return when {
+                !canPay -> if (moneyTyped) "Circaso support never asks for money, so payments are off here." else null
+                // Money is online only (offline-first.md): said as soon as an amount is typed, chat or no chat.
+                !online -> if (moneyTyped || money.failed) "You’re offline. Money needs a connection." else null
+                money.chatId != null -> null
+                money.opening -> "Opening the chat with $first…"
+                money.failed -> "The chat with $first didn’t open, so money can’t go yet. Tap to try again."
+                else -> null
+            }
+        }
+    /** [moneyLine] is the failed chat's: a tap on it tries again. */
+    val moneyRetry: Boolean get() = online && money.failed && money.chatId == null && moneyLine != null
     val burst: ReactionBurst? get() = bursts.firstOrNull()
     val current: MomentRing? get() = rings.getOrNull(ring)
     val moment: Moment? get() = current?.moments?.getOrNull(index)
@@ -78,6 +142,10 @@ class MomentViewerViewModel(
     connection: ConnectionState,
     /** Opens (or finds) the 1:1 chat with someone and sends a text there quoting a moment (V8). */
     private val replyInChat: suspend (posterId: String, text: String, moment: Moment) -> AppResult<String>,
+    /** The 1:1 chat with someone on this phone, if there is one (money for a moment goes from it). */
+    private val directChatId: suspend (posterId: String) -> String? = { null },
+    /** Opens that chat on the server when this phone has none; null when it couldn't. */
+    private val openChat: suspend (posterId: String) -> String? = { null },
     /** Open at this moment (a reply's quote in a chat was tapped); gone already means V7. */
     private val startAt: String? = null,
     /** Blocked people (2026-11-10): their Moments can't be opened or swiped to. */
@@ -100,6 +168,9 @@ class MomentViewerViewModel(
     init {
         viewModelScope.launch {
             combine(repository.moments, observeContacts().withoutBlocked(observeBlocks), repository.muted) { all, contacts, muted -> Triple(all, contacts, muted) }.collect { (all, contacts, muted) ->
+                // A payment from the reply field is at the PIN or being sent: the moment on screen stays as it is (not
+                // swapped, not closed) until it is through, so the payment keeps the moment it was made for.
+                _state.first { !it.payBusy }
                 val me = observeProfile().first()
                 val rings = if (posterId == null) {
                     val mine = all.filter { it.mine }.sortedBy { it.postedAt }
@@ -141,7 +212,13 @@ class MomentViewerViewModel(
                 }
             }
         }
-        viewModelScope.launch { connection.status.collect { st -> _state.update { it.copy(online = st == ConnectionStatus.Online) } } }
+        viewModelScope.launch {
+            connection.status.collect { st ->
+                _state.update { it.copy(online = st == ConnectionStatus.Online) }
+                // Back online with an amount waiting on a chat that couldn't be opened: open it now.
+                if (st == ConnectionStatus.Online && _state.value.let { it.money.failed && it.canPay && moneyStarted(it.reply) }) prepareMoney(again = true)
+            }
+        }
         // Someone viewed or reacted to the moment of mine on screen, live.
         // (A changed emoji leaves the counts alone, so the frame itself asks too.)
         viewModelScope.launch { repository.viewedFrames.collect { id -> if (_state.value.moment?.let { it.mine && it.momentId == id } == true) checkAsks.tryEmit(Unit) } }
@@ -156,7 +233,7 @@ class MomentViewerViewModel(
         if (shownId == m.momentId) return
         shownId = m.momentId
         // A half-typed reply belongs to the moment it was typed on, never the next one.
-        _state.update { it.copy(reply = "", paused = false, picking = false, bursts = emptyList()) }
+        _state.update { it.copy(reply = "", paused = false, picking = false, bursts = emptyList(), money = if (it.money.posterId == m.posterId) it.money else MomentMoney()) }
         load?.cancel()
         if (m.media == null || m.kind == MomentKind.Text) {
             _state.update { it.copy(media = ViewerMedia.None) }
@@ -185,6 +262,7 @@ class MomentViewerViewModel(
 
     fun next() {
         val s = _state.value
+        if (s.payBusy) return
         val ring = s.current ?: return
         when {
             s.index < ring.moments.size - 1 -> _state.update { it.copy(index = it.index + 1) }
@@ -196,6 +274,7 @@ class MomentViewerViewModel(
 
     fun previous() {
         val s = _state.value
+        if (s.payBusy) return
         when {
             s.index > 0 -> _state.update { it.copy(index = it.index - 1) }
             s.ring > 0 -> _state.update { it.copy(ring = it.ring - 1, index = 0) }
@@ -207,13 +286,55 @@ class MomentViewerViewModel(
     /** Swipe left: the next person's ring. */
     fun nextRing() {
         val s = _state.value
+        if (s.payBusy) return
         if (s.ring < s.rings.size - 1) { _state.update { it.copy(ring = it.ring + 1, index = 0) }; showCurrent() } else _state.update { it.copy(closed = true) }
     }
 
     fun retryMedia() { shownId = null; showCurrent() }
-    fun setPaused(paused: Boolean) = _state.update { it.copy(paused = paused) }
+    /** A hold, a sheet: the moment waits. Letting go never starts it again under a reply (or money) being written. */
+    fun setPaused(paused: Boolean) = _state.update { it.copy(paused = paused || it.reply.isNotEmpty() || it.replyFocused) }
     fun toggleMute() = _state.update { it.copy(muted = !it.muted) }
-    fun onReply(text: String) = _state.update { it.copy(reply = text, paused = text.isNotEmpty()) }
+    /**
+     * The reply field, which is the chat's composer (2026-11-14): plain words are a reply, `#500` is money for this
+     * moment. The moment waits while anything is in it. A `#` gets the chat ready, so the money card can pay.
+     */
+    fun onReply(text: String) {
+        _state.update { it.copy(reply = text, paused = text.isNotEmpty() || it.replyFocused) }
+        if (moneyStarted(text) && _state.value.canPay) prepareMoney()
+    }
+
+    private var chatJob: Job? = null
+
+    /**
+     * Finds the 1:1 chat with whoever posted this on the phone, or opens it (online, saying so meanwhile). One that
+     * couldn't be opened is tried [again] when the connection is back or the line is tapped, not at every key.
+     */
+    private fun prepareMoney(again: Boolean = false) {
+        val posterId = _state.value.moment?.posterId ?: return
+        val money = _state.value.money
+        if (money.posterId == posterId && (money.chatId != null || chatJob?.isActive == true || (money.failed && !again))) return
+        chatJob?.cancel()
+        chatJob = viewModelScope.launch {
+            val local = directChatId(posterId)
+            val chatId = local ?: if (_state.value.online) {
+                _state.update { it.copy(money = MomentMoney(posterId, opening = true)) }
+                openChat(posterId)
+            } else null
+            _state.update { if (it.moment?.posterId == posterId) it.copy(money = MomentMoney(posterId, chatId, failed = chatId == null)) else it }
+        }
+    }
+
+    /** The failed chat's line was tapped. */
+    fun retryMoney() { if (_state.value.canPay) prepareMoney(again = true) }
+
+    /** The reply field's payment is being signed or sent ([busy]), or is no longer. */
+    fun onPayBusy(busy: Boolean) = _state.update { it.copy(payBusy = busy) }
+
+    /** The payment was signed and its card, with this moment, is in the chat: the field is empty again and the moment carries on. */
+    fun onPaid() {
+        val name = _state.value.current?.name?.substringBefore(' ')
+        _state.update { it.copy(payBusy = false, paused = false, reply = "", notice = "Money for ${name ?: "them"} is on its way. It’s in your chat.") }
+    }
 
     /** Opens the reaction picker; the moment waits while it is open. Offline it says so instead of opening. */
     fun openPicker() {
@@ -249,6 +370,7 @@ class MomentViewerViewModel(
     fun sendReply() {
         val s = _state.value
         val m = s.moment ?: return
+        if (!s.canReply) return
         val text = s.reply.trim().ifEmpty { return }
         _state.update { it.copy(reply = "", paused = false) }
         viewModelScope.launch {
@@ -359,7 +481,7 @@ class MomentViewerViewModel(
     }
 
     /** The reply field took or lost the keyboard: the moment waits while someone writes. */
-    fun onReplyFocus(focused: Boolean) = _state.update { it.copy(paused = focused || it.reply.isNotEmpty()) }
+    fun onReplyFocus(focused: Boolean) = _state.update { it.copy(replyFocused = focused, paused = focused || it.reply.isNotEmpty()) }
 
     fun delete() {
         val m = _state.value.moment ?: return
@@ -378,5 +500,9 @@ internal fun List<ReactionBurst>.queue(b: ReactionBurst): List<ReactionBurst> = 
     0, 1 -> this + b
     else -> take(1) + drop(1).reduce { a, c -> a.merge(c) }.merge(b)
 }
+
+/** A `#` that starts an amount ("#", "#5", "lunch #500"), not a tag or a link's anchor ("#blessed"). */
+private val MoneyStart = Regex("""#(\d|$)""")
+internal fun moneyStarted(text: String): Boolean = MoneyStart.containsMatchIn(text)
 
 private fun String.firstName() = trim().substringBefore(' ').ifBlank { "Someone" }

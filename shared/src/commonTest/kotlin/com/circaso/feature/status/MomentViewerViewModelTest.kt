@@ -29,6 +29,7 @@ import com.circaso.feature.status.domain.MomentPrivacy
 import com.circaso.feature.status.domain.MomentViewer
 import com.circaso.feature.status.domain.MomentsRepository
 import com.circaso.feature.status.domain.PendingMoment
+import com.circaso.feature.status.domain.toQuote
 import com.circaso.feature.status.presentation.MomentViewerViewModel
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -62,6 +63,208 @@ class MomentViewerViewModelTest {
         posterId = "w", repository = repo, observeContacts = ObserveContactsUseCase(FakeContacts()), observeProfile = ObserveProfileUseCase(FakeProfile()),
         connection = connection, replyInChat = { _, _, _ -> AppResult.Success("c") },
     )
+
+    // ---- money for a moment, chat native (2026-11-14): `#500` in the reply field
+
+    private val opened = mutableListOf<String>()
+    private var localChat: String? = "chat-w"
+    private var serverChat: String? = "chat-new"
+    private val replies = mutableListOf<Pair<String, String>>()
+
+    private fun moneyViewer(posterId: String? = "w") = MomentViewerViewModel(
+        posterId = posterId, repository = repo, observeContacts = ObserveContactsUseCase(FakeContacts()), observeProfile = ObserveProfileUseCase(FakeProfile()),
+        connection = connection, replyInChat = { to, text, _ -> replies += to to text; AppResult.Success("c") },
+        directChatId = { localChat }, openChat = { opened += it; serverChat },
+    )
+
+    @Test fun anAmountInTheReplyFieldPaysWhoeverPostedItWithTheMomentQuoted() = runTest(dispatcher) {
+        repo.list.value = listOf(moment("m1").copy(caption = "Sunset at Diani", thumb = "dGh1bWI="))
+        val vm = moneyViewer()
+        assertNull(vm.state.value.moneyTarget, "nothing is made until a # is typed")
+        vm.onReply("#500 lunch")
+        val s = vm.state.value
+        val target = s.moneyTarget!!
+        assertEquals("w", target.userId)
+        assertEquals("Wanjiru Kamau", target.displayName)
+        assertEquals("chat-w", target.chatId)
+        assertEquals("m1", target.momentId)
+        // The same quote a text reply carries.
+        assertEquals(s.moment!!.toQuote(), target.quote)
+        assertEquals(com.circaso.core.crypto.MomentQuote("m1", "TEXT", "Sunday market", "dGh1bWI=", Long.MAX_VALUE), target.quote)
+        assertTrue(opened.isEmpty(), "the chat on this phone is used as it is")
+        assertNull(s.moneyLine)
+        // The arrow pays (the composer's money card); it never sends "#500 lunch" as words.
+        assertFalse(s.canReply)
+        vm.sendReply()
+        assertTrue(replies.isEmpty())
+        assertEquals("#500 lunch", vm.state.value.reply)
+    }
+
+    @Test fun plainWordsAreStillAReplyAndGetNoChatReady() = runTest(dispatcher) {
+        val vm = moneyViewer()
+        vm.onReply("So beautiful")
+        assertTrue(vm.state.value.canReply)
+        assertNull(vm.state.value.moneyTarget)
+        assertNull(vm.state.value.moneyLine)
+        vm.sendReply()
+        assertEquals(listOf("w" to "So beautiful"), replies)
+        assertEquals("", vm.state.value.reply)
+        assertTrue(opened.isEmpty())
+    }
+
+    @Test fun withNoChatOnThisPhoneAHashOpensItAndTheFieldSaysSoMeanwhile() = runTest(dispatcher) {
+        localChat = null
+        val gate = kotlinx.coroutines.CompletableDeferred<String?>()
+        val vm = MomentViewerViewModel(
+            posterId = "w", repository = repo, observeContacts = ObserveContactsUseCase(FakeContacts()), observeProfile = ObserveProfileUseCase(FakeProfile()),
+            connection = connection, replyInChat = { to, text, _ -> replies += to to text; AppResult.Success("c") },
+            directChatId = { null }, openChat = { opened += it; gate.await() },
+        )
+        vm.onReply("#")
+        assertEquals(listOf("w"), opened)
+        vm.onReply("#500")
+        assertEquals(listOf("w"), opened, "asked once while it opens")
+        assertEquals("Opening the chat with Wanjiru…", vm.state.value.moneyLine)
+        assertNull(vm.state.value.moneyTarget)
+        assertFalse(vm.state.value.canReply, "the amount is not sent as words while the chat opens")
+        gate.complete("chat-new")
+        assertEquals("chat-new", vm.state.value.moneyTarget?.chatId)
+        assertNull(vm.state.value.moneyLine)
+    }
+
+    @Test fun aChatThatWontOpenIsSaidAndATapOnTheLineTriesAgain() = runTest(dispatcher) {
+        localChat = null; serverChat = null
+        val vm = moneyViewer()
+        vm.onReply("#500")
+        assertNull(vm.state.value.moneyTarget)
+        assertEquals("The chat with Wanjiru didn’t open, so money can’t go yet. Tap to try again.", vm.state.value.moneyLine)
+        assertTrue(vm.state.value.moneyRetry)
+        assertFalse(vm.state.value.canReply)
+        // Typing on doesn't ask the server again at every key.
+        vm.onReply("#5000")
+        assertEquals(listOf("w"), opened)
+        serverChat = "chat-new"
+        vm.retryMoney()
+        assertEquals(listOf("w", "w"), opened)
+        assertEquals("chat-new", vm.state.value.moneyTarget?.chatId)
+        assertNull(vm.state.value.moneyLine)
+        // Without the amount it is a reply again.
+        vm.onReply("lovely")
+        assertTrue(vm.state.value.canReply)
+    }
+
+    @Test fun backOnlineTheChatIsOpenedForTheAmountStillInTheField() = runTest(dispatcher) {
+        localChat = null
+        monitor.osStatus.value = ConnectionStatus.Offline
+        val vm = moneyViewer()
+        vm.onReply("#500")
+        assertEquals("You’re offline. Money needs a connection.", vm.state.value.moneyLine)
+        assertFalse(vm.state.value.moneyRetry, "nothing to tap offline")
+        monitor.osStatus.value = ConnectionStatus.Online
+        assertEquals(listOf("w"), opened)
+        assertEquals("chat-new", vm.state.value.moneyTarget?.chatId)
+        assertNull(vm.state.value.moneyLine)
+    }
+
+    @Test fun aTagIsNotMoneyAndZeroIsOnlyWords() = runTest(dispatcher) {
+        localChat = null
+        val vm = moneyViewer()
+        vm.onReply("#blessed")
+        assertTrue(opened.isEmpty(), "no chat is opened for a tag")
+        assertNull(vm.state.value.moneyLine)
+        assertTrue(vm.state.value.canReply)
+        localChat = "chat-w"
+        vm.onReply("#0")
+        assertTrue(vm.state.value.canReply, "as in a chat, #0 is not an amount: the arrow sends it as words")
+    }
+
+    @Test fun aTapOrAHoldOnTheMomentNeverRestartsItUnderWhatIsBeingWritten() = runTest(dispatcher) {
+        val vm = moneyViewer()
+        vm.onReplyFocus(true)
+        vm.setPaused(true); vm.setPaused(false)
+        assertTrue(vm.state.value.paused, "the field has the keyboard")
+        vm.onReply("#500 lunch")
+        vm.onReplyFocus(false)
+        vm.setPaused(true); vm.setPaused(false)
+        assertTrue(vm.state.value.paused, "money is in the field")
+        assertEquals("#500 lunch", vm.state.value.reply)
+        vm.onReply("")
+        assertFalse(vm.state.value.paused)
+    }
+
+    @Test fun aMomentThatEndsWhileThePinIsUpStaysUntilThePaymentIsThrough() = runTest(dispatcher) {
+        val vm = moneyViewer()
+        vm.onReply("#500")
+        vm.onPayBusy(true)
+        repo.list.value = emptyList()
+        assertFalse(vm.state.value.closed)
+        assertEquals("m1", vm.state.value.moneyTarget?.momentId, "the payment keeps the moment it was made for")
+        vm.onPaid()
+        assertTrue(vm.state.value.closed)
+    }
+
+    @Test fun offlineWithNoChatTheFieldSaysMoneyNeedsAConnection() = runTest(dispatcher) {
+        localChat = null
+        monitor.osStatus.value = ConnectionStatus.Offline
+        val vm = moneyViewer()
+        assertFalse(vm.state.value.online)
+        vm.onReply("#500")
+        assertTrue(opened.isEmpty(), "nothing is asked of the server offline")
+        assertEquals("You’re offline. Money needs a connection.", vm.state.value.moneyLine)
+    }
+
+    @Test fun theMomentWaitsWhileTypingAndThroughThePinThenCarriesOn() = runTest(dispatcher) {
+        val vm = moneyViewer()
+        vm.onReply("#500")
+        assertTrue(vm.state.value.waiting, "typing, with the money card up")
+        vm.onPayBusy(true)
+        // The keyboard going away for the PIN, or a finger lifting, doesn't start it again; nor can it move on.
+        vm.onReplyFocus(false)
+        vm.setPaused(false)
+        vm.onReply("")
+        assertTrue(vm.state.value.waiting)
+        vm.next()
+        assertFalse(vm.state.value.closed)
+        vm.onPaid()
+        assertFalse(vm.state.value.waiting)
+        assertEquals("", vm.state.value.reply)
+        assertEquals("Money for Wanjiru is on its way. It’s in your chat.", vm.state.value.notice)
+    }
+
+    @Test fun onMyOwnMomentAHashIsNeverMoney() = runTest(dispatcher) {
+        repo.list.value = listOf(moment("mine").copy(mine = true, posterId = "me"))
+        val vm = moneyViewer(posterId = null)
+        assertFalse(vm.state.value.canPay)
+        vm.onReply("#500")
+        assertNull(vm.state.value.moneyTarget)
+        assertNull(vm.state.value.moneyLine)
+        assertTrue(opened.isEmpty())
+    }
+
+    @Test fun onCircasoSupportsMomentAnAmountIsWordsAndTheFieldSaysPaymentsAreOff() = runTest(dispatcher) {
+        val before = com.circaso.feature.support.Support.UserId
+        com.circaso.feature.support.Support.UserId = "w"
+        try {
+            val vm = moneyViewer()
+            assertFalse(vm.state.value.canPay)
+            vm.onReply("#500")
+            assertNull(vm.state.value.moneyTarget)
+            assertTrue(opened.isEmpty())
+            assertEquals("Circaso support never asks for money, so payments are off here.", vm.state.value.moneyLine)
+            assertTrue(vm.state.value.canReply)
+        } finally { com.circaso.feature.support.Support.UserId = before }
+    }
+
+    @Test fun eachMomentGetsItsOwnPaymentSoEachCardCarriesItsOwnMoment() = runTest(dispatcher) {
+        repo.list.value = listOf(moment("m1"), moment("m2").copy(postedAt = 2))
+        val vm = moneyViewer()
+        vm.onReply("#500")
+        assertEquals("m1", vm.state.value.moneyTarget?.momentId)
+        vm.onReply("")
+        vm.next()
+        assertEquals("", vm.state.value.reply)
+        assertEquals("m2", vm.state.value.moneyTarget?.momentId, "the same person's chat is still known")
+    }
 
     @Test fun openingThePickerPausesTheMomentAndClosingItCarriesOn() = runTest(dispatcher) {
         val vm = viewer()

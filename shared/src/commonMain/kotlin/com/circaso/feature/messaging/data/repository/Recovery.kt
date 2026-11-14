@@ -76,7 +76,7 @@ class ChatPaymentCards(
 
     /**
      * Their end-to-end card [row]: saved, unless the wallet already put this transfer's card in the chat, which then
-     * takes the note, the message id and the time from it. A second end-to-end card for one transfer is dropped.
+     * takes the note, the message id, the time and the moment it was sent for from it. A second end-to-end card for one transfer is dropped.
      */
     suspend fun receive(row: MessageEntity) = lock.withLock {
         val transferId = row.transferId ?: return@withLock
@@ -85,7 +85,7 @@ class ChatPaymentCards(
             existing == null -> dao.insert(row)
             // The card keeps its place: moving it under the person's eyes (perhaps under another day) would be a jump.
             existing.messageId == null && !existing.outgoing && existing.senderId == row.senderId -> dao.upsert(
-                existing.copy(messageId = row.messageId, text = row.text, sentAt = row.sentAt, replyTo = row.replyTo),
+                existing.copy(messageId = row.messageId, text = row.text, sentAt = row.sentAt, replyTo = row.replyTo, momentQuote = row.momentQuote),
             )
             else -> Unit
         }

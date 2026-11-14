@@ -20,6 +20,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.circaso.designsystem.motion.pressable
+import com.circaso.designsystem.chrome.glass
 import com.circaso.designsystem.theme.CircasoShapes
 import com.circaso.designsystem.theme.CircasoSizes
 import com.circaso.designsystem.theme.CircasoSpacing
@@ -93,6 +94,8 @@ fun CircasoIconButton(
     enabled: Boolean = true,
     /** Working on it (e.g. a payment on its way to the PIN): a spinner in place of the icon; taps are ignored. */
     busy: Boolean = false,
+    /** Over a photo or video (the stage): glass instead of `fill` while it isn't emphasised, like the controls beside it. */
+    onGlass: Boolean = false,
 ) {
     val c = CircasoTheme.colors
     val fg = when { !enabled -> c.inkTertiary; emphasised -> c.onAction; else -> c.ink }
@@ -100,7 +103,7 @@ fun CircasoIconButton(
         modifier
             .size(CircasoSizes.iconButton)
             .clip(CircasoShapes.circle)
-            .background(if (emphasised) c.action else c.fill)
+            .then(if (onGlass && !emphasised) Modifier.glass(CircasoShapes.circle, edge = false) else Modifier.background(if (emphasised) c.action else c.fill))
             .pressable(enabled = enabled && !busy, role = Role.Button, onClick = onClick)
             .semantics { this.contentDescription = if (busy) "$contentDescription, loading" else contentDescription },
         contentAlignment = Alignment.Center,

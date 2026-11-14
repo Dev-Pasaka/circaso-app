@@ -71,6 +71,11 @@ data class PayIntent(
      * the thread carries Sending → Sent and this resets for the next payment, rather than waiting here (GW17).
      */
     val inChat: Boolean = false,
+    /**
+     * Money sent from [userId]'s moment (`#500` in the Moment viewer's reply field, 2026-11-14): the payment's card in
+     * the chat with them carries it. Context only: it never reaches the wallet or changes the transfer.
+     */
+    val moment: com.circaso.core.crypto.MomentQuote? = null,
 ) {
     val contribution get() = groupId != null || (goalName != null && requestId == null)
     val payout get() = requestId != null
@@ -428,6 +433,8 @@ class PayViewModel(
 ) : ViewModel() {
     private val userId = intent.userId
     private val chatId = intent.chatId
+    /** The moment of a Not sent card being paid again ([onRetryExact]); gone with the next reset. */
+    private var retryMoment: com.circaso.core.crypto.MomentQuote? = null
     private val address = intent.address
     private val local = MutableStateFlow(
         PayUiState(
@@ -860,7 +867,10 @@ class PayViewModel(
                 is AppResult.Success -> {
                     idempotencyKey = newIdempotencyKey()
                     val transfer = r.value
-                    val card = PaymentCard(transfer.transferId, transfer.amount.amountMinor, transfer.amount.asset, transfer.blockchain, note)
+                    // The moment goes only on the card in the 1:1 chat with the person who posted it: never to a group
+                    // (its members may not be in the moment's audience), an address, or someone picked instead.
+                    val moment = (retryMoment ?: intent.moment)?.takeIf { intent.goalName == null && intent.requestId == null && !s.directPayout && !s.toGroup && toAddress == null && payee.userId.isNotEmpty() && payee.userId == userId }
+                    val card = PaymentCard(transfer.transferId, transfer.amount.amountMinor, transfer.amount.asset, transfer.blockchain, note, moment)
                     val target = if (s.directPayout) sendPayoutCards(s, payee, toAddress, card)
                     else (chatId ?: if (toAddress == null && !s.toGroup) (openDirectChat(payee.userId) as? AppResult.Success)?.value?.chatId else null)
                         ?.also { sendCard(it, card) }
@@ -972,6 +982,7 @@ class PayViewModel(
      */
     fun onQuickReset() {
         idempotencyKey = newIdempotencyKey()
+        retryMoment = null
         // Personal again (GW9b's default) unless the chat fixes the wallet (a payout from the group's).
         if (fromId.value != intent.fromWalletId) fromId.value = intent.fromWalletId
         local.update {
@@ -1005,8 +1016,10 @@ class PayViewModel(
      * back on the chat's money card, in its coin amount, so a rounding or a rate move can't change what is sent. It is
      * signed again with a fresh key; nothing repeats on its own.
      */
-    fun onRetryExact(amountMinor: String, asset: String, note: String?) {
+    fun onRetryExact(amountMinor: String, asset: String, note: String?, moment: com.circaso.core.crypto.MomentQuote? = null) {
         idempotencyKey = newIdempotencyKey()
+        // The card being paid again was money for a moment: its new card carries the same moment.
+        retryMoment = moment
         // As onAmount: the fee on the card was for the last amount, so nothing can sign it until it is asked again.
         staleFee()
         val decimals = state.value.wallet?.chains.orEmpty().flatMap { it.assets }.firstOrNull { it.symbol.equals(asset, true) }?.decimals ?: 6
