@@ -1246,12 +1246,12 @@ internal fun heldCoins(wallet: com.circaso.feature.wallet.domain.Wallet?): List<
 
 /** The "@" picker over the composer: up to four held coins as chips; they settle in and out as the list narrows. */
 @Composable
-internal fun CoinSuggestions(coins: List<HeldCoin>, onPick: (HeldCoin) -> Unit) {
+internal fun CoinSuggestions(coins: List<HeldCoin>, sideInset: androidx.compose.ui.unit.Dp = CircasoSpacing.s3, onPick: (HeldCoin) -> Unit) {
     val c = CircasoTheme.colors
     val t = CircasoTheme.typography
     androidx.compose.foundation.lazy.LazyRow(
         Modifier.fillMaxWidth().padding(bottom = CircasoSpacing.s2),
-        contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = CircasoSpacing.s3),
+        contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = sideInset),
         horizontalArrangement = Arrangement.spacedBy(CircasoSpacing.s2),
     ) {
         items(coins, key = { it.symbol }) { coin ->

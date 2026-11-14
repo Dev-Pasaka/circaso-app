@@ -132,20 +132,75 @@ class MomentViewerViewModelTest {
         assertNull(vm.state.value.moneyLine)
     }
 
-    @Test fun aChatThatWontOpenIsSaidAndTriedAgainAtTheNextKey() = runTest(dispatcher) {
+    @Test fun aChatThatWontOpenIsSaidAndATapOnTheLineTriesAgain() = runTest(dispatcher) {
         localChat = null; serverChat = null
         val vm = moneyViewer()
         vm.onReply("#500")
         assertNull(vm.state.value.moneyTarget)
-        assertEquals("The chat with Wanjiru didn’t open, so money can’t go yet. Type the amount again to retry.", vm.state.value.moneyLine)
+        assertEquals("The chat with Wanjiru didn’t open, so money can’t go yet. Tap to try again.", vm.state.value.moneyLine)
+        assertTrue(vm.state.value.moneyRetry)
         assertFalse(vm.state.value.canReply)
-        serverChat = "chat-new"
+        // Typing on doesn't ask the server again at every key.
         vm.onReply("#5000")
+        assertEquals(listOf("w"), opened)
+        serverChat = "chat-new"
+        vm.retryMoney()
         assertEquals(listOf("w", "w"), opened)
         assertEquals("chat-new", vm.state.value.moneyTarget?.chatId)
+        assertNull(vm.state.value.moneyLine)
         // Without the amount it is a reply again.
         vm.onReply("lovely")
         assertTrue(vm.state.value.canReply)
+    }
+
+    @Test fun backOnlineTheChatIsOpenedForTheAmountStillInTheField() = runTest(dispatcher) {
+        localChat = null
+        monitor.osStatus.value = ConnectionStatus.Offline
+        val vm = moneyViewer()
+        vm.onReply("#500")
+        assertEquals("You’re offline. Money needs a connection.", vm.state.value.moneyLine)
+        assertFalse(vm.state.value.moneyRetry, "nothing to tap offline")
+        monitor.osStatus.value = ConnectionStatus.Online
+        assertEquals(listOf("w"), opened)
+        assertEquals("chat-new", vm.state.value.moneyTarget?.chatId)
+        assertNull(vm.state.value.moneyLine)
+    }
+
+    @Test fun aTagIsNotMoneyAndZeroIsOnlyWords() = runTest(dispatcher) {
+        localChat = null
+        val vm = moneyViewer()
+        vm.onReply("#blessed")
+        assertTrue(opened.isEmpty(), "no chat is opened for a tag")
+        assertNull(vm.state.value.moneyLine)
+        assertTrue(vm.state.value.canReply)
+        localChat = "chat-w"
+        vm.onReply("#0")
+        assertTrue(vm.state.value.canReply, "as in a chat, #0 is not an amount: the arrow sends it as words")
+    }
+
+    @Test fun aTapOrAHoldOnTheMomentNeverRestartsItUnderWhatIsBeingWritten() = runTest(dispatcher) {
+        val vm = moneyViewer()
+        vm.onReplyFocus(true)
+        vm.setPaused(true); vm.setPaused(false)
+        assertTrue(vm.state.value.paused, "the field has the keyboard")
+        vm.onReply("#500 lunch")
+        vm.onReplyFocus(false)
+        vm.setPaused(true); vm.setPaused(false)
+        assertTrue(vm.state.value.paused, "money is in the field")
+        assertEquals("#500 lunch", vm.state.value.reply)
+        vm.onReply("")
+        assertFalse(vm.state.value.paused)
+    }
+
+    @Test fun aMomentThatEndsWhileThePinIsUpStaysUntilThePaymentIsThrough() = runTest(dispatcher) {
+        val vm = moneyViewer()
+        vm.onReply("#500")
+        vm.onPayBusy(true)
+        repo.list.value = emptyList()
+        assertFalse(vm.state.value.closed)
+        assertEquals("m1", vm.state.value.moneyTarget?.momentId, "the payment keeps the moment it was made for")
+        vm.onPaid()
+        assertTrue(vm.state.value.closed)
     }
 
     @Test fun offlineWithNoChatTheFieldSaysMoneyNeedsAConnection() = runTest(dispatcher) {

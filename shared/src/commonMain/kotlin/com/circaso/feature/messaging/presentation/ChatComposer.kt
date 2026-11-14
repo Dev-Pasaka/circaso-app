@@ -62,6 +62,9 @@ class ChatComposerMoney {
  */
 class StageComposer(
     val placeholder: String,
+    /** What a screen reader calls the field, and the arrow while it sends words ("Send reply to Wanjiru"). */
+    val label: String,
+    val sendLabel: String,
     /** The typed text can go as a reply now (the screen decides: it sends it, with the moment quoted). */
     val canSendText: Boolean,
     val onFocus: (Boolean) -> Unit = {},
@@ -181,7 +184,7 @@ internal fun ChatComposer(
         placeholder = stage?.placeholder ?: if (embedded) "#amount and a note" else if (canAdd) "Message, or #amount to add" else if (!state.isGroup && !state.isSupport && (onPay != null || payable)) "Message, or #amount to send" else "Message",
         onAttach = onAttach,
         focusRequester = focusRequester,
-        sendLabel = if (paying) quickPay?.state?.let { q -> payLabel(q) + (q.payee?.displayName?.takeIf { !q.toGroup && q.failure == null && q.step != PayStep.Signing }?.let { " to $it" } ?: "") } ?: "Send" else "Send",
+        sendLabel = if (paying) quickPay?.state?.let { q -> payLabel(q) + (q.payee?.displayName?.takeIf { !q.toGroup && q.failure == null && q.step != PayStep.Signing }?.let { " to $it" } ?: "") } ?: "Send" else stage?.sendLabel ?: "Send",
         showSend = paying || state.draft.isNotBlank() || (media == null && stage?.trailing == null),
         trailing = if (payChip == null && media != null && state.draft.isBlank()) ({ VoiceButton(state.recording, media.onVoiceStart, media.onVoiceEnd) })
         else stage?.trailing?.takeIf { !paying && state.draft.isBlank() },
@@ -202,13 +205,14 @@ internal fun ChatComposer(
         embedded = embedded,
         onStage = stage != null,
         onFocusChange = stage?.onFocus,
+        fieldLabel = stage?.label,
         floating = {
             AnimatedVisibility(
                 coinChoices.isNotEmpty(),
                 enter = if (CircasoTheme.reduceMotion) fadeIn(tween(CircasoMotion.QuickMs)) else fadeIn(tween(CircasoMotion.QuickMs)) + expandVertically(tween(CircasoMotion.QuickMs)),
                 exit = if (CircasoTheme.reduceMotion) fadeOut(tween(CircasoMotion.QuickMs)) else fadeOut(tween(CircasoMotion.QuickMs)) + shrinkVertically(tween(CircasoMotion.QuickMs)),
             ) {
-                CoinSuggestions(coinChoices) { coin ->
+                CoinSuggestions(coinChoices, sideInset = if (stage != null) 0.dp else CircasoSpacing.s3) { coin ->
                     chipHaptics.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.TextHandleMove)
                     val text = state.draft.replace(Regex("""@[A-Za-z]*$"""), "@${coin.symbol.lowercase()} ")
                     onDraft(text)
@@ -222,7 +226,7 @@ internal fun ChatComposer(
                 paying && quickPay != null,
                 enter = if (CircasoTheme.reduceMotion) fadeIn(tween(CircasoMotion.QuickMs)) else fadeIn(tween(CircasoMotion.QuickMs)) + slideInVertically(tween(CircasoMotion.QuickMs)) { it / 2 },
                 exit = fadeOut(tween(CircasoMotion.QuickMs / 2)),
-            ) { quickPay?.let { q -> ChatMoneyCard(q.state, q.onPay, { q.onChoosing(true) }, cardMotion, maxHeight = cardMaxHeight(), onRetryQuote = q.onRetryQuote, onUseMax = q.onUseMax, onRetryPrice = q.onRetryPrice) } }
+            ) { quickPay?.let { q -> ChatMoneyCard(q.state, q.onPay, { q.onChoosing(true) }, cardMotion, sideInset = if (stage != null) 0.dp else CircasoSpacing.s3, maxHeight = cardMaxHeight(), onRetryQuote = q.onRetryQuote, onUseMax = q.onUseMax, onRetryPrice = q.onRetryPrice) } }
             // An approved request's Pay (D5/GW9): the same card, the amount and payee locked by the approval.
             AnimatedVisibility(
                 payout != null,
@@ -252,8 +256,8 @@ internal fun ChatComposer(
                 enter = if (still) fadeIn(tween(CircasoMotion.BaseMs)) else fadeIn(tween(CircasoMotion.BaseMs)) + expandVertically(tween(CircasoMotion.BaseMs)),
                 exit = if (still) fadeOut(tween(CircasoMotion.QuickMs)) else fadeOut(tween(CircasoMotion.QuickMs)) + shrinkVertically(tween(CircasoMotion.QuickMs)),
             ) { RecordingStrip(stripSince) }
-            // On the stage a plain reply waits and sends like any message, so only money typed offline is told so.
-            if (!state.online && (stage == null || paying)) {
+            // On the stage the screen says it itself, on glass over the photo, and only for money (a reply waits and sends).
+            if (!state.online && stage == null) {
                 BasicText(
                     // Money is online only (offline-first.md): the sheet, which is only for money, says so.
                     if (embedded) "You're offline. Money needs a connection." else "You're offline. Messages send when you reconnect.",

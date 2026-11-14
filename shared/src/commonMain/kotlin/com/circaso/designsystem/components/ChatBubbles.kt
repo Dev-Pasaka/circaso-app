@@ -53,6 +53,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.selected
@@ -261,6 +262,8 @@ fun ComposerBar(
     onStage: Boolean = false,
     /** The field took or lost the keyboard. */
     onFocusChange: ((Boolean) -> Unit)? = null,
+    /** What a screen reader calls the field ("Reply to Wanjiru Kamau"); the placeholder is then not read as well. */
+    fieldLabel: String? = null,
 ) {
     val c = CircasoTheme.colors
     val t = CircasoTheme.typography
@@ -280,7 +283,8 @@ fun ComposerBar(
             above?.invoke(this)
             val side = if (embedded) 0.dp else CircasoSpacing.s4
             Row(
-                Modifier.fillMaxWidth().padding(start = side, end = side, top = CircasoSpacing.s2, bottom = CircasoSpacing.s1),
+                // On the stage the screen spaces the row itself (it sits where the stage field sat).
+                Modifier.fillMaxWidth().padding(start = side, end = side, top = if (onStage) 0.dp else CircasoSpacing.s2, bottom = if (onStage) 0.dp else CircasoSpacing.s1),
                 horizontalArrangement = Arrangement.spacedBy(CircasoSpacing.s2),
                 verticalAlignment = Alignment.Bottom,
             ) {
@@ -448,11 +452,13 @@ fun ComposerBar(
                                     field = kept
                                     handUp(kept.text)
                                 },
-                                enabled = enabled, maxLines = 5,
+                                // Over a moment the field stops at three lines (as the stage field did), so it never climbs the photo.
+                                enabled = enabled, maxLines = if (onStage) 3 else 5,
                                 textStyle = t.body.copy(color = c.ink), cursorBrush = SolidColor(c.ink),
                                 visualTransformation = transformation,
                                 onTextLayout = { textLayout = it },
                                 modifier = Modifier.fillMaxWidth().then(if (focusRequester != null) Modifier.focusRequester(focusRequester) else Modifier)
+                                    .then(if (fieldLabel != null) Modifier.semantics { contentDescription = fieldLabel } else Modifier)
                                     .onFocusChanged { focused = it.isFocused; if (!it.isFocused) chipSelected = false; onFocusChange?.invoke(it.isFocused) }
                                     // A text field can't hold a tappable child, so the chip's taps are read here, before the
                                     // field's own: on the ✕ the tap is the field's no longer (it would put the cursor back
@@ -539,7 +545,7 @@ fun ComposerBar(
                                     )
                                 }
                             }
-                            if (value.isEmpty()) BasicText(if (chip != null) "Add a note" else placeholder, style = t.body.copy(color = if (onStage) c.ink.copy(alpha = 0.8f) else c.inkSecondary), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            if (value.isEmpty()) BasicText(if (chip != null) "Add a note" else placeholder, if (fieldLabel != null) Modifier.clearAndSetSemantics { } else Modifier, style = t.body.copy(color = if (onStage) c.ink.copy(alpha = 0.8f) else c.inkSecondary), maxLines = 1, overflow = TextOverflow.Ellipsis)
                         }
                     }
                 }
@@ -547,7 +553,7 @@ fun ComposerBar(
                 }
                 Row(buttonLift, horizontalArrangement = Arrangement.spacedBy(CircasoSpacing.s2)) {
                     trailing?.invoke(this)
-                    if (showSend) CircasoIconButton(CircasoIcon.Send, sendLabel, onSend, if (onStage) Modifier.size(ComposerFieldMin) else Modifier, emphasised = canSend || sendBusy, busy = sendBusy)
+                    if (showSend) CircasoIconButton(CircasoIcon.Send, sendLabel, onSend, if (onStage) Modifier.size(ComposerFieldMin) else Modifier, emphasised = canSend || sendBusy, busy = sendBusy, onGlass = onStage)
                 }
             }
         }
