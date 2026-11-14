@@ -250,8 +250,9 @@ class MomentViewerViewModel(
         }
         if (!m.mine && !m.viewed) viewModelScope.launch { repository.markViewed(m.momentId) }
         if (m.mine) { lastCounts = m.momentId to m.reactionCount; checkReactions() }
-        // Fetch and decrypt the next one while this plays, so tapping on rarely stops at Loading.
-        upNext()?.takeIf { it.media != null && _state.value.online }?.let { next -> viewModelScope.launch { repository.media(next) } }
+        // Fetch and decrypt the next one while this plays, so tapping on rarely stops at Loading. Only a small one
+        // ([preloads]): a large video loads when it is shown.
+        upNext()?.takeIf { preloads(it) && _state.value.online }?.let { next -> viewModelScope.launch { repository.media(next) } }
     }
 
     private fun upNext(): Moment? {
@@ -506,3 +507,19 @@ private val MoneyStart = Regex("""#(\d|$)""")
 internal fun moneyStarted(text: String): Boolean = MoneyStart.containsMatchIn(text)
 
 private fun String.firstName() = trim().substringBefore(' ').ifBlank { "Someone" }
+
+/**
+ * The most a moment's file may be for the viewer to fetch it ahead of time, while the one before it plays
+ * (2026-11-15). Photos, voice and clips of a few seconds are well under it, so tapping on still rarely stops at
+ * Loading. A larger video (a moment's is up to 64 MiB since 2026-11-14) is fetched when it is shown: fetched ahead it
+ * would spend up to 64 MiB of someone's data on a moment they may never reach, and on a phone short of memory two
+ * large files being opened at once is what got the app closed (an iPhone, 2026-11-15).
+ */
+const val MomentPreloadMaxBytes = 8L * 1024 * 1024
+
+/** Whether [moment] is fetched ahead: it has a file, and the file is at most [MomentPreloadMaxBytes]. A size of 0 is one an older phone didn't say: its limit was 32 MiB, so it waits too unless it is a photo or a voice. */
+internal fun preloads(moment: Moment): Boolean {
+    val media = moment.media ?: return false
+    if (media.sizeBytes <= 0) return moment.kind != MomentKind.Video
+    return media.sizeBytes <= MomentPreloadMaxBytes
+}

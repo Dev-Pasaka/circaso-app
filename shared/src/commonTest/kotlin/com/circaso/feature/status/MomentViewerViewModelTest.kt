@@ -64,6 +64,43 @@ class MomentViewerViewModelTest {
         connection = connection, replyInChat = { _, _, _ -> AppResult.Success("c") },
     )
 
+    // ---- fetching the next moment ahead (2026-11-15): small ones only
+
+    @Test fun onlyASmallNextMomentIsFetchedAheadAndALargeVideoLoadsWhenItIsShown() = runTest(dispatcher) {
+        val mib = 1024L * 1024
+        fun file(id: String, kind: MomentKind, size: Long) = moment(id).copy(
+            kind = kind, text = null, viewed = false,
+            media = com.circaso.feature.status.domain.MomentMedia("f-$id", "k", "d", if (kind == MomentKind.Video) "video/mp4" else "image/jpeg", size),
+        )
+        repo.list.value = listOf(
+            file("photo", MomentKind.Image, 900_000), file("clip", MomentKind.Video, 5 * mib),
+            file("film", MomentKind.Video, 56 * mib), file("old", MomentKind.Video, 0), file("last", MomentKind.Image, 0),
+        )
+        val vm = viewer()
+        // The photo is on screen; the short clip after it is fetched while it shows.
+        assertEquals(listOf("photo", "clip"), repo.mediaAsked)
+        vm.next()
+        // The clip is on screen; the 56 MiB video after it is not fetched ahead.
+        assertEquals(listOf("photo", "clip", "clip"), repo.mediaAsked)
+        vm.next()
+        // It loads when it is shown. The one after it doesn't say its size (an older phone's video): it waits too.
+        assertEquals(listOf("photo", "clip", "clip", "film"), repo.mediaAsked)
+        vm.next()
+        // A photo with no size said is small: fetched ahead as before.
+        assertEquals(listOf("photo", "clip", "clip", "film", "old", "last"), repo.mediaAsked)
+    }
+
+    @Test fun theFetchAheadRule() {
+        val mib = 1024L * 1024
+        fun m(kind: MomentKind, size: Long?) = moment("x").copy(kind = kind, media = size?.let { com.circaso.feature.status.domain.MomentMedia("f", "k", "d", "m", it) })
+        assertTrue(com.circaso.feature.status.presentation.preloads(m(MomentKind.Video, 8 * mib)))
+        assertFalse(com.circaso.feature.status.presentation.preloads(m(MomentKind.Video, 8 * mib + 1)))
+        assertTrue(com.circaso.feature.status.presentation.preloads(m(MomentKind.Voice, 400_000)))
+        assertFalse(com.circaso.feature.status.presentation.preloads(m(MomentKind.Video, 0)))
+        assertTrue(com.circaso.feature.status.presentation.preloads(m(MomentKind.Image, 0)))
+        assertFalse(com.circaso.feature.status.presentation.preloads(m(MomentKind.Text, null)), "nothing to fetch")
+    }
+
     // ---- money for a moment, chat native (2026-11-14): `#500` in the reply field
 
     private val opened = mutableListOf<String>()
@@ -387,7 +424,9 @@ internal class ViewerFakeMoments : MomentsRepository {
     }
     override suspend fun viewers(momentId: String): AppResult<List<MomentViewer>> = AppResult.Success(emptyList())
     override suspend fun delete(momentId: String): AppResult<Unit> = AppResult.Success(Unit)
-    override suspend fun media(moment: Moment): MomentMediaLoad = MomentMediaLoad.NeedsConnection
+    /** Whose file was asked for, in order (the one on screen, and any fetched ahead). */
+    val mediaAsked = mutableListOf<String>()
+    override suspend fun media(moment: Moment): MomentMediaLoad { mediaAsked += moment.momentId; return MomentMediaLoad.NeedsConnection }
     override suspend fun setPrivacy(privacy: MomentPrivacy) = Unit
     override suspend fun setMuted(userId: String, muted: Boolean) = Unit
     override suspend fun onFrame(type: String, momentId: String?, posterId: String?, requesterId: String?) = Unit
