@@ -11,6 +11,7 @@ fun screenName(route: NavKey?, homeTab: Int): String? = when (route) {
     HomeRoute -> when (homeTab) { 0 -> "Chats"; 1 -> "Wallet"; 2 -> "You"; else -> null }
     is ChatRoute -> "Chats › A chat"
     is ChatInfoRoute -> "Chats › Chat info"
+    is GroupLinkRoute -> "Chats › Chat info › Invite via link"
     is ChatMediaRoute -> "Chats › Chat media"
     is LocationMapRoute -> "Chats › Live location map"
     NeedsAttentionRoute -> "Chats › Needs attention"
