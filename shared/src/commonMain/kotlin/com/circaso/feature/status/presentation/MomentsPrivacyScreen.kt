@@ -38,6 +38,7 @@ import com.circaso.designsystem.components.ListGroup
 import com.circaso.designsystem.components.ListRow
 import com.circaso.designsystem.components.RowChevron
 import com.circaso.designsystem.components.SearchPill
+import com.circaso.core.datastore.AppPreferences
 import com.circaso.designsystem.components.Section
 import com.circaso.designsystem.components.SwitchRow
 import com.circaso.designsystem.theme.CircasoShapes
@@ -66,8 +67,11 @@ data class MomentsPrivacyUiState(
     val draft: Set<String> = emptySet(),
     val query: String = "",
     val mutedOpen: Boolean = false,
-    /** Other people's moments are fetched as they arrive (on unless turned off); a setting of this phone. */
-    val autoDownload: Boolean = true,
+    /**
+     * Other people's moments are fetched as they arrive (on unless turned off); a setting of this phone. Null until
+     * it has been read, so the switch never opens on and slides off.
+     */
+    val autoDownload: Boolean? = null,
 ) {
     val shown: List<Contact> get() = if (query.isBlank()) contacts else contacts.filter { it.person.displayName.contains(query.trim(), true) || it.person.profileName.contains(query.trim(), true) }
 }
@@ -75,7 +79,7 @@ data class MomentsPrivacyUiState(
 class MomentsPrivacyViewModel(
     private val repository: MomentsRepository,
     observeContacts: ObserveContactsUseCase,
-    private val prefs: com.circaso.core.datastore.AppPreferences? = null,
+    private val prefs: AppPreferences,
 ) : ViewModel() {
     private val _state = MutableStateFlow(MomentsPrivacyUiState())
     val state: StateFlow<MomentsPrivacyUiState> = _state.asStateFlow()
@@ -89,17 +93,18 @@ class MomentsPrivacyViewModel(
     }
 
     init {
-        prefs?.let { p ->
-            viewModelScope.launch {
-                p.flag(com.circaso.core.datastore.AppPreferences.MomentAutoDownloadOff).collect { off -> _state.update { it.copy(autoDownload = !off) } }
-            }
+        viewModelScope.launch {
+            prefs.flag(AppPreferences.MomentAutoDownloadOff).collect { off -> _state.update { it.copy(autoDownload = !off) } }
         }
     }
 
     /** Shown at once; the phone's setting follows. */
     fun onAutoDownload(on: Boolean) {
         _state.update { it.copy(autoDownload = on) }
-        prefs?.let { p -> viewModelScope.launch { p.setFlag(com.circaso.core.datastore.AppPreferences.MomentAutoDownloadOff, !on) } }
+        viewModelScope.launch {
+            // The phone couldn't keep it: the switch goes back to what is kept.
+            runCatching { prefs.setFlag(AppPreferences.MomentAutoDownloadOff, !on) }.onFailure { _state.update { it.copy(autoDownload = !on) } }
+        }
     }
 
     fun choose(mode: MomentAudienceMode) {
@@ -166,12 +171,14 @@ private fun Settings(state: MomentsPrivacyUiState, vm: MomentsPrivacyViewModel, 
                 }
             }
             item { Note("Muted people’s moments move to the end of the row. They aren’t told.") }
-            item {
-                Section("Downloads", Modifier.padding(horizontal = CircasoSpacing.s4).padding(top = CircasoSpacing.s3)) {
-                    SwitchRow("Download automatically", state.autoDownload, vm::onAutoDownload, sub = "New moments are saved on this phone as they arrive, so they open at once")
+            state.autoDownload?.let { auto ->
+                item {
+                    Section("Downloads", Modifier.padding(horizontal = CircasoSpacing.s4).padding(top = CircasoSpacing.s3)) {
+                        SwitchRow("Download automatically", auto, vm::onAutoDownload, sub = "New moments download as they arrive, so they open at once")
+                    }
                 }
+                item { Note((if (auto) "On mobile data, long videos wait until you open them. " else "") + "Everything is removed from this phone when the moment ends.") }
             }
-            item { Note("On mobile data, larger videos download when you open them. Moments are removed from this phone after 24 hours.") }
         }
     }
 }

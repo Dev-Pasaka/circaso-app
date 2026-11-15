@@ -388,6 +388,14 @@ private class MomentPlayerView : UIView(frame = CGRectZero.readValue()) {
  */
 @Composable
 actual fun MomentVideo(path: String, playing: Boolean, muted: Boolean, modifier: Modifier, loop: Boolean, poster: ByteArray?, onUnplayable: () -> Unit, positionMs: Long?) {
+    // A new file is a new player in a new view. Without the key the interop view kept the first video's view (its
+    // factory runs once), so the next video's sound played behind a view whose player had been emptied: black, with
+    // sound (an iPhone, 2026-11-15; seen once one video moment follows another that is already on the phone).
+    androidx.compose.runtime.key(path) { MomentVideoPlayer(path, playing, muted, modifier, loop, poster, onUnplayable, positionMs) }
+}
+
+@Composable
+private fun MomentVideoPlayer(path: String, playing: Boolean, muted: Boolean, modifier: Modifier, loop: Boolean, poster: ByteArray?, onUnplayable: () -> Unit, positionMs: Long?) {
     val player = remember(path) { AVQueuePlayer() }
     val view = remember(path) { MomentPlayerView().also { it.playerLayer.player = player } }
     LaunchedEffect(view, poster) { view.setPoster(poster); view.setNeedsLayout() }

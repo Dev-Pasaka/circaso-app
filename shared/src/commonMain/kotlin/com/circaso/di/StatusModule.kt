@@ -88,7 +88,7 @@ val statusModule = module {
             // Opened for a share from another app: its photos and videos onto the review.
             shared = if (params.getOrNull<Boolean>() == true) com.circaso.feature.mediacompose.IncomingShares::take else null)
     }
-    viewModel { com.circaso.feature.status.presentation.MomentsPrivacyViewModel(get(), get(), get<com.circaso.core.datastore.AppPreferences>()) }
+    viewModel { com.circaso.feature.status.presentation.MomentsPrivacyViewModel(get(), get(), get()) }
     // V4 Forward: a moment into chats through the chat's own media path (encrypted, queued, sent by the outbox).
     single<com.circaso.feature.status.presentation.MomentForwarder> {
         val media = get<com.circaso.feature.messaging.data.repository.MediaMessages>()
