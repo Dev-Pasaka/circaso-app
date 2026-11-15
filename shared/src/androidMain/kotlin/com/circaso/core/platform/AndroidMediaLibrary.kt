@@ -169,7 +169,10 @@ class AndroidMediaLibrary(private val context: Context) : MediaLibrary {
         return recents(LibraryKind.Photo, limit, ask = false) to recents(LibraryKind.Video, limit, ask = false)
     }
 
-    override val limitedOffersAllowAll: Boolean get() = Build.VERSION.SDK_INT >= 34
+    // With only some photos chosen, asking again opens Android's selection screen, with or without the "selected"
+    // permission in the request (Redmi, Android 16, checked 2026-11-15): there is no prompt that offers Allow all,
+    // so the action says what it does, "Choose more". Allow all stays in the app's settings.
+    override val limitedOffersAllowAll: Boolean get() = false
 
     override suspend fun manageVisual(): LibraryAccess {
         val kinds = listOf(LibraryKind.Photo, LibraryKind.Video)
@@ -181,10 +184,9 @@ class AndroidMediaLibrary(private val context: Context) : MediaLibrary {
             }
         }
         if (weaker() == LibraryAccess.Granted) return LibraryAccess.Granted
-        // "Selected photos" already chosen: Android's own prompt again, asked for photos and videos only. Naming the
-        // "selected" permission too made Android skip the prompt and reopen its selection screen, which has no
-        // Allow all (Redmi, Android 16, 2026-11-14); without it the prompt offers Allow all (2026-11-15). Answered
-        // at once with no prompt shown: the app's settings (Permissions → Photos and videos → Allow all).
+        // "Selected photos" already chosen: ask again, which opens Android's selection screen to choose more
+        // (2026-11-15; it used to send the person to Settings). Answered at once with nothing shown: the app's
+        // settings (Permissions → Photos and videos).
         if (Build.VERSION.SDK_INT >= 34 && granted(Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED) && kinds.any(::asked)) {
             val started = System.currentTimeMillis()
             PermissionBridge.requestAll(arrayOf(Manifest.permission.READ_MEDIA_IMAGES, Manifest.permission.READ_MEDIA_VIDEO))
