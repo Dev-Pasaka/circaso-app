@@ -72,13 +72,18 @@ fun voiceLevels(samples: List<Float>, count: Int = VoiceLevelCount): List<Float>
 }
 
 /**
- * My moment that hasn't reached the server yet (M6): posting, waiting for a connection, or failed. [progress] is how
- * much of its media has gone up (0..1, bytes sent over bytes in all) while it uploads; null before the upload starts
- * and for a text moment, which has nothing to upload.
+ * My moment that hasn't reached the server yet (M6): being got ready, posting, waiting for a connection, or failed.
+ * [progress] is how far it has got (0..1) in this run: getting it ready first (a video made smaller, with the
+ * encoder's own progress where the phone says), then the bytes sent over the bytes in all; null before anything has
+ * started and for a text moment, which has nothing to upload.
  */
 data class PendingMoment(val localId: String, val kind: MomentKind, val state: PendingState, val error: String?, val createdAt: Long, val progress: Float? = null)
 
-enum class PendingState { Posting, Waiting, Failed }
+/**
+ * [Preparing] (2026-11-14, post like WhatsApp): Post has closed the composer and the moment's file is being got ready
+ * in the background (a video over the limit made smaller); it becomes [Posting] when it is handed to the outbox.
+ */
+enum class PendingState { Preparing, Posting, Waiting, Failed }
 
 /**
  * Someone's live moment this phone can't open yet. On a new phone the copies the poster sent were sealed for the old
@@ -132,6 +137,12 @@ sealed interface MomentDraft {
         /** A voice moment's background (a `MomentPalette` id) and its recorded waveform. */
         val background: String? = null,
         val levels: List<Float>? = null,
+        /**
+         * The file on this phone when [bytes] is empty (a video: never held whole in memory). It is this app's own
+         * copy (the library's, the camera's, the trimmer's) and posting takes it: it is moved into the app's private
+         * files, so nothing can clear it before the moment has gone.
+         */
+        val path: String? = null,
     ) : MomentDraft
 }
 
@@ -157,8 +168,14 @@ interface MomentsRepository {
     /** ST4: fetch, decrypt and store. Offline it fails and the phone's copy stays. */
     suspend fun refresh(): AppResult<Unit>
 
-    /** Posts through the outbox: optimistic, waits offline, retried with the same key (not money). */
+    /**
+     * Records the moment as pending and returns at once (optimistic, not money): a video is got ready in the
+     * background and then posted through the outbox, which waits offline and retries with the same key. Fails only
+     * when the draft's file isn't on the phone any more; then nothing was recorded.
+     */
     suspend fun post(draft: MomentDraft): AppResult<Unit>
+    /** Picks up moments still being got ready (the app was closed part-way): at launch, once signed in. */
+    suspend fun resume() {}
     suspend fun retry(localId: String)
     suspend fun discard(localId: String)
 
@@ -169,6 +186,8 @@ interface MomentsRepository {
     suspend fun viewers(momentId: String): AppResult<List<MomentViewer>>
     suspend fun delete(momentId: String): AppResult<Unit>
     suspend fun media(moment: Moment): MomentMediaLoad
+    /** How much room the moment's file takes on this phone; null when it isn't here yet (or the moment has none). */
+    suspend fun mediaSizeOnPhone(moment: Moment): Long? = null
 
     suspend fun setPrivacy(privacy: MomentPrivacy)
     suspend fun setMuted(userId: String, muted: Boolean)
@@ -201,4 +220,37 @@ interface SeenReactions {
             byMoment.keys.retainAll(live + momentId)
         }
     }
+}
+
+/**
+ * The most a moment's file may be for the viewer to fetch it ahead of time, while the one before it plays
+ * (2026-11-15). Photos, voice and clips of a few seconds are well under it, so tapping on still rarely stops at
+ * Loading. A larger video (a moment's is up to 64 MiB since 2026-11-14) is fetched when it is shown: fetched ahead it
+ * would spend up to 64 MiB of someone's data on a moment they may never reach, and on a phone short of memory two
+ * large files being opened at once is what got the app closed (an iPhone, 2026-11-15).
+ */
+const val MomentPreloadMaxBytes = 8L * 1024 * 1024
+
+/** Whether [moment] is fetched ahead: it has a file, and the file is at most [MomentPreloadMaxBytes]. A size of 0 is one an older phone didn't say: its limit was 32 MiB, so it waits too unless it is a photo or a voice. */
+fun preloads(moment: Moment): Boolean {
+    val media = moment.media ?: return false
+    if (media.sizeBytes <= 0) return moment.kind != MomentKind.Video
+    return media.sizeBytes <= MomentPreloadMaxBytes
+}
+
+/**
+ * The most space other people's moments fetched ahead may take on this phone ([MomentAutoDownload]); past it a moment
+ * is fetched when it is opened. They go after 24 hours, so this is only ever a day's worth.
+ */
+const val MomentAutoDownloadMaxBytes = 500L * 1024 * 1024
+
+/**
+ * Whether a moment is fetched as soon as this phone learns of it (Pasaka, 2026-11-15: "people don't have to stream
+ * moments, they are always on the device"). On Wi-Fi (or a cable) every one is; on mobile data, or when the phone
+ * can't say what carries the network, only what the viewer would fetch ahead anyway ([preloads]): photos, voice and
+ * small videos, so a 64 MiB video never spends someone's bundle unasked.
+ */
+fun autoDownloads(moment: Moment, transport: String?): Boolean {
+    if (moment.media == null) return false
+    return if (transport == "wifi" || transport == "ethernet") true else preloads(moment)
 }

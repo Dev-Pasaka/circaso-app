@@ -5,9 +5,12 @@ package com.circaso.feature.messaging.presentation.map
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
+import androidx.compose.runtime.State
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.viewinterop.UIKitView
 import platform.UIKit.UIView
@@ -23,6 +26,15 @@ interface NativeMap {
     fun moveTo(latitude: Double, longitude: Double, zoom: Double)
     fun fit(latitudes: List<Double>, longitudes: List<Double>, animated: Boolean)
     fun setStyle(json: String)
+
+    /**
+     * The dashed straight line through the points, in the colour given as red, green, blue and alpha (each 0 to 1);
+     * fewer than two points removes it.
+     */
+    fun setLine(latitudes: List<Double>, longitudes: List<Double>, red: Double, green: Double, blue: Double, alpha: Double)
+
+    /** What the screen lays over the map's top and bottom edges, in points: framing and centring keep clear of them. */
+    fun setInsets(top: Double, bottom: Double)
 }
 
 /** Google Maps for iOS lives on the Swift side (`MapImpl.swift`), installed at launch like the other bridges. */
@@ -42,7 +54,7 @@ object MapBridge {
  * every pan and zoom, and their photos load like anywhere else in the app.
  */
 @Composable
-internal actual fun PlatformMap(camera: MapCamera, styleJson: String, startLatitude: Double, startLongitude: Double, modifier: Modifier): Boolean {
+internal actual fun PlatformMap(camera: MapCamera, styleJson: String, startLatitude: Double, startLongitude: Double, line: State<MapLine?>, lineColor: Color, modifier: Modifier): Boolean {
     val provider = MapBridge.provider ?: return false
     val density = LocalDensity.current.density
     val map = remember(provider) { provider.makeMap(styleJson, startLatitude, startLongitude) { camera.moves++ } }
@@ -54,5 +66,18 @@ internal actual fun PlatformMap(camera: MapCamera, styleJson: String, startLatit
         camera.fitter = { points, animate -> map.fit(points.map { it.first }, points.map { it.second }, animate) }
     }
     LaunchedEffect(styleJson) { map.setStyle(styleJson) }
+    // One collector for the line's whole life: a glide is a run of values, not a run of recompositions.
+    LaunchedEffect(map, lineColor) {
+        snapshotFlow { line.value }.collect { l ->
+            if (l == null) map.setLine(emptyList(), emptyList(), 0.0, 0.0, 0.0, 0.0)
+            else map.setLine(
+                listOf(l.fromLatitude, l.toLatitude), listOf(l.fromLongitude, l.toLongitude),
+                lineColor.red.toDouble(), lineColor.green.toDouble(), lineColor.blue.toDouble(), lineColor.alpha.toDouble(),
+            )
+        }
+    }
+    val top = camera.topInset.value.toDouble()
+    val bottom = camera.bottomInset.value.toDouble()
+    LaunchedEffect(top, bottom) { map.setInsets(top, bottom) }
     return true
 }

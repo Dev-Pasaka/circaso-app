@@ -32,6 +32,15 @@ class MomentsStarterTest {
         assertEquals(1, repo.refreshes)
     }
 
+    @Test fun signedInWithOrWithoutAConnectionPicksUpMomentsLeftBeingGotReady() = runTest(UnconfinedTestDispatcher()) {
+        val signedIn = MutableStateFlow(false)
+        MomentsStarter(ready, socket, { repo }, backgroundScope, signedIn = signedIn).start()
+        assertEquals(0, repo.resumes, "nobody signed in: nothing of theirs to carry on")
+        signedIn.value = true // the app started again, offline
+        assertEquals(1, repo.resumes)
+        assertEquals(0, repo.refreshes, "offline: nothing is fetched, but a video part-way made smaller carries on")
+    }
+
     @Test fun eachSocketConnectionAndReconnectFetchesAgain() = runTest(UnconfinedTestDispatcher()) {
         ready.value = true
         MomentsStarter(ready, socket, { repo }, backgroundScope).start()

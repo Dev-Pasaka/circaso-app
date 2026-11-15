@@ -56,6 +56,14 @@ data class ChatInfoUiState(
     val pending: InfoAction? = null,
     val renaming: Boolean = false,
     val nameDraft: String = "",
+    /** The description being typed in the Edit group sheet (2026-11-14); blank removes it. */
+    val descriptionDraft: String = "",
+    /** The Edit group change is on its way: the sheet stays, its button busy, until the server answers. */
+    val saving: Boolean = false,
+    /** Why the last save didn't go through, said in the sheet beside the draft it kept. */
+    val editError: String? = null,
+    /** The group's join link is on (2026-11-14): its page shows the name, description and photo to anyone with it. */
+    val linkOn: Boolean = false,
     val adding: Boolean = false,
     val contacts: List<Contact> = emptyList(),
     val toAdd: Set<String> = emptySet(),
@@ -93,6 +101,11 @@ data class ChatInfoUiState(
 ) {
     /** An admin, or whoever sent it, may take an invite back. */
     fun mayCancel(invite: com.circaso.feature.messaging.domain.PendingInvite) = amAdmin || invite.invitedBy.userId == myUserId
+    /** The Edit group sheet has something to save: a name, and a name or description that differs from the group's. */
+    val editChanged get() = nameDraft.trim().isNotEmpty() &&
+        (nameDraft.trim() != chat?.title || descriptionDraft.trim() != chat.description.orEmpty() || nameUnknown)
+    /** Over the limit: said under the field, and Save rests. */
+    val descriptionTooLong get() = descriptionDraft.trim().length > com.circaso.feature.messaging.data.repository.MaxGroupDescriptionChars
     /** A group whose name this phone can't read: the name sheet starts empty and says why. */
     val nameUnknown get() = isGroup && chat?.nameKnown == false
     /** Admins change the group's photo (M8); it needs a connection, like every change to the group. */
@@ -152,6 +165,10 @@ class ChatInfoViewModel(
     val editName: com.circaso.feature.names.presentation.EditNameController? = null,
     /** Which security codes this phone has checked (2026-11-13); null in previews and tests. */
     private val verifiedCodes: com.circaso.feature.messaging.domain.VerifiedCodes? = null,
+    /** The name and description together (2026-11-14); null in older tests, which rename only. */
+    private val editGroup: com.circaso.feature.messaging.domain.EditGroupUseCase? = null,
+    /** Group join links (2026-11-14): whether this group's link is on, from this phone's copy; null in previews. */
+    private val links: com.circaso.feature.messaging.domain.GroupLinksRepository? = null,
 ) : ViewModel() {
     private val _state = MutableStateFlow(
         ChatInfoUiState(myUserId = myUserId, photosAvailable = setGroupPhoto != null && sources != null && encoder !== com.circaso.core.platform.NoGroupPhotoEncoder),
@@ -243,6 +260,8 @@ class ChatInfoViewModel(
             }
         }
         viewModelScope.launch { connection.status.collect { s -> _state.update { it.copy(online = s == ConnectionStatus.Online) } } }
+        // A link that is on makes the name, description and photo public: Group info says so, from this phone's copy.
+        links?.let { repo -> viewModelScope.launch { repo.link(chatId).collect { link -> _state.update { it.copy(linkOn = link != null) } } } }
         invites?.let { repo ->
             viewModelScope.launch {
                 // Only a group has invites; loaded once it is known to be one, then again whenever the server says so.
@@ -355,11 +374,20 @@ class ChatInfoViewModel(
     }
 
     fun onRename(start: Boolean) {
+        // A save on its way finishes first: the sheet closes by itself when the server answers.
+        if (!start && _state.value.saving) return
         if (!start) awaitingName = null
         // A name this phone can't read is not prefilled: "Group" is only the placeholder, not the group's name.
-        _state.update { it.copy(renaming = start, namingForPhoto = false, removingPhoto = false, nameDraft = if (start && !it.nameUnknown) it.chat?.title.orEmpty() else "") }
+        _state.update {
+            it.copy(
+                renaming = start, namingForPhoto = false, removingPhoto = false, editError = null,
+                nameDraft = if (start && !it.nameUnknown) it.chat?.title.orEmpty() else "",
+                descriptionDraft = if (start) it.chat?.description.orEmpty() else "",
+            )
+        }
     }
-    fun onNameDraft(text: String) = _state.update { it.copy(nameDraft = text) }
+    fun onNameDraft(text: String) = _state.update { it.copy(nameDraft = text, editError = null) }
+    fun onDescriptionDraft(text: String) = _state.update { it.copy(descriptionDraft = text, editError = null) }
     fun onRenameConfirm() {
         val name = _state.value.nameDraft.trim()
         if (name.isEmpty() || !_state.value.canChange) return
@@ -370,10 +398,18 @@ class ChatInfoViewModel(
             viewModelScope.launch { sendPhoto(set, change, name) }
             return
         }
-        _state.update { it.copy(renaming = false, namingForPhoto = false, busy = true) }
+        if (_state.value.descriptionTooLong) return
+        // A phone that can't read the group's name can't read its description either: the one it has is kept, not
+        // replaced by the empty field it couldn't fill.
+        val description = if (_state.value.nameUnknown) _state.value.chat?.description.orEmpty() else _state.value.descriptionDraft
+        // The sheet stays open, busy, until the server answers: a failure keeps what was typed and says why there.
+        _state.update { it.copy(saving = true, busy = true, editError = null) }
         viewModelScope.launch {
-            val r = rename(chatId, name)
-            _state.update { it.copy(busy = false, message = (r as? AppResult.Failure)?.let { f -> ErrorMessages.forError(f.error) }) }
+            val r = editGroup?.invoke(chatId, name, description) ?: rename(chatId, name)
+            _state.update {
+                if (r is AppResult.Failure) it.copy(saving = false, busy = false, editError = withRef(r.error))
+                else it.copy(saving = false, busy = false, renaming = false, namingForPhoto = false)
+            }
         }
     }
 

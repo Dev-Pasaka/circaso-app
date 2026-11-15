@@ -193,6 +193,10 @@ data class NetworkActivityRoute(val blockchain: String, val walletId: String? = 
 @Serializable
 data class NetworkAssetsRoute(val blockchain: String, val walletId: String? = null) : Route
 
+/** Invite via link (2026-11-14): a group's join link, for its admins, opened from Group info. */
+@Serializable
+data class GroupLinkRoute(val chatId: String) : Route
+
 /** A share link opened on this phone (`/s/{code}`, decision 2026-11-06): what its page shows, drawn natively. */
 @Serializable
 data class SharedLinkRoute(val code: String) : Route
@@ -259,6 +263,7 @@ val routeSerializers = SerializersModule {
         subclass(GroupWalletSetupRoute::class)
         subclass(TargetRoute::class)
         subclass(GroupWalletRoute::class)
+        subclass(GroupLinkRoute::class)
         subclass(SharedLinkRoute::class)
         subclass(SharedLinksRoute::class)
         subclass(PreviewRoute::class)

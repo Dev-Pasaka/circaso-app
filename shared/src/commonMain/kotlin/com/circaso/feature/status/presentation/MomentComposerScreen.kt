@@ -123,11 +123,11 @@ private fun ComposerContent(state: MomentComposerUiState, vm: MomentComposerView
         copy = MomentCopy,
         send = MediaSendButton(
             description = if (state.items.size > 1) "Share ${state.items.size} moments" else "Share moment",
-            enabled = state.canShare, busy = state.sharing || state.preparing, onClick = vm::share,
+            enabled = state.canShare, busy = state.sharing, onClick = vm::share,
         ),
+        // Post closes at once (2026-11-14): nothing here waits for a video to be made smaller; my ring shows it.
         footnote = when {
             state.nobody -> null
-            state.preparing -> "Making the video smaller to share…"
             state.items.size > 1 -> "${state.items.size} moments, in this order. End-to-end encrypted."
             else -> "End-to-end encrypted. Gone after 24 hours."
         },

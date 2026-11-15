@@ -55,6 +55,16 @@ interface SignalCrypto {
     fun aesGcmSeal(key: ByteArray, plaintext: ByteArray, associatedData: ByteArray = ByteArray(0)): ByteArray
     fun aesGcmOpen(key: ByteArray, sealed: ByteArray, associatedData: ByteArray = ByteArray(0)): ByteArray
     fun sha256(bytes: ByteArray): ByteArray
+
+    /**
+     * [aesGcmSeal]'s box (or [aesGcmOpen]'s, with [seal] false) worked through a piece at a time under [nonce] (12
+     * bytes), with no associated data, so a large file never sits in memory ([SingleBoxFile]). Null where the
+     * platform has only the one-shot, or [key] isn't 32 bytes.
+     */
+    fun gcmStream(key: ByteArray, nonce: ByteArray, seal: Boolean): GcmStream? = null
+
+    /** SHA-256 fed a piece at a time; null where the platform has only [sha256]. */
+    fun sha256Stream(): HashStream? = null
     fun randomBytes(count: Int): ByteArray
 }
 
@@ -129,4 +139,20 @@ sealed class SignalException(message: String) : Exception(message) {
     class MissingKey(val which: String) : SignalException("missing $which")
     /** Malformed bytes: not ours to guess at. */
     class Invalid : SignalException("invalid message")
+}
+
+/** One AES-256-GCM box in progress ([SignalCrypto.gcmStream]). */
+interface GcmStream {
+    /** Encrypts (or decrypts) [piece] where it is. */
+    fun update(piece: ByteArray)
+    /** Sealing, after the last piece: the 16-byte tag that ends the box. */
+    fun tag(): ByteArray
+    /** Opening, after the last piece: whether [tag] is the box's own. Nothing decrypted may be used before this says yes. */
+    fun verify(tag: ByteArray): Boolean
+}
+
+/** A hash in progress ([SignalCrypto.sha256Stream]). */
+interface HashStream {
+    fun update(bytes: ByteArray)
+    fun finish(): ByteArray
 }

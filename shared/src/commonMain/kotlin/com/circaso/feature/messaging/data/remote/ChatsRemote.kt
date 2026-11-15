@@ -74,6 +74,25 @@ class KtorInvitesRemote(private val api: CircasoApi) : InvitesRemote {
     }
 }
 
+/** Group join links (M28–M32, 2026-11-14): an admin's link, and joining with one. */
+interface GroupLinksRemote {
+    suspend fun link(chatId: String): AppResult<GroupLinkResponse>
+    suspend fun publish(chatId: String, request: PublishGroupLinkRequest): AppResult<GroupLinkDto>
+    suspend fun turnOff(chatId: String): AppResult<GroupLinkOffResponse>
+    suspend fun preview(token: String): AppResult<GroupLinkPreviewResponse>
+    suspend fun join(token: String): AppResult<ChatDto>
+}
+
+class KtorGroupLinksRemote(private val api: CircasoApi) : GroupLinksRemote {
+    override suspend fun link(chatId: String) = api.call<GroupLinkResponse> { method = HttpMethod.Get; url("/v1/chats/$chatId/link") }
+    override suspend fun publish(chatId: String, request: PublishGroupLinkRequest) = api.call<GroupLinkDto> {
+        method = HttpMethod.Put; url("/v1/chats/$chatId/link"); contentType(ContentType.Application.Json); setBody(request)
+    }
+    override suspend fun turnOff(chatId: String) = api.call<GroupLinkOffResponse> { method = HttpMethod.Delete; url("/v1/chats/$chatId/link") }
+    override suspend fun preview(token: String) = api.call<GroupLinkPreviewResponse> { method = HttpMethod.Get; url("/v1/chats/links/$token") }
+    override suspend fun join(token: String) = api.call<ChatDto> { method = HttpMethod.Post; url("/v1/chats/links/$token/join") }
+}
+
 class KtorMessagesRemote(private val api: CircasoApi) : MessagesRemote {
     override suspend fun send(chatId: String, request: SendChatMessageRequest, idempotencyKey: String) = api.call<SentMessageResponse> {
         method = HttpMethod.Post; url("/v1/chats/$chatId/messages"); idempotencyKey(idempotencyKey); contentType(ContentType.Application.Json); setBody(request)

@@ -135,12 +135,20 @@ class ChatsRepositoryImpl(
         }
     }
 
-    override suspend fun rename(chatId: String, name: String): AppResult<Chat> {
-        val key = groupKeys.latestMetaKey(chatId) ?: return withoutKey(chatId, name, photo = null)
-        // A new name keeps the group's photo: both live in the one sealed value.
-        val sealed = groupKeys.sealMetaWithin(key, name, currentPhoto(chatId)) ?: return AppResult.Failure(groupInvalid())
+    override suspend fun rename(chatId: String, name: String): AppResult<Chat> = edit(chatId, name, currentDescription(chatId))
+
+    override suspend fun editGroup(chatId: String, name: String, description: String): AppResult<Chat> =
+        edit(chatId, name, description.trim().take(MaxGroupDescriptionChars).ifEmpty { null })
+
+    /** A new name or description keeps the group's photo: all three live in the one sealed value. */
+    private suspend fun edit(chatId: String, name: String, description: String?): AppResult<Chat> {
+        val key = groupKeys.latestMetaKey(chatId) ?: return withoutKey(chatId, name, photo = null, description = description ?: "")
+        val sealed = groupKeys.sealMetaWithin(key, name, currentPhoto(chatId), description) ?: return AppResult.Failure(groupInvalid())
         return patchSealed(chatId, key) { version -> UpdateGroupRequest(sealedMeta = sealed, version = version) }
     }
+
+    /** The description this phone last read for the group; carried into every new seal so nothing drops it. */
+    private suspend fun currentDescription(chatId: String): String? = dao.chat(chatId)?.description
 
     /**
      * M8 for the photo: [image] is encrypted and uploaded into the group's own attachments, then the name and a small
@@ -161,7 +169,7 @@ class ChatsRepositoryImpl(
         val currentName = groupKeys.openGroupMeta(chatId, current.sealedMeta, current.metaVersion)?.name ?: current.name
             ?: name?.trim()?.takeIf { it.isNotEmpty() } ?: return AppResult.Failure(groupNameNeeded())
         val photo = if (image == null) null else when (val up = upload(chatId, image)) { is AppResult.Success -> up.value; is AppResult.Failure -> return up }
-        val sealed = groupKeys.sealMetaWithin(key, currentName, photo) ?: return AppResult.Failure(groupInvalid())
+        val sealed = groupKeys.sealMetaWithin(key, currentName, photo, current.description) ?: return AppResult.Failure(groupInvalid())
         val avatar = if (photo == null) AvatarChange.Clear else AvatarChange.set(photo.id)
         return patchSealed(chatId, key) { version -> UpdateGroupRequest(sealedMeta = sealed, version = version, avatarMediaId = avatar) }
     }
@@ -193,7 +201,7 @@ class ChatsRepositoryImpl(
      * admin, who can try again in a minute). Then a fresh key seals [name] (and [photo], else none: the old one can't
      * be read here), goes up as the next meta version, and is handed to every member.
      */
-    private suspend fun withoutKey(chatId: String, name: String?, photo: GroupPhotoRef?): AppResult<Chat> {
+    private suspend fun withoutKey(chatId: String, name: String?, photo: GroupPhotoRef?, description: String? = null): AppResult<Chat> {
         val chat = dao.chat(chatId) ?: return AppResult.Failure(AppError.Unexpected(null))
         if (!mayRekey(chatId)) {
             val members = dao.members(chatId)
@@ -207,7 +215,7 @@ class ChatsRepositoryImpl(
         }
         val typed = name?.trim()?.takeIf { it.isNotEmpty() } ?: return AppResult.Failure(groupNameNeeded())
         val key = groupKeys.newMetaKey()
-        val sealed = groupKeys.sealMetaWithin(key, typed, photo) ?: return AppResult.Failure(groupInvalid())
+        val sealed = groupKeys.sealMetaWithin(key, typed, photo, description ?: chat.description) ?: return AppResult.Failure(groupInvalid())
         // The server's photo goes with the old seal: kept only when a new one is set now.
         val avatar = if (photo == null) AvatarChange.Clear else AvatarChange.set(photo.id)
         val patched = patchSealed(chatId, key) { version -> UpdateGroupRequest(sealedMeta = sealed, version = version, avatarMediaId = avatar) }
@@ -260,6 +268,7 @@ class ChatsRepositoryImpl(
                 groupKeys.rememberMetaKey(chatId, r.value.metaVersion, key)
                 val chat = store(r.value)
                 photos?.notifyChanged()
+                runCatching { metaChanged?.invoke(chatId) }
                 AppResult.Success(chat)
             }
         }
@@ -330,18 +339,20 @@ class ChatsRepositoryImpl(
      * (group invites, 2026-11-09): the one person accepted an invite, and the chat says so ("Amina joined", or "You
      * joined" on their own phone), in the thread where it happened.
      */
-    suspend fun onMemberAdded(chatId: String, userIds: List<String>, joined: Boolean = false) {
+    suspend fun onMemberAdded(chatId: String, userIds: List<String>, joined: Boolean = false, viaLink: Boolean = false) {
         val me = ownUserId()
+        // Group join links (2026-11-14): the chat says how they came in, so admins see who the link brought.
+        val how = if (viaLink) JoinedViaLinkSuffix else JoinedSuffix
         if (me in userIds || dao.chat(chatId) == null) {
             refreshChat(chatId)
-            if (joined && me in userIds) insertSystemRow(messages, chatId, me!!, "You joined", now())
+            if (joined && me in userIds) insertSystemRow(messages, chatId, me!!, "You$how", now())
             return
         }
         refreshChat(chatId)
         if (joined) {
             for (userId in userIds) {
                 val name = dao.members(chatId).firstOrNull { it.userId == userId }?.displayName ?: "Someone" // their own name: the thread shows my saved name over it (systemText)
-                insertSystemRow(messages, chatId, userId, "$name joined", now())
+                insertSystemRow(messages, chatId, userId, "$name$how", now())
             }
         }
         groupKeys.ensureDistributed(chatId, userIds)
@@ -361,8 +372,18 @@ class ChatsRepositoryImpl(
      */
     suspend fun onChatUpdated(chatId: String, version: Int, avatarMediaId: Avatar? = null) {
         val current = dao.chat(chatId)
-        if (current == null || current.version < version || (avatarMediaId != null && avatarMediaId.id != current.avatarMediaId)) refreshChat(chatId)
+        if (current == null || current.version < version || (avatarMediaId != null && avatarMediaId.id != current.avatarMediaId)) {
+            refreshChat(chatId)
+            // Someone else changed the group: an admin's phone keeps its join link's published preview in step.
+            metaChanged?.invoke(chatId)
+        }
     }
+
+    /**
+     * Told after the group's name, description or photo changed (here, or by another admin): group join links
+     * publish the link's preview again while a link is on. Set by [GroupLinksRepositoryImpl]'s wiring; best effort.
+     */
+    var metaChanged: (suspend (chatId: String) -> Unit)? = null
 
     /** A frame's `avatarMediaId` when the key is there ([id] null: the group has no photo). */
     data class Avatar(val id: String?)
@@ -382,7 +403,8 @@ class ChatsRepositoryImpl(
         if ((iRemovedThem || amOwner) && name != null) {
             val key = groupKeys.newMetaKey()
             // The photo's reference goes into the new seal too; whoever left can no longer fetch the file (AT3 is members only).
-            val sealed = groupKeys.sealMetaWithin(key, name, currentPhoto(chatId)) ?: groupKeys.sealMeta(key, name)
+            val description = currentDescription(chatId)
+            val sealed = groupKeys.sealMetaWithin(key, name, currentPhoto(chatId), description) ?: groupKeys.sealMeta(key, name, description = description)
             patchSealed(chatId, key) { version -> UpdateGroupRequest(sealedMeta = sealed, version = version) }
         }
         groupKeys.ensureDistributed(chatId, chat.members.map { it.userId }.filter { it != me })
@@ -393,12 +415,14 @@ class ChatsRepositoryImpl(
     /** Saves a chat as the server describes it and returns it as the screens see it. */
     suspend fun store(dto: ChatDto): Chat {
         val previous = dao.chat(dto.chatId)
-        val name = if (dto.kind != MessagingWire.Group) null else {
-            groupKeys.openMeta(dto.chatId, dto.sealedMeta, dto.metaVersion)
+        val meta = if (dto.kind != MessagingWire.Group) null else {
+            groupKeys.openGroupMeta(dto.chatId, dto.sealedMeta, dto.metaVersion)
                 // A group this phone made whose create answer never arrived: the key kept for that attempt opens it.
-                ?: (if (groupKeys.adoptPendingKey(dto.chatId, dto.sealedMeta, dto.metaVersion)) groupKeys.openMeta(dto.chatId, dto.sealedMeta, dto.metaVersion) else null)
-                ?: previous?.name
+                ?: (if (groupKeys.adoptPendingKey(dto.chatId, dto.sealedMeta, dto.metaVersion)) groupKeys.openGroupMeta(dto.chatId, dto.sealedMeta, dto.metaVersion) else null)
         }
+        val name = if (dto.kind != MessagingWire.Group) null else meta?.name ?: previous?.name
+        // The description rides in the same seal; one an older app sealed without keeps what this phone knew.
+        val description = if (dto.kind != MessagingWire.Group) null else keptDescription(meta, previous?.description)
         val entity = ChatEntity(
             chatId = dto.chatId,
             kind = dto.kind,
@@ -413,6 +437,7 @@ class ChatsRepositoryImpl(
             updatedAt = previous?.updatedAt ?: now(),
             viaSpaceId = dto.viaSpaceId ?: previous?.viaSpaceId,
             avatarMediaId = dto.avatarMediaId,
+            description = description,
         )
         dao.upsertChat(entity)
         val members = dto.members.map { ChatMemberEntity(dto.chatId, it.user.userId, it.role, it.user.displayName, it.user.handle, it.user.avatarUrl, it.joinedAt) }
@@ -428,6 +453,9 @@ class ChatsRepositoryImpl(
         const val KeyGraceMillis = 10L * 60 * 1000
         /** The metadata version the server gives a new group's first seal (M5). */
         const val CreatedMetaVersion = 1
+        /** What follows a name ("Amina", "You") in the chat's line when someone joins. */
+        const val JoinedSuffix = " joined"
+        const val JoinedViaLinkSuffix = " joined using the group link"
     }
 
     private fun MemberRole.wire() = when (this) { MemberRole.Owner -> MessagingWire.Owner; MemberRole.Admin -> MessagingWire.Admin; MemberRole.Member -> MessagingWire.Member }
@@ -458,6 +486,7 @@ internal fun ChatEntity.toDomain(
         nameState = when { nameKnown -> GroupNameState.Known; keyUnavailable -> GroupNameState.Unavailable; else -> GroupNameState.Waiting },
         waitingFor = if (nameKnown) null else others.singleOrNull()?.displayName?.let { com.circaso.designsystem.components.firstNameWord(it) }?.takeIf { it.isNotEmpty() },
         initialsFrom = if (nameKnown) null else others.take(2).joinToString(" ") { com.circaso.designsystem.components.firstNameWord(it.displayName) }.takeIf { it.isNotBlank() },
+        description = if (direct) null else description,
     )
 }
 

@@ -22,8 +22,16 @@ class MomentsStarter(
     private val socket: Flow<Boolean>,
     private val repository: () -> MomentsRepository,
     private val scope: CoroutineScope,
+    /**
+     * True while someone is signed in, with or without a connection (2026-11-14): moments posted before the app was
+     * closed and still being got ready (a video part-way made smaller) carry on, so none is lost to a restart.
+     */
+    private val signedIn: Flow<Boolean>? = null,
 ) {
     fun start() {
+        signedIn?.let { s -> scope.launch { s.distinctUntilChanged().filter { it }.collect { repository().resume() } } }
+        // Each reconnect too (coming back to Circaso is one): an encoder that couldn't in the background is tried again.
+        scope.launch { merge(ready.distinctUntilChanged(), socket.distinctUntilChanged()).filter { it }.collect { repository().resume() } }
         scope.launch {
             merge(ready.distinctUntilChanged(), socket.distinctUntilChanged()).filter { it }.collect { repository().refresh() }
         }

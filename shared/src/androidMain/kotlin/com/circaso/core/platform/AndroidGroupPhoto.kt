@@ -43,6 +43,24 @@ class AndroidGroupPhotoEncoder : GroupPhotoEncoder {
         }
     }
 
+    override suspend fun preview(source: ByteArray): ByteArray? = withContext(Dispatchers.Default) {
+        runCatching {
+            val decoded = BitmapFactory.decodeByteArray(source, 0, source.size) ?: return@runCatching null
+            val side = min(decoded.width, decoded.height)
+            if (side <= 0) return@runCatching null
+            val square = Bitmap.createBitmap(decoded, (decoded.width - side) / 2, (decoded.height - side) / 2, side, side)
+            if (square !== decoded) decoded.recycle()
+            val target = min(side, LinkPhotoSide)
+            val small = if (side > target) Bitmap.createScaledBitmap(square, target, target, true) else square
+            try {
+                LinkPhotoQualities.firstNotNullOfOrNull { q -> small.jpeg(q).takeIf { it.size <= LinkPhotoMaxBytes } }
+            } finally {
+                if (small !== square) small.recycle()
+                square.recycle()
+            }
+        }.getOrNull()
+    }
+
     private fun thumbnail(square: Bitmap): ByteArray? {
         for (side in GroupThumbSides) {
             val small = Bitmap.createScaledBitmap(square, side, side, true)

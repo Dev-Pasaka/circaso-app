@@ -50,6 +50,8 @@ data class ComposerItem(
      * asks first). Null when it fits or its size isn't known yet.
      */
     val overLimit: Long? = null,
+    /** A video's file size, read once when it came onto the review (shown beside its length); null when unknown. */
+    val sizeBytes: Long? = null,
 ) {
     val video: CapturedMedia? get() = (capture as? ComposerCapture.Shot)?.takeIf { it.video }?.media
     /**
@@ -202,6 +204,8 @@ data class MediaComposeState(
     /** Re-encoding a video that is too large to send as it is. */
     val preparing: Boolean = false,
     val error: String? = null,
+    /** A line for a quiet toast: something to know, nothing that went wrong (why a greyed tile can't be picked). */
+    val info: String? = null,
     /** The longest video that may go untrimmed: a moment's minute; null in a chat, where any length goes ([ChatVideoMaxMs]). */
     val maxVideoMs: Long? = MomentMediaMaxMs,
 ) {
@@ -262,6 +266,44 @@ class MediaComposer(
 ) {
     /** "100 MB": the limit as people read it. */
     val limitLabel: String get() = limitLabel(maxBytes)
+
+    /**
+     * The largest video that can be picked at all, or null when any can (2026-11-14, Pasaka: "grey them out ... early
+     * feedback, no annoying errors later"). A moment makes a video smaller after Post, so only a file past
+     * [MomentSourceMaxBytes] can't go. A chat has none: a video over its limit can still be sent once it is trimmed
+     * shorter on the review (the trimmer cuts it to fit), so there it is marked on its tile ([overLimit]) and stays
+     * pickable, and the review says to trim it. Photos are never too large: the library hands every one over as a
+     * JPEG of at most [com.circaso.core.platform.MomentPhotoMaxSide], whatever the original weighs.
+     */
+    val pickLimit: Long? get() = if (sendAsIs) null else com.circaso.core.platform.MomentSourceMaxBytes
+
+    /** [item] can't be picked: a video whose file is known to be over [pickLimit]. Unknown sizes can always be picked. */
+    fun tooLarge(item: LibraryItem): Boolean = item.kind == LibraryKind.Video && pickLimit?.let { (item.sizeBytes ?: 0) > it } == true
+
+    /** A chat's video known to be over what a chat sends: marked on its tile; picking it leads to the trimmer's note. */
+    fun overLimit(item: LibraryItem): Boolean = sendAsIs && item.kind == LibraryKind.Video && (item.sizeBytes ?: 0) > maxBytes
+
+    /** "Videos up to 1 GB can be posted.": the limit, for the toast and for a screen reader on a greyed tile. */
+    val tooLargeLimit: String get() = "Videos up to ${compactSize(pickLimit ?: maxBytes)} can be ${if (sendAsIs) "sent" else "posted"}."
+
+    /** Why, in one line with the limit: "This video is 1.4 GB. Videos up to 1 GB can be posted." */
+    fun tooLargeReason(item: LibraryItem): String = "This video is ${overSize(item.sizeBytes ?: 0, pickLimit ?: maxBytes)}. $tooLargeLimit"
+
+    /** A greyed tile was tapped: nothing is picked, and a quiet line says why (not an error: nothing went wrong). True when [item] was refused. */
+    private fun refused(item: LibraryItem): Boolean {
+        if (!tooLarge(item)) return false
+        update { it.copy(info = tooLargeReason(item)) }
+        return true
+    }
+
+    fun infoShown() = update { it.copy(info = null) }
+
+    /** A picked video's length and size, for the review ("0:57 · 139 MB"); null for anything but a video whose size is known. */
+    fun reviewNote(item: ComposerItem): String? {
+        val video = item.video ?: return null
+        val size = item.sizeBytes ?: return null
+        return video.durationMs?.takeIf { it > 0 }?.let { longClock(it) + " · " }.orEmpty() + compactSize(size)
+    }
 
     // The video limit lives in the state ([MediaComposeState.maxVideoMs]), so the screen and Send read the same one.
     private var recentsJob: Job? = null
@@ -370,18 +412,22 @@ class MediaComposer(
 
     /** One tile from the strip: used at once, or ticked when several are being picked. */
     fun useRecent(item: LibraryItem) {
+        if (refused(item)) return
         if (state.selecting) toggle(item) else use { listOfNotNull(library.load(item)) }
     }
 
     /** A long press on a strip tile: start picking several (WhatsApp-style), this one first. */
     fun startSelecting(item: LibraryItem) {
         if (item.kind == LibraryKind.Audio) { useRecent(item); return }
+        if (refused(item)) return
         update { it.copy(selecting = true, selection = if (it.selection.any { s -> s.id == item.id }) it.selection else it.selection + item) }
     }
 
     /** Tick or untick; the numbers are the order they go in. At most [maxItems]. */
     fun toggle(item: LibraryItem) {
         val s = state
+        // Unticking always works; a video too large to send can't be ticked.
+        if (s.selection.none { it.id == item.id } && refused(item)) return
         when {
             s.selection.any { it.id == item.id } -> update { it.copy(selection = it.selection.filterNot { x -> x.id == item.id }, selecting = it.gallery != null || it.selection.size > 1) }
             s.selection.size >= maxItems -> update { it.copy(error = "You can pick up to $maxItems at a time.") }
@@ -393,7 +439,7 @@ class MediaComposer(
 
     /** Next (M3): each ticked photo or video, in order, onto the review. */
     fun useSelection() {
-        val picked = state.selection
+        val picked = state.selection.filterNot { tooLarge(it) }
         if (picked.isEmpty()) return
         use { picked.mapNotNull { library.load(it) } }
     }
@@ -500,7 +546,7 @@ class MediaComposer(
             when (sharedKind(f.mime, f.name)) {
                 SharedKind.Document -> if (documents) ComposerItem(ComposerCapture.Document(PickedFile(f.name, f.mime.ifBlank { "application/octet-stream" }, f.size.coerceAtLeast(0), path = f.path))) else { leftOut++; null }
                 SharedKind.Photo -> library.loadFile(f.path, f.mime)?.let { ComposerItem(ComposerCapture.Shot(it)) } ?: run { unreadable++; null }
-                SharedKind.Video -> library.loadFile(f.path, f.mime.ifBlank { "video/mp4" })?.let { ComposerItem(ComposerCapture.Shot(it)) } ?: run { unreadable++; null }
+                SharedKind.Video -> library.loadFile(f.path, f.mime.ifBlank { "video/mp4" })?.let { ComposerItem(ComposerCapture.Shot(it), sizeBytes = it.path?.let { p -> library.size(p) }?.takeIf { n -> n > 0 }) } ?: run { unreadable++; null }
             }
         }
         val notes = listOfNotNull(
@@ -528,6 +574,8 @@ class MediaComposer(
             // A chat sends videos as they are: one over the limit is said at once, before anyone presses Send.
             val tooBig = if (sendAsIs) media.mapNotNull { m -> m.path?.takeIf { m.mime.startsWith("video") }?.let { p -> library.size(p)?.takeIf { it > maxBytes }?.let { p to it } } } else emptyList()
             val bigPaths = tooBig.map { it.first }.toSet()
+            // Each picked video's size, read once here (a stat per item, never per tile), for the review's line.
+            val videoSizes = media.mapNotNull { m -> m.path?.takeIf { m.mime.startsWith("video") }?.let { p -> library.size(p)?.takeIf { it > 0 }?.let { p to it } } }.toMap()
             update { s ->
                 when {
                     media.isEmpty() -> s.copy(loadingPick = false)
@@ -536,7 +584,7 @@ class MediaComposer(
                     audio != null -> s.copy(loadingPick = false, items = listOf(ComposerItem(ComposerCapture.Voice(audio.bytes, audio.mime, audio.durationMs ?: 0))), current = 0)
                     else -> {
                         val sizes = tooBig.toMap()
-                        val added = media.take(maxItems - s.items.size).map { m -> ComposerItem(ComposerCapture.Shot(m), overLimit = m.path?.let { sizes[it] }) }
+                        val added = media.take(maxItems - s.items.size).map { m -> ComposerItem(ComposerCapture.Shot(m), overLimit = m.path?.let { sizes[it] }, sizeBytes = m.path?.let { videoSizes[it] }) }
                         // The first one over a minute goes on the stage, so its trimmer opens straight away.
                         val long = added.indexOfFirst { s.needsTrim(it) }
                         // The first one over the limit goes on the stage, with its size said, so it can be taken out.
@@ -633,9 +681,10 @@ class MediaComposer(
         update { it.copy(trim = t.copy(working = true)) }
         scope.launch {
             val cut = library.trim(path, t.startMs, t.endMs, maxBytes)
+            val cutSize = cut?.path?.let { library.size(it) }?.takeIf { it > 0 }
             update { s ->
                 if (cut == null) s.copy(trim = s.trim?.copy(working = false), error = "This video couldn’t be trimmed on this phone. Try a shorter one.")
-                else s.copy(trim = null, items = s.items.mapIndexed { i, it -> if (i == t.index) it.copy(capture = ComposerCapture.Shot(cut), unplayable = false, overLimit = null) else it })
+                else s.copy(trim = null, items = s.items.mapIndexed { i, it -> if (i == t.index) it.copy(capture = ComposerCapture.Shot(cut), unplayable = false, overLimit = null, sizeBytes = cutSize) else it })
             }
         }
     }
@@ -792,6 +841,31 @@ fun sizeLabel(bytes: Long): String = when {
     bytes >= 1024 -> "${(bytes + 512) / 1024} KB"
     else -> "$bytes bytes"
 }
+
+/**
+ * A size at a glance, for a tile's corner and the review's pill: "1.4 GB", "146 MB", "8.4 MB", "820 KB" (a decimal
+ * only where it tells something; [sizeLabel] keeps one for a file's exact size in a message). The unit is chosen
+ * after rounding, so nothing reads "1024 MB" or "10.0 MB".
+ */
+fun compactSize(bytes: Long): String {
+    val mb = 1024L * 1024
+    val gb = 1024 * mb
+    val wholeMb = (bytes + mb / 2) / mb
+    val tenthsMb = (bytes * 10 + mb / 2) / mb
+    val kb = (bytes + 512) / 1024
+    return when {
+        wholeMb >= 1024 -> { val tenths = (bytes * 10 + gb / 2) / gb; if (tenths % 10 == 0L) "${tenths / 10} GB" else "${tenths / 10}.${tenths % 10} GB" }
+        tenthsMb >= 100 -> "$wholeMb MB"
+        kb >= 1024 -> "${tenthsMb / 10}.${tenthsMb % 10} MB"
+        else -> "${kb.coerceAtLeast(1)} KB"
+    }
+}
+
+/**
+ * A size over [limit] at a glance, never reading as if it fits: a video a little over 1 GB would round to "1 GB"
+ * beside "up to 1 GB", so it says "just over 1 GB" (as [overLimitLabel] does for a message's file).
+ */
+fun overSize(bytes: Long, limit: Long): String = compactSize(bytes).let { if (it == compactSize(limit)) "just over $it" else it }
 
 /** "100 MB": an attachment limit as people read it. */
 fun limitLabel(maxBytes: Long): String = "${(maxBytes + 512 * 1024) / (1024 * 1024)} MB"

@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.text.BasicText
 import androidx.compose.foundation.text.BasicTextField
@@ -85,6 +86,8 @@ fun CircasoTextField(
                 onValueChange = { next -> field = next; if (next.text != value) onChange(next.text) },
                 enabled = enabled,
                 singleLine = singleLine,
+                // Longer text (a group's description) grows with what is typed up to six lines, then scrolls inside.
+                maxLines = if (singleLine) 1 else MultiLineMax,
                 textStyle = t.body.copy(color = if (enabled) c.ink else c.inkTertiary),
                 cursorBrush = SolidColor(c.ink),
                 // A secret keeps a number pad when one was asked for (PINs); every other secret gets the password keyboard.
@@ -100,12 +103,13 @@ fun CircasoTextField(
                     Row(
                         Modifier
                             .fillMaxWidth()
-                            .height(CircasoSizes.controlLg)
+                            // One line keeps the control's height; several lines start there and grow, with room above and below.
+                            .then(if (singleLine) Modifier.height(CircasoSizes.controlLg) else Modifier.heightIn(min = CircasoSizes.controlLg))
                             .background(c.fill, CircasoShapes.md)
                             .border(2.dp, outline, CircasoShapes.md)
-                            .padding(horizontal = CircasoSpacing.s4),
+                            .padding(horizontal = CircasoSpacing.s4, vertical = if (singleLine) 0.dp else CircasoSpacing.s3),
                         horizontalArrangement = Arrangement.spacedBy(CircasoSpacing.s2),
-                        verticalAlignment = Alignment.CenterVertically,
+                        verticalAlignment = if (singleLine) Alignment.CenterVertically else Alignment.Top,
                     ) {
                         leading?.invoke()
                         Box(Modifier.weight(1f)) {
@@ -129,3 +133,6 @@ fun CircasoTextField(
         }
     }
 }
+
+/** How tall a field for longer text grows before it scrolls inside itself. */
+private const val MultiLineMax = 6

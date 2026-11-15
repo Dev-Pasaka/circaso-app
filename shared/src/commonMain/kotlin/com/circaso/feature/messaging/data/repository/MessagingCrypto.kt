@@ -179,7 +179,27 @@ sealed interface OpenedGroup {
  * shape stays readable both ways; [photo] points at the encrypted photo and carries its thumbnail ([GroupPhotos]).
  */
 @Serializable
-internal data class GroupMeta(val name: String, val avatar: String? = null, val photo: GroupPhotoRef? = null)
+internal data class GroupMeta(
+    val name: String,
+    val avatar: String? = null,
+    val photo: GroupPhotoRef? = null,
+    /**
+     * The group's description (2026-11-14), sealed with its name so only members read it. This app always writes it
+     * ("" for none); null means the seal was made by an app from before descriptions, which neither read nor kept
+     * it, so a phone that knew one keeps showing it ([keptDescription]).
+     */
+    val description: String? = null,
+)
+
+/** A group description is at most this long, as typed (the server's limit for a join link's published copy too). */
+const val MaxGroupDescriptionChars = 500
+
+/**
+ * The description a freshly opened seal gives: its own when it carries one (blank is none), else [previous], because
+ * a seal without the field came from an older app that couldn't have meant to clear it.
+ */
+internal fun keptDescription(meta: GroupMeta?, previous: String?): String? =
+    if (meta?.description == null) previous else meta.description.trim().ifEmpty { null }
 
 /** The server's limit for `sealedMeta`, decoded (guide M5: at most 4 KB). */
 internal const val MaxSealedMetaBytes = 4 * 1024
@@ -226,18 +246,19 @@ class GroupKeys(
 
     suspend fun latestMetaKey(chatId: String): ByteArray? = chats.latestMetaKey(chatId)?.let { store.openBytes(it.key, "meta:$chatId:${it.metaVersion}") }
 
-    fun sealMeta(key: ByteArray, name: String, photo: GroupPhotoRef? = null): String =
-        Base64.encode(crypto.aesGcmSeal(key, json.encodeToString(GroupMeta.serializer(), GroupMeta(name, photo = photo)).encodeToByteArray(), MetaAad))
+    fun sealMeta(key: ByteArray, name: String, photo: GroupPhotoRef? = null, description: String? = null): String =
+        Base64.encode(crypto.aesGcmSeal(key, json.encodeToString(GroupMeta.serializer(), GroupMeta(name, photo = photo, description = description?.trim().orEmpty())).encodeToByteArray(), MetaAad))
 
     /**
      * [sealMeta] kept within the server's 4 KB: with the photo's thumbnail when it fits, else without it (the photo
      * still loads, just not instantly). Null when even the name alone is too long.
      */
-    fun sealMetaWithin(key: ByteArray, name: String, photo: GroupPhotoRef?): String? {
+    fun sealMetaWithin(key: ByteArray, name: String, photo: GroupPhotoRef?, description: String? = null): String? {
         fun fits(sealed: String) = Base64.decode(sealed).size <= MaxSealedMetaBytes
-        sealMeta(key, name, photo).takeIf(::fits)?.let { return it }
-        if (photo?.thumb != null) sealMeta(key, name, photo.copy(thumb = null)).takeIf(::fits)?.let { return it }
-        return sealMeta(key, name).takeIf(::fits)
+        sealMeta(key, name, photo, description).takeIf(::fits)?.let { return it }
+        // The description is kept before the thumbnail: the photo still arrives, a dropped description would be lost.
+        if (photo?.thumb != null) sealMeta(key, name, photo.copy(thumb = null), description).takeIf(::fits)?.let { return it }
+        return sealMeta(key, name, description = description).takeIf(::fits)
     }
 
     /** The group's name, or null when this phone has no key for that version yet (it arrives with the sender key). */

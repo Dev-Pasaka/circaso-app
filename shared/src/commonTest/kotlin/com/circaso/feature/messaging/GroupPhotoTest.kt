@@ -294,6 +294,73 @@ class GroupPhotoTest {
         chats.onChatUpdated("g1", stored.version, ChatsRepositoryImpl.Avatar(null))
         assertNull(chatsDao.chat("g1")!!.avatarMediaId)
     }
+
+    // ---- a join link's published photo (2026-11-14)
+
+    /** The phones' encoder makes a 256 px JPEG; this one marks the bytes, so the test sees what was published. */
+    private class MarkingEncoder : com.circaso.core.platform.GroupPhotoEncoder {
+        override suspend fun encode(source: ByteArray): GroupPhotoImage? = null
+        override suspend fun preview(source: ByteArray): ByteArray = "small:${source.size}".encodeToByteArray()
+    }
+
+    private class LinksRemote : com.circaso.feature.messaging.data.remote.GroupLinksRemote {
+        val published = mutableListOf<com.circaso.feature.messaging.data.remote.PublishGroupLinkRequest>()
+        override suspend fun link(chatId: String) = AppResult.Success(com.circaso.feature.messaging.data.remote.GroupLinkResponse(null))
+        override suspend fun publish(chatId: String, request: com.circaso.feature.messaging.data.remote.PublishGroupLinkRequest): AppResult<com.circaso.feature.messaging.data.remote.GroupLinkDto> {
+            published += request
+            return AppResult.Success(com.circaso.feature.messaging.data.remote.GroupLinkDto("h3Xq9LmT2vKc8RzYw4Nd6B", "https://links.circaso.com/s/h3Xq9LmT2vKc8RzYw4Nd6B", request.name, request.description, request.photo?.let { "https://links.circaso.com/s/h3Xq9LmT2vKc8RzYw4Nd6B/photo?v=1" }))
+        }
+        override suspend fun turnOff(chatId: String) = AppResult.Success(com.circaso.feature.messaging.data.remote.GroupLinkOffResponse())
+        override suspend fun preview(token: String) = AppResult.Failure(com.circaso.core.common.AppError.Network)
+        override suspend fun join(token: String) = AppResult.Failure(com.circaso.core.common.AppError.Network)
+    }
+
+    private class LinkCache(var value: String? = null) : com.circaso.feature.messaging.data.repository.GroupLinkCache {
+        override suspend fun read() = value
+        override suspend fun write(value: String?) { this.value = value }
+    }
+
+    private val linksRemote = LinksRemote()
+    private val links = com.circaso.feature.messaging.data.repository.GroupLinksRepositoryImpl(
+        linksRemote, chats, chatsDao, groupKeys, LinkCache(), json, { me }, photos = photos, encoder = MarkingEncoder(),
+    )
+
+    @Test fun aLinksPublishedPhotoIsASmallCopyOfTheGroupPhotoOnThisPhone() = runSuspending {
+        createGroup()
+        chats.setGroupPhoto("g1", image())
+
+        val link = (links.create("g1") as AppResult.Success).value
+
+        val sent = linksRemote.published.single()
+        assertEquals("Holiday Fund", sent.name)
+        assertEquals("small:200000", Base64.decode(sent.photo!!).decodeToString(), "the encoder's small copy of the full photo, never the full photo")
+        assertTrue(link.hasPhoto)
+    }
+
+    @Test fun aGroupWithoutAPhotoPublishesNone() = runSuspending {
+        createGroup()
+        val link = (links.create("g1") as AppResult.Success).value
+        assertNull(linksRemote.published.single().photo)
+        assertTrue(!link.hasPhoto)
+    }
+
+    @Test fun aNewOrRemovedGroupPhotoIsPublishedAgainWhileALinkIsOn() = runSuspending {
+        createGroup()
+        links.create("g1")
+        chats.metaChanged = { links.republishIfStale(it) }
+
+        chats.setGroupPhoto("g1", image())
+        assertEquals(2, linksRemote.published.size)
+        assertNotNull(linksRemote.published.last().photo)
+
+        links.republishIfStale("g1")
+        assertEquals(2, linksRemote.published.size, "the same photo isn't sent twice")
+
+        chats.setGroupPhoto("g1", null)
+        assertEquals(3, linksRemote.published.size)
+        assertNull(linksRemote.published.last().photo, "the public copy loses the photo when the group does")
+    }
+
 }
 
 private class FakeAttachments : AttachmentsRemote {

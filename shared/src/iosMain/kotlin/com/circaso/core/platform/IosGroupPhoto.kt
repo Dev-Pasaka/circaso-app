@@ -33,6 +33,17 @@ class IosGroupPhotoEncoder : GroupPhotoEncoder {
         GroupPhotoImage(fullJpeg, target.toInt(), target.toInt(), thumb)
     }
 
+    override suspend fun preview(source: ByteArray): ByteArray? = withContext(Dispatchers.IO) {
+        val image = UIImage(data = source.toNSData()) ?: return@withContext null
+        val (w, h) = image.size.useContents { width to height }
+        val shortSide = min(w, h)
+        if (shortSide <= 0.0) return@withContext null
+        val small = square(image, w, h, min(shortSide, LinkPhotoSide.toDouble()))
+        LinkPhotoQualities.firstNotNullOfOrNull { q ->
+            UIImageJPEGRepresentation(small, q / 100.0)?.toByteArray()?.takeIf { it.size <= LinkPhotoMaxBytes }
+        }
+    }
+
     private fun thumbnail(square: UIImage): ByteArray? {
         val (w, h) = square.size.useContents { width to height }
         for (side in GroupThumbSides) {

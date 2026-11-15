@@ -1,5 +1,6 @@
 package com.circaso.core.navigation
 
+import com.circaso.feature.messaging.presentation.GroupJoinLayer
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.ui.input.pointer.pointerInput
 import com.circaso.feature.share.presentation.ShareLinkLayer
@@ -230,6 +231,8 @@ fun AppNavigation(forceUpdate: Boolean, home: @Composable () -> Unit) {
     // Every share is a link (decision 2026-11-06): one layer over the whole app makes them and opens the share sheet.
     val shareLinks: com.circaso.feature.share.presentation.ShareLinkViewModel = koinInject()
     val shareLauncher = remember(shareLinks) { com.circaso.feature.share.presentation.ShareLinkLauncher(shareLinks::start) }
+    // Group join links (2026-11-14): one sheet over the whole app shows the group and Join Group.
+    val groupJoin: com.circaso.feature.messaging.presentation.GroupJoinViewModel = koinInject()
     // A share link opened from outside (App Links, Universal Links, circaso://s/…) waits until someone is signed in.
     val pendingLink by com.circaso.feature.share.domain.IncomingLinks.pending.collectAsState()
     LaunchedEffect(state, pendingLink, forceUpdate) {
@@ -237,7 +240,10 @@ fun AppNavigation(forceUpdate: Boolean, home: @Composable () -> Unit) {
             // Wait for the root swap above to land first, so the link opens over Home rather than being cleared by it,
             // and is only taken once it can open (an effect restarted while waiting leaves it pending).
             androidx.compose.runtime.snapshotFlow { backStack.firstOrNull() }.first { it == HomeRoute }
-            com.circaso.feature.share.domain.IncomingLinks.take()?.let { code -> backStack.add(SharedLinkRoute(code)) }
+            com.circaso.feature.share.domain.IncomingLinks.take()?.let { code ->
+                // A group join link (22 characters) opens the join sheet over wherever they are; a share link its screen.
+                if (com.circaso.feature.share.domain.IncomingLinks.isGroupToken(code)) groupJoin.open(code) else backStack.add(SharedLinkRoute(code))
+            }
         }
     }
     // Something shared in from another app waits the same way (kept through sign-in), then opens where it goes.
@@ -593,7 +599,8 @@ fun AppNavigation(forceUpdate: Boolean, home: @Composable () -> Unit) {
                 val info by infoViewModel.state.collectAsState()
                 val peer = info.chat?.peerId
                 ChatInfoScreen(
-                    infoViewModel, showSecurityCode = route.security, onBack = ::pop, onLeft = { pop(); pop() }, onGroupWallet = { backStack.add(if (info.money.enabled) GroupWalletRoute(route.chatId) else ChamaRoute(route.chatId)) },
+                    infoViewModel, showSecurityCode = route.security, onBack = ::pop, onLeft = { pop(); pop() },
+                    onInviteLink = { backStack.add(GroupLinkRoute(route.chatId)) }, onGroupWallet = { backStack.add(if (info.money.enabled) GroupWalletRoute(route.chatId) else ChamaRoute(route.chatId)) },
                     onSetUpWallet = { thenTarget -> backStack.add(GroupWalletSetupRoute(route.chatId, thenTarget = thenTarget)) },
                     onTarget = { backStack.add(TargetRoute(route.chatId)) },
                     onPayFromWallet = { wid -> backStack.add(PayRoute(fromWalletId = wid)) },
@@ -668,6 +675,11 @@ fun AppNavigation(forceUpdate: Boolean, home: @Composable () -> Unit) {
                     onBack = ::pop, onAsset = { chain, symbol -> backStack.add(AssetActivityRoute(chain, symbol, route.walletId)) },
                 )
             }
+            entry<GroupLinkRoute> { route ->
+                com.circaso.feature.messaging.presentation.GroupLinkScreen(
+                    koinViewModel(key = "group-link-${route.chatId}", parameters = { parametersOf(route.chatId) }), onBack = ::pop,
+                )
+            }
             entry<SharedLinkRoute> { route ->
                 com.circaso.feature.share.presentation.SharedLinkScreen(
                     koinViewModel(key = "shared-link-${route.code}", parameters = { parametersOf(route.code) }),
@@ -694,6 +706,7 @@ fun AppNavigation(forceUpdate: Boolean, home: @Composable () -> Unit) {
     if (state == AuthState.Active) {
         val scope = androidx.compose.runtime.rememberCoroutineScope()
         ShareLinkLayer(shareLinks) { text: String -> scope.launch { toast.show(text) } }
+        GroupJoinLayer(groupJoin, onOpenChat = ::openChatFromList)
     }
     ToastHost(toast, Modifier.align(Alignment.TopCenter).statusBarsPadding().padding(top = 56.dp))
     // Calls (designs H1–H5) live above every screen: one can ring anywhere, and it keeps going while money is sent from it.

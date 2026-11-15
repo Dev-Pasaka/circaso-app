@@ -81,7 +81,7 @@ class OutboxWorker(context: Context, params: WorkerParameters) : CoroutineWorker
             val run = OutboxWorkerRun {
                 if (!promoted) {
                     // Refused from the background on Android 12+: then this stays an ordinary job (about ten minutes,
-                    // retried after that), which is still enough for a 32 MiB file on most connections.
+                    // retried after that), which is still enough for a moment's 64 MiB on a connection of a megabit or more.
                     promoted = runCatching { setForeground(foregroundInfo()) }
                         .onFailure { Log.w(AndroidBackgroundUploads.Tag, "outbox job: foreground refused (${it.javaClass.simpleName}); runs as a plain job") }
                         .isSuccess

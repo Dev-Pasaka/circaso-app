@@ -326,7 +326,7 @@ private fun forwardOf(moment: Moment, media: ViewerMedia): ForwardMedia? {
     if (moment.kind == MomentKind.Text) return ForwardMedia(MomentKind.Text, null, null, "text/plain", null, null, null, null, null, text = moment.text)
     val ready = media as? ViewerMedia.Ready ?: return null
     val m = moment.media ?: return null
-    return ForwardMedia(moment.kind, ready.bytes, ready.path, m.mime, m.width, m.height, m.durationMs, moment.thumb?.let { runCatching { Base64.decode(it) }.getOrNull() }, moment.caption)
+    return ForwardMedia(moment.kind, ready.bytes.takeIf { it.isNotEmpty() }, ready.path, m.mime, m.width, m.height, m.durationMs, moment.thumb?.let { runCatching { Base64.decode(it) }.getOrNull() }, moment.caption)
 }
 
 @Composable

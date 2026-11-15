@@ -26,6 +26,124 @@ Spaces tagged `archive/spaces-v1`; Room v20 drops its tables); the backend keeps
   support's moments, never on a group's card. A Not sent card paid again keeps its moment. The notification reads
   "Sent you KES 500 for your moment" (Kotlin and the iOS extension). The transfer itself is unchanged; the server
   never sees the moment.
+- **Posting a moment (2026-11-14, Pasaka): like WhatsApp status, in the background.** "The only things to check on the
+  preview are the video's duration (under a minute) and the file size limit. Once that's fine they tap post and do not
+  have to stay on the preview. They track progress on the ring around their own moment."
+  - **The preview checks only that** (`momentRefusal` in `MomentComposerViewModel.kt`): a video is a minute or less
+    (the trimmer, as before), each file is still on the phone, and the size rule holds. **The size rule:** a photo or
+    a voice goes as it is, so it must fit the post limit (32 MiB, `MomentMediaMaxBytes`); a video over that limit is
+    **accepted**, because a minute always fits once encoded and it is made smaller after Post; only a video file over
+    1 GB (`MomentSourceMaxBytes`: more than a minute of anything a phone's camera records) is refused, with its size
+    ("This video is 1.4 GB. Videos up to 1 GB can be posted: trim it shorter or pick another."). Every item is checked
+    before any is recorded, so a batch is never half posted and half refused.
+  - **Post returns at once**, for a video too: `MomentsRepository.post` writes the pending row (`moment_pending`,
+    state `preparing`) and takes the file into the app's private files (a photo's bytes written; a video **moved**, a
+    rename however large, as `source-{localId}.mp4`, so a picker's or the camera's cache copy can't be cleared from
+    under it). No "Making the video smaller…" on the preview any more.
+  - **Getting ready and sending happen in the data layer, in the app's scope** (`MomentsRepositoryImpl.prepareWaiting`,
+    under `uploads.keep(UploadKind.Moment)`): one moment at a time, oldest first; a video over the limit goes through
+    `MediaLibrary.shrink` (the trimmer's encoder, from the file, never through memory), the result is moved under the
+    pending id, the row becomes `posting` and the outbox job `moment.post` is queued. So several picked post in the
+    order picked. A video the encoder couldn't do this time stays `preparing` (the ones behind wait their turn) and is
+    tried again 20 s later and at each launch or reconnect, three times in all, because an iPhone stops encoding once
+    Circaso is in the background; then it is Failed with why. Failed in preparing uses M6's failed row with plain
+    words (`moment.source_missing`, `moment.video_unreadable`), and Retry gets it ready again.
+  - **Resume:** anything `preparing` is picked up at launch once signed in (online or not), at each reconnect, and
+    whenever the outbox sends a moment (`MomentsStarter`, `MomentsRepository.resume`). The process dying mid-encode
+    loses nothing: the row and the private source file are still there, and the encode starts again from the start.
+  - **The ring (M6)** is one determinate arc over the whole batch: a video made smaller fills the first half of its
+    share (Android: Media3 Transformer's own progress; iPhone: no progress from the encoder yet, so the arc turns
+    and then moves to half when the video is ready), then the bytes sent fill to 95 %, and the post itself the rest.
+    Until there is something real to show (the first moments after Post, a text moment) the arc turns, as M6's
+    "Posting…" does, never an empty ring. It never runs back (`MomentsUiState.postingFloor`), and a moment that is
+    waiting or failed is never counted as posted (`postingIds`). While anything is still on its way the arc shows
+    even if another of the batch failed (its card is under the row). Offline it is Waiting, as designed, though
+    getting ready carries on. Reduced motion: the arc steps, no easing.
+  - **An encode that comes out over the limit is done again smaller, never failed on the person (2026-11-14, the
+    Redmi):** a 57 s, 1080x1920 video (139 MB) passed the preview and then failed "too large", because the phone's
+    (MediaTek) hardware encoder ran well past the bit rate it was asked for. Now: the plan aims at 85 % of the limit
+    (`MomentVideoEncoding.BudgetShare`, was 92 %); Android's encoder, over the limit, gets one more go lower by as much
+    as it overshot and a tenth more (was a fixed 80 %); and if the file handed back is still over 32 MiB the worker
+    asks again with a smaller byte budget, `budget × limit ÷ size it came out at × 0.9`
+    (`MomentVideoEncoding.smallerBudget`), which through the same plan lowers the bit rate and then the picture size
+    (1080p → 720p → 540p → 360p). Up to 4 passes (`EncodePasses`); each rejected file is deleted; the budget reached
+    is kept in the draft (`PendingDraft.budget`) so a restart doesn't repeat a pass. Only if all four come out over
+    is it Failed, with "This phone couldn’t make the video small enough to post. Trim it shorter and post it again."
+    (`moment.video_too_large`). The ring: the first pass fills four fifths of the encoding half, each later pass four
+    fifths of what is left, so it never goes back. Retry on a moment failed before this fix (`status.moment_too_large`
+    with its source still there) gets it ready again with the new rule.
+  - **Said before it is picked (2026-11-14, Pasaka: "show the duration and the file size before the user selects;
+    those larger than the maximum, grey them out"; no frame):** `LibraryItem.sizeBytes` (Android: MediaStore `SIZE`
+    in the same query; iPhone: the Photos resource's file size, read in `IosMediaLibrary`; null when unknown, never
+    held against a video).
+    - **Tiles:** the gallery's video tiles say the size under the length ("0:57" over "139 MB", two short lines so
+      neither is cut at large text, on a short shade); the 56 dp strip tile keeps the length alone; **photos say
+      nothing** (every photo is handed over as a JPEG of at most 2048 px whatever the original weighs, so its size
+      tells nothing and the grid stays calm).
+    - **A moment:** a video that can't be posted at all (its file over 1 GB, `MomentSourceMaxBytes`) is greyed out
+      (scrim, the over-limit mark in the tick's place, "Too large" across the gallery tile), can't be ticked or used
+      from the strip, and a tap says why in a quiet toast (Info, not Problem): "This video is 1.4 GB. Videos up to
+      1 GB can be posted." ("just over 1 GB" for one a little over). Videos over a minute are not greyed: they go
+      to the trimmer.
+    - **A chat: marked, not greyed.** A chat's video over its limit can still be sent once trimmed shorter on the
+      review (the trimmer cuts it to fit, and the review's note says so), so greying it would take that away. Its
+      tile carries the over-limit mark and its size, it stays pickable, and the existing review note takes over.
+      (`MediaComposer.pickLimit` is null in a chat; `overLimit(item)` marks.)
+    - **The review** shows the picked video's length and size in a small glass pill at the top of the stage (where
+      the recording pill sits), so nothing under the finger moves as the item on the stage changes. The line "will
+      be made smaller to post" was tried and left out: it read as if the video would be cut shorter.
+    - Sizes at a glance use `compactSize` ("1.4 GB", "146 MB", "8.4 MB"; binary units like every other size in the
+      app, so the Redmi's 145,978,653-byte clip reads "139 MB").
+  - **A moment's file up to 64 MiB (2026-11-14, Pasaka: "fast file uploads and at the same time improve the
+    quality"; was 32 MiB; where this note says 32 MiB above, read 64).** One number, `MomentMediaMaxBytes`
+    (`core/platform/MomentCamera.kt`); the backend's is `STATUS_MEDIA_MAX_BYTES` (backend PR "a moment's file up to
+    64 MiB"). What it buys: a full minute of 1080p30 keeps about 7.5 Mbit/s of the 8 it aims for (it was about 3.7),
+    a minute of 1080p60 keeps its size (it dropped to 720p), anything up to 40 s gets the full rate, a minute from the
+    in-app camera goes as recorded, and any file up to 64 MiB goes untouched. Not more than 64: a higher limit buys
+    a full minute almost nothing and costs upload time and memory. The bigger plan (chunked encryption, an original
+    and a quick version, streaming) is a later project.
+    - **Memory, which is what bounded the number.** A moment's file is one AES-GCM box that every app version must
+      open, and it was sealed and opened in memory: on Android about three to four times the file (the plaintext,
+      the JCA's own buffer, the ciphertext, the nonce-plus-ciphertext copy), with no `largeHeap`, and the viewer kept
+      the opened video's bytes while it played. Now (`core/crypto/SingleBoxFile`): Android seals and opens from file
+      to file a megabyte at a time with libsignal's incremental AES-256-GCM (already in the app; the same bytes as
+      before, checked against the JCA in `SingleBoxFileTest`); the download goes straight to a file; a video is
+      handed to the viewer by its path, never its bytes. iPhone at first still sealed and opened in memory, about
+      four times the file (256 MB at the limit); see the next point.
+    - **iPhone seals and opens from a file too (2026-11-15).** After 56 MB videos were posted, an iPhone's moments
+      "didn't load" and its log showed the app starting again as the first was opened: most likely closed for memory
+      (about four times the file per open, and the viewer fetched the next one at the same time). Now
+      `IosSignalCrypto.gcmStream` / `sha256Stream` go through the Swift bridge to libsignal's incremental
+      `Aes256GcmEncryption` / `Aes256GcmDecryption` (the same Rust code and version, 0.106.1, as Android's) and
+      CryptoKit's `SHA256`, so both phones run the same `SingleBoxFile` a megabyte at a time. Once per run, before it
+      is trusted, the phone checks on a small box that the pieces and the one-shot (CryptoKit) agree both ways and
+      that a changed tag is refused; if not, it keeps the one-shot and says so in the diagnostics
+      ("crypto: file sealing in pieces ...").
+    - **Fetching ahead (2026-11-15):** the viewer fetches the next moment while one plays only when its file is at
+      most 8 MiB (`MomentPreloadMaxBytes`: photos, voice, clips of a few seconds); a larger video loads when it is
+      shown, so nobody's data is spent on 64 MiB they may never reach and two large files are never opened at once.
+      A video whose size an older phone didn't say waits too.
+    - **Either release order works.** A server still at 32 MiB answers `status.media_invalid` to a larger video at
+      ST1: the app then makes the video fit 32 MiB (`MomentMediaLegacyMaxBytes`) and posts it, and for the rest of
+      that run makes videos fit 32 MiB straight away (`MomentsRepositoryImpl.fitOlderServer`). An older app keeps
+      sending at most 32 MiB to the new server. An older app **viewing** a new, larger moment still opens it in
+      memory: on an Android phone with a small heap a video near 64 MiB may fail to open there ("couldn't load")
+      until that phone updates.
+    - Shared in from another app, a video for a moment is still held to the post limit (now 64 MiB) by the share
+      screen's own check; picked in the app it may be up to 1 GB.
+  - **No Room change:** `preparing` is a new value of the `state` text column and the rest is in the draft JSON
+    (`PendingDraft.source`, `encoded`, `tries`); the database stays at version 22.
+  - **Departures from M4–M6:** none in layout. M4's review loses the "Making the video smaller to share…" footnote
+    and the Post button's wait (the owner's request); M6's ring is as drawn (a determinate arc with "Posting… n%"),
+    now from 0 % instead of a turning arc before the first byte. No frame for a failure in preparing: M6's "Your
+    moment didn't post" card with the two reasons above in its place.
+  - **Not done:** the trimmer's Done (M3b) still cuts the video there and then (a video over a minute waits on the
+    trimmer, not on the preview); deferring the cut to the background needs the review's player to play only the
+    chosen part on both phones. The encoder's progress on iPhone needs a Swift change (MomentVideoTranscoder).
+    A posted moment's media is still sealed whole in memory for the upload (32 MiB at most; the encrypted body is
+    one AES-GCM box). My own viewer doesn't show a pending moment (it never did).
+  - Tests: `MomentPostingTest` (the repository's worker), `MomentComposerViewModelTest`, `MomentsViewModelTest`,
+    `MomentsStateTest`, `MomentsStarterTest`. Previews: `chats-moments-preparing`, `chats-moments-prepare-failed`.
 - **Stays from the Spaces plan:** groups with optional wallets, the one Circaso fee, daily caps, Paying from, the
   wallet PIN and biometrics per wallet.
 
@@ -162,12 +280,108 @@ Media3 1.4.1, multiplatform-markdown-renderer 0.46.0.
 - D-C6 Live location WhatsApp-style (15 min / 1 h / 8 h), keeps updating in the background (Android foreground service
   with Stop; iOS background location), updates travel encrypted; full-screen map with profile-photo pins.
 - D-C7 Maps styled monochrome from theme tokens. **The Static Maps key never ships in the app**: previews come from the backend proxy `GET /v1/maps/static`.
+- D-C7a Location map: me, distance, a line, directions (Pasaka, 2026-11-15; app branch `feat/location-map-distance`).
+  No canvas frame; built from the map's own glass panel, `Avatar`, `CircasoButton` and tokens. Decisions:
+  - **Me on the map.** My photo pin with a **"You" tag under it** (the ring is ink; `action` equals `ink` in today's
+    themes, so the tag and the missing pulse are what tell it apart). The pulse means "others can see this moving", so
+    my pin pulses only while I share live in this chat; then my share's pin *is* my pin and the phone isn't read a
+    second time. Otherwise my position is read on this screen only (about every 5 s / 5 m; stopped by the view model
+    when the screen closes or Circaso goes to the background) and **never sent by this map**. The copy says exactly
+    that, "This map doesn't share where you are.", never "nobody can see you": a live share may be running in another chat.
+  - **Asking.** Nothing pops up on opening the map. The panel's last row gives the reason ("Uses your location on this
+    screen only. This map doesn't share it.") with **Turn on**, which brings up the phone's own prompt. Refused: one
+    row, "Location is off for Circaso", with **Settings**, for the rest of that visit. (iOS keeps saying so afterwards.
+    Android can't tell "refused" from "never asked", so the next visit shows the passive Turn on row again; a tap that
+    the system refuses silently flips it to Settings. Nothing ever pops up unasked.) Phone-wide location off: a plain line.
+  - **Distance.** Straight line (haversine), **metric everywhere** (the app has no unit setting): "under 10 m",
+    tens of metres to 990 m, one decimal to 9.9 km, whole km after, thousands grouped. Worded "2.4 km away", never
+    "route". A fix rougher than 100 m (Android "Approximate") claims only what it knows: "Within about 1.8 km" when the
+    distance is inside the fix's error, else "About 5 km away" rounded to the size of that error. It leads each row's
+    second line in ink, before "Live until … · updated …".
+  - **Order.** Unchanged: the tapped one first, then the others as their shares started. Not nearest-first: rows are
+    tap targets and would shuffle under a finger as people move; every row has its own distance instead.
+  - **Focus and the line.** Tapping a row or pin focuses it and recentres as before. With more than one, the focused
+    row is tinted `fill` (ink outline in high contrast) and its Directions is the Primary button. A **dashed ink line**
+    (3 dp, 8/6 dash, 80% ink, full ink in high contrast, geodesic) runs from me to the focus; it is always dashed so it
+    never reads as a road route (on iOS a very long line seen close up gets longer dashes, never a solid line). Drawn
+    by Google Maps on both platforms (a Compose line on the fallback picture). Its ends glide with the pins; a change
+    of focus snaps.
+  - **Framing.** Opened on a live share, the first framing includes me. Opened on a place, the map stays on the place.
+    Top bar: frame brackets = "Show you and {name}"; the people icon = "Show everyone" (only when that differs). Points
+    under 150 m apart get street level (zoom 17) around their middle, not the deepest zoom. The map is told the bar's
+    and panel's heights, so framing keeps clear of them and Google's mark stays visible above the panel. The panel
+    takes at most 45% of the screen; its rows scroll and the note / Turn on row stay pinned under them. The fallback
+    picture (no Maps key) is framed between the bar and panel too, and is kept until a pin nears its edge (no new
+    `GET /v1/maps/static` at every step).
+  - **Directions** open the phone's maps app from "my location" to the pin (Android: Google Maps, else any maps app at
+    the place, else the browser; iOS: Apple Maps, else Google's link). Only the destination is handed over. For a live
+    share the panel says "Directions lead to where {name} is now."
+  - **Not built: a road route drawn inside the map.** It needs Google's Routes API behind the backend (key, billing,
+    both people's coordinates through Circaso's server and Google). Proposal in the PR; Pasaka decides.
 - D-C8 Group invites (Pasaka, 2026-11-09; backend PR #83, app branch `feat/group-invites`): adding someone to a group
   invites them; they accept or decline from a card at the top of Chats (All/Groups), with a preview sheet. The inviter's
   phone seals the group's metadata key 1:1 for each invitee (`inviteKeys`) so the card shows the real name and photo;
   names stay end-to-end encrypted. Accept opens the chat; everyone sees "X joined". Decline is silent. Group info lists
   "Invited · N"; admins or the inviter cancel. Invites expire after 30 days and are cached on the phone for offline view
   (answering is online-only). No canvas frame: built from the glass `InviteCard`, `CircasoSheet`, `ListRow`.
+- D-C9 **Group description** (Pasaka, 2026-11-14; branch `feat/group-join-links`): optional, up to 500 characters,
+  inside the group's end-to-end sealed metadata next to the name (`GroupMeta.description`), so members read it and the
+  server can't. Admins edit it where they edit the name: Group info → **Edit group** (one sheet, name + description,
+  one PATCH). Shown under the name in Group info (4 lines, tap for all) and on the join preview. This app always writes
+  the field ("" = none); a seal without it came from an older app, which can't have meant to clear it, so the phone
+  keeps the description it knew (`keptDescription`, `chat.description`, Room 23) and the next seal from a new app
+  carries it again. The seal keeps the description before the photo's thumbnail when 4 KB is tight.
+- D-C10 **Group join links** (Pasaka, 2026-11-14: "people can share links and people can join from those links ... you
+  don't have to add them yourself", to move WhatsApp groups over; backend M28–M32, branch `feat/group-join-links` on
+  both repos). Decisions:
+  - **One link per group, admins only**: Group info → **Invite via link** → a screen with the QR code, the link (tap
+    to copy), Copy, Share (system share sheet with "Join *<name>* on Circaso: <link>", bold in WhatsApp), Reset Link
+    and Turn Off Link (each behind a confirm). The token is 22 base62 characters (131 bits).
+  - **Same link system as share links**: `https://<share host>/s/{token}` and `circaso://s/{token}`, so App Links,
+    Universal Links and the manifest/entitlements are unchanged. `IncomingLinks.isGroupToken` (22 characters; a share
+    code is 12) sends it to the join sheet instead of the shared-link screen.
+  - **The preview is public by the admin's choice**: the server can't read sealed metadata, so the admin's phone
+    publishes the name, description and a 256 px JPEG of the photo for that link only (`GroupLinksRepositoryImpl`).
+    The screen says "Anyone with the link can see the group's name, description and photo, and how many members it
+    has" **before** Create Link. A phone that can't read the group's name (lost key) publishes nothing. While a link is
+    on, an admin's phone republishes when the name, description or photo change (after its own edit, on
+    `chat.updated`, and when the link screen opens); turning the link off or resetting it deletes the published copy.
+    Members, messages and money are never published.
+  - **Joining**: the link opens a join sheet over wherever the person is (photo, name, "Group · N members",
+    description, Join Group). Joining is immediate (no invite to accept); the chat opens, named from the preview until
+    a member's phone sends the group's key (the existing `member.added` key distribution). The chat says "X joined
+    using the group link" (`member.added.viaLink`). Already a member: the chat opens, no sheet. Signed out: the link
+    waits in `IncomingLinks` through sign-in, as share links do.
+  - **No deferred install**: the app has no install-referrer mechanism and none is added; the web page says to get the
+    app, sign in and tap the link again.
+  - **Rules (server)**: no expiry by time (reset or turn off ends it); a full group says so; a reset/off/unknown link
+    says "This link no longer works. Ask an admin for a new one."; someone an admin removed, anyone with a block
+    either way with the link's maker or any admin, and support accounts can't join by link ("Ask an admin to add
+    you", never saying which); 60 lookups and 20 joins an hour. A link joiner is an ordinary member: in a wallet group
+    they see and pay in like any member and can't move the group's money (owner-only, 2026-11-06).
+  - **Offline**: showing an existing link, its QR, Copy and Share are reads from the phone's copy
+    (`AppPreferences.GroupLinksText`); Create, Reset, Turn Off, looking a link up and Join are online-only, disabled
+    with the reason, never queued. The join sheet opens by itself when the connection returns.
+  - **Design**: no canvas frames. The link screen is built from the wallet's Receive (QR tile), grouped rows and the
+    confirm sheet; the join sheet from the group-invite preview sheet and the message-sheet pattern.
+  - Previews: `-preview=group-link-intro|group-link-intro-offline|group-link-intro-no-name|group-link-creating|group-link-on|group-link-on-offline|group-link-resetting|group-link-reset|group-link-turn-off|group-link-loading|group-link-unknown-offline|group-link-failed|group-join|group-join-long|group-join-plain|group-join-loading|group-join-joining|group-join-offline|group-join-full|group-join-gone|group-join-not-allowed|group-join-no-connection|group-join-failed|group-info-description|group-info-description-long|group-edit|group-edit-too-long|group-edit-offline`.
+    Also `group-link-unreachable|group-link-not-admin|group-link-on-no-name|group-link-on-photo-missing|group-link-on-photo|group-join-unreachable|group-join-problem-offline|group-join-retry|group-edit-link-on|group-edit-saving|group-edit-failed`.
+  - **Design review (2026-11-15, `design-reviewer`)**, fixed: the three facts before Create Link are their own rows so
+    none is cut at two lines; money wording is the same before and after ("hidden until someone joins"; joiners "see
+    new messages and the group's wallet, like any member, and can't move its money"); with a link on, the Edit group
+    sheet says "Anyone with the group's link sees them too" and Group info's row shows "On"; a load or lookup with no
+    answer while the phone says it is online shows "Couldn't reach Circaso" with Try Again (never an endless skeleton
+    or a wait for a reconnect that isn't coming); failures are problem toasts, confirmed changes done toasts; Create
+    Link cross-fades to the link from its own top; the join sheet grows from its loading shapes; the description on
+    the join sheet and in Group info is "Show all" away from whole; the link is shown whole on two lines; the link
+    screen shows what is published ("On the link's page", and when the photo isn't there yet); the Edit group sheet
+    stays open and busy while saving and keeps the draft with the error and its reference on failure; multi-line
+    `CircasoTextField` grows to six lines (was a fixed 50 dp box; Lost Access and Vault get this too); a phone that
+    can't read the group's name can turn the link off but not reset it, and keeps the description it has.
+  - **Kept as asked, against the review**: the title "Invite via link" and the share text's `*bold*` name (both from
+    the owner's brief; the asterisks show literally outside WhatsApp). **Not done**: Circaso's own Pay scanner doesn't
+    read a group QR (it is the pay flow's scanner; the screen says "Scan with a phone's camera, or share").
+  - Not verified on a device or simulator (2026-11-15): built, unit-tested and compiled only.
 
 ### Sharing (2026-11-06)
 - D-S1 **Every share is a short link, never plain text** (Pasaka, 2026-11-06). Receipt, group statement, wallet
@@ -267,6 +481,7 @@ Media3 1.4.1, multiplatform-markdown-renderer 0.46.0.
 | Moments | Composer (text, camera, gallery, voice), viewer, replies in chat, reactions, privacy, contact-saved rule, push; shown in Chats under the Moments chip with rings on chat avatars (2026-11-05). |
 | Asha | Text and live voice, rich answers, PDF statements, conversations, voice picker; menu sheet (new chat, recents with delete, usage & credits, settings); voice mode transcript with the animated logo (2026-11-05, mascot removed). |
 | Sharing | Share links for receipts, statements, addresses, pay me and invites (options sheet, share sheet), opened links (App Links, Universal Links, `circaso://s/`), You → Shared links with turn off (2026-11-06; backend PR #52). Not yet on a device. |
+| Group links (2026-11-14) | Group description (sealed with the name, Edit group sheet), Invite via link for admins (QR, copy, share, reset, turn off, published preview), join sheet from a link, "joined using the group link" line. Needs backend `feat/group-join-links` (M28–M32). Not yet on a device. |
 | Support | Help screen, support chat UI (needs the support account), recovery case (SP06). |
 | Adaptive | Phones portrait and landscape, iPad 11"/13" checked on simulators. |
 

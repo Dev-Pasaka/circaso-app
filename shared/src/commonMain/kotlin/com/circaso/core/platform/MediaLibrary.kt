@@ -9,9 +9,11 @@ enum class LibraryKind { Photo, Video, Audio }
 /**
  * One item in the phone's library, for the recents strip under the camera (WhatsApp-style). [id] is the platform's own
  * reference (a content URI on Android, a PHAsset id on iOS); [title] names an audio file; [addedAt] (epoch millis, 0
- * when unknown) orders photos and videos together in the gallery's All tab.
+ * when unknown) orders photos and videos together in the gallery's All tab. [sizeBytes] is the file's size where the
+ * library says it without opening the file (2026-11-14: shown on a video's tile, and one too large to send is greyed
+ * out before it is picked); null when unknown, which is never treated as too large.
  */
-data class LibraryItem(val id: String, val kind: LibraryKind, val durationMs: Long? = null, val title: String? = null, val addedAt: Long = 0)
+data class LibraryItem(val id: String, val kind: LibraryKind, val durationMs: Long? = null, val title: String? = null, val addedAt: Long = 0, val sizeBytes: Long? = null)
 
 /**
  * How much of the library Circaso may read for one kind. [Limited]: only what the person chose (iPhone's limited
@@ -99,6 +101,18 @@ interface MediaLibrary {
      * AVAssetExportSession on iOS. No new library.
      */
     suspend fun trim(path: String, startMs: Long, endMs: Long, maxBytes: Long = MomentMediaMaxBytes): CapturedMedia? = null
+
+    /**
+     * [trim] for a moment being got ready after Post (the whole clip made smaller, in the background): the same copy,
+     * with [onProgress] told how far the encoder has got (0..1) where the phone says (Android's Transformer). Where it
+     * doesn't, [onProgress] is never called and the ring moves on when the copy is ready. [budgetBytes] is the size the
+     * encode is planned for, [maxBytes] or less: after a pass that came out over the limit (a hardware encoder that
+     * runs past its bit rate) the caller asks again with a smaller one ([MomentVideoEncoding.smallerBudget]). The
+     * result may still be over [maxBytes]; the caller checks.
+     */
+    suspend fun shrink(
+        path: String, startMs: Long, endMs: Long, maxBytes: Long = MomentMediaMaxBytes, budgetBytes: Long = maxBytes, onProgress: (Float) -> Unit = {},
+    ): CapturedMedia? = trim(path, startMs, endMs, minOf(maxBytes, budgetBytes))
 
     /**
      * The system's Files picker for any document (a chat's Document, no permission needed); null when the person

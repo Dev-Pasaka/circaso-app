@@ -83,7 +83,7 @@ class SharedItemsTest {
         assertEquals(10, check.usable.size)
         assertEquals(listOf(huge), check.tooLarge)
         assertEquals(2, check.overCount)
-        assertEquals("film.mov is just over 32 MB. Up to 32 MB can be sent. You can send up to 10 at a time; the first 10 are here.", check.notice)
+        assertEquals("film.mov is just over 64 MB. Up to 64 MB can be sent. You can send up to 10 at a time; the first 10 are here.", check.notice)
         assertNull(checkShare(listOf(photo)).notice)
     }
 

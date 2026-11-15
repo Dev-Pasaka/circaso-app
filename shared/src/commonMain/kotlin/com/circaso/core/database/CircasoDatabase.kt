@@ -66,7 +66,7 @@ import kotlinx.coroutines.Dispatchers
         com.circaso.feature.messaging.data.local.MessageReactionEntity::class, com.circaso.feature.messaging.data.local.MessageRetryEntity::class,
         com.circaso.feature.names.data.SavedNameEntity::class,
     ],
-    version = 22,
+    version = 23,
     autoMigrations = [
         AutoMigration(from = 1, to = 2), AutoMigration(from = 2, to = 3),
         AutoMigration(from = 3, to = 4), AutoMigration(from = 4, to = 5),
@@ -86,6 +86,8 @@ import kotlinx.coroutines.Dispatchers
         // 22: saved names (saved_name: names I give people, null = cleared) and transfer.counterpartUserId, so a
         // payment row shows the name I saved for the other person.
         AutoMigration(from = 21, to = 22),
+        // 23: chat.description, the group's description opened from its sealed metadata (group join links, 2026-11-14).
+        AutoMigration(from = 22, to = 23),
     ],
 )
 @ConstructedBy(CircasoDatabaseConstructor::class)

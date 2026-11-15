@@ -113,6 +113,17 @@ class GroupPhotos(
         return files.path(thumbName(ref.id))
     }
 
+    /**
+     * The full photo's bytes on this phone, fetched now if they aren't here yet; null when it can't be had (offline,
+     * gone from the server). For the one place a group photo is re-encoded: a join link's published preview.
+     */
+    suspend fun fullBytes(ref: GroupPhotoRef, serverId: String? = null): ByteArray? {
+        files.read(fullName(ref.id))?.let { return it }
+        if (serverId != null && serverId != ref.id) fetch(ref, serverId)
+        if (files.read(fullName(ref.id)) == null) fetch(ref)
+        return files.read(fullName(ref.id))
+    }
+
     /** Somebody changed what lists should draw (a new photo sealed): redraw them. */
     fun notifyChanged() = _changes.update { it + 1 }
 

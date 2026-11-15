@@ -12,6 +12,7 @@ import com.circaso.feature.contacts.domain.ObserveContactsUseCase
 import com.circaso.feature.profile.domain.ObserveProfileUseCase
 import com.circaso.feature.status.domain.Moment
 import com.circaso.feature.status.domain.MomentKind
+import com.circaso.feature.status.domain.preloads
 import com.circaso.feature.status.domain.MomentMediaLoad
 import com.circaso.feature.status.domain.MomentRing
 import com.circaso.feature.status.domain.MomentViewer
@@ -250,8 +251,9 @@ class MomentViewerViewModel(
         }
         if (!m.mine && !m.viewed) viewModelScope.launch { repository.markViewed(m.momentId) }
         if (m.mine) { lastCounts = m.momentId to m.reactionCount; checkReactions() }
-        // Fetch and decrypt the next one while this plays, so tapping on rarely stops at Loading.
-        upNext()?.takeIf { it.media != null && _state.value.online }?.let { next -> viewModelScope.launch { repository.media(next) } }
+        // Fetch and decrypt the next one while this plays, so tapping on rarely stops at Loading. Only a small one
+        // ([preloads]): a large video loads when it is shown.
+        upNext()?.takeIf { preloads(it) && _state.value.online }?.let { next -> viewModelScope.launch { repository.media(next) } }
     }
 
     private fun upNext(): Moment? {
@@ -506,3 +508,4 @@ private val MoneyStart = Regex("""#(\d|$)""")
 internal fun moneyStarted(text: String): Boolean = MoneyStart.containsMatchIn(text)
 
 private fun String.firstName() = trim().substringBefore(' ').ifBlank { "Someone" }
+

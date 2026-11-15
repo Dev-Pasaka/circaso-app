@@ -146,6 +146,11 @@ object ErrorMessages {
         "messaging.not_a_group" to "That only works in a group.",
         "messaging.group_full" to "This group is full.",
         "messaging.invite_not_found" to "This invite is no longer open.",
+        // Group join links (2026-11-14).
+        "messaging.link_not_found" to "This link no longer works. Ask an admin for a new one.",
+        "messaging.link_not_allowed" to "You can't join this group with a link. Ask an admin to add you.",
+        "messaging.link_invalid" to "The group's name, description or photo couldn't be published for the link. Check them and try again.",
+        "messaging.link_name_unknown" to "This phone can't read the group's name yet, so it can't make the link. Try again in a moment.",
         "messaging.group_invalid" to "Those group details can't be saved. Check them and try again.",
         "messaging.avatar_invalid" to "Couldn't use that photo. Try another one.",
         // made on this phone: it has no key for the group's name and photo

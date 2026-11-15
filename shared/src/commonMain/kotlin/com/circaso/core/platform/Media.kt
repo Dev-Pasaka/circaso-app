@@ -10,6 +10,29 @@ data class GeoPoint(val latitude: Double, val longitude: Double, val accuracyMet
 interface LocationProvider {
     val available: Boolean
     suspend fun current(): GeoPoint?
+
+    /** Whether this phone's location can be read right now, found out without asking for anything. */
+    fun access(): LocationAccess = LocationAccess.Off
+
+    /** Shows the platform's own "while using the app" prompt when it hasn't been answered yet; what was decided. */
+    suspend fun requestAccess(): LocationAccess = access()
+
+    /**
+     * Where the phone is, for as long as the flow is collected and only while Circaso is on screen (no background
+     * updates, nothing is sent anywhere): the map's own "you are here". Needs [LocationAccess.Granted].
+     */
+    fun updates(): kotlinx.coroutines.flow.Flow<GeoPoint> = kotlinx.coroutines.flow.emptyFlow()
+}
+
+/** Whether Circaso may read where the phone is. */
+enum class LocationAccess {
+    Granted,
+    /** Never answered (on Android also "answered no before": the system doesn't say which until it is asked again). */
+    NotAsked,
+    /** Refused: only the phone's Settings can change it now. */
+    Denied,
+    /** Location is switched off for the whole phone, or this build has no location at all. */
+    Off,
 }
 
 object NoLocation : LocationProvider {
@@ -19,6 +42,18 @@ object NoLocation : LocationProvider {
 
 /** Opens the phone's maps app at a shared location. */
 expect fun openMap(latitude: Double, longitude: Double, label: String?)
+
+/**
+ * Opens the phone's maps app with directions from where the phone is to the point: the route, the travel time and
+ * the way of travelling are that app's. Circaso hands over the destination only, never the person's own position.
+ */
+expect fun openDirections(latitude: Double, longitude: Double)
+
+/** Google Maps' documented directions link (the app when installed, the website otherwise): origin is "my location". */
+internal fun googleDirectionsUrl(latitude: Double, longitude: Double) = "https://www.google.com/maps/dir/?api=1&destination=$latitude,$longitude"
+
+/** Apple Maps' directions link: no `saddr`, so it starts from where the phone is. */
+internal fun appleDirectionsUrl(latitude: Double, longitude: Double) = "https://maps.apple.com/?daddr=$latitude,$longitude"
 
 /**
  * Turns the coins sound for money received on or off. iOS plays a push's sound from the app's `Library/Sounds`, so
@@ -71,6 +106,13 @@ interface MediaFiles {
     /** Where [name] is on disk, for a player that reads a file; null when it isn't there. */
     suspend fun path(name: String): String? = null
 
+    /**
+     * Where [name] is on disk for a video player, under a name that ends in [extension] ("mp4", "mov"). iPhone's
+     * player refuses a file with no extension ("Cannot Open"), and files are kept under their id alone, so there it
+     * is a second name for the same file (a hard link, no copy), removed with it. Null when the file isn't there.
+     */
+    suspend fun playablePath(name: String, extension: String): String? = path(name)
+
     /** Removes one file (a moment's media once its 24 hours are over). */
     suspend fun delete(name: String) {}
 
@@ -103,6 +145,14 @@ interface MediaFiles {
      * piece at a time. False when it can't be read.
      */
     suspend fun copyIn(path: String, name: String): Boolean = false
+
+    /**
+     * Takes a file of this app's from elsewhere on the phone ([path]: a picked video's copy in the cache, an encoder's
+     * output) in as [name], and the file at [path] is gone afterwards. A rename where the phone allows it (the same
+     * volume: instant, however large), else a copy that only appears under [name] once it is whole. False when it
+     * can't be read; then nothing is under [name].
+     */
+    suspend fun moveIn(path: String, name: String): Boolean = copyIn(path, name)
 }
 
 /** The size of a file anywhere on this phone (a picked video, a shared document), or null when it can't be read. */

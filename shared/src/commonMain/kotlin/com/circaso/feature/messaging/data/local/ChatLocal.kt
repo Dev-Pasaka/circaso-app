@@ -29,6 +29,12 @@ data class ChatEntity(
     @androidx.room.ColumnInfo(defaultValue = "NULL") val viaSpaceId: String? = null,
     /** The group photo the server keeps ([com.circaso.feature.messaging.data.remote.ChatDto.avatarMediaId]); null for none or unknown. */
     @androidx.room.ColumnInfo(defaultValue = "NULL") val avatarMediaId: String? = null,
+    /**
+     * The group's description as last opened from the sealed metadata (2026-11-14); null for none. Kept in its own
+     * column, like [name], so it still shows when the key is lost and survives a re-seal by an app from before
+     * descriptions.
+     */
+    @androidx.room.ColumnInfo(defaultValue = "NULL") val description: String? = null,
 )
 
 @Entity(tableName = "chat_member", primaryKeys = ["chatId", "userId"])

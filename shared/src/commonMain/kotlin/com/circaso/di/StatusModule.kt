@@ -14,6 +14,7 @@ import org.koin.core.qualifier.named
 import org.koin.core.module.dsl.viewModel
 import org.koin.dsl.bind
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.map
 import org.koin.dsl.module
 
 /**
@@ -32,6 +33,8 @@ val statusModule = module {
             // A new phone asks for keys only once its own are on the server, or a poster could seal for the old ones.
             keysPublished = { get<com.circaso.feature.messaging.domain.KeysRepository>().maintain() is com.circaso.core.common.AppResult.Success },
             uploads = getOrNull<com.circaso.core.platform.BackgroundUploads>() ?: com.circaso.core.platform.NoBackgroundUploads,
+            // Post closes the composer at once (2026-11-14): a video is made smaller here, in the app's scope.
+            library = getOrNull<com.circaso.core.platform.MediaLibrary>(), scope = get(),
         )
     }
     // The outbox processor collects every handler while it is built; this one finds the repository only when it
@@ -50,6 +53,22 @@ val statusModule = module {
             socket = get<com.circaso.core.realtime.RealtimeClient>().connected,
             repository = { get() },
             scope = get(),
+            // Signed in, online or not: moments left part-way ready by the last run are picked up.
+            signedIn = auth.state.map { it == com.circaso.core.session.AuthState.Active },
+        )
+    }
+    // Other people's moments fetched as they arrive, so they open at once (2026-11-15); started in CoreModule.
+    single {
+        val auth = get<com.circaso.core.session.AuthManager>()
+        val connection = get<com.circaso.core.sync.ConnectionState>()
+        com.circaso.feature.status.data.repository.MomentAutoDownload(
+            repository = { get() },
+            ready = kotlinx.coroutines.flow.combine(auth.state, connection.status) { state, status ->
+                state == com.circaso.core.session.AuthState.Active && status == com.circaso.core.platform.ConnectionStatus.Online
+            },
+            enabled = get<com.circaso.core.datastore.AppPreferences>().flag(com.circaso.core.datastore.AppPreferences.MomentAutoDownloadOff).map { !it },
+            transport = get<com.circaso.core.platform.ConnectivityMonitor>().transport ?: kotlinx.coroutines.flow.flowOf(null),
+            scope = get(),
         )
     }
     // Debug builds only: a dummy upload through the real pipeline, never posted (see DebugUploadHandler).
@@ -66,11 +85,10 @@ val statusModule = module {
     viewModel { com.circaso.feature.status.presentation.MomentsViewModel(get(), get(), get(), get(), get(), observeBlocks = get()) }
     viewModel { params ->
         com.circaso.feature.status.presentation.MomentComposerViewModel(get(), get(), get(), get(), get(), get(), get(), get(),
-            uploads = getOrNull<com.circaso.core.platform.BackgroundUploads>() ?: com.circaso.core.platform.NoBackgroundUploads,
             // Opened for a share from another app: its photos and videos onto the review.
             shared = if (params.getOrNull<Boolean>() == true) com.circaso.feature.mediacompose.IncomingShares::take else null)
     }
-    viewModel { com.circaso.feature.status.presentation.MomentsPrivacyViewModel(get(), get()) }
+    viewModel { com.circaso.feature.status.presentation.MomentsPrivacyViewModel(get(), get(), get()) }
     // V4 Forward: a moment into chats through the chat's own media path (encrypted, queued, sent by the outbox).
     single<com.circaso.feature.status.presentation.MomentForwarder> {
         val media = get<com.circaso.feature.messaging.data.repository.MediaMessages>()

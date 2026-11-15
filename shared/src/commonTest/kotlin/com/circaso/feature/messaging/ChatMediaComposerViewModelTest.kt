@@ -148,6 +148,25 @@ class ChatMediaComposerViewModelTest {
         assertTrue(vm.state.value.canSend)
     }
 
+    @Test fun aVideoOverTheChatLimitIsMarkedOnItsTileButStaysPickableBecauseItCanBeTrimmedToFit() = runTest(dispatcher) {
+        val limit = com.circaso.core.platform.ChatFileMaxBytes
+        val vm = composer(ChatComposeStart.Gallery)
+        val over = LibraryItem("over", LibraryKind.Video, durationMs = 300_000, sizeBytes = limit * 3 / 2)
+        val under = LibraryItem("under", LibraryKind.Video, durationMs = 300_000, sizeBytes = limit - 1)
+        // Nothing is greyed out in a chat: the trimmer cuts an over-limit video to fit, so it must stay pickable.
+        assertNull(vm.composer.pickLimit)
+        assertFalse(vm.composer.tooLarge(over))
+        assertFalse(vm.composer.tooLarge(LibraryItem("huge", LibraryKind.Video, sizeBytes = limit * 40)))
+        // It is marked, though, before it is picked.
+        assertTrue(vm.composer.overLimit(over))
+        assertFalse(vm.composer.overLimit(under))
+        assertFalse(vm.composer.overLimit(LibraryItem("unknown", LibraryKind.Video, durationMs = 300_000)))
+        vm.composer.toggle(over)
+        vm.composer.toggle(under)
+        assertEquals(listOf("over", "under"), vm.state.value.media.selection.map { it.id })
+        assertNull(vm.state.value.media.info)
+    }
+
     @Test fun severalFromTheGalleryGoInOrderEachWithItsOwnCaption() = runTest(dispatcher) {
         library.media += mapOf("a" to jpeg(3), "b" to clip("/v", 20_000), "c" to jpeg(5))
         library.files["/v"] = ByteArray(9)

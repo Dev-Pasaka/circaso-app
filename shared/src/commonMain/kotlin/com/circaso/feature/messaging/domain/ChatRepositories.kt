@@ -22,6 +22,11 @@ interface ChatsRepository {
 
     suspend fun rename(chatId: String, name: String): AppResult<Chat>
     /**
+     * M8: the group's name and description in one change (2026-11-14); both are sealed on the phone, so the server
+     * reads neither. [description] blank removes it. Online-only, admins only.
+     */
+    suspend fun editGroup(chatId: String, name: String, description: String): AppResult<Chat> = rename(chatId, name)
+    /**
      * M8: a new group photo (encrypted, uploaded, referenced in the sealed metadata), or null to remove it. [name] is
      * the group's name as the admin typed it, needed only when this phone can't read the current one (its key is lost:
      * the code `messaging.group_name_needed` asks for it).

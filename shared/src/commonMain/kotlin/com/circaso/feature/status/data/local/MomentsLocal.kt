@@ -32,7 +32,8 @@ data class MomentEntity(
 /**
  * My moment on its way out (M6). [draft] is the composer's choice as JSON; the plain media sits in the phone's media
  * files under [localId] until it is posted. [mediaId] and the key are filled once the upload is done, so a retry
- * doesn't upload twice. [state] is `posting`, `waiting` or `failed`.
+ * doesn't upload twice. [state] is `preparing` (2026-11-14: the file is still being got ready after Post; a value, not
+ * a schema change), `posting`, `waiting` or `failed`.
  */
 @Entity(tableName = "moment_pending")
 data class PendingMomentEntity(

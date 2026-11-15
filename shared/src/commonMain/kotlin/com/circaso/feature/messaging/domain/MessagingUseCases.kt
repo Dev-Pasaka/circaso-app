@@ -8,6 +8,11 @@ class ObserveChatsUseCase(private val chats: ChatsRepository) { operator fun inv
 /** Read. */
 class ObserveChatUseCase(private val chats: ChatsRepository) { operator fun invoke(chatId: String) = chats.chat(chatId) }
 
+/** Online-only (M8): the group's name and description in one change, both sealed on the phone; admins only. */
+class EditGroupUseCase(private val chats: ChatsRepository) {
+    suspend operator fun invoke(chatId: String, name: String, description: String) = chats.editGroup(chatId, name, description)
+}
+
 /** Read; refreshes quietly in the background. */
 class RefreshChatsUseCase(private val chats: ChatsRepository) { suspend operator fun invoke() = chats.refresh() }
 
