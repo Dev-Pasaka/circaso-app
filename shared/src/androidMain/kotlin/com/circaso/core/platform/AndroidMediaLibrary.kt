@@ -181,12 +181,17 @@ class AndroidMediaLibrary(private val context: Context) : MediaLibrary {
             }
         }
         if (weaker() == LibraryAccess.Granted) return LibraryAccess.Granted
-        // "Selected photos" already chosen: asking again only reopens the system's selection screen, which has no
-        // Allow all (Redmi, Android 16, 2026-11-14). Everything is allowed from the app's settings (Permissions →
-        // Photos and videos → Allow all); coming back re-reads the library.
+        // "Selected photos" already chosen: Android's own prompt again, asked for photos and videos only. Naming the
+        // "selected" permission too made Android skip the prompt and reopen its selection screen, which has no
+        // Allow all (Redmi, Android 16, 2026-11-14); without it the prompt offers Allow all (2026-11-15). Answered
+        // at once with no prompt shown: the app's settings (Permissions → Photos and videos → Allow all).
         if (Build.VERSION.SDK_INT >= 34 && granted(Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED) && kinds.any(::asked)) {
-            openAppSettings()
-            return weaker()
+            val started = System.currentTimeMillis()
+            PermissionBridge.requestAll(arrayOf(Manifest.permission.READ_MEDIA_IMAGES, Manifest.permission.READ_MEDIA_VIDEO))
+            kinds.forEach(::markAsked)
+            val after = weaker()
+            if (after != LibraryAccess.Granted && System.currentTimeMillis() - started < 400) openAppSettings()
+            return after
         }
         // Never answered, or one kind off: one prompt for both ("photos and videos"). Answered at once with no
         // prompt shown (refused for good): the app's settings, where the person can allow it.
