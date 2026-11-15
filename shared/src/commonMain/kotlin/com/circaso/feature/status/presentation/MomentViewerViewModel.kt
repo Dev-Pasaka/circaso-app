@@ -12,6 +12,7 @@ import com.circaso.feature.contacts.domain.ObserveContactsUseCase
 import com.circaso.feature.profile.domain.ObserveProfileUseCase
 import com.circaso.feature.status.domain.Moment
 import com.circaso.feature.status.domain.MomentKind
+import com.circaso.feature.status.domain.preloads
 import com.circaso.feature.status.domain.MomentMediaLoad
 import com.circaso.feature.status.domain.MomentRing
 import com.circaso.feature.status.domain.MomentViewer
@@ -508,18 +509,3 @@ internal fun moneyStarted(text: String): Boolean = MoneyStart.containsMatchIn(te
 
 private fun String.firstName() = trim().substringBefore(' ').ifBlank { "Someone" }
 
-/**
- * The most a moment's file may be for the viewer to fetch it ahead of time, while the one before it plays
- * (2026-11-15). Photos, voice and clips of a few seconds are well under it, so tapping on still rarely stops at
- * Loading. A larger video (a moment's is up to 64 MiB since 2026-11-14) is fetched when it is shown: fetched ahead it
- * would spend up to 64 MiB of someone's data on a moment they may never reach, and on a phone short of memory two
- * large files being opened at once is what got the app closed (an iPhone, 2026-11-15).
- */
-const val MomentPreloadMaxBytes = 8L * 1024 * 1024
-
-/** Whether [moment] is fetched ahead: it has a file, and the file is at most [MomentPreloadMaxBytes]. A size of 0 is one an older phone didn't say: its limit was 32 MiB, so it waits too unless it is a photo or a voice. */
-internal fun preloads(moment: Moment): Boolean {
-    val media = moment.media ?: return false
-    if (media.sizeBytes <= 0) return moment.kind != MomentKind.Video
-    return media.sizeBytes <= MomentPreloadMaxBytes
-}

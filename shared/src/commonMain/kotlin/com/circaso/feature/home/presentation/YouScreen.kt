@@ -226,7 +226,7 @@ fun YouContent(
                 Section("Security") {
                     ListRow("Security and Privacy", trailing = { RowChevron() }, onClick = actions.onSecurity)
                     RowDivider(Modifier.padding(start = CircasoSpacing.s4))
-                    ListRow("Moments", sub = "Who can see your moments", trailing = { RowChevron() }, onClick = actions.onMomentsPrivacy)
+                    ListRow("Moments", sub = "Who can see your moments, and downloads", trailing = { RowChevron() }, onClick = actions.onMomentsPrivacy)
                     RowDivider(Modifier.padding(start = CircasoSpacing.s4))
                     ListRow("Shared links", sub = "Links to receipts, statements, your address and invites", trailing = { RowChevron() }, onClick = actions.onSharedLinks)
                     RowDivider(Modifier.padding(start = CircasoSpacing.s4))

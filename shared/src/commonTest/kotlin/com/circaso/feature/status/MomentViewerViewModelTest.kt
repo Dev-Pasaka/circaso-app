@@ -93,12 +93,12 @@ class MomentViewerViewModelTest {
     @Test fun theFetchAheadRule() {
         val mib = 1024L * 1024
         fun m(kind: MomentKind, size: Long?) = moment("x").copy(kind = kind, media = size?.let { com.circaso.feature.status.domain.MomentMedia("f", "k", "d", "m", it) })
-        assertTrue(com.circaso.feature.status.presentation.preloads(m(MomentKind.Video, 8 * mib)))
-        assertFalse(com.circaso.feature.status.presentation.preloads(m(MomentKind.Video, 8 * mib + 1)))
-        assertTrue(com.circaso.feature.status.presentation.preloads(m(MomentKind.Voice, 400_000)))
-        assertFalse(com.circaso.feature.status.presentation.preloads(m(MomentKind.Video, 0)))
-        assertTrue(com.circaso.feature.status.presentation.preloads(m(MomentKind.Image, 0)))
-        assertFalse(com.circaso.feature.status.presentation.preloads(m(MomentKind.Text, null)), "nothing to fetch")
+        assertTrue(com.circaso.feature.status.domain.preloads(m(MomentKind.Video, 8 * mib)))
+        assertFalse(com.circaso.feature.status.domain.preloads(m(MomentKind.Video, 8 * mib + 1)))
+        assertTrue(com.circaso.feature.status.domain.preloads(m(MomentKind.Voice, 400_000)))
+        assertFalse(com.circaso.feature.status.domain.preloads(m(MomentKind.Video, 0)))
+        assertTrue(com.circaso.feature.status.domain.preloads(m(MomentKind.Image, 0)))
+        assertFalse(com.circaso.feature.status.domain.preloads(m(MomentKind.Text, null)), "nothing to fetch")
     }
 
     // ---- money for a moment, chat native (2026-11-14): `#500` in the reply field
