@@ -67,6 +67,13 @@ object AppUpdates {
     fun later() {
         _dismissed.value = true
     }
+
+    /**
+     * Whether the store now has a newer version than the update this phone already started ([staged] is its version
+     * code, 0 when none was started): then the started one is passed over and the latest is fetched, so nobody
+     * updates twice in a row to reach the current version.
+     */
+    fun newerThanStaged(staged: Int, available: Int, updateAvailable: Boolean): Boolean = updateAvailable && staged > 0 && available > staged
 }
 
 /** The quiet bar at the top of the window while a downloaded update waits for a restart. */
