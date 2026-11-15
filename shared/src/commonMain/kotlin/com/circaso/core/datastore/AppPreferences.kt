@@ -104,6 +104,12 @@ class AppPreferences(private val store: DataStore<Preferences>) : com.circaso.co
         /** Payments approve with Face ID / fingerprint on this phone; belongs to the signed-in account, so cleared on sign-out. */
         const val BiometricApproval = "biometric_approval"
 
+        /**
+         * Other people's moments aren't fetched ahead (You → Moments → Download automatically, Pasaka 2026-11-15);
+         * they are unless this is turned off. A phone setting, like the money sound.
+         */
+        const val MomentAutoDownloadOff = "moment_auto_download_off"
+
         /** The coins sound for money received is off (You → Money sound); it is on unless turned off. */
         const val MoneySoundOff = "money_sound_off"
 

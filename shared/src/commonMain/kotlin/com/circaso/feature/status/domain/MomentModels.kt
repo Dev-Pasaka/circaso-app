@@ -186,6 +186,8 @@ interface MomentsRepository {
     suspend fun viewers(momentId: String): AppResult<List<MomentViewer>>
     suspend fun delete(momentId: String): AppResult<Unit>
     suspend fun media(moment: Moment): MomentMediaLoad
+    /** How much room the moment's file takes on this phone; null when it isn't here yet (or the moment has none). */
+    suspend fun mediaSizeOnPhone(moment: Moment): Long? = null
 
     suspend fun setPrivacy(privacy: MomentPrivacy)
     suspend fun setMuted(userId: String, muted: Boolean)
@@ -218,4 +220,37 @@ interface SeenReactions {
             byMoment.keys.retainAll(live + momentId)
         }
     }
+}
+
+/**
+ * The most a moment's file may be for the viewer to fetch it ahead of time, while the one before it plays
+ * (2026-11-15). Photos, voice and clips of a few seconds are well under it, so tapping on still rarely stops at
+ * Loading. A larger video (a moment's is up to 64 MiB since 2026-11-14) is fetched when it is shown: fetched ahead it
+ * would spend up to 64 MiB of someone's data on a moment they may never reach, and on a phone short of memory two
+ * large files being opened at once is what got the app closed (an iPhone, 2026-11-15).
+ */
+const val MomentPreloadMaxBytes = 8L * 1024 * 1024
+
+/** Whether [moment] is fetched ahead: it has a file, and the file is at most [MomentPreloadMaxBytes]. A size of 0 is one an older phone didn't say: its limit was 32 MiB, so it waits too unless it is a photo or a voice. */
+fun preloads(moment: Moment): Boolean {
+    val media = moment.media ?: return false
+    if (media.sizeBytes <= 0) return moment.kind != MomentKind.Video
+    return media.sizeBytes <= MomentPreloadMaxBytes
+}
+
+/**
+ * The most space other people's moments fetched ahead may take on this phone ([MomentAutoDownload]); past it a moment
+ * is fetched when it is opened. They go after 24 hours, so this is only ever a day's worth.
+ */
+const val MomentAutoDownloadMaxBytes = 500L * 1024 * 1024
+
+/**
+ * Whether a moment is fetched as soon as this phone learns of it (Pasaka, 2026-11-15: "people don't have to stream
+ * moments, they are always on the device"). On Wi-Fi (or a cable) every one is; on mobile data, or when the phone
+ * can't say what carries the network, only what the viewer would fetch ahead anyway ([preloads]): photos, voice and
+ * small videos, so a 64 MiB video never spends someone's bundle unasked.
+ */
+fun autoDownloads(moment: Moment, transport: String?): Boolean {
+    if (moment.media == null) return false
+    return if (transport == "wifi" || transport == "ethernet") true else preloads(moment)
 }

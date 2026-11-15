@@ -157,6 +157,9 @@ class MomentsRepositoryImpl(
     private val scope: kotlinx.coroutines.CoroutineScope? = null,
 ) : MomentsRepository {
     private val refreshLock = Mutex()
+    /** A lock per media file being fetched (see [media]); a day of moments is a few hundred small entries at most. */
+    private val mediaLocks = mutableMapOf<String, Mutex>()
+    private val mediaLocksGuard = Mutex()
     /** One moment is got ready at a time, in the order they were posted. */
     private val preparing = Mutex()
     private val postLock = Mutex()
@@ -398,6 +401,20 @@ class MomentsRepositoryImpl(
      */
     override suspend fun media(moment: Moment): MomentMediaLoad {
         val media = moment.media ?: return MomentMediaLoad.Failed(null)
+        // One fetch per file at a time: the viewer and the automatic download ([MomentAutoDownload]) may both want
+        // it, and the second waits for the first's copy instead of fetching over it (or reading it half written).
+        val lock = mediaLocksGuard.withLock { mediaLocks.getOrPut(media.mediaId) { Mutex() } }
+        return lock.withLock { fetch(moment, media) }
+    }
+
+    override suspend fun mediaSizeOnPhone(moment: Moment): Long? {
+        val id = moment.media?.mediaId ?: return null
+        // Mid-fetch the file is there but not whole: not on the phone yet.
+        if (mediaLocksGuard.withLock { mediaLocks[id]?.isLocked == true }) return null
+        return files.size(id)
+    }
+
+    private suspend fun fetch(moment: Moment, media: MomentMedia): MomentMediaLoad {
         loaded(moment, media.mediaId)?.let { return it }
         val link = when (val r = remote.download(media.mediaId)) {
             is AppResult.Success -> r.value
