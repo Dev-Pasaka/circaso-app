@@ -196,6 +196,8 @@ private fun CallSurface(
     stage: CallStageState,
     moreAtStart: Boolean = false,
 ) {
+    // The call is dark in every theme: the status bar's icons go light while it fills the screen.
+    com.circaso.core.platform.StatusBarIcons(light = true)
     // The money sheet: the call chat's composer over the call (2026-11-09; it replaced H5's form and leaving for Pay).
     var moneyOpen by remember { mutableStateOf(false) }
     val openMoney: (() -> Unit)? = actions.moneySheet?.let { { moneyOpen = true } }

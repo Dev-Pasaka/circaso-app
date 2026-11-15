@@ -54,12 +54,29 @@ class AndroidContactsReader(private val context: Context) : ContactsReader {
 
     override suspend fun requestAccess(): Boolean = hasAccess() || PermissionBridge.request(Manifest.permission.READ_CONTACTS)
 
-    /** Android tells every app watching the contacts provider when a contact is saved, edited or removed. */
+    /**
+     * Android tells every app watching the contacts provider when a contact is saved, edited or removed.
+     *
+     * Watching starts only once contacts access is allowed: newer Android versions refuse the watch itself without
+     * it (a SecurityException, which used to end the app at launch). Until then this checks again every few seconds,
+     * so access given later, from the prompt or in Settings, is picked up without a restart.
+     */
     override fun changes(): kotlinx.coroutines.flow.Flow<Unit> = kotlinx.coroutines.flow.callbackFlow {
         val observer = object : android.database.ContentObserver(null) {
             override fun onChange(selfChange: Boolean) { trySend(Unit) }
         }
-        context.contentResolver.registerContentObserver(ContactsContract.Contacts.CONTENT_URI, true, observer)
+        var watching = false
+        while (!watching) {
+            if (hasAccess()) {
+                try {
+                    context.contentResolver.registerContentObserver(ContactsContract.Contacts.CONTENT_URI, true, observer)
+                    watching = true
+                } catch (_: SecurityException) {
+                    // Access was taken away between the check and the watch: wait and look again.
+                }
+            }
+            if (!watching) kotlinx.coroutines.delay(AccessCheckMillis)
+        }
         awaitClose { context.contentResolver.unregisterContentObserver(observer) }
     }
 
@@ -77,3 +94,6 @@ class AndroidContactsReader(private val context: Context) : ContactsReader {
         numbers
     }
 }
+
+/** How often the phone book watcher looks for contacts access while it has none. */
+private const val AccessCheckMillis = 5_000L
