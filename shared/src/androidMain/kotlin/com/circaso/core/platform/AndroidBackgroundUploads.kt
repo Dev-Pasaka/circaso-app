@@ -169,7 +169,9 @@ class AndroidBackgroundUploads(private val context: Context) : BackgroundUploads
                 .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
                 .setPublicVersion(public)
                 .setContentIntent(openApp(context, 20))
-                .setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_DEFERRED)
+                // Shown at once: left to Android's default it waits ten seconds, so an upload shorter than that
+                // ran in the background with nothing to say so (Redmi, 2026-11-15).
+                .setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE)
                 .build()
         }
     }
