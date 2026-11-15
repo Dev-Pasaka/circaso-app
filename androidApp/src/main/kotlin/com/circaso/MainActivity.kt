@@ -39,7 +39,16 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    /**
+     * The version a started update is bringing, kept across restarts. Play keeps a downloaded update waiting until
+     * the app restarts into it; if a newer one is published meanwhile, installing the waiting one only leads to
+     * another update straight after (Pasaka, 2026-11-15: "always pick the current latest… so they do not have to
+     * update the app multiple times"). Knowing what was downloaded lets [checkForUpdate] go for the newer one instead.
+     */
+    private val updatePrefs by lazy { getSharedPreferences("app_updates", MODE_PRIVATE) }
+
     private fun startUpdate(info: com.google.android.play.core.appupdate.AppUpdateInfo, type: Int) {
+        updatePrefs.edit().putInt(StagedVersionKey, info.availableVersionCode()).apply()
         runCatching {
             playUpdates.startUpdateFlowForResult(info, this, com.google.android.play.core.appupdate.AppUpdateOptions.defaultOptions(type), UpdateRequestCode)
         }
@@ -51,16 +60,22 @@ class MainActivity : ComponentActivity() {
             val immediate = com.google.android.play.core.install.model.AppUpdateType.IMMEDIATE
             val flexible = com.google.android.play.core.install.model.AppUpdateType.FLEXIBLE
             val availability = info.updateAvailability()
+            // Play has a newer version than the one downloaded (or downloading) here: that one is passed over.
+            val newerThanStaged = com.circaso.core.platform.AppUpdates.newerThanStaged(
+                staged = updatePrefs.getInt(StagedVersionKey, 0), available = info.availableVersionCode(),
+                updateAvailable = availability == com.google.android.play.core.install.model.UpdateAvailability.UPDATE_AVAILABLE,
+            )
             when {
-                info.installStatus() == com.google.android.play.core.install.model.InstallStatus.DOWNLOADED ->
+                info.installStatus() == com.google.android.play.core.install.model.InstallStatus.DOWNLOADED && !newerThanStaged ->
                     com.circaso.core.platform.AppUpdates.report(com.circaso.core.platform.AppUpdates.Status.Ready { playUpdates.completeUpdate() })
-                info.installStatus() == com.google.android.play.core.install.model.InstallStatus.DOWNLOADING -> Unit // the listener reports progress
+                info.installStatus() == com.google.android.play.core.install.model.InstallStatus.DOWNLOADING && !newerThanStaged -> Unit // the listener reports progress
                 // An immediate update the person left half way: Play requires it to be resumed.
                 availability == com.google.android.play.core.install.model.UpdateAvailability.DEVELOPER_TRIGGERED_UPDATE_IN_PROGRESS -> startUpdate(info, immediate)
                 availability != com.google.android.play.core.install.model.UpdateAvailability.UPDATE_AVAILABLE ->
                     com.circaso.core.platform.AppUpdates.report(com.circaso.core.platform.AppUpdates.Status.None)
                 info.updatePriority() >= ImmediateUpdatePriority && info.isUpdateTypeAllowed(immediate) -> startUpdate(info, immediate)
-                info.isUpdateTypeAllowed(flexible) && startFlexible -> startUpdate(info, flexible)
+                // At launch, and whenever the one already downloaded has been overtaken: the latest starts by itself.
+                info.isUpdateTypeAllowed(flexible) && (startFlexible || newerThanStaged) -> startUpdate(info, flexible)
                 info.isUpdateTypeAllowed(flexible) ->
                     com.circaso.core.platform.AppUpdates.report(com.circaso.core.platform.AppUpdates.Status.Available { startUpdate(info, flexible) })
             }
@@ -231,6 +246,9 @@ private const val ImmediateUpdatePriority = 4
 
 /** Request code for Play's update screen (its result needs no handling: a declined flexible update simply waits). */
 private const val UpdateRequestCode = 4_201
+
+/** Where the version code of the update last started is kept (see `updatePrefs`). */
+private const val StagedVersionKey = "staged_version_code"
 
 /** How often Play is asked again while Circaso stays open. */
 private const val UpdateCheckEveryMillis = 10 * 60 * 1000L
