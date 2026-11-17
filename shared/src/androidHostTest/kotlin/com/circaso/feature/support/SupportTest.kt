@@ -120,6 +120,24 @@ class SupportTest {
         assertEquals("Support isn't set up yet. Ask Asha, or try again later.", vm.state.value.error)
     }
 
+    @Test fun topicsOpenTheTicketFormWithTheirCategory() {
+        assertEquals(
+            listOf("PAYMENTS", "WALLET", "ACCOUNT", "GROUPS", "OTHER"),
+            listOf(Support.Topic.Payment, Support.Topic.Wallet, Support.Topic.Account, Support.Topic.Group, Support.Topic.Other).map { it.category.wire },
+        )
+    }
+
+    @Test fun helpOffersTheChatOnlyOnceTheSupportAccountExists() = runTest(dispatcher) {
+        val vm = help()
+        backgroundScope.launch(dispatcher) { vm.state.collect { } }
+        assertTrue(vm.state.value.supportChat)
+        Support.UserId = null
+        val without = help()
+        backgroundScope.launch(dispatcher) { without.state.collect { } }
+        assertFalse(without.state.value.supportChat)
+        assertTrue(without.state.value.tickets.isEmpty())
+    }
+
     @Test fun caseNumbersAreCircasoAndReadable() {
         assertEquals("CIR-1A2B-3C4D", caseNumber("0192f0aa-0000-7000-8000-00001a2b3c4d"))
     }

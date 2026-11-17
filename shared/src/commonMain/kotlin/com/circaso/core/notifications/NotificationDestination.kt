@@ -20,6 +20,9 @@ sealed interface NotificationDestination {
     /** A person's moment; [posterId] null is my own (a reaction to my moment). */
     data class Moment(val posterId: String? = null, val momentId: String? = null) : NotificationDestination
 
+    /** A support ticket (push `support.ticket`, 2026-11-08); with no [ticketId], the person's tickets. */
+    data class Ticket(val ticketId: String? = null) : NotificationDestination
+
     data object Asha : NotificationDestination
     data object Security : NotificationDestination
     data object Contacts : NotificationDestination
@@ -45,6 +48,7 @@ sealed interface NotificationDestination {
                 is Payment -> { put("to", "payment"); put("chatId", d.chatId); put("transferId", d.transferId); put("transactionId", d.transactionId) }
                 is MissedCall -> { put("to", "missedCall"); put("chatId", d.chatId); put("callId", d.callId) }
                 is Moment -> { put("to", "moment"); put("posterId", d.posterId); put("momentId", d.momentId) }
+                is Ticket -> { put("to", "ticket"); put("ticketId", d.ticketId) }
                 Asha -> put("to", "asha")
                 Security -> put("to", "security")
                 Contacts -> put("to", "contacts")
@@ -68,6 +72,7 @@ sealed interface NotificationDestination {
                 "payment" -> Payment(get("chatId"), get("transferId"), get("transactionId"))
                 "missedCall" -> MissedCall(get("chatId"), get("callId"))
                 "moment" -> Moment(get("posterId"), get("momentId"))
+                "ticket" -> Ticket(get("ticketId"))
                 "asha" -> Asha
                 "security" -> Security
                 "contacts" -> Contacts
@@ -97,6 +102,8 @@ sealed interface NotificationDestination {
                 kind == "moment.loved" -> Moment(null, get("momentId"))
                 kind?.startsWith("moment.") == true -> Moment(get("userId"), get("momentId"))
                 kind == "contact.joined" || kind == "connection.added" -> Contacts
+                // Before the chat rule: a ticket may name the chat it is about, and the tap still opens the ticket.
+                kind == "support.ticket" -> Ticket(get("ticketId"))
                 kind == "wallet.setup" -> Wallet
                 kind == "session.revoked" -> null // signed out: the app opens on sign-in, which says so
                 kind?.startsWith("security.") == true -> Security

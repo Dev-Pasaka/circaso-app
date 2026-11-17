@@ -57,24 +57,35 @@ import com.circaso.designsystem.theme.CircasoSpacing
 import com.circaso.designsystem.theme.CircasoTheme
 import com.circaso.feature.messaging.domain.Message
 import com.circaso.feature.support.Support
+import com.circaso.feature.support.TicketCategory
 
 @Composable
-fun HelpScreen(viewModel: HelpViewModel, onBack: () -> Unit, onOpenChat: (String) -> Unit, onAsha: () -> Unit, onCallChat: ((String) -> Unit)? = null) {
+fun HelpScreen(
+    viewModel: HelpViewModel, onBack: () -> Unit, onOpenChat: (String) -> Unit, onAsha: () -> Unit, onCallChat: ((String) -> Unit)? = null,
+    /** The new-ticket form, with what it's about already chosen when it came from a topic. */
+    onNewTicket: (TicketCategory?) -> Unit = {},
+    onOpenTicket: (String) -> Unit = {},
+    onAllTickets: () -> Unit = {},
+) {
     val state by viewModel.state.collectAsState()
     LaunchedEffect(Unit) { viewModel.opened.collect(onOpenChat) }
     LaunchedEffect(onCallChat) { if (onCallChat != null) viewModel.call.collect(onCallChat) }
     HelpContent(
-        state, onBack, viewModel::onTopic, viewModel::onChat, onAsha, if (onCallChat != null) viewModel::onCall else null, viewModel::onErrorShown,
+        state, onBack, viewModel::onChat, onAsha, if (onCallChat != null) viewModel::onCall else null, viewModel::onErrorShown,
         onSendLog = if (viewModel.canSendLog) viewModel::onSendLog else null, onSendLogConfirmed = viewModel::onSendLogConfirmed, onLogSheetClosed = viewModel::onLogSheetClosed,
+        onNewTicket = onNewTicket, onOpenTicket = onOpenTicket, onAllTickets = onAllTickets,
     )
 }
 
-/** Design SP01. */
+/**
+ * Design SP01, with tickets (2026-11-17): "Write to us" and each topic open the new-ticket form, and the person's
+ * newest tickets are listed. The chat and the call with a support account show only once that account exists
+ * ([HelpUiState.supportChat]).
+ */
 @Composable
 fun HelpContent(
     state: HelpUiState,
     onBack: () -> Unit,
-    onTopic: (Support.Topic) -> Unit,
     onChat: () -> Unit,
     onAsha: () -> Unit,
     onCall: (() -> Unit)?,
@@ -83,6 +94,9 @@ fun HelpContent(
     onSendLog: (() -> Unit)? = null,
     onSendLogConfirmed: () -> Unit = {},
     onLogSheetClosed: () -> Unit = {},
+    onNewTicket: (TicketCategory?) -> Unit = {},
+    onOpenTicket: (String) -> Unit = {},
+    onAllTickets: () -> Unit = {},
 ) {
     val c = CircasoTheme.colors
     val t = CircasoTheme.typography
@@ -98,7 +112,8 @@ fun HelpContent(
             val shown = rememberLast(state.logSheet) ?: LogSheet.Confirm
             // Held open while the log is on its way: the answer (a code, or why not) lands in it.
             CircasoSheet(state.logSheet != null, onLogSheetClosed, label = "Send diagnostic log", dismissible = state.logSheet != LogSheet.Sending) {
-                LogSheetContent(shown, state.online, onSendLogConfirmed, onLogSheetClosed, onChat = { onLogSheetClosed(); onChat() })
+                // The code is for support: with a support account that is the chat, otherwise a ticket.
+                LogSheetContent(shown, state.online, onSendLogConfirmed, onLogSheetClosed, chat = state.supportChat, onChat = { onLogSheetClosed(); if (state.supportChat) onChat() else onNewTicket(null) })
             }
         },
     ) { padding ->
@@ -111,14 +126,19 @@ fun HelpContent(
             }
             item {
                 Column(Modifier.fillMaxWidth().clip(CircasoShapes.lg).background(c.surface)) {
-                    ListRow(
-                        "Chat with us", sub = if (state.opening) "Opening…" else if (state.online) "Replies in a few minutes" else "You need a connection",
-                        leading = { Tile(CircasoIcon.Chat) }, onClick = if (state.online || state.conversation != null) onChat else null,
-                    )
+                    ListRow("Write to us", sub = "We reply here and notify you", leading = { Tile(CircasoIcon.Mail) }, onClick = { onNewTicket(null) })
                     RowDivider(Modifier.padding(start = 72.dp))
-                    // Design SP01's "Call us" is a free internet call to support; it arrives with calls (H1–H4).
-                    ListRow("Call us", sub = when { onCall == null -> "Calls are coming soon"; !state.online -> "You need a connection"; else -> "Free over the internet" }, leading = { Tile(CircasoIcon.Phone) }, onClick = if (state.online) onCall else null)
-                    RowDivider(Modifier.padding(start = 72.dp))
+                    // The chat and the call are with the support account: hidden until it exists (Support.UserId).
+                    if (state.supportChat) {
+                        ListRow(
+                            "Chat with us", sub = if (state.opening) "Opening…" else if (state.online) "Replies in a few minutes" else "You need a connection",
+                            leading = { Tile(CircasoIcon.Chat) }, onClick = if (state.online || state.conversation != null) onChat else null,
+                        )
+                        RowDivider(Modifier.padding(start = 72.dp))
+                        // Design SP01's "Call us" is a free internet call to support; it arrives with calls (H1–H4).
+                        ListRow("Call us", sub = when { onCall == null -> "Calls are coming soon"; !state.online -> "You need a connection"; else -> "Free over the internet" }, leading = { Tile(CircasoIcon.Phone) }, onClick = if (state.online) onCall else null)
+                        RowDivider(Modifier.padding(start = 72.dp))
+                    }
                     ListRow("Ask Asha", sub = "Answers right away, any time", leading = { AshaMark(size = CircasoSizes.avatarMd) }, onClick = onAsha)
                 }
             }
@@ -129,9 +149,22 @@ fun HelpContent(
                         ListRow(
                             topic.label, sub = topic.sub,
                             trailing = { com.circaso.designsystem.components.RowChevron() },
-                            onClick = if (state.online && !state.opening) ({ onTopic(topic) }) else null,
+                            // Each opens the new-ticket form with what it's about already chosen.
+                            onClick = { onNewTicket(topic.category) },
                         )
                         if (i < Support.Topic.entries.lastIndex) RowDivider(Modifier.padding(start = CircasoSpacing.s4))
+                    }
+                }
+            }
+            if (state.tickets.isNotEmpty()) {
+                item {
+                    SectionHeader("Your tickets")
+                    Column(Modifier.fillMaxWidth().clip(CircasoShapes.lg).background(c.surface)) {
+                        state.tickets.forEachIndexed { i, ticket ->
+                            TicketRow(ticket, now, { onOpenTicket(ticket.ticketId) })
+                            if (i < state.tickets.lastIndex || state.moreTickets) RowDivider(Modifier.padding(start = CircasoSpacing.s4))
+                        }
+                        if (state.moreTickets) ListRow("See all", trailing = { com.circaso.designsystem.components.RowChevron() }, onClick = onAllTickets)
                     }
                 }
             }
@@ -185,7 +218,7 @@ private fun <T : Any> rememberLast(value: T?): T? {
  * cross-fade and the sheet eases to the new height; asking and sending are one page, only the button changes.
  */
 @Composable
-private fun LogSheetContent(sheet: LogSheet, online: Boolean, onSend: () -> Unit, onClose: () -> Unit, onChat: () -> Unit) {
+private fun LogSheetContent(sheet: LogSheet, online: Boolean, onSend: () -> Unit, onClose: () -> Unit, chat: Boolean, onChat: () -> Unit) {
     val reduce = CircasoTheme.reduceMotion
     androidx.compose.animation.AnimatedContent(
         sheet,
@@ -197,12 +230,12 @@ private fun LogSheetContent(sheet: LogSheet, online: Boolean, onSend: () -> Unit
         },
         label = "log sheet",
     ) { page ->
-        Column(verticalArrangement = Arrangement.spacedBy(CircasoSpacing.s4)) { LogSheetPage(page, online, onSend, onClose, onChat) }
+        Column(verticalArrangement = Arrangement.spacedBy(CircasoSpacing.s4)) { LogSheetPage(page, online, onSend, onClose, chat, onChat) }
     }
 }
 
 @Composable
-private fun LogSheetPage(sheet: LogSheet, online: Boolean, onSend: () -> Unit, onClose: () -> Unit, onChat: () -> Unit) {
+private fun LogSheetPage(sheet: LogSheet, online: Boolean, onSend: () -> Unit, onClose: () -> Unit, chat: Boolean, onChat: () -> Unit) {
     val c = CircasoTheme.colors
     val t = CircasoTheme.typography
     val clipboard = androidx.compose.ui.platform.LocalClipboardManager.current
@@ -227,7 +260,7 @@ private fun LogSheetPage(sheet: LogSheet, online: Boolean, onSend: () -> Unit, o
         is LogSheet.Sent -> {
             Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 BasicText("Log sent", style = t.title2.copy(color = c.ink), modifier = announce)
-                BasicText("Give this code to our team when you chat or call, so they can find your log.", style = t.body.copy(color = c.inkSecondary))
+                BasicText(if (chat) "Give this code to our team when you chat or call, so they can find your log." else "Put this code in your ticket when you write to us, so our team can find your log.", style = t.body.copy(color = c.inkSecondary))
             }
             Column(
                 Modifier.fillMaxWidth().clip(CircasoShapes.md).background(sheetGroupColor()).sheetGroupEdge(CircasoShapes.md).padding(vertical = CircasoSpacing.s5),
@@ -240,8 +273,9 @@ private fun LogSheetPage(sheet: LogSheet, online: Boolean, onSend: () -> Unit, o
                 )
             }
             Column(verticalArrangement = Arrangement.spacedBy(CircasoSpacing.s2)) {
-                // The code is for support: chatting is the next step, with the code already copied to paste in.
-                CircasoButton("Chat with Us", { clipboard.setText(androidx.compose.ui.text.AnnotatedString(sheet.code)); onChat() }, size = ButtonSize.Large, block = true, enabled = online)
+                // The code is for support: writing to them is the next step, with the code already copied to paste in.
+                // The ticket form opens offline too (it sends once there's a connection); the chat needs one to open.
+                CircasoButton(if (chat) "Chat with Us" else "Write to Us", { clipboard.setText(androidx.compose.ui.text.AnnotatedString(sheet.code)); onChat() }, size = ButtonSize.Large, block = true, enabled = online || !chat)
                 CircasoButton(
                     if (copied) "Copied" else "Copy Code", { clipboard.setText(androidx.compose.ui.text.AnnotatedString(sheet.code)); copied = true },
                     style = ButtonStyle.Secondary, size = ButtonSize.Large, block = true, icon = if (copied) CircasoIcon.Check else CircasoIcon.Copy,

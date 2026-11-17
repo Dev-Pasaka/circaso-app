@@ -60,6 +60,11 @@ class NotificationRoutingTest {
         assertEquals(listOf(MomentViewerRoute("u1", "mo1")), open(NotificationDestination.Moment("u1", "mo1")).routes)
         assertEquals(listOf(MomentViewerRoute(null)), open(NotificationDestination.Moment()).routes)
         assertEquals(listOf(AshaRoute), open(NotificationDestination.Asha).routes)
+        // A ticket opens over the person's tickets, under You.
+        assertEquals(NotificationOpening(listOf(com.circaso.core.navigation.TicketsRoute, com.circaso.core.navigation.TicketRoute("t1")), HomeTabName.You), open(NotificationDestination.Ticket("t1")))
+        assertEquals(listOf<com.circaso.core.navigation.Route>(com.circaso.core.navigation.TicketsRoute), open(NotificationDestination.Ticket()).routes)
+        // The system-shown push's tap (its data arrives as the extras) lands on the ticket too.
+        assertEquals(NotificationDestination.Ticket("t1"), NotificationDestination.fromExtras(mapOf("kind" to "support.ticket", "ticketId" to "t1", "google.message_id" to "0:1")))
         assertEquals(listOf(SecurityRoute), open(NotificationDestination.Security).routes)
         assertEquals(listOf(ContactsRoute), open(NotificationDestination.Contacts).routes)
         assertEquals(listOf(EditProfileRoute), open(NotificationDestination.Profile).routes)
@@ -93,6 +98,10 @@ class NotificationRoutingTest {
         assertEquals(NotificationDestination.Wallet, push("kind" to "wallet.setup"))
         assertEquals(NotificationDestination.Security, push("kind" to "security.new_device"))
         assertEquals(NotificationDestination.Asha, push("kind" to "asha.reply"))
+        // A reply on a support ticket opens that ticket, even when the ticket names the chat it is about.
+        assertEquals(NotificationDestination.Ticket("t1"), push("kind" to "support.ticket", "ticketId" to "t1"))
+        assertEquals(NotificationDestination.Ticket("t1"), push("kind" to "support.ticket", "ticketId" to "t1", "chatId" to "c1"))
+        assertEquals(NotificationDestination.Ticket(), push("kind" to "support.ticket"))
         assertEquals(NotificationDestination.Inbox, push("kind" to "something.new"))
         assertEquals(NotificationDestination.Inbox, push("google.message_id" to "0:123"))
         assertNull(push("kind" to "session.revoked"))
@@ -109,6 +118,7 @@ class NotificationRoutingTest {
             NotificationDestination.MissedCall("c1", "call1"),
             NotificationDestination.Moment("u1", "mo1"),
             NotificationDestination.Moment(),
+            NotificationDestination.Ticket("t1"), NotificationDestination.Ticket(),
             NotificationDestination.Asha, NotificationDestination.Security, NotificationDestination.Contacts,
             NotificationDestination.Wallet, NotificationDestination.Profile, NotificationDestination.NeedsAttention, NotificationDestination.Inbox,
         )

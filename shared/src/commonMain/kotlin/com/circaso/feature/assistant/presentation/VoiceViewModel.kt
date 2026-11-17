@@ -127,7 +127,7 @@ data class VoiceUiState(
      * listening at once, before `interrupted` (or, if it was only noise, she comes back up and carries on).
      */
     val ducked: Boolean = false,
-    /** The call's sound and microphone are on headphones or a headset (wired, USB or Bluetooth), not the phone. */
+    /** The call's sound (and the microphone, when it has one) is on headphones (wired, USB or Bluetooth), not the phone. */
     val onHeadset: Boolean = false,
 ) {
     val live get() = phase != VoicePhase.Connecting && phase != VoicePhase.Ended && phase != VoicePhase.Reconnecting

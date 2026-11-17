@@ -13,12 +13,17 @@ import org.koin.core.qualifier.named
 import org.koin.dsl.module
 
 val homeModule = module {
-    // Support (SP01, SP06): a chat with Circaso's own account, and the lost-access case.
+    // Support tickets (SU1–SU4): one copy in memory for Help, the list and each ticket; the `support` frames update it.
+    single { com.circaso.feature.support.SupportTickets(get()) }
+    // Support (SP01, SP06): tickets, a chat with Circaso's own account once it exists, and the lost-access case.
     viewModel {
         val auth = get<com.circaso.core.session.AuthManager>()
         val logs = com.circaso.feature.support.DiagnosticLogs(get(), get())
-        com.circaso.feature.support.presentation.HelpViewModel(get(), get(), get(), get(), get(), myUserId = { auth.userId }, sendLog = logs::send)
+        com.circaso.feature.support.presentation.HelpViewModel(get(), get(), get(), get(), get(), myUserId = { auth.userId }, sendLog = logs::send, tickets = get())
     }
+    viewModel { com.circaso.feature.support.presentation.TicketsViewModel(get(), get()) }
+    viewModel { (category: String?) -> com.circaso.feature.support.presentation.NewTicketViewModel(category, get(), get()) }
+    viewModel { (ticketId: String) -> com.circaso.feature.support.presentation.TicketViewModel(ticketId, get(), get()) }
     viewModel { (phone: String?) -> com.circaso.feature.support.presentation.LostAccessViewModel(phone, get()) }
     viewModel { YouViewModel(get(), get(), get(), get(), get(), get(), kickOutbox = get(named("kickOutbox")), prefs = get()) }
     viewModel { EditProfileViewModel(get(), get(), get(), get(), get(), get(), get(), get(), get(), get()) }

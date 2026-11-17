@@ -165,6 +165,18 @@ data object NotificationsRoute : Route
 @Serializable
 data object HelpRoute : Route
 
+/** You → Help → Your tickets: every support ticket the person has (SU2). */
+@Serializable
+data object TicketsRoute : Route
+
+/** The new-ticket form (SU1). [category] is what it's about, as the server names it (`PAYMENTS`), when Help chose it. */
+@Serializable
+data class NewTicketRoute(val category: String? = null) : Route
+
+/** One support ticket and its replies (SU3, SU4). */
+@Serializable
+data class TicketRoute(val ticketId: String) : Route
+
 /** Design SP06: help for someone whose number belongs to an account they can't sign in to. */
 @Serializable
 data class LostAccessRoute(val phone: String? = null) : Route
@@ -259,6 +271,9 @@ val routeSerializers = SerializersModule {
         subclass(NotificationsRoute::class)
         subclass(HelpRoute::class)
         subclass(LostAccessRoute::class)
+        subclass(TicketsRoute::class)
+        subclass(NewTicketRoute::class)
+        subclass(TicketRoute::class)
         subclass(ChamaRoute::class)
         subclass(GroupWalletSetupRoute::class)
         subclass(TargetRoute::class)

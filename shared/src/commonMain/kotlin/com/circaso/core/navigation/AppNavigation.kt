@@ -411,6 +411,33 @@ fun AppNavigation(forceUpdate: Boolean, home: @Composable () -> Unit) {
                     onOpenChat = { id -> openChatFromList(id) },
                     onAsha = { backStack.add(AshaRoute) },
                     onCallChat = if (calls.available) ({ id -> calls.start(id, false) }) else null,
+                    onNewTicket = { category -> backStack.add(NewTicketRoute(category?.wire)) },
+                    onOpenTicket = { id -> backStack.add(TicketRoute(id)) },
+                    onAllTickets = { backStack.add(TicketsRoute) },
+                )
+            }
+            // Support tickets (SU1–SU4, 2026-11-17).
+            entry<TicketsRoute> {
+                com.circaso.feature.support.presentation.TicketsScreen(
+                    koinViewModel(), onBack = ::pop,
+                    onOpenTicket = { id -> backStack.add(TicketRoute(id)) },
+                    onNewTicket = { backStack.add(NewTicketRoute()) },
+                )
+            }
+            entry<NewTicketRoute> { route ->
+                com.circaso.feature.support.presentation.NewTicketScreen(
+                    koinViewModel(key = "new-ticket-" + route.category, parameters = { parametersOf(route.category) }), onBack = ::pop,
+                    // The ticket takes the form's place: Back from it doesn't return to a form already sent.
+                    onOpened = { id ->
+                        val at = backStack.lastIndexOf(route)
+                        if (at >= 0) backStack[at] = TicketRoute(id) else backStack.add(TicketRoute(id))
+                    },
+                )
+            }
+            entry<TicketRoute> { route ->
+                com.circaso.feature.support.presentation.TicketScreen(
+                    koinViewModel(key = "ticket-" + route.ticketId, parameters = { parametersOf(route.ticketId) }), onBack = ::pop,
+                    onNewTicket = { category -> backStack.add(NewTicketRoute(category)) },
                 )
             }
             entry<LostAccessRoute> { route ->

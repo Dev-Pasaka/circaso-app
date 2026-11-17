@@ -10,6 +10,8 @@ import com.circaso.core.navigation.NeedsAttentionRoute
 import com.circaso.core.navigation.NotificationsRoute
 import com.circaso.core.navigation.Route
 import com.circaso.core.navigation.SecurityRoute
+import com.circaso.core.navigation.TicketRoute
+import com.circaso.core.navigation.TicketsRoute
 import com.circaso.core.navigation.TransferRoute
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -78,6 +80,8 @@ object NotificationRoutes {
             ?.let { NotificationOpening(listOf(ChatRoute(it, lookups.lastCallLocalId(it))), HomeTabName.Chats) }
             ?: NotificationOpening(listOf(NotificationsRoute), HomeTabName.You)
         is NotificationDestination.Moment -> NotificationOpening(listOf(MomentViewerRoute(destination.posterId, destination.momentId)), HomeTabName.Chats)
+        // Under the person's tickets, so Back from the ticket shows the rest of them.
+        is NotificationDestination.Ticket -> NotificationOpening(listOfNotNull(TicketsRoute, destination.ticketId?.let { TicketRoute(it) }), HomeTabName.You)
         NotificationDestination.Asha -> NotificationOpening(listOf(AshaRoute), HomeTabName.Chats)
         NotificationDestination.Security -> NotificationOpening(listOf(SecurityRoute), HomeTabName.You)
         NotificationDestination.Contacts -> NotificationOpening(listOf(ContactsRoute), HomeTabName.You)

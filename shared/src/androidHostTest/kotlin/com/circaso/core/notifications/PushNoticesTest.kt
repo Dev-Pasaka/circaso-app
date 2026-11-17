@@ -245,6 +245,23 @@ class PushNoticesTest {
         assertNull(missed.from)
     }
 
+    @Test fun aSupportReplyShowsTheServersWordsAndOpensTheTicket() = runBlocking {
+        val data = mapOf("kind" to "support.ticket", "ticketId" to "t1")
+        // The push's own alert (the system shows it while Circaso is away; on screen the app shows the same words).
+        val alert = assertNotNull(notices.forPush(data, "Circaso Support", "We replied to your ticket CS-000123."))
+        assertEquals(NotificationContent("Circaso Support", "We replied to your ticket CS-000123."), alert.content)
+        assertEquals(NotificationDestination.Ticket("t1"), alert.destination)
+        assertEquals("ticket:t1", alert.key)
+        assertEquals(NoticeChannel.Message, alert.channel)
+        // Data-only: its words from the data, else our own; never dropped.
+        assertEquals(NotificationContent("Circaso Support", "We replied to your ticket CS-000124."), assertNotNull(notices.forPush(data + ("title" to "Circaso Support") + ("body" to "We replied to your ticket CS-000124."))).content)
+        assertEquals(NotificationContent("Circaso Support", "We replied to your ticket."), assertNotNull(notices.forPush(data)).content)
+        prefs.setFlag(AppPreferences.NotificationPrivacy, true)
+        val private = assertNotNull(notices.forPush(data, "Circaso Support", "We replied to your ticket CS-000123."))
+        assertEquals(NotificationContent("Circaso", "New notification"), private.content)
+        assertEquals(NotificationDestination.Ticket("t1"), private.destination)
+    }
+
     @Test fun aContactWhoJoinedIsNamedAsSavedWithTheirPhoto() = runBlocking {
         val notice = assertNotNull(notices.forPush(mapOf("kind" to "contact.joined", "userId" to amina, "body" to "Amina Wanjiku is on Circaso")))
         assertEquals(NotificationContent("Mum", "Joined Circaso. Say hi 👋"), notice.content)

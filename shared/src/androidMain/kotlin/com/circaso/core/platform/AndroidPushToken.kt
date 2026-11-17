@@ -129,7 +129,7 @@ class CircasoMessagingService : FirebaseMessagingService() {
                         }?.let {
                             if (notices.privacyOn()) "Circaso" to "New notification" else message.data["title"] to it
                         }
-                    val notice = notices.forPush(message.data)
+                    val notice = notices.forPush(message.data, message.notification?.title, message.notification?.body)
                         ?: worded?.takeIf { message.data["kind"] != "session.revoked" }?.let { (title, body) ->
                             com.circaso.core.notifications.Notice(
                                 com.circaso.core.notifications.NotificationContent(title ?: "Circaso", body.orEmpty()),

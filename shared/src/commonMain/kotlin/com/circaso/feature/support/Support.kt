@@ -27,12 +27,15 @@ object Support {
         return chat != null && chat.peerId == id && id != myUserId
     }
 
-    /** "What's it about?" (SP01): the first message says it, so whoever picks it up knows where to start. */
-    enum class Topic(val label: String, val sub: String, val opener: String) {
-        Payment("A payment", "Pending, sent to the wrong person, or missing", "Hi, I need help with a payment."),
-        Wallet("My wallet", "Balance, networks, PIN or recovery", "Hi, I need help with my wallet."),
-        Account("Signing in", "Your number, Google or Apple, or a new phone", "Hi, I need help with signing in or my account."),
-        Group("A group goal", "Contributions, approvals or the treasurer", "Hi, I need help with a group goal."),
-        Other("Something else", "Anything we haven't listed", "Hi, I need some help."),
+    /**
+     * "What's it about?" (SP01): each opens the new-ticket form with its [category] chosen (2026-11-17). [opener] is the
+     * support chat's first message, for when a support account exists.
+     */
+    enum class Topic(val label: String, val sub: String, val opener: String, val category: TicketCategory) {
+        Payment("A payment", "Pending, sent to the wrong person, or missing", "Hi, I need help with a payment.", TicketCategory.Payments),
+        Wallet("My wallet", "Balance, networks, PIN or recovery", "Hi, I need help with my wallet.", TicketCategory.Wallet),
+        Account("Signing in", "Your number, Google or Apple, or a new phone", "Hi, I need help with signing in or my account.", TicketCategory.Account),
+        Group("A group goal", "Contributions, approvals or the treasurer", "Hi, I need help with a group goal.", TicketCategory.Groups),
+        Other("Something else", "Anything we haven't listed", "Hi, I need some help.", TicketCategory.Other),
     }
 }

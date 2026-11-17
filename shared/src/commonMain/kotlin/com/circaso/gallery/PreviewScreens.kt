@@ -557,7 +557,7 @@ private fun PreviewScreensC(name: String) {
         "receive" -> WalletContent(WalletUiState(wallet = sampleWallet(), receiveSheet = true, handle = "pasaka"), PaddingValues(bottom = 90.dp), noWalletActions, {}, {}, {}, {})
         "help" -> com.circaso.feature.support.presentation.HelpContent(
             com.circaso.feature.support.presentation.HelpUiState(topic = com.circaso.feature.support.Support.Topic.Payment, conversation = ChatSummary(supportChat, text(9, "s1", "It's on its way now. Anything else?", false, 60 * 20, sender = "sup", senderName = "Circaso Support"), 0)),
-            {}, {}, {}, {}, null, onSendLog = {},
+            {}, {}, {}, null, onSendLog = {},
         )
         "support-chat" -> ThreadContent(
             ThreadUiState(chat = supportChat, myUserId = "me", messages = listOf(
@@ -588,7 +588,7 @@ private fun PreviewScreensC(name: String) {
             }
             com.circaso.feature.wallet.presentation.ActivityContent(state, {}, {}, {}, {})
         }
-        else -> if (!GroupWalletPreview(name) && !ChatMoneyPreview(name) && !MomentsChatsPreview(name) && !AshaPreview(name) && !VaultPreview(name) && !SavedNamesPreview(name) && !GroupLinkPreview(name) && !SecurityCodePreview(name) && !SheetsPreview(name) && !HelpLogPreview(name) && !CallPreviews(name)) BasicText("Unknown preview: $name")
+        else -> if (!GroupWalletPreview(name) && !ChatMoneyPreview(name) && !MomentsChatsPreview(name) && !AshaPreview(name) && !VaultPreview(name) && !SavedNamesPreview(name) && !GroupLinkPreview(name) && !SecurityCodePreview(name) && !SheetsPreview(name) && !HelpLogPreview(name) && !TicketPreview(name) && !CallPreviews(name)) BasicText("Unknown preview: $name")
     }
 }
 
@@ -796,7 +796,7 @@ private fun HelpLogPreview(name: String): Boolean {
         else -> return false
     }
     com.circaso.feature.support.presentation.HelpContent(
-        com.circaso.feature.support.presentation.HelpUiState(online = !name.endsWith("offline"), logSheet = sheet), {}, {}, {}, {}, null, onSendLog = {},
+        com.circaso.feature.support.presentation.HelpUiState(online = !name.endsWith("offline"), logSheet = sheet), {}, {}, {}, null, onSendLog = {},
     )
     return true
 }

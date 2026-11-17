@@ -32,6 +32,11 @@ data class HelpUiState(
     val error: String? = null,
     /** "Send diagnostic log" (2026-11-13): its sheet, while open. */
     val logSheet: LogSheet? = null,
+    /** "Your tickets": the newest few ([HelpViewModel.TicketsShown]), with "See all" when there are [moreTickets]. */
+    val tickets: List<com.circaso.feature.support.TicketDto> = emptyList(),
+    val moreTickets: Boolean = false,
+    /** The support account exists ([Support.UserId]): the chat and the call with it are offered beside tickets. */
+    val supportChat: Boolean = false,
 )
 
 /** The "Send diagnostic log" sheet: asking first, sending, the code to give support, or what went wrong. */
@@ -43,7 +48,11 @@ sealed interface LogSheet {
     data class Failed(val message: String, val reference: String? = null) : LogSheet
 }
 
-/** Design SP01: chat with a person (calls arrive with calls), what it's about, and the conversation so far. */
+/**
+ * Design SP01. Since 2026-11-17 help is asked for with a support ticket ("Write to us", and each topic opens the
+ * new-ticket form): the person's tickets are listed here. The chat and call with a support account stay for when
+ * [Support.UserId] is set.
+ */
 class HelpViewModel(
     observeChats: ObserveChatsUseCase,
     private val findHandle: FindByHandleUseCase,
@@ -54,6 +63,8 @@ class HelpViewModel(
     private val myUserId: () -> String?,
     /** Uploads the diagnostic log and answers its code; null hides the row. */
     private val sendLog: (suspend () -> AppResult<com.circaso.feature.support.DiagnosticLogReceipt>)? = null,
+    /** The person's support tickets; null leaves "Your tickets" out. */
+    private val tickets: com.circaso.feature.support.SupportTickets? = null,
 ) : ViewModel() {
     val canSendLog: Boolean get() = sendLog != null
     private val local = MutableStateFlow(HelpUiState())
@@ -79,9 +90,19 @@ class HelpViewModel(
         }
     }
 
-    val state: StateFlow<HelpUiState> = combine(local, observeChats(), connection.status) { ui, chats, c ->
-        ui.copy(conversation = chats.firstOrNull { Support.isSupportChat(it.chat, myUserId()) }, online = c == ConnectionStatus.Online)
+    val state: StateFlow<HelpUiState> = combine(local, observeChats(), connection.status, tickets?.list ?: MutableStateFlow(com.circaso.feature.support.TicketList())) { ui, chats, c, mine ->
+        ui.copy(
+            conversation = chats.firstOrNull { Support.isSupportChat(it.chat, myUserId()) }, online = c == ConnectionStatus.Online,
+            tickets = mine.tickets.take(TicketsShown), moreTickets = mine.tickets.size > TicketsShown || mine.hasMore,
+            supportChat = Support.UserId != null,
+        )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), local.value)
+
+    init {
+        // "Your tickets" shows what was last loaded at once, then the latest. A failure says nothing here: the list
+        // screen ("See all") is where it can be tried again.
+        if (tickets != null) viewModelScope.launch { tickets.refresh() }
+    }
 
     /** SP01's topic rows: the chat opens with that topic as the person's first message. */
     fun onTopic(topic: Support.Topic) {
@@ -134,4 +155,9 @@ class HelpViewModel(
     }
 
     fun onLogSheetClosed() = local.update { if (it.logSheet == LogSheet.Sending) it else it.copy(logSheet = null) }
+
+    companion object {
+        /** How many tickets Help shows before "See all". */
+        const val TicketsShown = 3
+    }
 }

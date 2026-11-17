@@ -215,6 +215,23 @@ class RealtimeTest {
         assertTrue(calls.log.isEmpty())
     }
 
+    @Test fun supportFramesGoToTheTicketsAndAResyncReloadsThem() = runTest {
+        val seen = mutableListOf<String>()
+        val calls = Calls()
+        val d = RealtimeDispatcher(
+            frames = MutableSharedFlow(), scope = kotlinx.coroutines.CoroutineScope(UnconfinedTestDispatcher()),
+            onSessionRevoked = {}, refreshContacts = { calls.log += "contacts" }, refreshBlocks = {}, refreshOwnProfile = {},
+            isOwnUser = { false }, onSupportFrame = { type, data -> seen += type + ":" + data?.get("ticketId")?.toString().orEmpty() },
+        )
+        d.handle(f("support", "ticket.replied", """{"ticketId":"t1","number":"CS-000123","status":"PENDING_USER"}"""))
+        d.handle(f("support", "ticket.updated", """{"ticketId":"t1","number":"CS-000123","status":"RESOLVED"}"""))
+        d.handle(f("support", "resync"))
+        assertEquals(listOf("ticket.replied:\"t1\"", "ticket.updated:\"t1\"", "resync:"), seen)
+        assertTrue(calls.log.isEmpty(), "a support resync is not the contacts'")
+        // The server replays what was missed only for modules named when the socket opens.
+        assertTrue("support" in KnownModules)
+    }
+
     @Test fun unknownFramesDoNothing() = runTest {
         val calls = Calls(); dispatcher(calls).handle(f("chats", "message.created"))
         assertTrue(calls.log.isEmpty())

@@ -72,6 +72,11 @@ internal fun AshaPreview(name: String): Boolean {
             VoiceUiState(phase = VoicePhase.Reconnecting, turns = listOf(VoiceTurn("Who did I chat with this week?", listOf("Mostly Achieng and Otieno."), done = true), VoiceTurn("And Mum?", listOf("You and Mum talked on"), done = true, cutOff = true))),
             {}, {}, {}, {},
         )
+        "asha-voice-headphones" -> VoiceContent(VoiceUiState(phase = VoicePhase.Listening, onHeadset = true, micLevel = 0.4f), {}, {}, {}, {})
+        "asha-voice-headphones-speaking" -> VoiceContent(
+            VoiceUiState(phase = VoicePhase.Speaking, onHeadset = true, voiceLevel = 0.6f, turns = listOf(VoiceTurn("Who did I chat with this week?", listOf("Mostly Achieng and Otieno.")))),
+            {}, {}, {}, {},
+        )
         "asha-voice-muted" -> VoiceContent(VoiceUiState(phase = VoicePhase.Listening, muted = true), {}, {}, {}, {})
         // The composer (2026-11-10): `/` offers Asha above the field; a finished `#500` is an inverted chip.
         "composer-asha-suggest" -> Composer("Can you check /as")

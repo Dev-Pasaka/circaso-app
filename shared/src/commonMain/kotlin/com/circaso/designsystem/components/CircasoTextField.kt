@@ -57,6 +57,8 @@ fun CircasoTextField(
     masked: Boolean = true,
     /** A prefilled field opens with all its text selected, so one keystroke replaces it (Edit name). */
     selectAllOnStart: Boolean = false,
+    /** A field for several lines ([singleLine] false) opens this tall, so it reads as room to write in. */
+    minLines: Int = 1,
 ) {
     val c = CircasoTheme.colors
     val t = CircasoTheme.typography
@@ -87,7 +89,8 @@ fun CircasoTextField(
                 enabled = enabled,
                 singleLine = singleLine,
                 // Longer text (a group's description) grows with what is typed up to six lines, then scrolls inside.
-                maxLines = if (singleLine) 1 else MultiLineMax,
+                maxLines = if (singleLine) 1 else maxOf(MultiLineMax, minLines),
+                minLines = if (singleLine) 1 else minLines,
                 textStyle = t.body.copy(color = if (enabled) c.ink else c.inkTertiary),
                 cursorBrush = SolidColor(c.ink),
                 // A secret keeps a number pad when one was asked for (PINs); every other secret gets the password keyboard.
