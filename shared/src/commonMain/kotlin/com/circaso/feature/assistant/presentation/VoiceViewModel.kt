@@ -3,6 +3,7 @@ package com.circaso.feature.assistant.presentation
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.circaso.core.common.Diagnostics
+import com.circaso.core.platform.AudioRoute
 import com.circaso.core.platform.LiveMicStart
 import com.circaso.core.platform.LiveMicrophone
 import com.circaso.core.platform.LiveSpeaker
@@ -126,6 +127,8 @@ data class VoiceUiState(
      * listening at once, before `interrupted` (or, if it was only noise, she comes back up and carries on).
      */
     val ducked: Boolean = false,
+    /** The call's sound and microphone are on headphones or a headset (wired, USB or Bluetooth), not the phone. */
+    val onHeadset: Boolean = false,
 ) {
     val live get() = phase != VoicePhase.Connecting && phase != VoicePhase.Ended && phase != VoicePhase.Reconnecting
 
@@ -218,8 +221,14 @@ class VoiceViewModel(
     private var conversationId: String? = null
 
     // The server's `reply_done` ends the speaking phase, not a gap between sentences, so the phase is never read off the player.
-    val state: StateFlow<VoiceUiState> = combine(local, microphone.level, speaker.level) { ui, mic, voice ->
-        ui.copy(micLevel = if (ui.visual == VoiceVisual.Listening) mic else 0f, voiceLevel = if (ui.visual == VoiceVisual.Speaking) voice else 0f)
+    // Where the sound is goes on the screen in words: a headset connected in a bag or another room took the call's
+    // microphone and nobody could tell why Asha heard nothing (voice test, 2026-11-16).
+    val state: StateFlow<VoiceUiState> = combine(local, microphone.level, speaker.level, speaker.route) { ui, mic, voice, route ->
+        ui.copy(
+            micLevel = if (ui.visual == VoiceVisual.Listening) mic else 0f,
+            voiceLevel = if (ui.visual == VoiceVisual.Speaking) voice else 0f,
+            onHeadset = route == AudioRoute.Headphones,
+        )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), VoiceUiState())
 
     /** Starts (or, after a quiet hang-up, restarts) the conversation. */

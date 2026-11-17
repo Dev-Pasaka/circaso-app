@@ -210,7 +210,7 @@ private fun StatusLine(state: VoiceUiState, maxLines: Int) {
 
 private fun statusLine(s: VoiceUiState): String = when (s.visual) {
     VoiceVisual.Connecting -> "Connecting…"
-    VoiceVisual.Listening -> "Listening"
+    VoiceVisual.Listening -> if (s.onHeadset) "Listening on your headset" else "Listening"
     VoiceVisual.Muted -> "Muted"
     VoiceVisual.Reconnecting -> "Reconnecting…"
     VoiceVisual.Thinking -> s.status ?: "Thinking…"
@@ -233,6 +233,7 @@ private fun hint(s: VoiceUiState): String = when {
     s.phase == VoicePhase.Reconnecting -> ReconnectingText
     s.muted -> "Unmute to talk."
     s.phase == VoicePhase.Thinking -> s.status ?: "Thinking…"
+    s.onHeadset -> "Go ahead, I'm listening on your headset."
     else -> "Go ahead, I'm listening."
 }
 
