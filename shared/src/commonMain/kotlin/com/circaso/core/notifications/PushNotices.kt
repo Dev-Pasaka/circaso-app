@@ -103,8 +103,11 @@ class PushNotices(
 
     private suspend fun compose(event: NotificationEvent) = NotificationText.compose(event, privacyOn(), fiat())
 
-    /** Null when there is nothing to show (a control message, a taken-back reaction, a ringing call). */
-    suspend fun forPush(data: Map<String, String>): Notice? {
+    /**
+     * Null when there is nothing to show (a control message, a taken-back reaction, a ringing call). [alertTitle] and
+     * [alertBody] are the push's own alert, when it came with one (the system shows it itself while Circaso is away).
+     */
+    suspend fun forPush(data: Map<String, String>, alertTitle: String? = null, alertBody: String? = null): Notice? {
         val kind = data["kind"]
         val chatId = data["chatId"]?.takeIf { it.isNotBlank() }
         return when {
@@ -115,6 +118,7 @@ class PushNotices(
             kind == "call.missed" || kind == "call.ended" -> missedCall(chatId, data["callId"], data["callerName"], data["callKind"] == "VIDEO", data["userId"])
             kind == MomentReactionKind -> momentReaction(data)
             kind == "contact.joined" || kind == "connection.added" -> newPerson(kind, data)
+            kind == SupportTicketKind -> supportTicket(data, alertTitle, alertBody)
             kind != null && kind.startsWith("space.") -> null // Spaces is archived (2026-11-05)
             chatId != null && data["messageId"] == null && kind == null -> addedToGroup(chatId)
             chatId != null && data["messageId"] != null -> message(chatId, data["messageId"]!!)
@@ -212,6 +216,21 @@ class PushNotices(
             compose(event), NoticeChannel.Message, "moment:${momentId ?: "mine"}", NotificationDestination.Moment(null, momentId),
             from = who, fromLine = NotificationText.personLine(event), thread = MomentThread,
         )
+    }
+
+    /**
+     * `support.ticket` (2026-11-08): support replied on a ticket. The server's own words ("We replied to your ticket
+     * CS-000123.", never the reply's text) under "Circaso Support"; the tap opens the ticket. One notice per ticket, so
+     * a second reply replaces the first. With Notification privacy on it says only that something is new.
+     */
+    private suspend fun supportTicket(data: Map<String, String>, alertTitle: String?, alertBody: String?): Notice {
+        val ticketId = data["ticketId"]?.takeIf { it.isNotBlank() }
+        val content = if (privacyOn()) NotificationContent("Circaso", "New notification")
+        else NotificationContent(
+            (alertTitle ?: data["title"])?.takeIf { it.isNotBlank() } ?: com.circaso.feature.support.Support.Name,
+            (alertBody ?: data["body"])?.takeIf { it.isNotBlank() } ?: "We replied to your ticket${data["number"]?.takeIf { it.isNotBlank() }?.let { " $it" }.orEmpty()}.",
+        )
+        return Notice(content, NoticeChannel.Message, "ticket:${ticketId ?: "mine"}", NotificationDestination.Ticket(ticketId))
     }
 
     /** `contact.joined` and `connection.added` (data-only since 2026-11-14): the person as I know them, with their photo. */
@@ -415,6 +434,8 @@ class PushNotices(
         const val ContactsLoadMillis = 3_000L
         /** The push kind for a reaction on my moment (named for the first reaction, a heart). */
         const val MomentReactionKind = "moment.loved"
+        /** The push kind for a reply on a support ticket. */
+        const val SupportTicketKind = "support.ticket"
         /** A moment's notification once two or more people reacted to it. */
         const val MomentThread = "Your moment"
     }

@@ -839,8 +839,10 @@ class VoiceBargeInTest {
         val vm = viewModel()
         live(vm) {
             ashaSpeaking()
+            assertEquals(false, vm.state.value.onHeadset, "on the loudspeaker the screen says nothing about headphones")
             speaker.route.value = com.circaso.core.platform.AudioRoute.Headphones
             voice(null, 100)
+            assertEquals(true, vm.state.value.onHeadset)
             voice(-20f, 140) // 4 windows: enough on headphones
             assertEquals(1, repo.session.interrupts.size)
             assertEquals(VoicePhase.Listening, vm.state.value.phase)

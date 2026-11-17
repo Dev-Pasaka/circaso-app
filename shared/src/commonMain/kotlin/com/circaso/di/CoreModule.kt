@@ -72,6 +72,8 @@ val coreModule = module {
             // Another person may sign in next: nothing of this one's chats stays on show (notifications and Android's
             // conversation shortcuts, which carry names and photos).
             runCatching { koin.getOrNull<com.circaso.core.platform.ChatNotifications>()?.clearShown() }
+            // Support tickets are kept in memory only: the next person never sees these.
+            runCatching { koin.getOrNull<com.circaso.feature.support.SupportTickets>()?.clear() }
             // iOS: the notification extension's snapshot of this person's keys, names and photos goes too.
             runCatching { koin.getOrNull<com.circaso.core.notifications.NotificationSnapshotWriter>()?.clear() }
         }

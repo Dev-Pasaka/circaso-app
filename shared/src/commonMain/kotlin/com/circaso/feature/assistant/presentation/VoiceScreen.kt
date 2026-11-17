@@ -108,7 +108,7 @@ fun VoiceContent(
                 CircasoIconButton(CircasoIcon.Back, "Back to the chat", back)
                 Column(Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(2.dp)) {
                     BasicText("Asha", style = t.headline.copy(color = c.ink))
-                    StatusLine(state, maxLines = 1)
+                    StatusLine(state, maxLines = 2, centred = true)
                 }
                 Spacer(Modifier.width(com.circaso.designsystem.theme.CircasoSizes.iconButton))
             }
@@ -197,24 +197,28 @@ fun VoiceContent(
  * confirmed it: a short duck while the person may be talking over her shows "Listening" without announcing it.
  */
 @Composable
-private fun StatusLine(state: VoiceUiState, maxLines: Int) {
+private fun StatusLine(state: VoiceUiState, maxLines: Int, centred: Boolean = false) {
     val c = CircasoTheme.colors
     val spoken = statusLine(state.copy(ducked = false))
     BasicText(
         statusLine(state),
         Modifier.clearAndSetSemantics { contentDescription = spoken; liveRegion = LiveRegionMode.Polite },
-        style = CircasoTheme.typography.caption1.copy(color = if (state.visual == VoiceVisual.Error) c.critical else c.inkSecondary),
+        style = CircasoTheme.typography.caption1.copy(
+            color = if (state.visual == VoiceVisual.Error) c.critical else c.inkSecondary,
+            textAlign = if (centred) androidx.compose.ui.text.style.TextAlign.Center else androidx.compose.ui.text.style.TextAlign.Start,
+        ),
         maxLines = maxLines,
+        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
     )
 }
 
 private fun statusLine(s: VoiceUiState): String = when (s.visual) {
     VoiceVisual.Connecting -> "Connecting…"
-    VoiceVisual.Listening -> if (s.onHeadset) "Listening on your headset" else "Listening"
+    VoiceVisual.Listening -> if (s.onHeadset) "Listening on your headphones" else "Listening"
     VoiceVisual.Muted -> "Muted"
     VoiceVisual.Reconnecting -> "Reconnecting…"
     VoiceVisual.Thinking -> s.status ?: "Thinking…"
-    VoiceVisual.Speaking -> "Speaking"
+    VoiceVisual.Speaking -> if (s.onHeadset) "Speaking on your headphones" else "Speaking"
     VoiceVisual.Error -> if (s.ending == VoiceEnding.Offline) "Offline" else "Not connected"
     VoiceVisual.Ended -> when (s.ending) {
         is VoiceEnding.Maintenance -> "On a short break"
@@ -233,7 +237,7 @@ private fun hint(s: VoiceUiState): String = when {
     s.phase == VoicePhase.Reconnecting -> ReconnectingText
     s.muted -> "Unmute to talk."
     s.phase == VoicePhase.Thinking -> s.status ?: "Thinking…"
-    s.onHeadset -> "Go ahead, I'm listening on your headset."
+    s.onHeadset -> "Go ahead, I'm listening on your headphones."
     else -> "Go ahead, I'm listening."
 }
 

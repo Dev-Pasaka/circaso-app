@@ -52,6 +52,7 @@ val realtimeModule = module {
                 val field = { k: String -> (data?.get(k) as? kotlinx.serialization.json.JsonPrimitive)?.content }
                 get<com.circaso.feature.status.domain.MomentsRepository>().onFrame(type, field("momentId"), field("posterId"), field("requesterId"))
             },
+            onSupportFrame = { type, data -> get<com.circaso.feature.support.SupportTickets>().onFrame(type, data) },
             onAshaBack = { get<com.circaso.feature.assistant.domain.AshaAvailability>().reportBack() },
             onPeerProfile = { userId ->
                 val profile = get<com.circaso.feature.profile.domain.ProfileRepository>().publicProfile(userId)
