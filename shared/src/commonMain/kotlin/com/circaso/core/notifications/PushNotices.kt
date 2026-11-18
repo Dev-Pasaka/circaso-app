@@ -341,7 +341,12 @@ class PushNotices(
             return paymentCard(chatId, if (group) groupTitle(chatId, chat?.name) else chat?.name, group, from?.name ?: senderName(chatId, card.senderId), card, from)
         }
         // No card (money from outside Circaso, or the card is still on its way): the wallet's own record of it.
-        if (key != null) withTimeoutOrNull(3_000) { wallet.refresh() }
+        // The push says which wallet network the money is on (wallet networks): that network's record is read, whichever
+        // is selected in the app; a push without one (an older server) reads the selected network's, as before.
+        val on = com.circaso.feature.wallet.domain.WalletNetwork.of(data["network"])
+        if (key != null) withTimeoutOrNull(3_000) {
+            if (on != null) kotlinx.coroutines.withContext(com.circaso.feature.wallet.domain.PinnedNetwork(on)) { wallet.refresh() } else wallet.refresh()
+        }
         val transfer = key?.let { withTimeoutOrNull(1_000) { wallet.transfer(it).first() } }
         val from = transfer?.counterpartName ?: data["fromName"]?.takeIf { it.isNotBlank() } ?: nameFromBody(data["body"])
         val money = transfer?.amount?.let { Money(it.amountMinor, it.asset) }

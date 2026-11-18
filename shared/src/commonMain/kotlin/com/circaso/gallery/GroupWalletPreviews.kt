@@ -260,6 +260,8 @@ internal fun WalletGroupsPreview(name: String, gwState: GroupWalletUiState, gwAc
 private fun TabPreview(start: WalletUiState, gwActions: GroupWalletActions = GroupWalletActions({}, {}, {}, {}, {}), query: String = "") {
     // The menu and the full list open and close by touch on the phone, as in the app (the view model's own rules).
     var state by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(start) }
+    // Test money on screen marks itself, as the app's root provides it from the selected wallet network.
+    androidx.compose.runtime.CompositionLocalProvider(com.circaso.feature.wallet.presentation.LocalTestnet provides state.testnet) {
     com.circaso.feature.home.presentation.HomeScreen(
         initialTab = 1, // Wallet (tabs: Chats, Wallet, You since Spaces was removed)
         chats = {}, chatsActions = {}, chatsBanner = {},
@@ -274,6 +276,8 @@ private fun TabPreview(start: WalletUiState, gwActions: GroupWalletActions = Gro
                 onMode = { m -> state = state.copy(mode = m, selectedWalletId = if (m == WalletMode.Groups) state.lastGroupWalletId ?: state.groupWallets.firstOrNull()?.walletId else null, switching = false) },
                 onCreate = {}, onRefresh = {}, onReceive = {}, onComing = {},
                 groupMenu = sheetMenu,
+                // Mainnet | Testnet by touch: each side shows its own wallet (the other network's, or none yet).
+                onNetwork = { n -> state = networkSide(state, n) },
             )
         },
         walletOverlay = {
@@ -284,7 +288,34 @@ private fun TabPreview(start: WalletUiState, gwActions: GroupWalletActions = Gro
         walletActions = {},
         you = {},
     )
+    }
 }
+
+private val BothNetworks = listOf(com.circaso.feature.wallet.domain.WalletNetwork.MAINNET, com.circaso.feature.wallet.domain.WalletNetwork.TESTNET)
+
+/** A Mainnet wallet for the previews: the Mainnet chains (Base first), so nothing on it says testnet. */
+private fun mainnetWallet() = sampleWallet().copy(
+    chains = listOf(
+        com.circaso.feature.wallet.domain.WalletChain("BASE", "0x7a3f0000000000000000000000000000001e4b00", "ACTIVE", listOf(com.circaso.feature.wallet.domain.Asset("USDC", "0xusdc", 6, "84250000", "84.25", "10868.25")), true),
+        com.circaso.feature.wallet.domain.WalletChain("SOL", "So1AbCdEf0000000000000000000000000000002f9", "ACTIVE", listOf(com.circaso.feature.wallet.domain.Asset("USDC", "So1usdc", 6, "12000000", "12", "1548.00")), true),
+    ),
+    totals = listOf(com.circaso.feature.wallet.domain.AssetTotal("USDC", 6, "96250000", "96.25")),
+    fiat = com.circaso.feature.wallet.domain.FiatValue("KES", "12416.25", "129.00", "2026-11-18T10:00:00Z", false),
+)
+
+/** The tab for someone with both networks, on [network]; [created] false is the first visit to it (no wallet there yet). */
+private fun networkState(network: com.circaso.feature.wallet.domain.WalletNetwork, created: Boolean = true, base: WalletUiState = WalletUiState()): WalletUiState {
+    val testnet = network == com.circaso.feature.wallet.domain.WalletNetwork.TESTNET
+    val wallet = if (testnet) sampleWallet() else mainnetWallet()
+    return base.copy(
+        wallet = if (created) wallet else wallet.copy(status = WalletStatus.None, chains = emptyList(), totals = emptyList()),
+        network = network, networks = BothNetworks, testnet = testnet,
+    )
+}
+
+/** What the switch does in a preview: the other network's wallet; Mainnet's doesn't exist yet when the preview began without one. */
+private fun networkSide(state: WalletUiState, network: com.circaso.feature.wallet.domain.WalletNetwork): WalletUiState =
+    if (state.networks.size < 2) state else networkState(network, base = state)
 
 /** GroupWalletRoute without its view model. */
 @Composable
@@ -336,6 +367,23 @@ internal fun GroupWalletPreview(name: String): Boolean {
         "gw-wallet-loading" -> PushedWallet(GroupWalletUiState(chat = kilimani, money = gwMoney()), gwActions)
         "gw-wallet-error" -> PushedWallet(GroupWalletUiState(chat = kilimani, loading = false, error = "Circaso is busy right now. Please try again in a moment.", reference = "req_W9s"), gwActions)
         // The Wallet tab with the corner switcher (Pasaka, 2026-11-04): closed, open, three groups, a locked wallet.
+        // Wallet networks (2026-11-18): the Mainnet | Testnet switch, alone and beside Personal | Groups, the first
+        // visit to a network (a separate wallet, its own PIN), and Testnet for someone who has nothing else.
+        "wallet-network-mainnet" -> TabPreview(networkState(com.circaso.feature.wallet.domain.WalletNetwork.MAINNET))
+        "wallet-network-testnet" -> TabPreview(networkState(com.circaso.feature.wallet.domain.WalletNetwork.TESTNET))
+        "wallet-network-groups" -> TabPreview(networkState(com.circaso.feature.wallet.domain.WalletNetwork.MAINNET, base = tabState(gwState)))
+        "wallet-network-groups-testnet" -> TabPreview(networkState(com.circaso.feature.wallet.domain.WalletNetwork.TESTNET, base = tabState(gwState)).copy(selectedWalletId = "gw-1"), gwActions)
+        "wallet-network-create-mainnet" -> TabPreview(networkState(com.circaso.feature.wallet.domain.WalletNetwork.MAINNET, created = false))
+        "wallet-network-create-testnet" -> TabPreview(networkState(com.circaso.feature.wallet.domain.WalletNetwork.TESTNET, created = false))
+        "wallet-network-offline" -> TabPreview(networkState(com.circaso.feature.wallet.domain.WalletNetwork.MAINNET, created = false).copy(online = false))
+        "wallet-testnet-only" -> TabPreview(WalletUiState(wallet = sampleWallet(), network = com.circaso.feature.wallet.domain.WalletNetwork.TESTNET, networks = listOf(com.circaso.feature.wallet.domain.WalletNetwork.TESTNET), testnet = true))
+        "wallet-mainnet-only" -> TabPreview(WalletUiState(wallet = mainnetWallet(), network = com.circaso.feature.wallet.domain.WalletNetwork.MAINNET, networks = listOf(com.circaso.feature.wallet.domain.WalletNetwork.MAINNET)))
+        // Solana: no Circaso fee, the network's fee in SOL; and the state when the wallet has no SOL for it.
+        "gw-pay-sol" -> PayPreview(payState(PayUiState(payee = Person("6", "Mum", null, DemoPhotos.Mum, null), chatId = "dm", amountText = "500", note = "for lunch")).copy(wallet = mainnetWallet(), blockchain = "SOL"))
+        "gw-pay-sol-gas" -> PayPreview(payState(PayUiState(payee = Person("6", "Mum", null, DemoPhotos.Mum, null), chatId = "dm", amountText = "500", note = "for lunch", block = com.circaso.feature.wallet.presentation.PayBlock.Gas)).copy(wallet = mainnetWallet(), blockchain = "SOL"))
+        "gw-pay-testnet" -> androidx.compose.runtime.CompositionLocalProvider(com.circaso.feature.wallet.presentation.LocalTestnet provides true) {
+            PayPreview(payState(PayUiState(payee = Person("6", "Mum", null, DemoPhotos.Mum, null), chatId = "dm", amountText = "500", note = "for lunch")))
+        }
         "wallet-switcher" -> TabPreview(tabState(gwState))
         "wallet-switcher-open" -> TabPreview(tabState(gwState).copy(switching = true))
         "wallet-switcher-three" -> TabPreview(tabState(gwState, three = true).copy(switching = true))
