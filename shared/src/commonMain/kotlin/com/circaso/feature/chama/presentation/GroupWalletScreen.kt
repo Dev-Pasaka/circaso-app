@@ -235,11 +235,11 @@ class GroupWalletHooks(
 fun GroupWalletScreen(viewModel: GroupWalletViewModel, onBack: () -> Unit, actions: GroupWalletActions, walletActions: WalletActions) {
     val state by viewModel.state.collectAsState()
     val hidden by viewModel.hidden.collectAsState()
-    val ui =WalletUiState(group = state, online = state.online, hidden = hidden, receiveSheet = state.receiving)
+    val ui =WalletUiState(group = state, online = state.online, hidden = hidden, receiveSheet = state.receiving, testnet = com.circaso.feature.wallet.presentation.LocalTestnet.current)
     val hooks = GroupWalletHooks(actions, viewModel::onDecide, viewModel::refresh, viewModel::onMessageShown)
     CircasoScaffold(
         topBar = { CircasoNavBar(title = state.name, onBack = onBack) },
-        strip = { com.circaso.feature.wallet.presentation.TestnetNote(androidx.compose.ui.Modifier.padding(vertical = com.circaso.designsystem.theme.CircasoSpacing.s1)) },
+        strip = { com.circaso.feature.wallet.presentation.TestnetStrip() },
         banner = { ConnectionBanner(showing = state.wallet?.let { "Showing the wallet as of " + formatLocalTime(it.fetchedAt, LocalTimeStyle.Clock) } ?: "Showing what is saved on this phone") },
         overlay = { WalletSheets(ui, walletActions, viewModel::onReceive, {}) },
     ) { padding ->

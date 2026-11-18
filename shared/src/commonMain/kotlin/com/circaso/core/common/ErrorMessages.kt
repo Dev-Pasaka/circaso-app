@@ -90,9 +90,6 @@ object ErrorMessages {
         "wallet.network_changed" to "You switched networks while this payment was open. Nothing was sent. Go back and start it again.",
         // Solana: the person pays the network fee in SOL themselves (no Circaso fee, no sponsored gas there).
         "wallet.insufficient_gas" to "You need a little SOL in this wallet to pay Solana's network fee. Nothing was sent.",
-        "wallet.insufficient_native_balance" to "You need a little SOL in this wallet to pay Solana's network fee. Nothing was sent.",
-        "wallet.gas_insufficient" to "You need a little SOL in this wallet to pay Solana's network fee. Nothing was sent.",
-        "wallet.insufficient_sol" to "You need a little SOL in this wallet to pay Solana's network fee. Nothing was sent.",
         "wallet.sdk_unavailable" to "Signing isn't available in this build yet.",
         "wallet.sdk_failed" to "Something went wrong while signing. Nothing was sent.",
         // group wallets (phase 2)

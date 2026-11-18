@@ -89,7 +89,8 @@ fun GoalStrip(chama: Chama, fiat: FiatValue?, showAdd: Boolean, canAdd: Boolean,
             raised = amountText(chama.contributedMinor, fiat),
             of = amountNumber(chama.goal.targetMinor, fiat),
             progress = chama.progress,
-            meta = goalMeta(chama),
+            // A group's money on Testnet says so on the strip itself, in the thread where it is added to.
+            meta = (if (com.circaso.feature.wallet.presentation.LocalTestnet.current) "Testnet · " else "") + goalMeta(chama),
             label = "${chama.goal.name} progress",
             modifier = Modifier.weight(1f),
         )

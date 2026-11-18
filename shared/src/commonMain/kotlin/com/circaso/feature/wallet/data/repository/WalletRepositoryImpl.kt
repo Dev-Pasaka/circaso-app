@@ -152,6 +152,8 @@ class WalletRepositoryImpl(
 
     @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
     override val wallet: Flow<Wallet?> = networks.selected.flatMapLatest { dao.observeSnapshot(it.wire) }.map { row -> row?.let { decode(it) } }
+    override fun walletOn(network: WalletNetwork): Flow<Wallet?> = dao.observeSnapshot(network.wire).map { row -> row?.let { decode(it) } }
+
     @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
     override val transfers: Flow<List<Transfer>> =
         combine(networks.selected.flatMapLatest { dao.observeTransfers(it.wire) }, names.saved) { rows, saved -> rows.map { it.toDomain().named(saved) } }
@@ -224,7 +226,7 @@ class WalletRepositoryImpl(
         val key = keyOf(response.network, asked)
         dao.saveSnapshot(WalletSnapshotEntity(key, json.encodeToString(WalletResponse.serializer(), response), fetchedAt))
         if (response.status == "ACTIVE") WalletNetwork.of(key)?.let { on -> _setupRequestedBy.update { it - on } }
-        return response.toDomain(fetchedAt)
+        return response.toDomain(fetchedAt).copy(network = WalletNetwork.of(key))
     }
 
     /** The create key belongs to one network's wallet: Mainnet's W2 must never replay Testnet's. */
@@ -463,8 +465,9 @@ class WalletRepositoryImpl(
         return on(network) {
             remote.wallet(currency(), walletId).map { response ->
                 val at = nowMillis()
-                dao.saveCached(WalletCacheEntity(walletId, json.encodeToString(WalletResponse.serializer(), response), at, keyOf(response.network, network)))
-                response.toDomain(at)
+                val key = keyOf(response.network, network)
+                dao.saveCached(WalletCacheEntity(walletId, json.encodeToString(WalletResponse.serializer(), response), at, key))
+                response.toDomain(at).copy(network = WalletNetwork.of(key))
             }
         }
     }
@@ -663,12 +666,13 @@ class WalletRepositoryImpl(
         }
     }
 
+    // A copy read from the phone says which network's row it came from, so no screen can pair it with the other's name.
     private fun decodeCached(row: WalletCacheEntity): Wallet? = try {
-        json.decodeFromString(WalletResponse.serializer(), row.json).toDomain(row.fetchedAt)
+        json.decodeFromString(WalletResponse.serializer(), row.json).toDomain(row.fetchedAt).copy(network = WalletNetwork.of(row.network))
     } catch (e: Exception) { null }
 
     private fun decode(row: WalletSnapshotEntity): Wallet? = try {
-        json.decodeFromString(WalletResponse.serializer(), row.json).toDomain(row.fetchedAt)
+        json.decodeFromString(WalletResponse.serializer(), row.json).toDomain(row.fetchedAt).copy(network = WalletNetwork.of(row.network))
     } catch (e: Exception) { null }
 
     private companion object {
@@ -818,8 +822,7 @@ private fun QuoteTransferResponse.toDomain() = PaymentQuote(
         "INSUFFICIENT_FUNDS" -> QuoteProblem.InsufficientFunds
         "PER_PAYMENT_LIMIT" -> QuoteProblem.PerPaymentLimit
         "DAILY_LIMIT" -> QuoteProblem.DailyLimit
-        // No name was agreed for this when it was written: the likely ones all mean the same.
-        "INSUFFICIENT_GAS", "INSUFFICIENT_NATIVE_BALANCE", "INSUFFICIENT_SOL", "GAS" -> QuoteProblem.InsufficientGas
+        "INSUFFICIENT_GAS" -> QuoteProblem.InsufficientGas
         else -> null
     },
     fitsAt = fitsAt, leftMinor = limit?.left?.amountMinor, dailyMaxMinor = limit?.dailyMax?.amountMinor, moreAt = limit?.moreAt,

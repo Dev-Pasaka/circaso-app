@@ -182,6 +182,7 @@ fun TargetContent(
     CircasoScaffold(
         grouped = true,
         topBar = { CircasoNavBar(title = if (state.editing) "Change Target" else "Add a Target", onBack = onBack) },
+        strip = { com.circaso.feature.wallet.presentation.TestnetStrip(onGrouped = true) },
         banner = { ConnectionBanner(showing = "Saving a target needs a connection") },
         // The whole group sees the target: removing it is confirmed first.
         overlay = {

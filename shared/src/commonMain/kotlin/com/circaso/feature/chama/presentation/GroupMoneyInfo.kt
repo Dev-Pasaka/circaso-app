@@ -104,15 +104,17 @@ class GroupInfoMoneySource(
 ) {
     private val error = MutableStateFlow<Pair<String, String?>?>(null)
 
-    fun observe(chatId: String): Flow<GroupInfoMoney> = combine(flag.enabled, observeMoney(chatId), error) { on, money, err -> Triple(on, money, err) }
+    // Re-read whole for each selected network (the group's money, its wallet and that wallet's settings), so nothing of
+    // one network is ever combined with the other's.
+    fun observe(chatId: String): Flow<GroupInfoMoney> = networks.selected.flatMapLatest { network -> observeOn(chatId, network) }
+
+    private fun observeOn(chatId: String, network: com.circaso.feature.wallet.domain.WalletNetwork): Flow<GroupInfoMoney> = combine(flag.enabled, observeMoney(chatId), error) { on, money, err -> Triple(on, money, err) }
         .flatMapLatest { (on, money, err) ->
             val walletId = money?.wallet?.walletId
             if (!on) flowOf(GroupInfoMoney(enabled = false))
             else if (walletId == null) flowOf(GroupInfoMoney(true, money, biometricLabel = biometricLabel, loadError = err?.first?.takeIf { money == null }, loadReference = err?.second))
-            else networks.selected.flatMapLatest { on ->
-                combine(observeWallet(walletId), prefs.walletBiometrics(walletId, on.wire), prefs.walletBiometricsLost(walletId, on.wire)) { w, bio, lost ->
-                    GroupInfoMoney(true, money, w, bio, lost && !bio, biometricLabel)
-                }
+            else combine(observeWallet(walletId), prefs.walletBiometrics(walletId, network.wire), prefs.walletBiometricsLost(walletId, network.wire)) { w, bio, lost ->
+                GroupInfoMoney(true, money, w?.takeIf { it.network == null || it.network == network }, bio, lost && !bio, biometricLabel)
             }
         }
 

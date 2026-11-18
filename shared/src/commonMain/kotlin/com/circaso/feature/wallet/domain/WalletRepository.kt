@@ -11,6 +11,12 @@ interface WalletRepository {
     /** The last wallet read, null before the first; `status` None until a wallet exists. */
     val wallet: Flow<Wallet?>
 
+    /**
+     * The phone's copy of the person's wallet on one network, whatever is selected: a payment under way reads the
+     * wallet of the network it is pinned to, and a screen pairs a balance with the network it belongs to.
+     */
+    fun walletOn(network: WalletNetwork): Flow<Wallet?> = wallet
+
     /** Transfers this phone knows, newest first. */
     val transfers: Flow<List<Transfer>>
 

@@ -119,13 +119,19 @@ internal fun shortWalletName(name: String): String {
  * the lift follows. Each side reads out as "Wallet: Personal" / "Wallet: Groups", a tab, selected or not.
  */
 @Composable
-fun WalletModeControl(groups: Boolean, onMode: (WalletMode) -> Unit, modifier: Modifier = Modifier) {
+fun WalletModeControl(groups: Boolean, onMode: (WalletMode) -> Unit, modifier: Modifier = Modifier, segmentMinWidth: androidx.compose.ui.unit.Dp? = null) {
     TwoSegmentControl(
         first = "Personal", second = "Groups", secondSelected = groups,
         onSelect = { second -> onMode(if (second) WalletMode.Groups else WalletMode.Personal) },
-        describe = { "Wallet: $it" }, modifier = modifier,
+        describe = { "Wallet: $it" }, modifier = modifier, segmentMinWidth = segmentMinWidth,
     )
 }
+
+/**
+ * A segment's least width when the network switch and Personal | Groups share the Wallet tab's row: wide enough for
+ * the longest of the four words, so the two pills are the same width, side by side or one above the other.
+ */
+internal val PairedSegmentMinWidth = CircasoSpacing.s10 * 2 + CircasoSpacing.s2
 
 /**
  * The two-word segmented pill both of the Wallet tab's switches are (Personal | Groups, Mainnet | Testnet): one
@@ -142,6 +148,8 @@ internal fun TwoSegmentControl(
     modifier: Modifier = Modifier,
     secondDot: Boolean = false,
     dotColor: androidx.compose.ui.graphics.Color = androidx.compose.ui.graphics.Color.Unspecified,
+    /** Wider segments than the words need, so two controls in one row come out the same width. */
+    segmentMinWidth: androidx.compose.ui.unit.Dp? = null,
 ) {
     val c = CircasoTheme.colors
     val t = CircasoTheme.typography
@@ -183,7 +191,7 @@ internal fun TwoSegmentControl(
         listOf(false to first, true to second).forEach { (isSecond, label) ->
             val on = isSecond == secondSelected
             Box(
-                Modifier.weight(1f).widthIn(min = SegmentMinWidth).heightIn(min = TouchHeight * scale)
+                Modifier.weight(1f).widthIn(min = (segmentMinWidth ?: SegmentMinWidth) * scale.coerceAtMost(if (segmentMinWidth != null) 1.3f else 1f)).heightIn(min = TouchHeight * scale)
                     // The lift sliding across is the feedback: no ripple or press scale over the 44 dp target.
                     .selectable(
                         selected = on, role = Role.Tab, interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() },
@@ -195,13 +203,15 @@ internal fun TwoSegmentControl(
                 val dotted = isSecond && secondDot
                 BasicText(
                     label,
-                    Modifier.padding(horizontal = SegmentPadding).then(
+                    // The dot's own room is added before the word, so dot and word are centred in the segment as one.
+                    Modifier.padding(horizontal = SegmentPadding).padding(start = if (dotted) TestnetDot + SegmentDotGap else 0.dp).then(
                         if (!dotted) Modifier else Modifier.drawBehind {
                             // Before the word, in the reading direction, level with its middle.
-                            val r = SegmentDot.toPx() / 2f
+                            val r = TestnetDot.toPx() / 2f
                             val gap = SegmentDotGap.toPx()
                             val cx = if (rtl) size.width + gap + r else -gap - r
-                            drawCircle(dotColor, r, androidx.compose.ui.geometry.Offset(cx, size.height / 2f), alpha = if (on) 1f else 0.55f)
+                            // Softer while its side isn't selected, but never in high contrast, where it must hold 3:1.
+                            drawCircle(dotColor, r, androidx.compose.ui.geometry.Offset(cx, size.height / 2f), alpha = if (on || c.isHighContrast) 1f else 0.55f)
                         },
                     ),
                     style = t.footnote.copy(color = if (on) c.ink else c.inkSecondary, fontWeight = FontWeight.SemiBold, textAlign = TextAlign.Center),
@@ -212,9 +222,8 @@ internal fun TwoSegmentControl(
     }
 }
 
-/** Testnet's dot in the network switch: small enough to sit in the segment's own padding. */
-private val SegmentDot = 6.dp
-private val SegmentDotGap = 4.dp
+/** The space between Testnet's dot ([TestnetDot], shared with the tag) and its word in the network switch. */
+private val SegmentDotGap = CircasoSpacing.s1
 
 /** What a group wallet lets this person do, in a few words (the menu's and the full list's second line). */
 internal fun walletLine(w: NamedWallet, locked: Boolean): String = when {

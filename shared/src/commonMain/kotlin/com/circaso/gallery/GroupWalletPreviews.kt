@@ -375,7 +375,13 @@ internal fun GroupWalletPreview(name: String): Boolean {
         "wallet-network-groups-testnet" -> TabPreview(networkState(com.circaso.feature.wallet.domain.WalletNetwork.TESTNET, base = tabState(gwState)).copy(selectedWalletId = "gw-1"), gwActions)
         "wallet-network-create-mainnet" -> TabPreview(networkState(com.circaso.feature.wallet.domain.WalletNetwork.MAINNET, created = false))
         "wallet-network-create-testnet" -> TabPreview(networkState(com.circaso.feature.wallet.domain.WalletNetwork.TESTNET, created = false))
-        "wallet-network-offline" -> TabPreview(networkState(com.circaso.feature.wallet.domain.WalletNetwork.MAINNET, created = false).copy(online = false))
+        // A first visit to the other network with no connection: nothing of it was ever read, the server's list says
+        // there is no wallet, so the create screen shows (saying a connection is needed) rather than a skeleton.
+        "wallet-network-offline" -> TabPreview(networkState(com.circaso.feature.wallet.domain.WalletNetwork.MAINNET, created = false).copy(wallet = null, networkWalletStatus = WalletStatus.None, online = false))
+        "gw-send-sol-gas" -> com.circaso.feature.wallet.presentation.SendToWalletContent(
+            com.circaso.feature.wallet.presentation.SendToWalletUiState(wallet = mainnetWallet(), blockchain = "SOL", address = "So1Recipient00000000000000000000000000009x", amountText = "12", gasShort = true, network = com.circaso.feature.wallet.domain.WalletNetwork.MAINNET),
+            {}, {}, {}, {}, {}, {}, {}, {}, {},
+        )
         "wallet-testnet-only" -> TabPreview(WalletUiState(wallet = sampleWallet(), network = com.circaso.feature.wallet.domain.WalletNetwork.TESTNET, networks = listOf(com.circaso.feature.wallet.domain.WalletNetwork.TESTNET), testnet = true))
         "wallet-mainnet-only" -> TabPreview(WalletUiState(wallet = mainnetWallet(), network = com.circaso.feature.wallet.domain.WalletNetwork.MAINNET, networks = listOf(com.circaso.feature.wallet.domain.WalletNetwork.MAINNET)))
         // Solana: no Circaso fee, the network's fee in SOL; and the state when the wallet has no SOL for it.

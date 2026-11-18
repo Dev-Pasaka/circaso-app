@@ -18,6 +18,12 @@ data class Wallet(
     val canSign: Boolean = true,
     /** Why sending is held: `VAULT_OPENED`, or a recovery (`RELINKED`); null when not held or unknown. */
     val holdReason: String? = null,
+    /**
+     * The wallet network this copy is of, from the phone's row (wallet networks). A screen that shows a network's name
+     * beside a balance checks it, so one network's money is never drawn under the other's label; null from a caller
+     * that built the wallet by hand (tests, previews).
+     */
+    val network: WalletNetwork? = null,
 ) {
     val isGroup get() = owner?.type == WalletOwnerType.Group
 
@@ -112,8 +118,6 @@ data class Transfer(
     /** The wallet network it moved on; a row from before networks is Testnet's. */
     val network: WalletNetwork = WalletNetwork.TESTNET,
 ) {
-    /** Test money: said wherever this payment is shown, whatever network is selected. */
-    val testnet get() = network == WalletNetwork.TESTNET
     val outgoing get() = direction == TransferDirection.Out
     val settled get() = state == TransferState.Confirmed
     /** The other side is a space's wallet (W6 `toSpaceId`/`fromSpaceId`, phase 3): name it from the space on the phone. */

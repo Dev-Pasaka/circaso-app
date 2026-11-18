@@ -202,6 +202,13 @@ data class PayUiState(
     /** §7b's fee line, from W17 (phase 2F). */
     val fee: PayFee = PayFee.None,
     /**
+     * The wallet network this card is for (the view model's pin): the wallet shown, every quote and W4 are all its,
+     * whatever is selected elsewhere. The Testnet mark on the Pay screen comes from here, not from the selection.
+     */
+    val network: com.circaso.feature.wallet.domain.WalletNetwork = com.circaso.feature.wallet.domain.WalletNetwork.TESTNET,
+    /** The card's network is Testnet (and the server has said which networks there are): test money is on screen. */
+    val testnet: Boolean = false,
+    /**
      * What the typed number is in, fixed when it is typed, a coin is tagged or the unit is switched: true is the
      * person's currency, false the coin; null until then (follow [inFiat]). A later wallet refresh never changes it, so
      * a price that goes away can't turn "KES 500" into 500 ETH (design review, 2026-11-06).
@@ -313,7 +320,9 @@ data class PayUiState(
      */
     /** The fee alone, in the person's currency ("KES 5.17"), for the chat's slim card; "No fee" when none is taken. */
     val feeShort: String
-        get() = (fee as? PayFee.Quoted)?.takeIf { !MinorUnits.isZero(it.amountMinor) }?.let { moneyText(it.amountMinor) } ?: feeText
+        get() = (fee as? PayFee.Quoted)?.takeIf { !MinorUnits.isZero(it.amountMinor) }?.let { moneyText(it.amountMinor) }
+            // The slim card has no room for the whole Solana line: the part the person must know.
+            ?: if (onSolana && (fee is PayFee.None || fee is PayFee.Quoted)) SolanaFeeShort else feeText
 
     /** The payment leaves on Solana: no Circaso fee, and the network's own fee is paid in SOL from this wallet. */
     val onSolana: Boolean get() = com.circaso.feature.wallet.domain.isSolanaChain(payChain)
@@ -449,7 +458,10 @@ class PayViewModel(
      * sign if the selection has moved on since. It follows the selection only between payments (never while signing),
      * so a payment is never prepared on one network and signed on another.
      */
-    private var pinned: com.circaso.feature.wallet.domain.WalletNetwork = networks.current()
+    private val pin = MutableStateFlow(networks.current())
+    private var pinned: com.circaso.feature.wallet.domain.WalletNetwork
+        get() = pin.value
+        set(value) { pin.value = value }
 
     private val userId = intent.userId
     private val chatId = intent.chatId
@@ -505,13 +517,16 @@ class PayViewModel(
     private val priceTick = MutableStateFlow(0)
 
     val state: StateFlow<PayUiState> = combine(
-        combine(local, priceTick) { ui, _ -> ui }, observeWallet(), observeContacts(), connection.status,
+        // The card says which network it is for, and reads that network's wallet: never the selected one's by accident.
+        combine(local, priceTick, pin, networks.state) { ui, _, on, all -> ui.copy(network = on, testnet = all.known && on == com.circaso.feature.wallet.domain.WalletNetwork.TESTNET) },
+        pin.flatMapLatest { observeWallet(it) }, observeContacts(), connection.status,
         combine(if (intent.goalName != null && chatId != null) observeChama(chatId) else flowOf(null), groupSide, observeMe) { ch, g, m -> Triple(ch, g, m) },
     ) { ui, personal, contacts, c, sides ->
         val (chama, group, me) = sides
         val people = contacts.map { it.person }
         // The money leaves the chosen wallet: its chains and balance, and its fiat rate (the server prices each one).
-        val wallet = if (group.sourceIsGroup) group.source else personal
+        // A copy that says it is another network's is not this card's wallet (a group wallet's copies follow the selection).
+        val wallet = (if (group.sourceIsGroup) group.source else personal)?.takeIf { it.network == null || it.network == ui.network }
         ui.copy(
             wallet = wallet,
             contacts = people,
@@ -548,6 +563,18 @@ class PayViewModel(
     /** Marks the fee on the card out of date at once, so a tap can't sign it for another amount (before the re-ask). */
     private fun staleFee() { if (quotePayment != null && !quotesUnsupported) local.update { it.copy(feeStale = true) } }
 
+    /**
+     * The card moves to another network: its wallet, chain, fee and limits are that network's from here, with a fresh
+     * key. The amount and the note typed stay (the person meant them); the payee is checked again there.
+     */
+    private fun repin(on: com.circaso.feature.wallet.domain.WalletNetwork) {
+        pinned = on
+        idempotencyKey = newIdempotencyKey()
+        quotedFor = null
+        local.update { it.copy(blockchain = null, failure = null, block = null, feeChange = null, problem = null, fee = PayFee.None, feeStale = quotePayment != null && !quotesUnsupported) }
+        userId?.let { check(it, null) }
+    }
+
     /** GW10: open or close the switcher. */
     fun onChoosing(open: Boolean) { if (!open || state.value.canSwitch) local.update { it.copy(choosing = open) } }
 
@@ -566,15 +593,10 @@ class PayViewModel(
         if (userId != null) check(userId, null)
         // Another network picked while this card is idle (a chat left open beside the Wallet tab): the card starts
         // again on it, with a fresh key and no chain or fee carried over. While signing, the pin stays.
+        // Looked at again when signing ends, so a switch made during the PIN is taken up the moment it is over.
         viewModelScope.launch {
-            networks.selected.collect { on ->
-                if (on == pinned || local.value.step == PayStep.Signing) return@collect
-                pinned = on
-                idempotencyKey = newIdempotencyKey()
-                staleFee()
-                local.update { it.copy(blockchain = null, failure = null, block = null, feeChange = null, problem = null) }
-                userId?.let { check(it, null) }
-            }
+            combine(networks.selected, local.map { it.step == PayStep.Signing }.distinctUntilChanged()) { on, signing -> on to signing }
+                .collect { (on, signing) -> if (!signing && on != pinned) repin(on) }
         }
         wallets?.let { w -> viewModelScope.launch { if (groupWallets.isOn) w.refresh(intent.fromWalletId, intent.groupId ?: intent.chatId) } }
         viewModelScope.launch { keepPricesFresh() }
@@ -923,6 +945,14 @@ class PayViewModel(
                     // Phase 2F: refused before anything was prepared, with the numbers to say why (GW13c, GW14b, GW20).
                     if (refusedWithNumbers(s, r.error as? AppError.Api)) return@launch
                     // G2 / GW19: say Not sent, and that nothing was taken from the named wallet; the approval stands.
+                    // The network moved under this payment: nothing was sent or signed. The card starts again on the
+                    // network selected now and says why, rather than offer Try Again for a payment that can't go.
+                    if (code == com.circaso.feature.wallet.domain.NetworkChangedCode) {
+                        local.update { it.copy(step = PayStep.Amount, failure = null) }
+                        repin(networks.current())
+                        local.update { it.copy(error = "You switched to ${pinned.label}. Nothing was sent. Check the payment again for your ${pinned.label} wallet.") }
+                        return@launch
+                    }
                     val failure = if (code == "wallet.cancelled") null else PayFailure(s.walletName.takeIf { s.fromGroupWallet } ?: "your wallet", ErrorMessages.forError(r.error), ErrorMessages.reference(r.error))
                     local.update { it.copy(step = PayStep.Amount, failure = failure) }
                 }
@@ -1112,10 +1142,13 @@ class PayViewModel(
         /** W4 refusals that prepared nothing: the same key would be answered from the replay cache, so the next try is new. */
         val Refusals = setOf(
             "wallet.fee_changed", "wallet.limit_exceeded", "wallet.insufficient_funds", com.circaso.feature.wallet.domain.NetworkChangedCode,
-            "wallet.insufficient_gas", "wallet.insufficient_native_balance", "wallet.gas_insufficient", "wallet.insufficient_sol",
+            com.circaso.feature.wallet.domain.InsufficientGasCode,
         )
     }
 }
+
+/** The same on the chat's slim card, which has room for a few words. */
+const val SolanaFeeShort = "Network fee in SOL"
 
 /** The fee row on Solana: Circaso takes nothing there, and the network's own fee comes out of the wallet's SOL. */
 const val SolanaFeeLine = "No Circaso fee · network fee paid in SOL"

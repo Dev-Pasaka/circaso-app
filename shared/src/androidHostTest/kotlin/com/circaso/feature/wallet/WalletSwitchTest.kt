@@ -147,7 +147,7 @@ class WalletSwitchTest {
 
     private val walletRepo = stub<WalletRepository> { name, args ->
         when (name) {
-            "getWallet" -> flowOf(aWallet("500000000"))
+            "getWallet", "walletOn" -> flowOf(aWallet("500000000"))
             "getTransfers" -> flowOf(emptyList<Transfer>())
             "getWallets" -> listHeld.flatMapLatest { held -> if (held) kotlinx.coroutines.flow.emptyFlow() else listings }
             "walletOf" -> flowOf(if (args[0] == "gw-1") aWallet("100000000", "gw-1") else aWallet("500000000"))

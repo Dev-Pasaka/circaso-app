@@ -914,6 +914,8 @@ private fun PaymentMessage(
                 } else if (payout != null) payout.second else m.note,
                 // A card only carries its chain; a test chain is said on the card itself, whatever network is selected now
                 // (a Mainnet chain adds nothing, so someone with only Mainnet never sees the word).
+                // Kept for good (decided 2026-11-18): an old test card stays marked even for someone who later has
+                // only Mainnet. It is the truth about that money; unmarked, it would read as real.
                 foot = (if (com.circaso.feature.wallet.domain.isTestnetChain(m.blockchain)) "Testnet · " else "") +
                     (if (shownFiat != null) "$usdc · " else "") + formatLocalTime(m.orderAt, LocalTimeStyle.Clock) + when { failed -> " · card not sent"; waiting -> " · sending card"; else -> "" },
                 // Money on chain is never dimmed or greyed because its encrypted card is still going out or didn't

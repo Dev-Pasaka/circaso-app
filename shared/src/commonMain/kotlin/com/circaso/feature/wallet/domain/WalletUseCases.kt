@@ -1,6 +1,10 @@
 package com.circaso.feature.wallet.domain
 
-class ObserveWalletUseCase(private val wallet: WalletRepository) { operator fun invoke() = wallet.wallet }
+class ObserveWalletUseCase(private val wallet: WalletRepository) {
+    operator fun invoke() = wallet.wallet
+    /** One network's copy, whatever is selected. */
+    operator fun invoke(network: WalletNetwork) = wallet.walletOn(network)
+}
 class RefreshWalletUseCase(private val wallet: WalletRepository) { suspend operator fun invoke() = wallet.refresh() }
 class CreateWalletUseCase(private val wallet: WalletRepository) { suspend operator fun invoke() = wallet.create() }
 class ObserveTransfersUseCase(private val wallet: WalletRepository) { operator fun invoke() = wallet.transfers }

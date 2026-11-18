@@ -142,13 +142,11 @@ const val NetworkChangedCode = "wallet.network_changed"
 /** The server's refusal of a network the person may not use (403). */
 const val NetworkUnavailableCode = "wallet.network_unavailable"
 
-/** Not enough SOL to pay Solana's own network fee (the app's name for it; see `isGasProblem`). */
+/**
+ * Not enough SOL to pay Solana's own network fee: the one code W4 and W17 refuse with (agreed with the backend,
+ * 2026-11-18); W17's `problem` for the same thing is `INSUFFICIENT_GAS`.
+ */
 const val InsufficientGasCode = "wallet.insufficient_gas"
 
-/**
- * The server says the wallet can't pay the chain's network fee. The backend had no code for it when this was written
- * (2026-11-18), so the likely names are all read as the same thing.
- */
-fun isGasProblem(code: String?): Boolean = code != null && code in GasCodes
-
-private val GasCodes = setOf(InsufficientGasCode, "wallet.insufficient_native_balance", "wallet.gas_insufficient", "wallet.insufficient_sol")
+/** The server says the wallet can't pay the chain's network fee. */
+fun isGasProblem(code: String?): Boolean = code == InsufficientGasCode

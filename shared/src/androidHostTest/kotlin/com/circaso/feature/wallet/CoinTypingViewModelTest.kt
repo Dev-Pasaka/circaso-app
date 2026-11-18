@@ -96,7 +96,7 @@ class CoinTypingViewModelTest {
 
     private val repo = stub<WalletRepository> { name, args ->
         when (name) {
-            "getWallet" -> wallets
+            "getWallet", "walletOn" -> wallets
             "recipient" -> AppResult.Success(Recipient(args[0] as String, RecipientStatus.CanReceive, listOf("BASE-SEPOLIA")))
             else -> null
         }

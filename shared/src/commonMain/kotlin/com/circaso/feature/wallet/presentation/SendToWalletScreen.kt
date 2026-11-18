@@ -75,7 +75,8 @@ fun SendToWalletContent(
     LaunchedEffect(state.error) { state.error?.let { toast.show(it, com.circaso.designsystem.chrome.ToastKind.Problem); onErrorShown() } }
     CircasoScaffold(
         topBar = { CircasoNavBar(title = when (state.step) { ExternalStep.Review, ExternalStep.Signing -> "Review"; ExternalStep.Done -> "Sent"; else -> "Send to a Wallet" }, onBack = when (state.step) { ExternalStep.Signing -> null; ExternalStep.Review -> onBackToForm; else -> onBack }) },
-        strip = { com.circaso.feature.wallet.presentation.TestnetNote(androidx.compose.ui.Modifier.padding(vertical = com.circaso.designsystem.theme.CircasoSpacing.s1)) },
+        // From the network this send is pinned to, not from whatever is selected on the Wallet tab.
+        strip = { TestnetStrip(show = state.testnet) },
         toast = { ToastHost(toast) },
     ) { padding ->
         val chains = state.wallet?.chains?.filter { it.state == "ACTIVE" }.orEmpty()
@@ -118,6 +119,8 @@ fun SendToWalletContent(
                         DetailRow("Fee", "Shown before you confirm")
                         DetailRow("They receive", state.amountMinor?.let { MinorUnits.toDisplay(it, 6) + " USDC" } ?: "—")
                     }
+                    // Solana and no SOL for its fee: said here, where it stays, with the address to add SOL to.
+                    if (state.gasShort) SolanaGasNote(state.walletName.takeIf { state.fromGroup }, state.chainAddress)
                     CircasoButton("Review", onReview, size = ButtonSize.Large, block = true, enabled = state.canReview, busy = state.checking)
                     if (!state.online) BasicText("You need a connection to send money.", style = t.footnote.copy(color = c.inkSecondary))
                 }

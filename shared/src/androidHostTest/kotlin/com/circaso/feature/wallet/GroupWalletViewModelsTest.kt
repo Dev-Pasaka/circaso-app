@@ -187,7 +187,7 @@ class GroupWalletPayViewModelTest {
 
     private val walletRepo = fake<WalletRepository> { name, args ->
         when (name) {
-            "getWallet" -> flowOf(personal)
+            "getWallet", "walletOn" -> flowOf(personal)
             "getWallets" -> flowOf(if (memberOnly) listings.map { it.copy(canSign = it.personal) } else listings)
             "walletOf" -> flowOf(if (args[0] == "gw-1") groupBalance else personal)
             "refreshWallets" -> AppResult.Success(listings)
@@ -837,7 +837,7 @@ class GroupInfoRulesTest {
 class TargetViewModelTest {
     private val dispatcher = UnconfinedTestDispatcher()
     private val saved = mutableListOf<List<Any?>>()
-    private val walletRepo = fake<WalletRepository> { name, _ -> if (name == "getWallet") flowOf(personal) else null }
+    private val walletRepo = fake<WalletRepository> { name, _ -> if (name == "getWallet" || name == "walletOn") flowOf(personal) else null }
     private val chats = fake<ChatsRepository> { name, _ -> if (name == "chat") flowOf(group) else null }
     private val chamas = fake<ChamaRepository> { name, args ->
         when (name) {

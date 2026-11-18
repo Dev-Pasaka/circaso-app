@@ -336,9 +336,21 @@ the switch or the word testnet. This is closed testing with real crypto.
 - **Pinning** (`PinnedNetwork`, a coroutine context element): a call is made and saved for one network whatever is
   selected when it answers. The repositories wrap every remote call in it (`WalletRepositoryImpl.on`), frames are
   handled under the network they name (else their chain's, else the phone's row, else the selected one), and
-  `PaymentRequest.network` is fixed by `PayViewModel` / `SendToWalletViewModel` when the card or screen is built:
-  `pay` sends nothing if the selection has moved (`wallet.network_changed`) and never opens the PIN if it moves
-  between W4 and the SDK (the row becomes Expired). W5 for a card of the other network is retried on that network.
+  `PaymentRequest.network` is the pin of `PayViewModel` / `SendToWalletViewModel`: `pay` sends nothing if the
+  selection has moved (`wallet.network_changed`) and never opens the PIN if it moves between W4 and the SDK (the row
+  becomes Expired). W5 for a card of the other network is retried on that network.
+- **A payment's screen shows its pin, not the selection** (design review of PR #74). `PayUiState.network/testnet` and
+  `SendToWalletUiState.network/testnet` come from the pin; the wallet is read with `ObserveWalletUseCase(network)`
+  (`WalletRepository.walletOn`); the Testnet strip is driven by that state. The pin follows the selection only while
+  nothing is being signed, and is looked at again when signing ends: Pay starts the card again on the new network
+  (amount and note kept), Send returns to its form with a notice. `wallet.network_changed` resets the same way.
+- **Data carries its network.** `Wallet.network` is the row's network. `WalletViewModel.networkSide` re-reads the
+  wallet, the picked group and the switcher's balances per selected network and hands them on with that network; the
+  tab's `network` and `testnet` come from that data, so one network's balance is never drawn under the other's label
+  (a copy that says it is another network's is dropped). `BiometricApprovalViewModel` and `GroupInfoMoneySource` read
+  the setting and the wallet for one network together.
+- **First visit to a network:** when nothing of it was read on this phone and the server's list says the wallet is
+  `NONE` or `SETTING_UP` (`WalletUiState.createAtOnce`), the create screen shows at once, offline too.
 - **Room v24** (auto-migration with `WalletNetworksMigration`): `wallet_snapshot` and `wallet_list` are one row per
   network (their `id` column is gone); `wallet_cache`, `wallet_activity`, `chama_snapshot`, `group_money` have
   `network` in their keys; `transfer` has the column (lists filter on it, a payment is still found by id). Every row
@@ -351,21 +363,30 @@ the switch or the word testnet. This is closed testing with real crypto.
 - **UI** (no design frame; decided to the premium bar): `WalletNetworkControl` is the Personal | Groups pill
   (`TwoSegmentControl` in `WalletSwitcher.kt`: same track, lift, spring, 44 dp target, reduced motion, RTL) with a
   caution dot on Testnet. It shares the tab's top row with Personal | Groups in a `FlowRow`: side by side where both
-  fit, stacked where they don't. Test money is marked by `TestnetTag` / `TestnetNote` (`WalletNetworkParts.kt`):
-  under the bar (the scaffold's `strip`) on Pay, Send to a Wallet, Transactions, Networks, Assets, the group wallet and
-  the chama screen while Testnet is selected (`LocalTestnet`, provided in `App` from `WalletNetworks`); on the Receive
-  sheet; on a payment's detail and on a chat's money card by the payment's own chain, whatever is selected. Chain
+  fit, stacked where they don't (equal widths, `PairedSegmentMinWidth`); each pill eases in on its own. Test money is
+  marked by `TestnetTag` / `TestnetNote`, and on screens by the one `TestnetStrip(show)` (`WalletNetworkParts.kt`;
+  it owns its padding and eases open, a fade with reduced motion; the note wraps at large text): in the scaffold's
+  `strip` on Pay and Send (from their pinned network), Transactions, Networks, Assets, Currency, the group wallet,
+  group wallet set-up, the target form and the chama screen (`LocalTestnet`, provided in `App`); on the Receive sheet
+  and the thread's goal strip; on a payment's detail and a chat's money card by the payment's own chain, whatever is
+  selected. **Decided 2026-11-18:** old Testnet cards and receipts stay marked for someone who later has only
+  Mainnet (it is the truth about that money). In You → Security the "Approve payments with…" row names the wallet
+  ("For your Mainnet wallet") when the person has both networks. Chain
   names say "(testnet)" from `isTestnetChain` (SEPOLIA, AMOY, DEVNET, FUJI, TESTNET). The first visit to a network
   with no wallet is the create screen, named ("Set up your Mainnet wallet") and saying it is a separate wallet with its
   own PIN.
-- **Solana:** `isSolanaChain`: the fee row reads "No Circaso fee · network fee paid in SOL"; `PayBlock.Gas` /
-  `QuoteProblem.InsufficientGas` is the state for too little SOL. The backend had no code for it when this was built,
-  so `wallet.insufficient_gas` and three likely variants (and W17 `problem: INSUFFICIENT_GAS`) are all read as it;
-  change `isGasProblem` when the backend names one.
+- **Solana:** `isSolanaChain`: the fee row reads "No Circaso fee · network fee paid in SOL" (Pay, Send and the
+  receipt; "Network fee in SOL" on the chat's slim card). Too little SOL is one code, `wallet.insufficient_gas` (W4
+  and W17), and one W17 `problem`, `INSUFFICIENT_GAS`: `PayBlock.Gas` on Pay and the chat card,
+  `SendToWalletUiState.gasShort` on Send, both drawn by `SolanaGasNote` (what is wrong, the wallet's Solana address,
+  Copy Solana Address).
 - **Previews:** `wallet-network-mainnet|testnet|groups|groups-testnet|create-mainnet|create-testnet|offline`,
-  `wallet-testnet-only`, `wallet-mainnet-only`, `gw-pay-sol`, `gw-pay-sol-gas`, `gw-pay-testnet`.
+  `wallet-testnet-only`, `wallet-mainnet-only`, `gw-pay-sol`, `gw-pay-sol-gas`, `gw-send-sol-gas`, `gw-pay-testnet`.
 - **Tests:** `commonTest/feature/wallet/WalletNetworksTest.kt` (the store, the header on the wire with a mock engine,
-  per-network copies, frames, the payment pin, the legacy server).
+  per-network copies, frames, the payment pin, the legacy server) and
+  `androidHostTest/feature/wallet/WalletNetworkViewModelsTest.kt` (Pay and Send show and follow their pin, the reset
+  on a switch, `PayBlock.Gas` from W17 and W4, the Solana fee lines, the Wallet tab never pairing one network's label
+  with the other's money, `onNetwork`, the notice, the create screen at once).
 - **Not done:** Circle's own PIN screens don't name the network; the treasurer-model link retry (`PendingLinks`) is
   not per network; nothing here has run against a server with networks (the routes were not live when it was built).
 

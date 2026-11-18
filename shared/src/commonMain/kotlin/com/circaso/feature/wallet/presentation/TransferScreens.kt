@@ -95,7 +95,9 @@ fun TransferContent(state: TransferUiState, onBack: () -> Unit) {
     CircasoScaffold(
         topBar = { CircasoNavBar(title = "Payment", onBack = onBack, trailing = { if (transfer != null) CircasoIconButton(CircasoIcon.Share, "Share receipt", { shareLinks?.share(receiptTarget(transfer, state.fiat)) }) }) },
         // The payment's own chain says it: a test payment is marked whatever network is selected now.
-        strip = { TestnetNote(Modifier.padding(vertical = CircasoSpacing.s1), show = transfer != null && com.circaso.feature.wallet.domain.isTestnetChain(transfer.blockchain)) },
+        // Kept for good (decided 2026-11-18): a test payment stays marked even for someone who later has only Mainnet.
+        // It is the truth about that payment, and hiding it would make test money read as real.
+        strip = { TestnetStrip(show = transfer != null && com.circaso.feature.wallet.domain.isTestnetChain(transfer.blockchain)) },
         toast = { ToastHost(toast) },
     ) { padding ->
         if (transfer == null) {
@@ -148,7 +150,7 @@ fun TransferContent(state: TransferUiState, onBack: () -> Unit) {
                 // The network fee on what Circaso's people send is inside their Circaso fee; money from outside paid its own.
                 // From the fee's minor units (the phone's copy keeps no display string): "KES 12.99 · 0.10 USDC". It
                 // said "No fee" for a charged fee before (2026-11-05).
-                if (!incoming) DetailRow("Fee", feeText(transfer.fee, state.fiat))
+                if (!incoming) DetailRow("Fee", receiptFeeText(transfer.fee, state.fiat, transfer.blockchain))
                 DetailRow("Status", statusText(transfer))
             }
             transfer.failureReason?.takeIf { transfer.state == TransferState.Failed }?.let { BasicText(it, style = t.footnote.copy(color = c.critical, textAlign = TextAlign.Center)) }
@@ -291,7 +293,7 @@ fun ActivityContent(
                 )
             })
         },
-        strip = { TestnetNote(Modifier.padding(vertical = CircasoSpacing.s1)) },
+        strip = { TestnetStrip() },
     ) { padding ->
         val bottom = padding.calculateBottomPadding() + CircasoSpacing.s4
         val pull = androidx.compose.material3.pulltorefresh.rememberPullToRefreshState()
@@ -475,7 +477,7 @@ fun NetworksScreen(viewModel: NetworksViewModel, onBack: () -> Unit) {
     val t = CircasoTheme.typography
     val toast = rememberToastState()
     LaunchedEffect(state.notice, state.error) { (state.notice ?: state.error)?.let { toast.show(it, if (state.notice == null) com.circaso.designsystem.chrome.ToastKind.Problem else com.circaso.designsystem.chrome.ToastKind.Info); viewModel.onNoticeShown() } }
-    CircasoScaffold(topBar = { CircasoNavBar(title = "Networks", onBack = onBack) }, strip = { TestnetNote(Modifier.padding(vertical = CircasoSpacing.s1)) }, toast = { ToastHost(toast) }) { padding ->
+    CircasoScaffold(topBar = { CircasoNavBar(title = "Networks", onBack = onBack) }, strip = { TestnetStrip() }, toast = { ToastHost(toast) }) { padding ->
         val chains = state.chains
         LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = padding.calculateBottomPadding() + CircasoSpacing.s4)) {
             item { BasicText("Your wallet has its own address on each network. USDC sent on a network you're not on can't reach you.", style = t.footnote.copy(color = c.inkSecondary), modifier = Modifier.padding(CircasoSpacing.s4)) }
@@ -501,8 +503,10 @@ fun NetworksScreen(viewModel: NetworksViewModel, onBack: () -> Unit) {
 }
 
 /** The fee a person paid, in their currency first for dollar coins, then the coin; "No fee" only when none was taken. */
-private fun feeText(fee: com.circaso.feature.wallet.domain.Amount?, rate: com.circaso.feature.wallet.domain.FiatValue?): String {
-    val minor = fee?.amountMinor?.takeIf { it.isNotBlank() && !MinorUnits.isZero(it) } ?: return "No fee"
+/** On Solana Circaso takes none and the network's own fee was paid in SOL from the wallet: the receipt says that, not "No fee". */
+internal fun receiptFeeText(fee: com.circaso.feature.wallet.domain.Amount?, rate: com.circaso.feature.wallet.domain.FiatValue?, blockchain: String? = null): String {
+    val minor = fee?.amountMinor?.takeIf { it.isNotBlank() && !MinorUnits.isZero(it) }
+        ?: return if (com.circaso.feature.wallet.domain.isSolanaChain(blockchain)) SolanaFeeLine else "No fee"
     val coin = MinorUnits.toDisplay(minor, MinorUnits.decimalsOf(fee.asset)) + " " + fee.asset
     val fiat = rate?.takeIf { MinorUnits.isDollar(fee.asset) }?.let { r -> usdcToFiat(minor, r.rate)?.let { formatFiat(r.currency, it) } }
     return if (fiat != null) "$fiat · $coin" else coin

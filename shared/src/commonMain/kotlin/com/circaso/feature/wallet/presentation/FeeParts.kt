@@ -192,12 +192,7 @@ internal fun blockNote(s: PayUiState): BlockNote? {
     return when (val b = s.block) {
         null -> null
         // Solana: the network's fee is the person's to pay, in SOL. The amount is fine; the wallet needs SOL.
-        PayBlock.Gas -> BlockNote(
-            title = (if (s.fromGroupWallet) "${s.walletName} needs" else "You need") + " SOL for the network fee",
-            text = "Payments on Solana pay Solana’s own small fee in SOL, from the wallet that sends. Add a little SOL to " +
-                (if (s.fromGroupWallet) "its" else "your") + " Solana address, then try again. Nothing was sent.",
-            action = null, icon = CircasoIcon.Info, warning = true,
-        )
+        PayBlock.Gas -> solanaGasNote(s.walletName.takeIf { s.fromGroupWallet }, s.wallet?.chains?.firstOrNull { it.blockchain == s.payChain }?.address)
         is PayBlock.Funds -> {
             val max = offer(b.maxAmountMinor)
             BlockNote(
@@ -273,8 +268,31 @@ internal fun FeeProblems(s: PayUiState, onUseMax: () -> Unit) {
     }
     val note = blockNote(s)
     AnimatedVisibility(note != null, enter = enter, exit = exit) {
-        note?.let { BlockNoteView(it, onUseMax, stale = s.feeStale) }
+        note?.let {
+            // Solana's note offers the address to add SOL to; the others offer the amount that fits.
+            if (s.block == PayBlock.Gas) SolanaGasNote(s.walletName.takeIf { s.fromGroupWallet }, s.wallet?.chains?.firstOrNull { c -> c.blockchain == s.payChain }?.address)
+            else BlockNoteView(it, onUseMax, stale = s.feeStale)
+        }
     }
+}
+
+/**
+ * Solana with too little SOL for the network's own fee, which the person pays themselves there: what is wrong, the
+ * wallet's Solana address, and one tap to copy it. [group] names a group wallet; null is the person's own.
+ */
+internal fun solanaGasNote(group: String?, address: String?, copied: Boolean = false) = BlockNote(
+    title = (if (group != null) "$group needs" else "You need") + " SOL for the network fee",
+    text = "Payments on Solana pay Solana’s own small fee in SOL, from the wallet that sends. Nothing was sent. Add a little SOL to " +
+        (if (group != null) "its" else "your") + " Solana address" + (address?.let { " (${com.circaso.feature.wallet.domain.shortAddress(it)})" } ?: "") + ", then try again.",
+    action = address?.let { if (copied) "Solana Address Copied" else "Copy Solana Address" }, icon = CircasoIcon.Info, warning = true,
+)
+
+/** [solanaGasNote] with its action wired: the address goes to the clipboard and the button says so. The same on Pay, the chat card and Send. */
+@Composable
+internal fun SolanaGasNote(group: String?, address: String?, modifier: Modifier = Modifier) {
+    val clipboard = androidx.compose.ui.platform.LocalClipboardManager.current
+    val copied = androidx.compose.runtime.remember(address) { androidx.compose.runtime.mutableStateOf(false) }
+    BlockNoteView(solanaGasNote(group, address, copied.value), { address?.let { clipboard.setText(androidx.compose.ui.text.AnnotatedString(it)); copied.value = true } }, modifier)
 }
 
 /** GW14 / GW14b / GW20's note: the icon and title, the numbers, and the one-tap offer when there is one. */
