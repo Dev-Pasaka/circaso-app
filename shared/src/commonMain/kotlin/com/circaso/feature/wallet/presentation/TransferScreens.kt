@@ -94,6 +94,8 @@ fun TransferContent(state: TransferUiState, onBack: () -> Unit) {
     val shareLinks = com.circaso.feature.share.presentation.LocalShareLinks.current
     CircasoScaffold(
         topBar = { CircasoNavBar(title = "Payment", onBack = onBack, trailing = { if (transfer != null) CircasoIconButton(CircasoIcon.Share, "Share receipt", { shareLinks?.share(receiptTarget(transfer, state.fiat)) }) }) },
+        // The payment's own chain says it: a test payment is marked whatever network is selected now.
+        strip = { TestnetNote(Modifier.padding(vertical = CircasoSpacing.s1), show = transfer != null && com.circaso.feature.wallet.domain.isTestnetChain(transfer.blockchain)) },
         toast = { ToastHost(toast) },
     ) { padding ->
         if (transfer == null) {
@@ -289,6 +291,7 @@ fun ActivityContent(
                 )
             })
         },
+        strip = { TestnetNote(Modifier.padding(vertical = CircasoSpacing.s1)) },
     ) { padding ->
         val bottom = padding.calculateBottomPadding() + CircasoSpacing.s4
         val pull = androidx.compose.material3.pulltorefresh.rememberPullToRefreshState()
@@ -472,7 +475,7 @@ fun NetworksScreen(viewModel: NetworksViewModel, onBack: () -> Unit) {
     val t = CircasoTheme.typography
     val toast = rememberToastState()
     LaunchedEffect(state.notice, state.error) { (state.notice ?: state.error)?.let { toast.show(it, if (state.notice == null) com.circaso.designsystem.chrome.ToastKind.Problem else com.circaso.designsystem.chrome.ToastKind.Info); viewModel.onNoticeShown() } }
-    CircasoScaffold(topBar = { CircasoNavBar(title = "Networks", onBack = onBack) }, toast = { ToastHost(toast) }) { padding ->
+    CircasoScaffold(topBar = { CircasoNavBar(title = "Networks", onBack = onBack) }, strip = { TestnetNote(Modifier.padding(vertical = CircasoSpacing.s1)) }, toast = { ToastHost(toast) }) { padding ->
         val chains = state.chains
         LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = padding.calculateBottomPadding() + CircasoSpacing.s4)) {
             item { BasicText("Your wallet has its own address on each network. USDC sent on a network you're not on can't reach you.", style = t.footnote.copy(color = c.inkSecondary), modifier = Modifier.padding(CircasoSpacing.s4)) }

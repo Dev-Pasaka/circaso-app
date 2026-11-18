@@ -144,6 +144,7 @@ fun WalletTab(
         onMode = viewModel::onMode, onAllGroups = viewModel::onAllGroups, groupMenu = groupMenu,
         onCreate = viewModel::onCreate, onRefresh = { viewModel.refresh(fromPull = true) }, onReceive = viewModel::onReceive, onComing = viewModel::onComing,
         onErrorShown = viewModel::onErrorShown, onAddNetworks = viewModel::onAddMissingNetworks, onToggleHidden = viewModel::onToggleHidden,
+        onNetwork = viewModel::onNetwork, onNetworkNoticeShown = viewModel::onNetworkNoticeShown,
     )
 }
 
@@ -171,7 +172,17 @@ fun WalletTabContent(
     onMode: (WalletMode) -> Unit = {},
     onAllGroups: (Boolean) -> Unit = {},
     groupMenu: GroupMenuActions? = null,
+    onNetwork: (com.circaso.feature.wallet.domain.WalletNetwork) -> Unit = {},
+    onNetworkNoticeShown: () -> Unit = {},
 ) {
+    // The network that was on screen was taken away (an admin, or it was switched off): said once, plainly.
+    val screenToast = com.circaso.designsystem.chrome.LocalScreenToast.current
+    LaunchedEffect(state.networkNotice) {
+        state.networkNotice?.let { n ->
+            screenToast?.show("${n.lost.label} isn’t available on your account any more. Showing your ${n.now.label} wallet.", com.circaso.designsystem.chrome.ToastKind.Info)
+            onNetworkNoticeShown()
+        }
+    }
     // The remembered side (Personal or Groups) and the saved list of group wallets take a few milliseconds to read:
     // the tab waits for both rather than drawing Personal and then sliding across to Groups, or drawing the control
     // a moment after the page.
@@ -180,24 +191,37 @@ fun WalletTabContent(
         // The Personal | Groups row. Already there when the tab opens with the flag known, it doesn't move anything;
         // when it arrives (or goes) after the page is up, it eases open or closed instead of the page jumping by its
         // height (a fade alone with reduced motion is still a resize, so it eases too).
-        val row = remember { androidx.compose.animation.core.MutableTransitionState(state.showSwitcher) }
-        row.targetState = state.showSwitcher
+        // The Mainnet | Testnet switch shares the row (only for someone with both networks): side by side where the
+        // two fit (a wide phone, a tablet's column), the network above the wallet kind where they don't (a narrow
+        // phone, large text). Each control eases in or out on its own, so one arriving never makes the other jump.
+        val showRow = state.showSwitcher || state.showNetworkSwitch
+        val row = remember { androidx.compose.animation.core.MutableTransitionState(showRow) }
+        row.targetState = showRow
         androidx.compose.animation.AnimatedVisibility(
             row,
             enter = androidx.compose.animation.expandVertically(tween(CircasoMotion.BaseMs)) + androidx.compose.animation.fadeIn(tween(CircasoMotion.BaseMs)),
             exit = androidx.compose.animation.shrinkVertically(tween(CircasoMotion.QuickMs)) + androidx.compose.animation.fadeOut(tween(CircasoMotion.QuickMs)),
         ) {
-            Box(Modifier.fillMaxWidth().padding(horizontal = CircasoSpacing.s4), contentAlignment = Alignment.Center) {
-                WalletModeControl(groups = state.showingGroups, onMode = onMode)
+            @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+            androidx.compose.foundation.layout.FlowRow(
+                Modifier.fillMaxWidth().padding(horizontal = CircasoSpacing.s4),
+                horizontalArrangement = Arrangement.spacedBy(CircasoSpacing.s3, Alignment.CenterHorizontally),
+                verticalArrangement = Arrangement.Center,
+            ) {
+                if (state.showNetworkSwitch) WalletNetworkControl(state.network, onNetwork)
+                if (state.showSwitcher) WalletModeControl(groups = state.showingGroups, onMode = onMode)
             }
         }
+        // Testnet without a switch to say so (someone who only has Testnet): the same mark, as a line.
+        TestnetNote(Modifier.padding(horizontal = CircasoSpacing.s4, vertical = CircasoSpacing.s1), show = state.testnet && !state.showNetworkSwitch)
         // A group picked a moment ago may not be read yet: its own skeleton, named, until it is.
         val shown = state.selectedGroupKey?.let { chat ->
             state.copy(group = state.group ?: com.circaso.feature.chama.presentation.GroupWalletUiState(nameHint = state.selected.name, online = state.online)) to chat
         }
         androidx.compose.animation.AnimatedContent(
             targetState = shown?.first ?: state.copy(group = null),
-            contentKey = { it.selectedWalletId ?: "personal" },
+            // The other network's wallet is another wallet: it crossfades in like another group does.
+            contentKey = { (it.selectedWalletId ?: "personal") + "@" + it.network.name },
             transitionSpec = {
                 androidx.compose.animation.fadeIn(tween(CircasoMotion.BaseMs)) togetherWith androidx.compose.animation.fadeOut(tween(CircasoMotion.QuickMs))
             },
@@ -271,6 +295,8 @@ fun BiometricOfferContent(bio: com.circaso.feature.account.presentation.Biometri
 fun androidx.compose.foundation.layout.BoxScope.WalletSheets(state: WalletUiState, actions: WalletActions, onReceive: (Boolean) -> Unit, onComing: (ComingFlow?) -> Unit) {
     val group = state.group
     CircasoSheet(state.receiveSheet, { onReceive(false) }, label = group?.let { "Receive into ${it.name}" } ?: "Receive") {
+        // Receiving test money: said before any address or code is shown, so nobody sends real money to it.
+        TestnetNote(Modifier.padding(bottom = CircasoSpacing.s2), show = state.testnet || LocalTestnet.current)
         if (group != null) GroupReceiveContent(group, onClose = { onReceive(false) })
         else ReceiveSheetContent(state.wallet, state.handle, onClose = { onReceive(false) })
     }
@@ -425,21 +451,27 @@ private fun CreateWallet(state: WalletUiState, bottom: androidx.compose.ui.unit.
     // SETTING_UP means the PIN was never finished: W2 again gives a fresh challenge, so the button stays live.
     val halfway = state.status == WalletStatus.SettingUp
     Column(Modifier.fillMaxSize().padding(horizontal = CircasoSpacing.s6).padding(bottom = bottom), verticalArrangement = Arrangement.spacedBy(CircasoSpacing.s3, Alignment.CenterVertically), horizontalAlignment = Alignment.CenterHorizontally) {
-        AmountDisplay("USDC", "0", sub = "Your money, held by you", size = AmountSize.Medium)
+        // Someone with both networks: this network's wallet is named, and said to be a separate one with its own PIN.
+        val both = state.showNetworkSwitch
+        val named = if (both) "${state.network.label} wallet" else "wallet"
+        val other = state.networks.firstOrNull { it != state.network }?.label
+        AmountDisplay("USDC", "0", sub = if (state.testnet) "Test money, no real value" else "Your money, held by you", size = AmountSize.Medium)
         Spacer(Modifier.height(CircasoSpacing.s2))
-        BasicText(when { state.creating -> "Setting up your wallet"; halfway -> "Finish setting up your wallet"; else -> "Set up your wallet" }, style = t.title2.copy(color = c.ink, textAlign = TextAlign.Center))
+        BasicText(when { state.creating -> "Setting up your $named"; halfway -> "Finish setting up your $named"; else -> "Set up your $named" }, style = t.title2.copy(color = c.ink, textAlign = TextAlign.Center))
         BasicText(
             when {
                 state.creating -> "Choose a 6-digit PIN and your security questions. Only you can move your money; Circaso never can."
-                halfway -> "Your wallet is waiting for its PIN. Pick up where you left off."
-                state.setupRequestedBy != null -> "${state.setupRequestedBy} wants to send you money. Set up your wallet and they can."
+                halfway -> "Your $named is waiting for its PIN. Pick up where you left off."
+                state.setupRequestedBy != null -> "${state.setupRequestedBy} wants to send you money. Set up your $named and they can."
+                both && other != null && state.testnet -> "This is a separate wallet from your $other one, for trying things out with test money that has no real value. It gets its own PIN, and nothing moves between the two."
+                both && other != null -> "This is a separate wallet from your $other one, with its own PIN and its own money. Nothing moves between the two; your $other wallet stays as it is."
                 else -> "Send and receive dollars (USDC) with the people you chat with. You set a PIN that only you know; Circaso never holds your money."
             },
             style = t.body.copy(color = c.inkSecondary, textAlign = TextAlign.Center),
         )
         state.error?.let { BasicText(it, style = t.footnote.copy(color = c.critical, textAlign = TextAlign.Center)) }
         Spacer(Modifier.height(CircasoSpacing.s2))
-        CircasoButton(when { state.creating -> "Setting up…"; halfway -> "Continue Setup"; else -> "Create Wallet" }, onCreate, size = ButtonSize.Large, block = true, enabled = state.online && !state.creating, busy = state.creating)
+        CircasoButton(when { state.creating -> "Setting up…"; halfway -> "Continue Setup"; both -> "Create ${state.network.label} Wallet"; else -> "Create Wallet" }, onCreate, size = ButtonSize.Large, block = true, enabled = state.online && !state.creating, busy = state.creating)
         if (!state.online) BasicText("You need a connection to set up a wallet.", style = t.footnote.copy(color = c.inkSecondary))
     }
 }

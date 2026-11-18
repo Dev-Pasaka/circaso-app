@@ -120,12 +120,35 @@ internal fun shortWalletName(name: String): String {
  */
 @Composable
 fun WalletModeControl(groups: Boolean, onMode: (WalletMode) -> Unit, modifier: Modifier = Modifier) {
+    TwoSegmentControl(
+        first = "Personal", second = "Groups", secondSelected = groups,
+        onSelect = { second -> onMode(if (second) WalletMode.Groups else WalletMode.Personal) },
+        describe = { "Wallet: $it" }, modifier = modifier,
+    )
+}
+
+/**
+ * The two-word segmented pill both of the Wallet tab's switches are (Personal | Groups, Mainnet | Testnet): one
+ * drawing, one motion, one touch target, so the two read as a pair. [secondDot] puts a small dot in [dotColor] before
+ * the second word (Testnet's caution mark); it is drawn, never laid out, so the lift's maths is untouched.
+ */
+@Composable
+internal fun TwoSegmentControl(
+    first: String,
+    second: String,
+    secondSelected: Boolean,
+    onSelect: (second: Boolean) -> Unit,
+    describe: (String) -> String,
+    modifier: Modifier = Modifier,
+    secondDot: Boolean = false,
+    dotColor: androidx.compose.ui.graphics.Color = androidx.compose.ui.graphics.Color.Unspecified,
+) {
     val c = CircasoTheme.colors
     val t = CircasoTheme.typography
     val still = CircasoTheme.reduceMotion
     // Critically damped: it glides to the side and stops, never past it; a second tap mid-slide turns it round.
     val at by animateFloatAsState(
-        if (groups) 1f else 0f,
+        if (secondSelected) 1f else 0f,
         if (still) snap() else spring(dampingRatio = 1f, stiffness = Spring.StiffnessMedium),
         label = "segment",
     )
@@ -146,7 +169,7 @@ fun WalletModeControl(groups: Boolean, onMode: (WalletMode) -> Unit, modifier: M
                 drawRoundRect(track, androidx.compose.ui.geometry.Offset(0f, top), androidx.compose.ui.geometry.Size(size.width, trackH), radius)
                 val inset = TrackInset.toPx()
                 val half = size.width / 2f
-                // Physical x: in RTL Personal (0) is the right half.
+                // Physical x: in RTL the first side (0) is the right half.
                 val x = (if (rtl) 1f - at else at) * half + inset
                 val liftSize = androidx.compose.ui.geometry.Size(half - inset * 2, trackH - inset * 2)
                 val liftRadius = androidx.compose.ui.geometry.CornerRadius(liftSize.height / 2f)
@@ -157,20 +180,30 @@ fun WalletModeControl(groups: Boolean, onMode: (WalletMode) -> Unit, modifier: M
             },
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        listOf(WalletMode.Personal to "Personal", WalletMode.Groups to "Groups").forEach { (mode, label) ->
-            val on = (mode == WalletMode.Groups) == groups
+        listOf(false to first, true to second).forEach { (isSecond, label) ->
+            val on = isSecond == secondSelected
             Box(
                 Modifier.weight(1f).widthIn(min = SegmentMinWidth).heightIn(min = TouchHeight * scale)
                     // The lift sliding across is the feedback: no ripple or press scale over the 44 dp target.
                     .selectable(
                         selected = on, role = Role.Tab, interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() },
-                        indication = null, onClick = { if (!on) onMode(mode) },
+                        indication = null, onClick = { if (!on) onSelect(isSecond) },
                     )
-                    .semantics(mergeDescendants = true) { contentDescription = "Wallet: $label" },
+                    .semantics(mergeDescendants = true) { contentDescription = describe(label) },
                 contentAlignment = Alignment.Center,
             ) {
+                val dotted = isSecond && secondDot
                 BasicText(
-                    label, Modifier.padding(horizontal = SegmentPadding),
+                    label,
+                    Modifier.padding(horizontal = SegmentPadding).then(
+                        if (!dotted) Modifier else Modifier.drawBehind {
+                            // Before the word, in the reading direction, level with its middle.
+                            val r = SegmentDot.toPx() / 2f
+                            val gap = SegmentDotGap.toPx()
+                            val cx = if (rtl) size.width + gap + r else -gap - r
+                            drawCircle(dotColor, r, androidx.compose.ui.geometry.Offset(cx, size.height / 2f), alpha = if (on) 1f else 0.55f)
+                        },
+                    ),
                     style = t.footnote.copy(color = if (on) c.ink else c.inkSecondary, fontWeight = FontWeight.SemiBold, textAlign = TextAlign.Center),
                     maxLines = 1,
                 )
@@ -178,6 +211,10 @@ fun WalletModeControl(groups: Boolean, onMode: (WalletMode) -> Unit, modifier: M
         }
     }
 }
+
+/** Testnet's dot in the network switch: small enough to sit in the segment's own padding. */
+private val SegmentDot = 6.dp
+private val SegmentDotGap = 4.dp
 
 /** What a group wallet lets this person do, in a few words (the menu's and the full list's second line). */
 internal fun walletLine(w: NamedWallet, locked: Boolean): String = when {

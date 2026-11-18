@@ -57,6 +57,7 @@ import com.circaso.feature.wallet.domain.SignSubject
 import com.circaso.feature.wallet.domain.Wallet
 import com.circaso.feature.wallet.presentation.WalletAvatar
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flatMapLatest
@@ -98,6 +99,8 @@ class GroupInfoMoneySource(
     private val enableBiometrics: EnableWalletBiometricsUseCase,
     private val prefs: AppPreferences,
     private val biometricLabel: String?,
+    /** Each wallet network's group wallet has its own biometric setting on this phone. */
+    private val networks: com.circaso.feature.wallet.domain.WalletNetworks = com.circaso.feature.wallet.domain.WalletNetworks.Single,
 ) {
     private val error = MutableStateFlow<Pair<String, String?>?>(null)
 
@@ -106,8 +109,10 @@ class GroupInfoMoneySource(
             val walletId = money?.wallet?.walletId
             if (!on) flowOf(GroupInfoMoney(enabled = false))
             else if (walletId == null) flowOf(GroupInfoMoney(true, money, biometricLabel = biometricLabel, loadError = err?.first?.takeIf { money == null }, loadReference = err?.second))
-            else combine(observeWallet(walletId), prefs.walletBiometrics(walletId), prefs.flag(lostFlag(walletId))) { w, bio, lost ->
-                GroupInfoMoney(true, money, w, bio, lost && !bio, biometricLabel)
+            else networks.selected.flatMapLatest { on ->
+                combine(observeWallet(walletId), prefs.walletBiometrics(walletId, on.wire), prefs.walletBiometricsLost(walletId, on.wire)) { w, bio, lost ->
+                    GroupInfoMoney(true, money, w, bio, lost && !bio, biometricLabel)
+                }
             }
         }
 
@@ -121,19 +126,21 @@ class GroupInfoMoneySource(
 
     /** GW8: turn on fingerprint / Face ID for this wallet only (its own Circle user, its PIN once). */
     suspend fun turnOnBiometrics(walletId: String, name: String): AppResult<Unit> {
-        val r = enableBiometrics(SignSubject.group(walletId, name))
-        if (r is AppResult.Success) { prefs.setWalletBiometrics(walletId, true); prefs.setFlag(lostFlag(walletId), false) }
+        // The network is fixed before Circle's screen opens: the setting saved is for the wallet that was signed for.
+        val on = networks.current()
+        val r = withContext(com.circaso.feature.wallet.domain.PinnedNetwork(on)) { enableBiometrics(SignSubject.group(walletId, name)) }
+        if (r is AppResult.Success) { prefs.setWalletBiometrics(walletId, true, on.wire); prefs.setWalletBiometricsLost(walletId, false, on.wire) }
         return r
     }
 
     suspend fun setApprovalPolicy(chatId: String, policy: ApprovalPolicy, key: String) = setPolicy(chatId, policy, key)
 
     /** Back to the wallet's PIN on this phone (the personal Security switch does the same). */
-    suspend fun turnOffBiometrics(walletId: String) = prefs.setWalletBiometrics(walletId, false)
+    suspend fun turnOffBiometrics(walletId: String) = prefs.setWalletBiometrics(walletId, false, networks.current().wire)
 
     companion object {
         /** Set when Circle reports a wallet's biometrics gone, so its row says why it's off (GW8b). */
-        fun lostFlag(walletId: String?) = "biometric_lost.${walletId ?: "personal"}"
+        fun lostFlag(walletId: String?) = AppPreferences.biometricLostFlag(walletId)
     }
 }
 

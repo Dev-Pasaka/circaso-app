@@ -66,7 +66,7 @@ import kotlinx.coroutines.Dispatchers
         com.circaso.feature.messaging.data.local.MessageReactionEntity::class, com.circaso.feature.messaging.data.local.MessageRetryEntity::class,
         com.circaso.feature.names.data.SavedNameEntity::class,
     ],
-    version = 23,
+    version = 24,
     autoMigrations = [
         AutoMigration(from = 1, to = 2), AutoMigration(from = 2, to = 3),
         AutoMigration(from = 3, to = 4), AutoMigration(from = 4, to = 5),
@@ -88,6 +88,11 @@ import kotlinx.coroutines.Dispatchers
         AutoMigration(from = 21, to = 22),
         // 23: chat.description, the group's description opened from its sealed metadata (group join links, 2026-11-14).
         AutoMigration(from = 22, to = 23),
+        // 24: wallet networks (2026-11-18). Every copy of money is kept per network (`network` = MAINNET or TESTNET):
+        // wallet_snapshot and wallet_list go from one row to one per network, wallet_cache, wallet_activity,
+        // chama_snapshot and group_money add it to their keys, transfer gains the column. Every row from before is
+        // Testnet's (the column's default), so nothing is lost and nothing shows under Mainnet.
+        AutoMigration(from = 23, to = 24, spec = WalletNetworksMigration::class),
     ],
 )
 @ConstructedBy(CircasoDatabaseConstructor::class)
@@ -121,6 +126,11 @@ class DropSpacesTables : AutoMigrationSpec {
         connection.execSQL("DELETE FROM outbox WHERE type IN ('space.post', 'space.reaction')")
     }
 }
+
+/** Version 23 → 24: the single-row tables are keyed by network now, so their fixed `id` column goes. */
+@androidx.room.DeleteColumn(tableName = "wallet_snapshot", columnName = "id")
+@androidx.room.DeleteColumn(tableName = "wallet_list", columnName = "id")
+class WalletNetworksMigration : AutoMigrationSpec
 
 // Room generates the actual for each platform.
 @Suppress("KotlinNoActualForExpect")

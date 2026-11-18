@@ -13,14 +13,19 @@ import org.koin.dsl.module
 /** Where the last vault status is kept (`text.vault.status`), cleared on sign-out with the account's other data. */
 const val VaultStatusText = "vault.status"
 
+private fun vaultStatusText(networks: com.circaso.feature.wallet.domain.WalletNetworks) =
+    if (networks.current() == com.circaso.feature.wallet.domain.WalletNetwork.MAINNET) "$VaultStatusText.mainnet" else VaultStatusText
+
 /** The PIN Vault (2026-11-11): the Circle PIN sealed with a passkey; the platform module provides `PasskeyPrf`. */
 val vaultModule = module {
-    single<VaultRemote> { KtorVaultRemote(get()) }
+    single<VaultRemote> { KtorVaultRemote(get(), get()) }
     single {
         val prefs = get<com.circaso.core.datastore.AppPreferences>()
         VaultRepository(
             get(), get(), get(), userId = { get<AuthManager>().userId }, newIdempotencyKey = ::newIdempotencyKey,
-            readCache = { prefs.text(VaultStatusText).first() }, writeCache = { prefs.setText(VaultStatusText, it) },
+            // One remembered status per wallet network; Testnet keeps the name from before networks.
+            readCache = { prefs.text(vaultStatusText(get())).first() }, writeCache = { prefs.setText(vaultStatusText(get()), it) },
+            network = { get<com.circaso.feature.wallet.domain.WalletNetworks>().current().wire },
             // The group key backup turns on with the vault's passkey answer: no second prompt.
             afterSecret = { id, secret -> get<com.circaso.feature.keybackup.data.KeyBackupRepository>().onPrfSecret(id, secret) },
         )

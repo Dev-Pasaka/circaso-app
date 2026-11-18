@@ -5,6 +5,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.text.BasicText
+import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -238,6 +239,7 @@ fun GroupWalletScreen(viewModel: GroupWalletViewModel, onBack: () -> Unit, actio
     val hooks = GroupWalletHooks(actions, viewModel::onDecide, viewModel::refresh, viewModel::onMessageShown)
     CircasoScaffold(
         topBar = { CircasoNavBar(title = state.name, onBack = onBack) },
+        strip = { com.circaso.feature.wallet.presentation.TestnetNote(androidx.compose.ui.Modifier.padding(vertical = com.circaso.designsystem.theme.CircasoSpacing.s1)) },
         banner = { ConnectionBanner(showing = state.wallet?.let { "Showing the wallet as of " + formatLocalTime(it.fetchedAt, LocalTimeStyle.Clock) } ?: "Showing what is saved on this phone") },
         overlay = { WalletSheets(ui, walletActions, viewModel::onReceive, {}) },
     ) { padding ->

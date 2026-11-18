@@ -8,8 +8,12 @@ data class ApiConfig(
     val userAgent: String? = null,
 ) {
     companion object {
-        /** Dev server. Production (`https://api.circaso.com`) is not live yet. */
-        const val DEV_BASE_URL = "https://sandbox.circaso.com"
+        /**
+         * The API host (since 2026-11-18, with wallet networks: one server talks to Circle Mainnet and Testnet side by
+         * side). `https://sandbox.circaso.com` is the same server under its older name and keeps working, so builds
+         * from before the change carry on; share links stay on their own host (`IncomingLinks`).
+         */
+        const val BASE_URL = "https://api.circaso.com"
     }
 }
 

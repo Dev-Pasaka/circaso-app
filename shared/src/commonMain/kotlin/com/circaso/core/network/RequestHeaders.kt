@@ -46,3 +46,25 @@ internal fun requestHeaders(tokens: AccessTokenProvider) = createClientPlugin("C
         }
     }
 }
+
+/** Which wallet network a call is for (`MAINNET` or `TESTNET`), on every wallet-scoped route (wallet networks, 2026-11-18). */
+const val WalletNetworkHeader = "X-Wallet-Network"
+
+/**
+ * Says which network a wallet-scoped call is for and hears when the server refuses it. The wallet feature provides
+ * the real one; [None] sends nothing (tests, and a build without the feature).
+ */
+interface WalletNetworkGate {
+    /** The header's value for the call about to be made; null sends none (a server without networks, or not asked yet). */
+    suspend fun header(): String?
+
+    /** The server answered `wallet.network_unavailable` to a call that carried [sent]. */
+    suspend fun refused(sent: String?) {}
+
+    companion object {
+        val None: WalletNetworkGate = object : WalletNetworkGate { override suspend fun header(): String? = null }
+    }
+}
+
+/** For calls built by hand (streams, sockets): the header when there is one. */
+fun HttpRequestBuilder.walletNetwork(value: String?) { value?.let { header(WalletNetworkHeader, it) } }

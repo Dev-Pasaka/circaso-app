@@ -912,7 +912,10 @@ private fun PaymentMessage(
                         com.circaso.feature.wallet.presentation.cardNoteTyped(m.note).takeIf { it.isNotBlank() },
                     ).joinToString(" · ")
                 } else if (payout != null) payout.second else m.note,
-                foot = (if (shownFiat != null) "$usdc · " else "") + formatLocalTime(m.orderAt, LocalTimeStyle.Clock) + when { failed -> " · card not sent"; waiting -> " · sending card"; else -> "" },
+                // A card only carries its chain; a test chain is said on the card itself, whatever network is selected now
+                // (a Mainnet chain adds nothing, so someone with only Mainnet never sees the word).
+                foot = (if (com.circaso.feature.wallet.domain.isTestnetChain(m.blockchain)) "Testnet · " else "") +
+                    (if (shownFiat != null) "$usdc · " else "") + formatLocalTime(m.orderAt, LocalTimeStyle.Clock) + when { failed -> " · card not sent"; waiting -> " · sending card"; else -> "" },
                 // Money on chain is never dimmed or greyed because its encrypted card is still going out or didn't
                 // (a card the wallet added on a new phone, then sent): the foot says that; the look follows the money.
                 // Someone else's payout from the group's wallet isn't money this member received: it's drawn as money sent.

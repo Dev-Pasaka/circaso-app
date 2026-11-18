@@ -39,6 +39,8 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonPrimitive
@@ -52,24 +54,33 @@ class ChamaRepositoryImpl(
     private val scope: CoroutineScope,
     /** Group wallets are on (phase 2): frames reload the group's money (CH7) instead of the treasurer-model goal (CH1). */
     private val groupWallets: () -> Boolean = { false },
+    /** A group's money is per wallet network: the copies are keyed on it and follow the selected one. */
+    private val networks: com.circaso.feature.wallet.domain.WalletNetworks = com.circaso.feature.wallet.domain.WalletNetworks.Single,
 ) : ChamaRepository {
     private val linking = Mutex()
 
     /** The copy, with any payment still being linked shown on its request, so nobody is offered to pay it again. */
-    override fun chama(chatId: String): Flow<Chama?> = combine(dao.observe(chatId), links.pendingLinks) { row, pending ->
+    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+    override fun chama(chatId: String): Flow<Chama?> = combine(networks.selected.flatMapLatest { dao.observe(chatId, it.wire) }, links.pendingLinks) { row, pending ->
         row?.let { decode(it) }?.let { c ->
             c.copy(openRequests = c.openRequests.map { r -> if (r.transferId == null) pending[r.requestId]?.let { r.copy(transferId = it.second) } ?: r else r })
         }
     }
 
-    override suspend fun refresh(chatId: String): AppResult<Chama?> = when (val r = remote.chama(chatId)) {
-        is AppResult.Success -> AppResult.Success(save(chatId, r.value))
-        is AppResult.Failure -> if ((r.error as? AppError.Api)?.code == "chama.no_goal") { dao.delete(chatId); AppResult.Success(null) } else r
+    override suspend fun refresh(chatId: String): AppResult<Chama?> {
+        // Asked and saved for one network, whatever is selected by the time the answer lands.
+        val network = networks.effective()
+        return withContext(com.circaso.feature.wallet.domain.PinnedNetwork(network)) {
+            when (val r = remote.chama(chatId)) {
+                is AppResult.Success -> AppResult.Success(save(chatId, r.value, network.wire))
+                is AppResult.Failure -> if ((r.error as? AppError.Api)?.code == "chama.no_goal") { dao.delete(chatId, network.wire); AppResult.Success(null) } else r
+            }
+        }
     }
 
-    private suspend fun save(chatId: String, response: ChamaResponse): Chama {
+    private suspend fun save(chatId: String, response: ChamaResponse, network: String): Chama {
         val at = nowMillis()
-        dao.save(ChamaSnapshotEntity(chatId, json.encodeToString(ChamaResponse.serializer(), response), at))
+        dao.save(ChamaSnapshotEntity(chatId, json.encodeToString(ChamaResponse.serializer(), response), at, network))
         return response.toDomain(at)
     }
 
@@ -114,6 +125,12 @@ class ChamaRepositoryImpl(
 
     override suspend fun onFrame(type: String, data: JsonObject?) {
         val chatId = data?.get("chatId")?.jsonPrimitive?.contentOrNull ?: return
+        // A frame says which network's money moved; without one (an older server) it is the selected network's.
+        val network = com.circaso.feature.wallet.domain.WalletNetwork.of(data["network"]?.jsonPrimitive?.contentOrNull) ?: networks.effective()
+        withContext(com.circaso.feature.wallet.domain.PinnedNetwork(network)) { handleFrame(type, chatId) }
+    }
+
+    private suspend fun handleFrame(type: String, chatId: String) {
         when (type) {
             "goal.updated", "contribution.added", "request.updated" -> {
                 if (groupWallets()) refreshMoney(chatId) else { refresh(chatId); retryPendingLinks() }
@@ -124,14 +141,20 @@ class ChamaRepositoryImpl(
         }
     }
 
-    override fun money(chatId: String): Flow<GroupMoney?> = dao.observeMoney(chatId).map { row ->
+    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+    override fun money(chatId: String): Flow<GroupMoney?> = networks.selected.flatMapLatest { dao.observeMoney(chatId, it.wire) }.map { row ->
         row?.let { runCatching { json.decodeFromString(GroupMoneyResponse.serializer(), it.json).toDomain(it.fetchedAt) }.getOrNull() }
     }
 
-    override suspend fun refreshMoney(chatId: String): AppResult<GroupMoney> = remote.money(chatId).map { r ->
-        val at = nowMillis()
-        dao.saveMoney(GroupMoneyEntity(chatId, json.encodeToString(GroupMoneyResponse.serializer(), r), at))
-        r.toDomain(at)
+    override suspend fun refreshMoney(chatId: String): AppResult<GroupMoney> {
+        val network = networks.effective()
+        return withContext(com.circaso.feature.wallet.domain.PinnedNetwork(network)) {
+            remote.money(chatId).map { r ->
+                val at = nowMillis()
+                dao.saveMoney(GroupMoneyEntity(chatId, json.encodeToString(GroupMoneyResponse.serializer(), r), at, network.wire))
+                r.toDomain(at)
+            }
+        }
     }
 
     override suspend fun setApprovalPolicy(chatId: String, policy: ApprovalPolicy, idempotencyKey: String): AppResult<ApprovalPolicy> =

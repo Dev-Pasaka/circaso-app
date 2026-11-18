@@ -58,6 +58,8 @@ class KtorAshaRemote(
     private val tokens: AccessTokenProvider,
     private val auth: AuthManager,
     private val json: Json,
+    /** Asha's wallet tools run on the server for the network the person has selected: her turn says which. */
+    private val walletNetwork: com.circaso.core.network.WalletNetworkGate = com.circaso.core.network.WalletNetworkGate.None,
 ) : AshaRemote {
     override suspend fun history(cursor: String?, limit: Int) = api.call<ChatResponse> {
         method = HttpMethod.Get
@@ -176,10 +178,12 @@ class KtorAshaRemote(
     override fun stream(request: SendMessageRequest): Flow<AppResult<SseEvent>> = flow {
         val token = tokens.accessToken()
         val agent = auth.agentToken()
+        val network = walletNetwork.header()
         try {
             client.prepareRequest {
                 method = HttpMethod.Post
                 url("/v1/assistant/chat/messages")
+                network?.let { header(com.circaso.core.network.WalletNetworkHeader, it) }
                 token?.let { header(HttpHeaders.Authorization, "Bearer $it") }
                 agent?.let { header("X-Agent-Token", it) }
                 header("Idempotency-Key", newIdempotencyKey())

@@ -78,9 +78,11 @@ data class SendToWalletUiState(
     /** "No fee", "0.25 USDC · network + 1%", "0.50 USDC · minimum": the same one fee as every payment, network cost included. */
     val feeText: String
         get() = when (val f = fee) {
-            is PayFee.Quoted -> if (MinorUnits.isZero(f.amountMinor)) "No fee" else listOfNotNull(MinorUnits.toDisplay(f.amountMinor, 6) + " USDC", feeWhy(f.minimum, f.rateBps)).joinToString(" · ")
-            else -> "No fee"
+            is PayFee.Quoted -> if (MinorUnits.isZero(f.amountMinor)) noFee else listOfNotNull(MinorUnits.toDisplay(f.amountMinor, 6) + " USDC", feeWhy(f.minimum, f.rateBps)).joinToString(" · ")
+            else -> noFee
         }
+    /** On Solana Circaso takes no fee and the network's own is paid in SOL from this wallet: said instead of "No fee". */
+    private val noFee: String get() = if (com.circaso.feature.wallet.domain.isSolanaChain(blockchain)) SolanaFeeLine else "No fee"
     /** What leaves the wallet: the amount plus the fee (the address receives exactly the amount). */
     val totalMinor: String? get() = amountMinor?.let { a -> feeMinor?.let { MinorUnits.add(a, it) } ?: a }
 }
@@ -104,7 +106,10 @@ class SendToWalletViewModel(
     private val quotePayment: QuotePaymentUseCase? = null,
     /** The card into the group's chat after a group wallet's payment. */
     private val sendCard: SendPaymentCardUseCase? = null,
+    /** The wallet network this send is on, fixed for the life of the screen: review, W4 and the PIN are all its. */
+    networks: com.circaso.feature.wallet.domain.WalletNetworks = com.circaso.feature.wallet.domain.WalletNetworks.Single,
 ) : ViewModel() {
+    private val pinned: com.circaso.feature.wallet.domain.WalletNetwork = networks.current()
     private val local = MutableStateFlow(SendToWalletUiState(canScan = scanner.available, group = fromWalletId != null))
     private var idempotencyKey = newIdempotencyKey()
 
@@ -156,7 +161,7 @@ class SendToWalletViewModel(
         note = s.note.trim().takeIf { it.isNotEmpty() }, counterpartName = com.circaso.feature.wallet.domain.shortAddress(to),
                 // Never the personal subject for a group wallet: onConfirm waits until its name has loaded.
         fromWalletId = fromWalletId, subject = if (fromWalletId != null) s.from!!.subject else com.circaso.feature.wallet.domain.SignSubject.Personal,
-        quoteId = quoteId,
+        quoteId = quoteId, network = pinned,
     )
 
     /** W11 first: a wrong address is an answer here, never a failed payment. Then W17's fee for exactly this. */
@@ -198,6 +203,7 @@ class SendToWalletViewModel(
             QuoteProblem.InsufficientFunds -> "$who ${if (s.fromGroup) "doesn’t" else "don’t"} have enough for this and its fee." + (max?.let { " The most that can go is $it." } ?: "")
             QuoteProblem.PerPaymentLimit -> "That’s over the limit for one payment." + (max?.let { " The most is $it." } ?: "")
             QuoteProblem.DailyLimit -> "That’s over today’s limit." + (max?.let { " $it can still go today." } ?: "")
+            QuoteProblem.InsufficientGas -> "$who ${if (s.fromGroup) "needs" else "need"} a little SOL in this wallet to pay Solana’s network fee. Add SOL to its Solana address, then try again."
         }
     }
 
@@ -245,6 +251,9 @@ class SendToWalletViewModel(
 
     private companion object {
         /** W4 refusals that prepared nothing (the same as Pay's): the same key would replay the refusal. */
-        val Refused = setOf("wallet.fee_changed", "wallet.limit_exceeded", "wallet.insufficient_funds")
+        val Refused = setOf(
+            "wallet.fee_changed", "wallet.limit_exceeded", "wallet.insufficient_funds", com.circaso.feature.wallet.domain.NetworkChangedCode,
+            "wallet.insufficient_gas", "wallet.insufficient_native_balance", "wallet.gas_insufficient", "wallet.insufficient_sol",
+        )
     }
 }

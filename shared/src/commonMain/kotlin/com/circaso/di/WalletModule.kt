@@ -35,18 +35,40 @@ import org.koin.dsl.module
 /** The wallet (guide W1–W5, W9–W12): reads from Room, money moves only online and signed in the Circle SDK. */
 val walletModule = module {
     single { get<CircasoDatabase>().walletDao() }
-    single<WalletRemote> { KtorWalletRemote(get(), get()) }
+    // Wallet networks (2026-11-18): one source of truth for the selected network, kept in two small settings that are
+    // wiped at sign-out with the rest of `text.wallet.*`.
+    single<com.circaso.feature.wallet.domain.WalletNetworks> {
+        val prefs = get<com.circaso.core.datastore.AppPreferences>()
+        com.circaso.feature.wallet.data.repository.WalletNetworksStore(
+            load = { get<WalletRemote>().networks() },
+            saved = kotlinx.coroutines.flow.combine(
+                prefs.text(com.circaso.core.datastore.AppPreferences.WalletNetworkText), prefs.text(com.circaso.core.datastore.AppPreferences.WalletNetworksText),
+            ) { selected, list -> com.circaso.feature.wallet.data.repository.SavedNetworks(selected, list) },
+            save = { texts -> prefs.setWalletNetworks(texts.selected, texts.list) },
+            scope = get(),
+        )
+    }
+    // What every wallet-scoped remote (wallet, vault, chama, Asha's turn) asks for `X-Wallet-Network`.
+    single<com.circaso.core.network.WalletNetworkGate> {
+        val networks = get<com.circaso.feature.wallet.domain.WalletNetworks>()
+        object : com.circaso.core.network.WalletNetworkGate {
+            override suspend fun header(): String? = networks.header()
+            override suspend fun refused(sent: String?) = networks.onRefused(sent)
+        }
+    }
+    single<WalletRemote> { KtorWalletRemote(get(), get(), get()) }
     single { WalletRepositoryImpl(get(), get(), signer = { WalletSignerBridge.signer ?: NoWalletSigner }, currency = { get<com.circaso.core.datastore.AppPreferences>().currency.first() ?: localCurrencyCode() }, json = get(),
         scope = get(),
         onMoneyReceived = {
             if (!get<com.circaso.core.datastore.AppPreferences>().flag(com.circaso.core.datastore.AppPreferences.MoneySoundOff).first()) com.circaso.core.platform.playMoneySound()
         },
-        onBiometricsLost = { walletId ->
+        onBiometricsLostOn = { walletId, network ->
             val prefs = get<com.circaso.core.datastore.AppPreferences>()
-            prefs.setWalletBiometrics(walletId, false)
-            // Only that wallet falls back to its PIN; its row says why (GW8b).
-            prefs.setFlag(com.circaso.feature.chama.presentation.GroupInfoMoneySource.lostFlag(walletId), true)
+            prefs.setWalletBiometrics(walletId, false, network.wire)
+            // Only that wallet (on that network) falls back to its PIN; its row says why (GW8b).
+            prefs.setWalletBiometricsLost(walletId, true, network.wire)
         },
+        networks = get(),
         // Money is never hidden by decryption: a confirmed chat payment always has its card in that chat.
         onChatPayment = { seen -> get<com.circaso.feature.messaging.data.repository.ChatPaymentCards>().fromWallet(seen) },
         names = get(),
@@ -78,9 +100,10 @@ val walletModule = module {
     factory { com.circaso.feature.wallet.domain.AwaitGroupWalletUseCase(get()) }
     factory { com.circaso.feature.wallet.domain.EnableWalletBiometricsUseCase(get()) }
     factory { com.circaso.feature.wallet.domain.AddWalletNetworksUseCase(get()) }
-    viewModel { com.circaso.feature.account.presentation.BiometricApprovalViewModel(get(), get(), get(), get()) }
+    viewModel { com.circaso.feature.account.presentation.BiometricApprovalViewModel(get(), get(), get(), get(), networks = get()) }
     viewModel { WalletViewModel(get(), get(), get(), get(), get(), get(), getChains = get(), addMissingChains = get(), groupWallets = get(), sources = get(), groupReader = get(), privacy = get(),
-        choices = get<com.circaso.core.datastore.AppPreferences>().let { p -> com.circaso.feature.wallet.presentation.WalletChoiceStore.of(p::text, p::setText) }) }
+        choices = get<com.circaso.core.datastore.AppPreferences>().let { p -> com.circaso.feature.wallet.presentation.WalletChoiceStore.of(p::text, p::setText) },
+        networks = get()) }
     single { com.circaso.feature.wallet.presentation.BalancePrivacy() }
     viewModel { com.circaso.feature.wallet.presentation.CurrencyViewModel(get(), get()) }
     viewModel { (blockchain: String?, symbol: String?, walletId: String?) -> ActivityViewModel(get(), get(), blockchain, symbol, walletId, get(), get(), get(), loadPage = get(), connection = get()) }
@@ -93,12 +116,13 @@ val walletModule = module {
         val refreshWalletOf = get<com.circaso.feature.wallet.domain.RefreshWalletOfUseCase>()
         PayViewModel(intent, get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), scanner = get(), findHandle = { profiles.findByHandle(it) }, groupWallets = get(), wallets = get(), observeTransfer = get(), quotePayment = get(),
             refreshPrices = { id -> if (id == null) refreshWallet() else refreshWalletOf(id) },
-            observeMe = profiles.profile.map { p -> p?.let { com.circaso.feature.contacts.domain.Person(it.userId, it.displayName, it.handle, it.avatarUrl, it.about) } })
+            observeMe = profiles.profile.map { p -> p?.let { com.circaso.feature.contacts.domain.Person(it.userId, it.displayName, it.handle, it.avatarUrl, it.about) } },
+            networks = get())
     }
     factory {
         com.circaso.feature.wallet.presentation.GroupWalletSources(
             get(), get(), get(), get(), get(), get(), get(), get(), get(),
         )
     }
-    viewModel { (fromWalletId: String?) -> SendToWalletViewModel(get(), get(), get(), get(), scanner = get(), fromWalletId = fromWalletId, wallets = get(), quotePayment = get(), sendCard = get()) }
+    viewModel { (fromWalletId: String?) -> SendToWalletViewModel(get(), get(), get(), get(), scanner = get(), fromWalletId = fromWalletId, wallets = get(), quotePayment = get(), sendCard = get(), networks = get()) }
 }

@@ -93,6 +93,8 @@ class GroupWalletSetupViewModel(
     private val connection: ConnectionState,
     /** "Fingerprint", "Face ID"; null when the phone has none set up. */
     private val biometricLabel: String?,
+    /** The group's wallet is set up on the selected network; its biometric setting is that network's. */
+    private val networks: com.circaso.feature.wallet.domain.WalletNetworks = com.circaso.feature.wallet.domain.WalletNetworks.Single,
 ) : ViewModel() {
     private val _state = MutableStateFlow(GroupWalletSetupState(biometricLabel = biometricLabel))
     val state: StateFlow<GroupWalletSetupState> = _state.asStateFlow()
@@ -176,8 +178,9 @@ class GroupWalletSetupViewModel(
         if (!s.online) { _state.update { it.copy(problem = SetupProblem.Offline) }; return }
         _state.update { it.copy(turningOnBiometrics = true) }
         viewModelScope.launch {
-            val r = enableBiometrics(subject())
-            if (r is AppResult.Success) prefs.setWalletBiometrics(s.walletId, true)
+            val on = networks.current()
+            val r = kotlinx.coroutines.withContext(com.circaso.feature.wallet.domain.PinnedNetwork(on)) { enableBiometrics(subject()) }
+            if (r is AppResult.Success) prefs.setWalletBiometrics(s.walletId, true, on.wire)
             // Not turned on (cancelled, or Circle couldn't): the wallet still works with its PIN; carry on either way.
             _state.update { it.copy(turningOnBiometrics = false, step = SetupStep.Networks) }
             run()

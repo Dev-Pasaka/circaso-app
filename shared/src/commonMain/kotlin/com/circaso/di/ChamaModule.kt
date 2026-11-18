@@ -20,13 +20,13 @@ import org.koin.dsl.module
 /** Chamas (guide CH1–CH6, designs D2–D6): the last server view per group is kept in Room; every write is online-only. */
 val chamaModule = module {
     single { get<CircasoDatabase>().chamaDao() }
-    single<ChamaRemote> { KtorChamaRemote(get()) }
+    single<ChamaRemote> { KtorChamaRemote(get(), get()) }
     single {
         com.circaso.feature.chama.data.repository.GroupMoneyLive(
             get(), get(), scope = get(), groupWallets = { get<com.circaso.core.flags.GroupWalletsFlag>().isOn },
         )
     }
-    single { ChamaRepositoryImpl(get(), get(), get(), links = get<com.circaso.core.datastore.AppPreferences>(), scope = get(), groupWallets = { get<com.circaso.core.flags.GroupWalletsFlag>().isOn }) }
+    single { ChamaRepositoryImpl(get(), get(), get(), links = get<com.circaso.core.datastore.AppPreferences>(), scope = get(), groupWallets = { get<com.circaso.core.flags.GroupWalletsFlag>().isOn }, networks = get()) }
     single<ChamaRepository> { get<ChamaRepositoryImpl>() }
     single { com.circaso.feature.chama.data.repository.ContributionFeed() } // contributions landing live (a group call)
     factory { ObserveChamaUseCase(get()) }
@@ -44,12 +44,12 @@ val chamaModule = module {
     // Group wallets (phase 2): group info's money rows, the wallet set-up (GW2–GW5) and the target form (GW7b).
     factory {
         val bio = get<com.circaso.core.platform.Biometrics>()
-        com.circaso.feature.chama.presentation.GroupInfoMoneySource(get(), get(), get(), get(), get(), get(), get(), get(), biometricLabel = bio.name.takeIf { bio.available() })
+        com.circaso.feature.chama.presentation.GroupInfoMoneySource(get(), get(), get(), get(), get(), get(), get(), get(), biometricLabel = bio.name.takeIf { bio.available() }, networks = get())
     }
     viewModel { (chatId: String, plan: com.circaso.feature.chama.presentation.GroupWalletPlan) ->
         val bio = get<com.circaso.core.platform.Biometrics>()
         com.circaso.feature.chama.presentation.GroupWalletSetupViewModel(
-            chatId, plan, get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), biometricLabel = bio.name.takeIf { bio.available() },
+            chatId, plan, get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), biometricLabel = bio.name.takeIf { bio.available() }, networks = get(),
         )
     }
     factory { com.circaso.feature.chama.presentation.GroupWalletReader(get(), get(), get(), get(), get(), get(), get(), get(), get()) }

@@ -124,6 +124,11 @@ sealed interface PayBlock {
     data class PerPayment(val maxAmountMinor: String?) : PayBlock
     /** GW14/GW14b: the rolling 24-hour cap, fees included. */
     data class Daily(val leftMinor: String?, val dailyMaxMinor: String?, val fitsAt: String?, val moreAt: String?, val maxAmountMinor: String?) : PayBlock
+    /**
+     * Solana: the wallet has too little SOL for the network's own fee, which the person pays themselves there (no
+     * Circaso fee, no sponsored gas). Nothing to offer but to add SOL; the amount isn't the problem.
+     */
+    data object Gas : PayBlock
 }
 
 /** Why the chosen person can't be paid right now, and what the screen offers. */
@@ -310,13 +315,19 @@ data class PayUiState(
     val feeShort: String
         get() = (fee as? PayFee.Quoted)?.takeIf { !MinorUnits.isZero(it.amountMinor) }?.let { moneyText(it.amountMinor) } ?: feeText
 
+    /** The payment leaves on Solana: no Circaso fee, and the network's own fee is paid in SOL from this wallet. */
+    val onSolana: Boolean get() = com.circaso.feature.wallet.domain.isSolanaChain(payChain)
+
+    /** "No fee", or on Solana what is true there: Circaso takes nothing, the network takes a little SOL. */
+    private val noFee: String get() = if (onSolana) SolanaFeeLine else "No fee"
+
     val feeText: String
         get() = when (val f = fee) {
-            PayFee.None -> "No fee"
+            PayFee.None -> noFee
             PayFee.Quoting -> "Working it out"
             PayFee.Offline -> "Needs a connection"
             is PayFee.Failed -> "Couldn’t work it out"
-            is PayFee.Quoted -> if (MinorUnits.isZero(f.amountMinor)) "No fee" else {
+            is PayFee.Quoted -> if (MinorUnits.isZero(f.amountMinor)) noFee else {
                 val money = moneyText(f.amountMinor)
                 val why = feeWhy(f.minimum, f.rateBps)
                 val line = listOfNotNull(money, why).joinToString(" · ")
@@ -430,7 +441,16 @@ class PayViewModel(
      * wallet), when a coin other than a dollar coin is tagged or its price grows old; absent in older tests and previews.
      */
     private val refreshPrices: (suspend (walletId: String?) -> AppResult<*>)? = null,
+    /** The wallet network this payment is on, fixed while it is being prepared and signed. */
+    private val networks: com.circaso.feature.wallet.domain.WalletNetworks = com.circaso.feature.wallet.domain.WalletNetworks.Single,
 ) : ViewModel() {
+    /**
+     * The network the card on screen was built for: every quote and W4 carries it, and the wallet refuses to send or
+     * sign if the selection has moved on since. It follows the selection only between payments (never while signing),
+     * so a payment is never prepared on one network and signed on another.
+     */
+    private var pinned: com.circaso.feature.wallet.domain.WalletNetwork = networks.current()
+
     private val userId = intent.userId
     private val chatId = intent.chatId
     /** The moment of a Not sent card being paid again ([onRetryExact]); gone with the next reset. */
@@ -544,6 +564,18 @@ class PayViewModel(
         // An address can't be checked (W9 is for people); the chain validates it when the payment goes. A group's
         // wallet is checked by W4 itself (members only).
         if (userId != null) check(userId, null)
+        // Another network picked while this card is idle (a chat left open beside the Wallet tab): the card starts
+        // again on it, with a fresh key and no chain or fee carried over. While signing, the pin stays.
+        viewModelScope.launch {
+            networks.selected.collect { on ->
+                if (on == pinned || local.value.step == PayStep.Signing) return@collect
+                pinned = on
+                idempotencyKey = newIdempotencyKey()
+                staleFee()
+                local.update { it.copy(blockchain = null, failure = null, block = null, feeChange = null, problem = null) }
+                userId?.let { check(it, null) }
+            }
+        }
         wallets?.let { w -> viewModelScope.launch { if (groupWallets.isOn) w.refresh(intent.fromWalletId, intent.groupId ?: intent.chatId) } }
         viewModelScope.launch { keepPricesFresh() }
         quotePayment?.let { quote ->
@@ -649,7 +681,9 @@ class PayViewModel(
                         val api = r.error as? AppError.Api
                         // GW13d only for what Try Again can fix (Circle or the network); a refusal says why, as W4 would.
                         val retryable = api == null || api.code == "wallet.custody_unavailable" || api.httpStatus >= 500
-                        it.copy(fee = PayFee.Failed(ErrorMessages.reference(r.error), ErrorMessages.forError(r.error), retryable), feeStale = false, block = null)
+                        // Solana with no SOL for its fee: a state of its own, not "couldn't work out the fee".
+                        if (com.circaso.feature.wallet.domain.isGasProblem(api?.code)) it.copy(fee = PayFee.None, feeStale = false, block = PayBlock.Gas)
+                        else it.copy(fee = PayFee.Failed(ErrorMessages.reference(r.error), ErrorMessages.forError(r.error), retryable), feeStale = false, block = null)
                     }
                 }
             }
@@ -678,7 +712,7 @@ class PayViewModel(
         return QuoteKey(
             PaymentRequest(
                 blockchain = chain, toUserId = toUser, toAddress = toAddress, amountMinor = minor, asset = s.asset, chatId = chatId,
-                toGroupId = s.groupId, fromWalletId = s.payingFrom.walletId,
+                toGroupId = s.groupId, fromWalletId = s.payingFrom.walletId, network = pinned,
             ),
         )
     }
@@ -693,7 +727,7 @@ class PayViewModel(
             is PayBlock.Funds -> b.maxAmountMinor
             is PayBlock.PerPayment -> b.maxAmountMinor
             is PayBlock.Daily -> b.maxAmountMinor
-            null -> null
+            PayBlock.Gas, null -> null
         } ?: return
         if (MinorUnits.isZero(max)) return
         // The same amount the offer names (FeeParts.fittedAmount): never a cent over what fits.
@@ -861,7 +895,7 @@ class PayViewModel(
                 // A direct payout belongs to the group's chat, wherever it was started (W4 reads reach and membership there).
                 asset = s.asset, chatId = if (s.directPayout) s.payingFrom.chatId ?: chatId else chatId, note = note, counterpartName = payee.displayName ?: group,
                 toGroupId = s.groupId, fromWalletId = s.payingFrom.walletId, payoutRequestId = s.requestId.takeIf { s.groupPayout }, subject = subject,
-                quoteId = (s.fee as? PayFee.Quoted)?.quoteId,
+                quoteId = (s.fee as? PayFee.Quoted)?.quoteId, network = pinned,
             )
             when (val r = pay(request, idempotencyKey)) {
                 is AppResult.Success -> {
@@ -981,6 +1015,8 @@ class PayViewModel(
      * cleared), it starts again empty, with a fresh idempotency key, and the payee check kept.
      */
     fun onQuickReset() {
+        // The next payment is for the network selected now.
+        pinned = networks.current()
         idempotencyKey = newIdempotencyKey()
         retryMoment = null
         // Personal again (GW9b's default) unless the chat fixes the wallet (a payout from the group's).
@@ -1063,7 +1099,8 @@ class PayViewModel(
                 val max = f["maxAmountMinor"] ?: return false
                 local.update { it.copy(step = PayStep.Amount, failure = null, block = PayBlock.Funds(max)) }
             }
-            else -> return false
+            // Solana, and the wallet has no SOL for the network's fee: said as its own state, with what to do.
+            else -> if (com.circaso.feature.wallet.domain.isGasProblem(error.code)) local.update { it.copy(step = PayStep.Amount, failure = null, block = PayBlock.Gas) } else return false
         }
         return true
     }
@@ -1073,9 +1110,15 @@ class PayViewModel(
         const val AttachBackoffMillis = 1_000L
 
         /** W4 refusals that prepared nothing: the same key would be answered from the replay cache, so the next try is new. */
-        val Refusals = setOf("wallet.fee_changed", "wallet.limit_exceeded", "wallet.insufficient_funds")
+        val Refusals = setOf(
+            "wallet.fee_changed", "wallet.limit_exceeded", "wallet.insufficient_funds", com.circaso.feature.wallet.domain.NetworkChangedCode,
+            "wallet.insufficient_gas", "wallet.insufficient_native_balance", "wallet.gas_insufficient", "wallet.insufficient_sol",
+        )
     }
 }
+
+/** The fee row on Solana: Circaso takes nothing there, and the network's own fee comes out of the wallet's SOL. */
+const val SolanaFeeLine = "No Circaso fee · network fee paid in SOL"
 
 /** GW13: the pause after the last keystroke before the fee is asked for. */
 const val QuoteDelayMillis = 400L
@@ -1121,6 +1164,7 @@ internal fun com.circaso.feature.wallet.domain.PaymentQuote.blockOf(): PayBlock?
     com.circaso.feature.wallet.domain.QuoteProblem.InsufficientFunds -> PayBlock.Funds(maxAmountMinor)
     com.circaso.feature.wallet.domain.QuoteProblem.PerPaymentLimit -> PayBlock.PerPayment(maxAmountMinor)
     com.circaso.feature.wallet.domain.QuoteProblem.DailyLimit -> PayBlock.Daily(leftMinor, dailyMaxMinor, fitsAt, moreAt, maxAmountMinor)
+    com.circaso.feature.wallet.domain.QuoteProblem.InsufficientGas -> PayBlock.Gas
     null -> null
 }
 

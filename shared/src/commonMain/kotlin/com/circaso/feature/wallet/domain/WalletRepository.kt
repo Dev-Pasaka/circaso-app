@@ -133,10 +133,19 @@ data class PaymentRequest(
     val toSpaceId: String? = null,
     /** SP13's membership quote: personal wallet only, exactly its amount (SM1). */
     val spacePaymentId: String? = null,
+    /**
+     * The wallet network this payment was reviewed on, fixed when the pay or send flow started: W4 and its PIN run
+     * for it alone, and if the selection has moved since, nothing is sent or signed. Null: the selected network.
+     */
+    val network: WalletNetwork? = null,
 )
 
 /** What stops a quoted payment as it is (W17 reports it; W4 would refuse it). */
-enum class QuoteProblem { InsufficientFunds, PerPaymentLimit, DailyLimit }
+enum class QuoteProblem {
+    InsufficientFunds, PerPaymentLimit, DailyLimit,
+    /** The wallet can't pay the chain's own network fee (Solana: paid in SOL by the person, never sponsored). */
+    InsufficientGas,
+}
 
 /**
  * W17's answer (phase 2F, spaces-plan §7b): the one Circaso fee for exactly this payment, in the payment's coin

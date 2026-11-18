@@ -56,6 +56,12 @@ import com.circaso.feature.wallet.domain.GroupWallet
 import com.circaso.feature.wallet.domain.SignPurpose
 import com.circaso.feature.wallet.domain.SignSubject
 import com.circaso.feature.wallet.domain.WalletListing
+import com.circaso.feature.wallet.domain.WalletNetwork
+import com.circaso.feature.wallet.domain.WalletNetworks
+import com.circaso.feature.wallet.domain.PinnedNetwork
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.withContext
 import com.circaso.feature.wallet.domain.WalletOwner
 import com.circaso.feature.wallet.domain.WalletOwnerType
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -91,7 +97,26 @@ class WalletRepositoryImpl(
     private val onChatPayment: suspend (com.circaso.feature.wallet.domain.ChatPaymentSeen) -> Unit = {},
     /** Names I saved for people: a payment row shows them in place of the server's name. */
     private val names: com.circaso.feature.names.domain.PeopleNames = com.circaso.feature.names.domain.PeopleNames.None,
+    /**
+     * Which wallet network is selected (wallet networks, 2026-11-18). Every copy on the phone is keyed on it, every
+     * list follows it, and a call is made and saved for one network whatever is selected by the time it answers.
+     */
+    private val networks: WalletNetworks = WalletNetworks.Single,
+    /** Circle said a wallet's biometrics are gone, with the network that wallet is on (each network has its own flags). */
+    onBiometricsLostOn: (suspend (walletId: String?, network: WalletNetwork) -> Unit)? = null,
 ) : WalletRepository {
+    /** The network of the challenge on Circle's screen right now: what a "biometrics lost" report belongs to. */
+    private var signingOn: WalletNetwork? = null
+
+    /** Runs [block] for one network: the remote sends it and every copy made inside is saved under it. */
+    private suspend fun <T> on(network: WalletNetwork, block: suspend () -> T): T = withContext(PinnedNetwork(network)) { block() }
+
+    /** The network this call is for: pinned on the coroutine, else the selected one. */
+    private suspend fun net(): WalletNetwork = networks.effective()
+
+    /** Where a server answer is kept: the network it names, else the one that was asked for. */
+    private fun keyOf(answered: String?, asked: WalletNetwork): String = (WalletNetwork.of(answered) ?: asked).wire
+
     private fun Transfer.named(saved: Map<String, String>): Transfer =
         counterpartUserId?.let { saved[it] }?.takeIf { it != counterpartName }?.let { copy(counterpartName = it, counterpartOwnName = counterpartName) } ?: this
 
@@ -102,7 +127,14 @@ class WalletRepositoryImpl(
     /** Money-in frames already heard (the coins sound plays once per payment). */
     private val heardMoney = mutableSetOf<String>()
 
-    init { scope?.launch { com.circaso.feature.wallet.domain.WalletSignerBridge.biometricsLost.collect { onBiometricsLost(it.walletId) } } }
+    init {
+        scope?.launch {
+            com.circaso.feature.wallet.domain.WalletSignerBridge.biometricsLost.collect {
+                val on = signingOn ?: networks.current()
+                if (onBiometricsLostOn != null) onBiometricsLostOn(it.walletId, on) else onBiometricsLost(it.walletId)
+            }
+        }
+    }
 
     /**
      * One challenge at a time: the SDK is one instance for every wallet (Circle user) on the phone, so a group wallet's
@@ -110,17 +142,27 @@ class WalletRepositoryImpl(
      */
     private val signing = Mutex()
 
-    private suspend fun sign(session: SdkSession, challengeId: String): SignOutcome = signing.withLock { signer().execute(session, challengeId) }
+    private suspend fun sign(session: SdkSession, challengeId: String): SignOutcome {
+        val on = net()
+        return signing.withLock {
+            signingOn = on
+            signer().execute(session, challengeId)
+        }
+    }
 
-    override val wallet: Flow<Wallet?> = dao.observeSnapshot().map { row -> row?.let { decode(it) } }
-    override val transfers: Flow<List<Transfer>> = combine(dao.observeTransfers(), names.saved) { rows, saved -> rows.map { it.toDomain().named(saved) } }
+    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+    override val wallet: Flow<Wallet?> = networks.selected.flatMapLatest { dao.observeSnapshot(it.wire) }.map { row -> row?.let { decode(it) } }
+    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+    override val transfers: Flow<List<Transfer>> =
+        combine(networks.selected.flatMapLatest { dao.observeTransfers(it.wire) }, names.saved) { rows, saved -> rows.map { it.toDomain().named(saved) } }
     override fun transfer(transferId: String): Flow<Transfer?> = combine(dao.observeTransfer(transferId), names.saved) { row, saved -> row?.toDomain()?.named(saved) }
 
     /** Who asked this person to set up a wallet (`setup.requested`), for the tab's nudge; cleared once a wallet exists. */
-    private val _setupRequestedBy = MutableStateFlow<String?>(null)
+    private val _setupRequestedBy = MutableStateFlow<Map<WalletNetwork, String>>(emptyMap())
     private val _walletNamesHeard = MutableStateFlow<Map<String, String>>(emptyMap())
     override val walletNamesHeard: kotlinx.coroutines.flow.Flow<Map<String, String>> = _walletNamesHeard
-    val setupRequestedBy: StateFlow<String?> = _setupRequestedBy.asStateFlow()
+    /** For the selected network only: someone waiting on a Testnet wallet says nothing on the Mainnet page. */
+    val setupRequestedBy: Flow<String?> = combine(_setupRequestedBy, networks.selected) { asked, on -> asked[on] }
 
     /** Flipped by `wallet.ready`, so a create or add-chain stops polling at once. */
     private val ready = MutableStateFlow(0)
@@ -128,7 +170,10 @@ class WalletRepositoryImpl(
     private var createKey: String? = null
     private val addChainKeys = mutableMapOf<String, String>()
 
-    override suspend fun refresh(): AppResult<Wallet> = remote.wallet(currency()).map { save(it) }.also { if (it is AppResult.Success) syncHistory() }
+    override suspend fun refresh(): AppResult<Wallet> {
+        val network = net()
+        return on(network) { remote.wallet(currency()).map { save(it, network) }.also { if (it is AppResult.Success) syncHistory() } }
+    }
 
     /**
      * W6: the latest page of money in and out, so a new phone (or a fresh install) has its Recent list and a payment
@@ -158,26 +203,40 @@ class WalletRepositoryImpl(
         val key = row.transferId ?: row.id
         // Money in that a Circaso payment brought now names its transfer (2026-11-05): one row, not two.
         if (row.direction == "IN" && row.transferId != null) dao.deleteIncoming(row.id)
-        val entity = row.toEntity(key, dao.transfer(key))
+        val entity = row.toEntity(key, dao.transfer(key), net())
         dao.upsert(entity)
         return entity
     }
 
-    override suspend fun loadActivityPage(walletId: String?, cursor: String?): AppResult<String?> =
-        remote.transactions(cursor = cursor, limit = HistoryPage, walletId = walletId).map { page ->
-            if (walletId != null) dao.saveActivity(page.transactions.map { it.toActivity(walletId) })
-            else page.transactions.forEach { saveHistoryRow(it) }
-            page.nextCursor
+    override suspend fun loadActivityPage(walletId: String?, cursor: String?): AppResult<String?> {
+        val network = net()
+        return on(network) {
+            remote.transactions(cursor = cursor, limit = HistoryPage, walletId = walletId).map { page ->
+                if (walletId != null) dao.saveActivity(page.transactions.map { it.toActivity(walletId, network) })
+                else page.transactions.forEach { saveHistoryRow(it) }
+                page.nextCursor
+            }
         }
+    }
 
-    private suspend fun save(response: WalletResponse): Wallet {
+    private suspend fun save(response: WalletResponse, asked: WalletNetwork): Wallet {
         val fetchedAt = nowMillis()
-        dao.saveSnapshot(WalletSnapshotEntity(1, json.encodeToString(WalletResponse.serializer(), response), fetchedAt))
-        if (response.status == "ACTIVE") _setupRequestedBy.value = null
+        val key = keyOf(response.network, asked)
+        dao.saveSnapshot(WalletSnapshotEntity(key, json.encodeToString(WalletResponse.serializer(), response), fetchedAt))
+        if (response.status == "ACTIVE") WalletNetwork.of(key)?.let { on -> _setupRequestedBy.update { it - on } }
         return response.toDomain(fetchedAt)
     }
 
+    /** The create key belongs to one network's wallet: Mainnet's W2 must never replay Testnet's. */
+    private var createKeyOn: WalletNetwork? = null
+
     override suspend fun create(): AppResult<WalletStatus> {
+        val network = net()
+        return on(network) { createOn(network) }
+    }
+
+    private suspend fun createOn(network: WalletNetwork): AppResult<WalletStatus> {
+        if (createKeyOn != network) { createKey = null; createKeyOn = network }
         val key = createKey ?: newIdempotencyKey().also { createKey = it }
         val created = when (val r = remote.create(key)) {
             is AppResult.Failure -> { Diagnostics.note("wallet: create failed (${(r.error as? AppError.Api)?.code ?: r.error::class.simpleName})"); return r }
@@ -218,6 +277,12 @@ class WalletRepositoryImpl(
     override suspend fun enableBiometricApproval(): AppResult<Unit> = enableBiometricApproval(SignSubject.Personal)
 
     override suspend fun enableBiometricApproval(subject: SignSubject): AppResult<Unit> {
+        val network = net()
+        return on(network) { enableBiometricsOn(subject) }
+    }
+
+    private suspend fun enableBiometricsOn(subject: SignSubject): AppResult<Unit> {
+        signingOn = net()
         val sdk = when (val r = remote.session(subject.walletId)) { is AppResult.Failure -> return r; is AppResult.Success -> r.value }
         val session = sdk.toDomain(subject.copy(purpose = SignPurpose.EnableBiometrics))
         return when (val outcome = signing.withLock { signer().enableBiometrics(session) }) {
@@ -231,6 +296,11 @@ class WalletRepositoryImpl(
     override suspend fun addMissingChains(): AppResult<Unit> = addMissingChains(SignSubject.Personal)
 
     override suspend fun addMissingChains(subject: SignSubject): AppResult<Unit> {
+        val network = net()
+        return on(network) { addMissingOn(subject) }
+    }
+
+    private suspend fun addMissingOn(subject: SignSubject): AppResult<Unit> {
         val walletId = subject.walletId
         val subjectForPin = subject.copy(purpose = SignPurpose.AddNetworks)
         val key = addMissingKeys.getOrPut(walletId) { newIdempotencyKey() }
@@ -249,6 +319,20 @@ class WalletRepositoryImpl(
     }
 
     override suspend fun addChain(blockchain: String): AppResult<ChainStatus> {
+        // A chain belongs to one network, so the chain says which wallet it joins.
+        val network = pinnedOr(WalletNetwork.ofChain(blockchain))
+        return on(network) { addChainOn(blockchain) }
+    }
+
+    /** The pinned network when there is one; else [fallback], when the person may use it; else the selected one. */
+    private suspend fun pinnedOr(fallback: WalletNetwork?): WalletNetwork {
+        com.circaso.feature.wallet.domain.pinnedNetwork()?.let { return it }
+        val selected = net()
+        val s = networks.state.value
+        return fallback?.takeIf { f -> f == selected || (s.known && !s.legacy && s.options.any { it.network == f }) } ?: selected
+    }
+
+    private suspend fun addChainOn(blockchain: String): AppResult<ChainStatus> {
         val key = addChainKeys.getOrPut(blockchain) { newIdempotencyKey() }
         val added = when (val r = remote.addChain(blockchain, key)) { is AppResult.Failure -> return r; is AppResult.Success -> r.value }
         if (added.status == "ENABLED") { addChainKeys.remove(blockchain); refresh(); return AppResult.Success(ChainStatus.Enabled) }
@@ -274,7 +358,22 @@ class WalletRepositoryImpl(
     override suspend fun validateAddress(blockchain: String, address: String): AppResult<String?> =
         remote.validateAddress(ValidateAddressRequest(blockchain, address.trim())).map { if (it.valid) it.address else null }
 
+    /**
+     * A payment is prepared and signed for one network: the one its review was shown for ([PaymentRequest.network]).
+     * If the selection has moved since, nothing is sent; if it moves between W4 and the PIN, nothing is signed.
+     */
     override suspend fun pay(request: PaymentRequest, idempotencyKey: String): AppResult<Transfer> {
+        val network = request.network ?: net()
+        if (moved(network)) return AppResult.Failure(networkChanged())
+        return on(network) { payOn(request, idempotencyKey, network) }
+    }
+
+    /** The person has moved to another network than the payment's (only once the saved choice is read). */
+    private fun moved(network: WalletNetwork): Boolean = networks.state.value.let { it.loaded && it.selected != network }
+
+    private fun networkChanged() = AppError.Api(com.circaso.feature.wallet.domain.NetworkChangedCode, 409, null, null, emptyMap())
+
+    private suspend fun payOn(request: PaymentRequest, idempotencyKey: String, network: WalletNetwork): AppResult<Transfer> {
         val body = PrepareTransferRequest(
             blockchain = request.blockchain,
             to = PayeeRequest(userId = request.toUserId, address = request.toAddress, groupId = request.toGroupId, spaceId = request.toSpaceId),
@@ -297,11 +396,17 @@ class WalletRepositoryImpl(
             walletId = request.fromWalletId, toGroupId = request.toGroupId, payoutRequestId = request.payoutRequestId,
             counterpartUserId = request.toUserId,
             fromGroupId = request.fromWalletId?.let { request.chatId },
+            network = keyOf(prepared.network, network),
         )
         dao.upsert(row)
         val challenge = prepared.challengeId
         val sdk = prepared.sdk
         if (challenge != null && sdk != null) {
+            // The person moved to the other network while W4 was answering: its PIN screen never opens for this one.
+            if (moved(network)) {
+                dao.upsert(row.copy(state = "EXPIRED", failureReason = "network_changed", updatedAt = nowMillis()))
+                return AppResult.Failure(networkChanged())
+            }
             when (val outcome = sign(sdk.toDomain(request.subject.copy(purpose = SignPurpose.Approve)), challenge)) {
                 SignOutcome.Done -> dao.upsert(row.copy(state = "SUBMITTED", updatedAt = nowMillis()))
                 SignOutcome.Cancelled -> { dao.upsert(row.copy(state = "EXPIRED", failureReason = "cancelled", updatedAt = nowMillis())); return AppResult.Failure(outcome.toError()) }
@@ -314,6 +419,11 @@ class WalletRepositoryImpl(
     }
 
     override suspend fun quote(request: PaymentRequest): AppResult<PaymentQuote?> {
+        val network = request.network ?: net()
+        return on(network) { quoteOn(request) }
+    }
+
+    private suspend fun quoteOn(request: PaymentRequest): AppResult<PaymentQuote?> {
         val body = PrepareTransferRequest(
             blockchain = request.blockchain,
             to = PayeeRequest(userId = request.toUserId, address = request.toAddress, groupId = request.toGroupId, spaceId = request.toSpaceId),
@@ -328,48 +438,70 @@ class WalletRepositoryImpl(
 
     // ---- Group wallets (phase 2)
 
-    override val wallets: Flow<List<WalletListing>> = dao.observeList().map { row ->
+    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+    override val wallets: Flow<List<WalletListing>> = networks.selected.flatMapLatest { dao.observeList(it.wire) }.map { row ->
         row?.let { runCatching { json.decodeFromString(WalletsResponse.serializer(), it.json) }.getOrNull() }?.wallets.orEmpty().map { it.toDomain() }
     }
 
-    override suspend fun refreshWallets(): AppResult<List<WalletListing>> = remote.wallets().map { r ->
-        dao.saveList(WalletListEntity(1, json.encodeToString(WalletsResponse.serializer(), r), nowMillis()))
-        r.wallets.map { it.toDomain() }
-    }
-
-    override fun walletOf(walletId: String?): Flow<Wallet?> =
-        if (walletId == null) wallet else dao.observeCached(walletId).map { row -> row?.let { decodeCached(it) } }
-
-    override suspend fun refreshWallet(walletId: String?): AppResult<Wallet> {
-        if (walletId == null) return refresh()
-        return remote.wallet(currency(), walletId).map { response ->
-            val at = nowMillis()
-            dao.saveCached(WalletCacheEntity(walletId, json.encodeToString(WalletResponse.serializer(), response), at))
-            response.toDomain(at)
+    override suspend fun refreshWallets(): AppResult<List<WalletListing>> {
+        val network = net()
+        return on(network) {
+            remote.wallets().map { r ->
+                dao.saveList(WalletListEntity(network.wire, json.encodeToString(WalletsResponse.serializer(), r), nowMillis()))
+                r.wallets.map { it.toDomain() }
+            }
         }
     }
 
-    override fun activity(walletId: String): Flow<List<Transfer>> =
-        combine(dao.observeActivity(walletId), dao.observeTransfersOf(walletId), names.saved) { history, signedHere, saved ->
+    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+    override fun walletOf(walletId: String?): Flow<Wallet?> =
+        if (walletId == null) wallet else networks.selected.flatMapLatest { dao.observeCached(walletId, it.wire) }.map { row -> row?.let { decodeCached(it) } }
+
+    override suspend fun refreshWallet(walletId: String?): AppResult<Wallet> {
+        if (walletId == null) return refresh()
+        val network = net()
+        return on(network) {
+            remote.wallet(currency(), walletId).map { response ->
+                val at = nowMillis()
+                dao.saveCached(WalletCacheEntity(walletId, json.encodeToString(WalletResponse.serializer(), response), at, keyOf(response.network, network)))
+                response.toDomain(at)
+            }
+        }
+    }
+
+    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+    override fun activity(walletId: String): Flow<List<Transfer>> = networks.selected.flatMapLatest { on ->
+        combine(dao.observeActivity(walletId, on.wire), dao.observeTransfersOf(walletId, on.wire), names.saved) { history, signedHere, saved ->
             val known = history.mapNotNull { it.transferId }.toSet()
             (history.map { it.toDomain() } + signedHere.filter { it.transferId !in known }.map { it.toDomain() }).sortedByDescending { it.createdAt }
                 .map { it.named(saved) }
         }
+    }
 
-    override suspend fun refreshActivity(walletId: String): AppResult<Unit> =
-        remote.transactions(limit = HistoryPage, walletId = walletId).map { page -> dao.saveActivity(page.transactions.map { it.toActivity(walletId) }) }
+    override suspend fun refreshActivity(walletId: String): AppResult<Unit> {
+        val network = net()
+        return on(network) {
+            remote.transactions(limit = HistoryPage, walletId = walletId).map { page -> dao.saveActivity(page.transactions.map { it.toActivity(walletId, network) }) }
+        }
+    }
 
     override suspend fun groupWallet(chatId: String): AppResult<GroupWallet> = remote.groupWallet(chatId).map { it.toDomain() }
 
     private val setupKeys = mutableMapOf<String, String>()
 
     override suspend fun startGroupWallet(chatId: String, name: String): AppResult<GroupWallet> {
-        val key = setupKeys.getOrPut(chatId) { newIdempotencyKey() }
+        val network = net()
+        return on(network) { startGroupWalletOn(chatId, name, network) }
+    }
+
+    private suspend fun startGroupWalletOn(chatId: String, name: String, network: WalletNetwork): AppResult<GroupWallet> {
+        // One group can have a wallet on each network: each set-up has its own key.
+        val key = setupKeys.getOrPut("${network.wire}:$chatId") { newIdempotencyKey() }
         val started = when (val r = remote.setUpGroupWallet(chatId, key)) {
             is AppResult.Failure -> {
                 Diagnostics.note("wallet: group set-up failed (${(r.error as? AppError.Api)?.code ?: r.error::class.simpleName})")
                 // Already active (a second phone finished it, or a retry after the answer was lost): nothing to sign.
-                if ((r.error as? AppError.Api)?.code == "wallet.already_exists") { setupKeys.remove(chatId); return groupWallet(chatId) }
+                if ((r.error as? AppError.Api)?.code == "wallet.already_exists") { setupKeys.remove("${network.wire}:$chatId"); return groupWallet(chatId) }
                 return r
             }
             is AppResult.Success -> r.value
@@ -378,16 +510,21 @@ class WalletRepositoryImpl(
             val subject = SignSubject.group(started.walletId, name, SignPurpose.SetPin)
             when (val outcome = sign(started.sdk.toDomain(subject), challenge)) {
                 SignOutcome.Done -> Unit
-                else -> { Diagnostics.note("wallet: group PIN ${outcome.describe()}"); setupKeys.remove(chatId); return AppResult.Failure(outcome.toError()) }
+                else -> { Diagnostics.note("wallet: group PIN ${outcome.describe()}"); setupKeys.remove("${network.wire}:$chatId"); return AppResult.Failure(outcome.toError()) }
             }
         }
         // A new key next time: W14 again while it is setting up gives a fresh challenge (GW6b); it must not replay this one.
-        setupKeys.remove(chatId)
+        setupKeys.remove("${network.wire}:$chatId")
         val listing = WalletListing(started.walletId, WalletOwner(WalletOwnerType.Group, null, chatId, ""), walletStatus(started.status), true, emptyList())
         return AppResult.Success(GroupWallet(chatId, walletStatus(started.status), listing))
     }
 
     override suspend fun awaitGroupWallet(chatId: String): AppResult<GroupWallet> {
+        val network = net()
+        return on(network) { awaitGroupWalletOn(chatId) }
+    }
+
+    private suspend fun awaitGroupWalletOn(chatId: String): AppResult<GroupWallet> {
         var last: AppResult<GroupWallet> = AppResult.Failure(AppError.Network)
         withTimeoutOrNull(AwaitMillis) {
             while (true) {
@@ -408,9 +545,28 @@ class WalletRepositoryImpl(
         return done
     }
 
-    override suspend fun loadTransfer(transferId: String): AppResult<Transfer> = remote.transfer(transferId).map { dto ->
+    /**
+     * W5 for the network the payment is on: the phone's row says which, a pinned call says which, else the selected
+     * one is asked first and then, for someone with both, the other (a Testnet card opened while Mainnet is selected).
+     */
+    override suspend fun loadTransfer(transferId: String): AppResult<Transfer> {
         val existing = dao.transfer(transferId)
-        val row = dto.toEntity(existing)
+        val known = com.circaso.feature.wallet.domain.pinnedNetwork() ?: existing?.let { WalletNetwork.of(it.network) }?.takeIf { usable(it) }
+        val first = known ?: net()
+        val read = on(first) { readTransfer(transferId, first) }
+        val missing = ((read as? AppResult.Failure)?.error as? AppError.Api)?.let { it.httpStatus == 404 || it.httpStatus == 403 } == true
+        val other = WalletNetwork.entries.firstOrNull { it != first }
+        if (!missing || known != null || other == null || !networks.state.value.let { s -> s.known && !s.legacy && s.options.any { it.network == other } }) return read
+        val second = on(other) { readTransfer(transferId, other) }
+        return if (second is AppResult.Success) second else read
+    }
+
+    /** The person may use [network] (or there is only one, as before networks). */
+    private fun usable(network: WalletNetwork): Boolean = networks.state.value.let { s -> !s.known || s.legacy || s.options.any { it.network == network } }
+
+    private suspend fun readTransfer(transferId: String, asked: WalletNetwork): AppResult<Transfer> = remote.transfer(transferId).map { dto ->
+        val existing = dao.transfer(transferId)
+        val row = dto.toEntity(existing, asked)
         save(row, existing)
         row.toDomain()
     }
@@ -425,7 +581,21 @@ class WalletRepositoryImpl(
         if (ended && existing?.state != row.state && row.direction == TransferDirection.Out.name) settledOut.tryEmit(row.toDomain())
     }
 
+    /**
+     * A frame is handled for the network it names (`network`, wallet networks), so money on the network that isn't on
+     * screen updates that network's copy and leaves the visible one alone. An older server names none: the chain says
+     * (chains never overlap), else the phone's row, else the selected network.
+     */
     override suspend fun onFrame(type: String, data: JsonObject?) {
+        fun str(k: String) = data?.get(k)?.jsonPrimitive?.contentOrNull
+        val network = WalletNetwork.of(str("network"))
+            ?: WalletNetwork.ofChainOrNull(str("blockchain"))?.takeIf { usable(it) }
+            ?: (str("transferId") ?: str("transactionId"))?.let { dao.transfer(it) }?.let { WalletNetwork.of(it.network) }?.takeIf { usable(it) }
+            ?: net()
+        on(network) { handleFrame(type, data, network) }
+    }
+
+    private suspend fun handleFrame(type: String, data: JsonObject?, network: WalletNetwork) {
         fun str(k: String) = data?.get(k)?.jsonPrimitive?.contentOrNull
         when (type) {
             "transfer.updated" -> {
@@ -468,7 +638,7 @@ class WalletRepositoryImpl(
                             fromAddress = "", toUserId = null, toAddress = "", asset = asset,
                             amountMinor = amountMinor, amount = amount?.get("amount")?.jsonPrimitive?.contentOrNull ?: "0",
                             feeMinor = null, chatId = str("chatId"), txHash = null, failureReason = null, counterpartName = str("fromName"), note = null,
-                            createdAt = now, updatedAt = now, counterpartUserId = str("fromUserId"),
+                            createdAt = now, updatedAt = now, counterpartUserId = str("fromUserId"), network = network.wire,
                         ),
                 )
                 // Paid from a chat: that chat shows the card, whatever happened to the end-to-end one.
@@ -488,7 +658,7 @@ class WalletRepositoryImpl(
                 val walletId = str("walletId")
                 if (walletId == null) refresh() else { refreshWallet(walletId); refreshWallets() }
             }
-            "setup.requested" -> _setupRequestedBy.value = str("fromName") ?: "Someone"
+            "setup.requested" -> _setupRequestedBy.update { it + (network to (str("fromName") ?: "Someone")) }
             else -> Diagnostics.note("wallet: frame $type ignored")
         }
     }
@@ -545,7 +715,7 @@ internal fun GroupWalletResponse.toDomain() = GroupWallet(chatId, walletStatus(s
 /** How a space counterparty is kept in `wallet_activity.counterpartGroupId` (no schema change); see [Transfer.counterpartSpaceId]. */
 internal const val SpacePrefix = "space:"
 
-internal fun TransactionDto.toActivity(walletId: String): WalletActivityEntity = WalletActivityEntity(
+internal fun TransactionDto.toActivity(walletId: String, asked: WalletNetwork = WalletNetwork.TESTNET): WalletActivityEntity = WalletActivityEntity(
     walletId = walletId, rowId = id, transferId = transferId, direction = direction, state = state, blockchain = blockchain,
     asset = amount.asset, amountMinor = amount.amountMinor, amount = amount.amount,
     counterpartName = counterparty?.displayName ?: counterparty?.handle?.let { "@$it" }, counterpartHandle = counterparty?.handle,
@@ -553,7 +723,12 @@ internal fun TransactionDto.toActivity(walletId: String): WalletActivityEntity =
     // A space on the other side (phase 3) has no name on the wire: kept as "space:{id}" and named from the phone's spaces.
     counterpartGroupId = counterparty?.groupId ?: (counterparty?.spaceId ?: if (direction == "OUT") toSpaceId else fromSpaceId)?.let { SpacePrefix + it },
     chatId = chatId, txHash = txHash, occurredAt = isoMillis(occurredAt) ?: nowMillis(),
+    network = networkOf(network, blockchain, asked),
 )
+
+/** A row's network: what the server said, else what its chain says (chains never overlap), else what was asked for. */
+internal fun networkOf(answered: String?, blockchain: String?, asked: WalletNetwork): String =
+    (WalletNetwork.of(answered) ?: WalletNetwork.ofChainOrNull(blockchain) ?: asked).wire
 
 internal fun WalletActivityEntity.toDomain(): Transfer {
     val incoming = direction == "IN"
@@ -564,7 +739,7 @@ internal fun WalletActivityEntity.toDomain(): Transfer {
         toAddress = if (incoming) "" else counterpartAddress.orEmpty(), amount = Amount(asset, amountMinor, amount), fee = null, chatId = chatId,
         txHash = txHash, failureReason = null, counterpartName = counterpartName, note = null, createdAt = occurredAt, updatedAt = occurredAt,
         counterpartHandle = counterpartHandle, counterpartAvatar = counterpartAvatar, walletId = walletId, counterpartGroupId = counterpartGroupId,
-        counterpartUserId = counterpartUserId,
+        counterpartUserId = counterpartUserId, network = WalletNetwork.of(network) ?: WalletNetwork.TESTNET,
     )
 }
 
@@ -585,7 +760,7 @@ internal fun SignOutcome.toError(): AppError = when (this) {
     SignOutcome.Done -> AppError.Unexpected(null)
 }
 
-internal fun TransferResponse.toEntity(existing: TransferEntity?): TransferEntity {
+internal fun TransferResponse.toEntity(existing: TransferEntity?, asked: WalletNetwork = WalletNetwork.TESTNET): TransferEntity {
     val now = nowMillis()
     return TransferEntity(
         transferId = transferId, direction = if (direction == "IN") TransferDirection.In.name else TransferDirection.Out.name, state = state,
@@ -597,10 +772,11 @@ internal fun TransferResponse.toEntity(existing: TransferEntity?): TransferEntit
         walletId = existing?.walletId, fromGroupId = fromGroupId ?: existing?.fromGroupId, toGroupId = toGroupId ?: existing?.toGroupId,
         payoutRequestId = payoutRequestId ?: existing?.payoutRequestId,
         counterpartUserId = existing?.counterpartUserId ?: to.userId.takeIf { direction != "IN" },
+        network = networkOf(network, blockchain, asked),
     )
 }
 
-internal fun TransactionDto.toEntity(key: String, existing: TransferEntity?): TransferEntity {
+internal fun TransactionDto.toEntity(key: String, existing: TransferEntity?, asked: WalletNetwork = WalletNetwork.TESTNET): TransferEntity {
     val at = isoMillis(occurredAt) ?: nowMillis()
     val incoming = direction == "IN"
     val party = counterparty
@@ -616,6 +792,7 @@ internal fun TransactionDto.toEntity(key: String, existing: TransferEntity?): Tr
         counterpartHandle = party?.handle ?: existing?.counterpartHandle, counterpartAvatar = party?.avatarUrl ?: existing?.counterpartAvatar,
         walletId = existing?.walletId, fromGroupId = existing?.fromGroupId, toGroupId = party?.groupId ?: existing?.toGroupId, payoutRequestId = existing?.payoutRequestId,
         counterpartUserId = party?.userId ?: existing?.counterpartUserId,
+        network = networkOf(network, blockchain, asked),
     )
 }
 
@@ -631,6 +808,7 @@ internal fun TransferEntity.toDomain() = Transfer(
     createdAt = createdAt, updatedAt = updatedAt, counterpartHandle = counterpartHandle, counterpartAvatar = counterpartAvatar,
     walletId = walletId, fromGroupId = fromGroupId, toGroupId = toGroupId, payoutRequestId = payoutRequestId,
     counterpartUserId = counterpartUserId ?: toUserId,
+    network = WalletNetwork.of(network) ?: WalletNetwork.TESTNET,
 )
 
 private fun QuoteTransferResponse.toDomain() = PaymentQuote(
@@ -640,6 +818,8 @@ private fun QuoteTransferResponse.toDomain() = PaymentQuote(
         "INSUFFICIENT_FUNDS" -> QuoteProblem.InsufficientFunds
         "PER_PAYMENT_LIMIT" -> QuoteProblem.PerPaymentLimit
         "DAILY_LIMIT" -> QuoteProblem.DailyLimit
+        // No name was agreed for this when it was written: the likely ones all mean the same.
+        "INSUFFICIENT_GAS", "INSUFFICIENT_NATIVE_BALANCE", "INSUFFICIENT_SOL", "GAS" -> QuoteProblem.InsufficientGas
         else -> null
     },
     fitsAt = fitsAt, leftMinor = limit?.left?.amountMinor, dailyMaxMinor = limit?.dailyMax?.amountMinor, moreAt = limit?.moreAt,

@@ -70,7 +70,7 @@ fun NetworkAssetsScreen(viewModel: NetworkAssetsViewModel, onBack: () -> Unit, o
     val c = CircasoTheme.colors
     val t = CircasoTheme.typography
     val network = state.chain?.let { chainName(it.blockchain).substringBefore(" (") }
-    CircasoScaffold(grouped = true, topBar = { CircasoNavBar(title = network?.let { "Assets on $it" } ?: "Assets", onBack = onBack) }) { padding ->
+    CircasoScaffold(grouped = true, topBar = { CircasoNavBar(title = network?.let { "Assets on $it" } ?: "Assets", onBack = onBack) }, strip = { com.circaso.feature.wallet.presentation.TestnetNote(androidx.compose.ui.Modifier.padding(vertical = com.circaso.designsystem.theme.CircasoSpacing.s1)) }) { padding ->
         LazyColumn(
             Modifier.fillMaxSize(),
             contentPadding = PaddingValues(start = CircasoSpacing.s4, end = CircasoSpacing.s4, bottom = padding.calculateBottomPadding() + CircasoSpacing.s4),

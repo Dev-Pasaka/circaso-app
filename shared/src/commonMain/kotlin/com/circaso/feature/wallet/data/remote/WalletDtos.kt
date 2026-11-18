@@ -14,11 +14,17 @@ import kotlinx.serialization.Serializable
     val status: String, val chains: List<ChainDto> = emptyList(), val totals: List<AssetTotalDto> = emptyList(), val fiat: FiatDto? = null, val hold: HoldDto? = null,
     // Phase 2 (PR #28): which wallet, whose, and whether you sign for it. Absent from an older server.
     val walletId: String? = null, val owner: WalletOwnerDto? = null, val canSign: Boolean = true,
+    // Wallet networks (2026-11-18): which network this wallet is on. Absent from a server before networks.
+    val network: String? = null,
 )
+
+/** `GET /v1/wallet/networks`: the networks this person may use (only those), and the one to start on. */
+@Serializable data class NetworkDto(val network: String, val walletStatus: String = "NONE")
+@Serializable data class NetworksResponse(val networks: List<NetworkDto> = emptyList(), val default: String? = null)
 
 // Group wallets (phase 2, guide "Group wallets", W14–W16).
 @Serializable data class WalletOwnerDto(val type: String, val userId: String? = null, val chatId: String? = null, val signerUserId: String, val spaceId: String? = null)
-@Serializable data class WalletListingDto(val walletId: String, val owner: WalletOwnerDto, val status: String, val canSign: Boolean = false, val blockchains: List<String> = emptyList())
+@Serializable data class WalletListingDto(val walletId: String, val owner: WalletOwnerDto, val status: String, val canSign: Boolean = false, val blockchains: List<String> = emptyList(), val network: String? = null)
 @Serializable data class WalletsResponse(val wallets: List<WalletListingDto> = emptyList())
 @Serializable data class GroupWalletResponse(val chatId: String, val status: String, val wallet: WalletListingDto? = null)
 @Serializable data class GroupWalletSetupResponse(val walletId: String, val chatId: String, val status: String, val challengeId: String? = null, val sdk: SdkDto)
@@ -50,6 +56,7 @@ import kotlinx.serialization.Serializable
 @Serializable data class PrepareTransferResponse(
     val transferId: String, val state: String, val blockchain: String, val amount: AmountDto, val challengeId: String? = null, val sdk: SdkDto? = null,
     val fee: FeeDto? = null, val expiresAt: String, val walletId: String? = null, val total: AmountDto? = null,
+    val network: String? = null,
 )
 
 /** The one Circaso fee (phase 2F): an amount, plus how it was priced; [rateBps] and [minimum] are absent on a repeat. */
@@ -68,7 +75,7 @@ import kotlinx.serialization.Serializable
 @Serializable data class QuoteTransferResponse(
     val blockchain: String, val amount: AmountDto, val fee: FeeDto, val total: AmountDto, val balance: AmountDto? = null,
     val maxAmount: AmountDto? = null, val limit: LimitDto? = null, val problem: String? = null, val fitsAt: String? = null,
-    val quoteId: String? = null, val expiresAt: String,
+    val quoteId: String? = null, val expiresAt: String, val network: String? = null,
 )
 @Serializable data class TransferResponse(
     val transferId: String, val direction: String, val state: String, val blockchain: String, val from: String, val to: PayeeDto, val amount: AmountDto,
@@ -77,6 +84,7 @@ import kotlinx.serialization.Serializable
     val fromGroupId: String? = null, val toGroupId: String? = null, val signerUserId: String? = null, val payoutRequestId: String? = null,
     // Phase 3: a space's wallet on either side (W5); the phone names it from its spaces.
     val fromSpaceId: String? = null, val toSpaceId: String? = null,
+    val network: String? = null,
 )
 
 /** W6: the person's money in and out, newest first; [nextCursor] null on the last page. */
@@ -87,6 +95,7 @@ import kotlinx.serialization.Serializable
     val occurredAt: String,
     // Phase 3 (W6): a space's wallet on either side, named on the phone.
     val fromSpaceId: String? = null, val toSpaceId: String? = null,
+    val network: String? = null,
 )
 @Serializable data class CounterpartyDto(
     val userId: String? = null, val displayName: String? = null, val handle: String? = null, val avatarUrl: String? = null, val address: String? = null,

@@ -191,6 +191,13 @@ internal fun blockNote(s: PayUiState): BlockNote? {
     fun offer(max: String?) = max?.takeIf { !MinorUnits.isZero(it) }?.let { fittedText(s, it) }
     return when (val b = s.block) {
         null -> null
+        // Solana: the network's fee is the person's to pay, in SOL. The amount is fine; the wallet needs SOL.
+        PayBlock.Gas -> BlockNote(
+            title = (if (s.fromGroupWallet) "${s.walletName} needs" else "You need") + " SOL for the network fee",
+            text = "Payments on Solana pay Solana’s own small fee in SOL, from the wallet that sends. Add a little SOL to " +
+                (if (s.fromGroupWallet) "its" else "your") + " Solana address, then try again. Nothing was sent.",
+            action = null, icon = CircasoIcon.Info, warning = true,
+        )
         is PayBlock.Funds -> {
             val max = offer(b.maxAmountMinor)
             BlockNote(

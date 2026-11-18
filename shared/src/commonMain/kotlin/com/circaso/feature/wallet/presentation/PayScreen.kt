@@ -150,6 +150,8 @@ fun PayContent(
                 trailing = { if (state.step == PayStep.Pick && onScan != null) CircasoIconButton(CircasoIcon.Scan, "Scan a Circaso code", onScan) },
             )
         },
+        // Test money is said on every step of a payment, under the bar, where it can't be missed.
+        strip = { com.circaso.feature.wallet.presentation.TestnetNote(androidx.compose.ui.Modifier.padding(vertical = com.circaso.designsystem.theme.CircasoSpacing.s1)) },
         toast = { ToastHost(toast) },
         overlay = {
             CircasoSheet(visible = state.choosing, onDismiss = { onChoosing(false) }, label = "Pay from") {

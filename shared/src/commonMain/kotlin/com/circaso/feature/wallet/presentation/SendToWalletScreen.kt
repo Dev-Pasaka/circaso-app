@@ -75,6 +75,7 @@ fun SendToWalletContent(
     LaunchedEffect(state.error) { state.error?.let { toast.show(it, com.circaso.designsystem.chrome.ToastKind.Problem); onErrorShown() } }
     CircasoScaffold(
         topBar = { CircasoNavBar(title = when (state.step) { ExternalStep.Review, ExternalStep.Signing -> "Review"; ExternalStep.Done -> "Sent"; else -> "Send to a Wallet" }, onBack = when (state.step) { ExternalStep.Signing -> null; ExternalStep.Review -> onBackToForm; else -> onBack }) },
+        strip = { com.circaso.feature.wallet.presentation.TestnetNote(androidx.compose.ui.Modifier.padding(vertical = com.circaso.designsystem.theme.CircasoSpacing.s1)) },
         toast = { ToastHost(toast) },
     ) { padding ->
         val chains = state.wallet?.chains?.filter { it.state == "ACTIVE" }.orEmpty()
