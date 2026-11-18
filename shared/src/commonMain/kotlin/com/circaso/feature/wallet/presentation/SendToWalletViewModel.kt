@@ -128,14 +128,16 @@ class SendToWalletViewModel(
     // The pinned network's wallet, not the selected one's; a group wallet's copy that says it is another network's is dropped.
     @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
     private val source: Flow<Wallet?> = pin.flatMapLatest { on ->
-        (if (fromWalletId != null && wallets != null) wallets.walletOf(fromWalletId) else observeWallet(on)).map { w -> w?.takeIf { it.network == null || it.network == on } }
+        (if (fromWalletId != null && wallets != null) wallets.walletOf(fromWalletId, on) else observeWallet(on)).map { w -> w?.takeIf { it.network == null || it.network == on } }
     }
     private val from: Flow<NamedWallet?> = if (fromWalletId == null || wallets == null) flowOf(null)
     else wallets.named.map { list -> list.firstOrNull { it.walletId == fromWalletId } }
 
     val state: StateFlow<SendToWalletUiState> = combine(local, source, connection.status, from, combine(pin, networks.state) { on, all -> on to (all.known && on == com.circaso.feature.wallet.domain.WalletNetwork.TESTNET) }) { ui, w, c, f, net ->
         ui.copy(
-            wallet = w, online = c == ConnectionStatus.Online, from = f, network = net.first, testnet = net.second,
+            wallet = w, online = c == ConnectionStatus.Online, from = f, network = net.first,
+            // A sent payment's mark is its own (its chain says), not the selection's.
+            testnet = ui.result?.takeIf { ui.step == ExternalStep.Done }?.let { com.circaso.feature.wallet.domain.isTestnetChain(it.blockchain) } ?: net.second,
             // A chain of the network that was left is not this wallet's: the first of its own.
             blockchain = ui.blockchain?.takeIf { b -> w == null || w.chains.any { it.blockchain == b } } ?: w?.chains?.firstOrNull { it.state == "ACTIVE" }?.blockchain,
         )
@@ -154,12 +156,12 @@ class SendToWalletViewModel(
     }
 
     private fun moveTo(on: com.circaso.feature.wallet.domain.WalletNetwork) {
+        // A finished send is that payment's page: it keeps its network, its wallet and its mark whatever is selected.
+        if (local.value.step == ExternalStep.Done) return
         pin.value = on
         idempotencyKey = newIdempotencyKey()
         local.update {
-            // A finished send stays as it is (it is done); anything else goes back to the form.
-            if (it.step == ExternalStep.Done) it
-            else it.copy(
+            it.copy(
                 step = ExternalStep.Form, blockchain = null, checkedAddress = null, fee = PayFee.None, failure = null, checking = false, gasShort = false,
                 error = "You switched to ${on.label}. Nothing was sent. Check the network and the address again for your ${on.label} wallet.",
             )

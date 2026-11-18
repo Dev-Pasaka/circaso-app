@@ -459,6 +459,9 @@ class WalletRepositoryImpl(
     override fun walletOf(walletId: String?): Flow<Wallet?> =
         if (walletId == null) wallet else networks.selected.flatMapLatest { dao.observeCached(walletId, it.wire) }.map { row -> row?.let { decodeCached(it) } }
 
+    override fun walletOfOn(walletId: String?, network: WalletNetwork): Flow<Wallet?> =
+        if (walletId == null) walletOn(network) else dao.observeCached(walletId, network.wire).map { row -> row?.let { decodeCached(it) } }
+
     override suspend fun refreshWallet(walletId: String?): AppResult<Wallet> {
         if (walletId == null) return refresh()
         val network = net()

@@ -247,6 +247,30 @@ class WalletNetworkViewModelsTest {
         assertTrue(s.error!!.contains("Mainnet") && s.error!!.contains("Nothing was sent"), s.error)
     }
 
+    @Test fun aPaymentThatWentThroughKeepsItsOwnNetworkAndMarkWhateverIsSelectedAfter() = runTest(dispatcher) {
+        val vm = payVm(); keep(vm); advanceUntilIdle()
+        vm.onAmount("500"); advanceUntilIdle()
+        // The selection moves to Mainnet while the PIN is up, and the Testnet payment succeeds.
+        whilePaying = { select(WalletNetwork.MAINNET) }
+        vm.onPay(); advanceUntilIdle(); runCurrent()
+        val s = vm.state.value
+        assertEquals(PayStep.Done, s.step)
+        assertEquals("BASE-SEPOLIA", paid.single().blockchain); assertEquals(WalletNetwork.TESTNET, paid.single().network)
+        assertEquals(WalletNetwork.TESTNET, s.network, "the result page is the payment's, not the selection's")
+        assertTrue(s.testnet, "a Testnet payment's page stays marked as test money")
+        assertEquals("BASE-SEPOLIA", s.payChain, "nothing of the card was wiped for the other network")
+        assertEquals("500000000", s.balanceMinor)
+        assertNull(s.error)
+        // The other way round: a Mainnet payment's page is never marked, whatever is selected after.
+        vm.onQuickReset(); advanceUntilIdle()
+        assertEquals(WalletNetwork.MAINNET, vm.state.value.network)
+        vm.onAmount("50"); advanceUntilIdle()
+        whilePaying = { select(WalletNetwork.TESTNET) }
+        vm.onPay(); advanceUntilIdle(); runCurrent()
+        assertEquals(PayStep.Done, vm.state.value.step)
+        assertEquals(WalletNetwork.MAINNET, vm.state.value.network); assertFalse(vm.state.value.testnet)
+    }
+
     @Test fun theNextPaymentInAChatIsForTheNetworkSelectedThen() = runTest(dispatcher) {
         val vm = payVm(); keep(vm); advanceUntilIdle()
         select(WalletNetwork.MAINNET)
@@ -335,6 +359,22 @@ class WalletNetworkViewModelsTest {
         assertEquals(WalletNetwork.TESTNET, paid.single().network)
         assertEquals(ExternalStep.Form, vm.state.value.step); assertEquals(WalletNetwork.MAINNET, vm.state.value.network)
         assertNull(vm.state.value.failure)
+    }
+
+    @Test fun aSendThatWentThroughKeepsItsOwnNetworkAndMarkWhateverIsSelectedAfter() = runTest(dispatcher) {
+        val vm = sendVm(); keep(vm); advanceUntilIdle()
+        vm.onAddress("0xabc"); vm.onAmount("12"); runCurrent(); vm.onReview(); advanceUntilIdle()
+        whilePaying = { select(WalletNetwork.MAINNET) }
+        runCurrent(); vm.onConfirm(); advanceUntilIdle(); runCurrent()
+        val s = vm.state.value
+        assertEquals(ExternalStep.Done, s.step)
+        assertEquals(WalletNetwork.TESTNET, s.network, "the Sent page is the payment's, not the selection's")
+        assertTrue(s.testnet)
+        assertEquals("500000000", s.wallet?.usdc?.amountMinor, "and so is the wallet behind it")
+        assertNull(s.error)
+        // Still so when the selection moves again while the page is up.
+        select(WalletNetwork.TESTNET); select(WalletNetwork.MAINNET); advanceUntilIdle(); runCurrent()
+        assertEquals(ExternalStep.Done, vm.state.value.step); assertEquals(WalletNetwork.TESTNET, vm.state.value.network); assertTrue(vm.state.value.testnet)
     }
 
     @Test fun sendSaysTooLittleSolAsANoteOnTheFormNotAToast() = runTest(dispatcher) {

@@ -77,6 +77,9 @@ interface WalletRepository {
     /** One wallet from the phone's copy; [walletId] null is the person's own. */
     fun walletOf(walletId: String?): Flow<Wallet?>
 
+    /** [walletOf] on one network, whatever is selected: what a payment pinned to that network pays from. */
+    fun walletOfOn(walletId: String?, network: WalletNetwork): Flow<Wallet?> = walletOf(walletId)
+
     /** W1 for one wallet (`?walletId=`); null is the person's own. */
     suspend fun refreshWallet(walletId: String?): AppResult<Wallet>
 

@@ -128,10 +128,14 @@ fun WalletModeControl(groups: Boolean, onMode: (WalletMode) -> Unit, modifier: M
 }
 
 /**
- * A segment's least width when the network switch and Personal | Groups share the Wallet tab's row: wide enough for
- * the longest of the four words, so the two pills are the same width, side by side or one above the other.
+ * A segment's least width when the network switch and Personal | Groups share the Wallet tab's row, so the two pills
+ * come out the same width, side by side or one above the other. 84 dp is about what the longest of the four words
+ * needs with its padding ("Personal", and "Testnet" with its dot) at the default text size; 80 dp would be under the
+ * words, and the pills would then differ. Two pills of 168 dp and their gap need 348 dp, so they sit side by side on
+ * a 393 dp phone and wider, and stack, deliberately, on a 360 dp phone (328 dp of room) and at large text: two full
+ * controls, each with its 44 dp targets, read better there than two squeezed ones.
  */
-internal val PairedSegmentMinWidth = CircasoSpacing.s10 * 2 + CircasoSpacing.s2
+internal val PairedSegmentMinWidth = CircasoSpacing.s10 * 2 + CircasoSpacing.s1
 
 /**
  * The two-word segmented pill both of the Wallet tab's switches are (Personal | Groups, Mainnet | Testnet): one

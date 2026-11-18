@@ -189,7 +189,7 @@ class GroupWalletPayViewModelTest {
         when (name) {
             "getWallet", "walletOn" -> flowOf(personal)
             "getWallets" -> flowOf(if (memberOnly) listings.map { it.copy(canSign = it.personal) } else listings)
-            "walletOf" -> flowOf(if (args[0] == "gw-1") groupBalance else personal)
+            "walletOf", "walletOfOn" -> flowOf(if (args[0] == "gw-1") groupBalance else personal)
             "refreshWallets" -> AppResult.Success(listings)
             "validateAddress" -> AppResult.Success((args[1] as String).lowercase())
             "refreshWallet" -> AppResult.Success(groupBalance)

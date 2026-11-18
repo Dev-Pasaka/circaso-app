@@ -344,6 +344,9 @@ the switch or the word testnet. This is closed testing with real crypto.
   (`WalletRepository.walletOn`); the Testnet strip is driven by that state. The pin follows the selection only while
   nothing is being signed, and is looked at again when signing ends: Pay starts the card again on the new network
   (amount and note kept), Send returns to its form with a notice. `wallet.network_changed` resets the same way.
+  Only a card still being filled in moves (Pay: Pick or Amount; Send: not Done): a payment being signed, on its way
+  or done keeps its network while it is on screen, and on Sending / Done the mark comes from the result's own chain.
+  A group wallet the money leaves is read for the pin too (`WalletRepository.walletOfOn`).
 - **Data carries its network.** `Wallet.network` is the row's network. `WalletViewModel.networkSide` re-reads the
   wallet, the picked group and the switcher's balances per selected network and hands them on with that network; the
   tab's `network` and `testnet` come from that data, so one network's balance is never drawn under the other's label

@@ -28,7 +28,10 @@ class QuotePaymentUseCase(private val wallet: WalletRepository) { suspend operat
 class ObserveWalletsUseCase(private val wallet: WalletRepository) { operator fun invoke() = wallet.wallets }
 class RefreshWalletsUseCase(private val wallet: WalletRepository) { suspend operator fun invoke() = wallet.refreshWallets() }
 /** Read. [walletId] null is the person's own. */
-class ObserveWalletOfUseCase(private val wallet: WalletRepository) { operator fun invoke(walletId: String?) = wallet.walletOf(walletId) }
+class ObserveWalletOfUseCase(private val wallet: WalletRepository) {
+    /** One network's copy of the wallet, whatever is selected. */
+    operator fun invoke(walletId: String?, network: WalletNetwork) = wallet.walletOfOn(walletId, network)
+    operator fun invoke(walletId: String?) = wallet.walletOf(walletId) }
 class RefreshWalletOfUseCase(private val wallet: WalletRepository) { suspend operator fun invoke(walletId: String?) = wallet.refreshWallet(walletId) }
 /** Read. */
 class ObserveWalletActivityUseCase(private val wallet: WalletRepository) { operator fun invoke(walletId: String) = wallet.activity(walletId) }
