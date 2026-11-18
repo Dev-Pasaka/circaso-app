@@ -125,6 +125,7 @@ fun ChamaContent(
                 },
             )
         },
+        strip = { com.circaso.feature.wallet.presentation.TestnetStrip(onGrouped = true) },
         toast = { ToastHost(toast) },
         bottomBar = if (chama != null) ({
             Column(Modifier.fillMaxWidth().padding(horizontal = CircasoSpacing.s4, vertical = CircasoSpacing.s2), verticalArrangement = Arrangement.spacedBy(CircasoSpacing.s2)) {

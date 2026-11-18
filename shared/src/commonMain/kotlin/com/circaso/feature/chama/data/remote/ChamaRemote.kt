@@ -2,7 +2,8 @@ package com.circaso.feature.chama.data.remote
 
 import com.circaso.core.common.AppResult
 import com.circaso.core.network.CircasoApi
-import com.circaso.core.network.call
+import com.circaso.core.network.WalletNetworkGate
+import com.circaso.core.network.walletCall
 import com.circaso.core.network.idempotencyKey
 import com.circaso.core.network.newIdempotencyKey
 import com.circaso.core.network.NoBody
@@ -67,10 +68,11 @@ interface ChamaRemote {
     suspend fun setSettings(chatId: String, request: GroupSettingsRequest, idempotencyKey: String): AppResult<GroupSettingsDto>
 }
 
-class KtorChamaRemote(private val api: CircasoApi) : ChamaRemote {
-    override suspend fun chama(chatId: String) = api.call<ChamaResponse> { method = HttpMethod.Get; url("/v1/chama/chats/$chatId") }
+/** A group's money is per wallet network (the header picks): every chama route says which. */
+class KtorChamaRemote(private val api: CircasoApi, private val network: WalletNetworkGate = WalletNetworkGate.None) : ChamaRemote {
+    override suspend fun chama(chatId: String) = api.walletCall<ChamaResponse>(network) { method = HttpMethod.Get; url("/v1/chama/chats/$chatId") }
 
-    override suspend fun setGoal(chatId: String, request: SetGoalRequest) = api.call<GoalDto> {
+    override suspend fun setGoal(chatId: String, request: SetGoalRequest) = api.walletCall<GoalDto>(network) {
         method = HttpMethod.Put
         url("/v1/chama/chats/$chatId/goal")
         idempotencyKey(newIdempotencyKey())
@@ -78,14 +80,14 @@ class KtorChamaRemote(private val api: CircasoApi) : ChamaRemote {
         setBody(request)
     }
 
-    override suspend fun ledger(chatId: String, before: String?, limit: Int) = api.call<LedgerResponse> {
+    override suspend fun ledger(chatId: String, before: String?, limit: Int) = api.walletCall<LedgerResponse>(network) {
         method = HttpMethod.Get
         url("/v1/chama/chats/$chatId/ledger")
         parameter("limit", limit)
         before?.let { parameter("before", it) }
     }
 
-    override suspend fun createRequest(chatId: String, request: CreateRequestRequest, idempotencyKey: String) = api.call<RequestDto> {
+    override suspend fun createRequest(chatId: String, request: CreateRequestRequest, idempotencyKey: String) = api.walletCall<RequestDto>(network) {
         method = HttpMethod.Post
         url("/v1/chama/chats/$chatId/requests")
         idempotencyKey(idempotencyKey)
@@ -93,13 +95,13 @@ class KtorChamaRemote(private val api: CircasoApi) : ChamaRemote {
         setBody(request)
     }
 
-    override suspend fun decide(requestId: String, approve: Boolean) = api.call<RequestDto> {
+    override suspend fun decide(requestId: String, approve: Boolean) = api.walletCall<RequestDto>(network) {
         method = HttpMethod.Post
         url("/v1/chama/requests/$requestId/${if (approve) "approve" else "decline"}")
         idempotencyKey(newIdempotencyKey())
     }
 
-    override suspend fun attachPayment(requestId: String, transferId: String) = api.call<RequestDto> {
+    override suspend fun attachPayment(requestId: String, transferId: String) = api.walletCall<RequestDto>(network) {
         method = HttpMethod.Post
         url("/v1/chama/requests/$requestId/payment")
         idempotencyKey(newIdempotencyKey())
@@ -107,15 +109,15 @@ class KtorChamaRemote(private val api: CircasoApi) : ChamaRemote {
         setBody(AttachPaymentRequest(transferId))
     }
 
-    override suspend fun money(chatId: String) = api.call<GroupMoneyResponse> { method = HttpMethod.Get; url("/v1/chama/chats/$chatId/money") }
+    override suspend fun money(chatId: String) = api.walletCall<GroupMoneyResponse>(network) { method = HttpMethod.Get; url("/v1/chama/chats/$chatId/money") }
 
-    override suspend fun removeGoal(chatId: String) = api.call<NoBody> {
+    override suspend fun removeGoal(chatId: String) = api.walletCall<NoBody>(network) {
         method = HttpMethod.Delete
         url("/v1/chama/chats/$chatId/goal")
         idempotencyKey(newIdempotencyKey())
     }
 
-    override suspend fun setSettings(chatId: String, request: GroupSettingsRequest, idempotencyKey: String) = api.call<GroupSettingsDto> {
+    override suspend fun setSettings(chatId: String, request: GroupSettingsRequest, idempotencyKey: String) = api.walletCall<GroupSettingsDto>(network) {
         method = HttpMethod.Put
         url("/v1/chama/chats/$chatId/settings")
         idempotencyKey(idempotencyKey)

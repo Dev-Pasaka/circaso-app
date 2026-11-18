@@ -150,6 +150,9 @@ fun PayContent(
                 trailing = { if (state.step == PayStep.Pick && onScan != null) CircasoIconButton(CircasoIcon.Scan, "Scan a Circaso code", onScan) },
             )
         },
+        // Test money is said on every step of a payment, under the bar, where it can't be missed: from the network
+        // this payment is pinned to, not from whatever is selected on the Wallet tab.
+        strip = { TestnetStrip(show = state.testnet) },
         toast = { ToastHost(toast) },
         overlay = {
             CircasoSheet(visible = state.choosing, onDismiss = { onChoosing(false) }, label = "Pay from") {

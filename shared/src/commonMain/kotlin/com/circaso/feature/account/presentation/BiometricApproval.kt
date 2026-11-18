@@ -29,6 +29,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
@@ -43,6 +44,11 @@ data class BiometricApprovalState(
     val label: String = "Fingerprint",
     /** The phone has biometrics set up; without them there is nothing to offer. */
     val supported: Boolean = true,
+    /**
+     * Which wallet the switch governs, named only for someone with both networks ("Mainnet wallet"): each network's
+     * wallet has its own PIN and its own setting, so the row must say which one this is. Null with one network.
+     */
+    val walletName: String? = null,
 ) {
     /** For sentences: "Face ID" / "Touch ID" keep their capitals, "fingerprint" doesn't. */
     val inSentence get() = if (label.endsWith(" ID")) label else label.lowercase()
@@ -54,16 +60,29 @@ data class BiometricApprovalState(
  * so Circaso never sees the PIN. The switch is remembered on this phone and wiped with the rest of the local data on
  * sign-out or Remove this phone ([AppPreferences.clear]).
  */
+@OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
 class BiometricApprovalViewModel(
     private val wallet: WalletRepository,
     private val prefs: AppPreferences,
     connection: ConnectionState,
     biometrics: Biometrics,
+    /** The switch is the selected network's wallet's: Mainnet and Testnet are two Circle users with two PINs. */
+    private val networks: com.circaso.feature.wallet.domain.WalletNetworks = com.circaso.feature.wallet.domain.WalletNetworks.Single,
 ) : ViewModel() {
     private val local = MutableStateFlow(BiometricApprovalState(label = biometrics.name, supported = biometrics.available()))
     val state: StateFlow<BiometricApprovalState> =
-        combine(local, prefs.flag(AppPreferences.BiometricApproval), connection.status, wallet.wallet) { ui, on, status, w ->
-            ui.copy(enabled = on, online = status == ConnectionStatus.Online, hasWallet = w?.status == WalletStatus.Active)
+        // The setting and the wallet are read for the same network together: one network's switch is never shown
+        // beside the other's wallet, even for the instant after a switch.
+        combine(
+            local,
+            networks.selected.flatMapLatest { on -> combine(prefs.walletBiometrics(null, on.wire), wallet.walletOn(on)) { enabled, w -> Triple(on, enabled, w) } },
+            connection.status, networks.state,
+        ) { ui, side, status, all ->
+            val (on, enabled, w) = side
+            ui.copy(
+                enabled = enabled, online = status == ConnectionStatus.Online, hasWallet = w?.status == WalletStatus.Active,
+                walletName = "${on.label} wallet".takeIf { all.switchable },
+            )
         }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), local.value)
 
     fun onEnable() {
@@ -71,8 +90,10 @@ class BiometricApprovalViewModel(
         if (now.busy || now.enabled || !now.online || !now.supported) return
         local.update { it.copy(busy = true, error = null) }
         viewModelScope.launch {
-            when (val r = wallet.enableBiometricApproval()) {
-                is AppResult.Success -> { prefs.setFlag(AppPreferences.BiometricApproval, true); local.update { it.copy(busy = false) } }
+            // Fixed before Circle's screen opens, so the setting saved is for the wallet that was signed for.
+            val on = networks.current()
+            when (val r = kotlinx.coroutines.withContext(com.circaso.feature.wallet.domain.PinnedNetwork(on)) { wallet.enableBiometricApproval() }) {
+                is AppResult.Success -> { prefs.setWalletBiometrics(null, true, on.wire); local.update { it.copy(busy = false) } }
                 is AppResult.Failure -> {
                     // Backing out of Circle's PIN screen is a choice, not an error.
                     val cancelled = (r.error as? AppError.Api)?.code == "wallet.cancelled"
@@ -99,12 +120,13 @@ fun BiometricApprovalSection(state: BiometricApprovalState, onEnable: () -> Unit
     Column {
         Section("Payments") {
             // No manage screen yet (turning it off happens in Circle's settings), so "On" has no chevron.
+            val which = state.walletName?.let { "For your $it · " }.orEmpty()
             ListRow(
                 state.label,
-                sub = when {
+                sub = which + when {
                     state.enabled -> "Your PIN takes over if it fails"
                     !state.online -> "Turning this on needs a connection"
-                    else -> "Approve without typing your PIN"
+                    else -> if (state.walletName != null) "Approve without typing its PIN" else "Approve without typing your PIN"
                 },
                 meta = if (state.enabled) "On" else null,
                 trailing = if (state.enabled) null else {

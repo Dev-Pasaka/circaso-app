@@ -9,6 +9,15 @@ For **Claude Code working in the Circaso mobile app** (Kotlin Multiplatform: one
 - **Status words used below:** **READY** (backend finished, safe to build on), **DEV STUB** (the HTTP contract is final but a vendor behind it is faked on dev), **PARTIAL** (works, with a named gap), **MISSING** (not built in the backend; do not invent an endpoint).
 - If the backend says something different from this file, the backend wins: tell Pasaka and fix the file.
 
+> **Changed on 2026-11-18, wallet networks: Mainnet and Testnet side by side (BACKEND PR PENDING: not deployed when this was written; the app is built to the contract and works unchanged against a server without it):**
+> 1. **Header `X-Wallet-Network: MAINNET|TESTNET`** on every wallet-scoped route: `/v1/wallet*`, `/v1/wallets`, `/v1/vault*`, the chama money routes (`/v1/chama/*`) and Asha's turn (the agent's wallet tools). Absent (older apps): TESTNET if the person may use it, else MAINNET.
+> 2. **New route `GET /v1/wallet/networks`** → `{ "networks": [ { "network": "MAINNET", "walletStatus": "NONE|SETTING_UP|ACTIVE" }, … ], "default": "MAINNET" }`: only the networks the person may use. The app shows its Mainnet | Testnet switch only with more than one entry, and treats `404 request.not_found` here as "one network, no switch, send no header".
+> 3. **`network`** on every DTO that has `blockchain` (W1, W16, transfers, transactions, quotes, share receipts) and on the wallet frames and pushes (`transfer.updated`, `payment.received`, `wallet.ready`, `setup.requested`). Chain names never overlap between networks (suffix SEPOLIA, AMOY, DEVNET, FUJI, TESTNET = Testnet), so end-to-end money cards, which carry only `blockchain`, are read by chain.
+> 4. **`403 wallet.network_unavailable`**: the header named a network the person may not use. The app falls back to `default` and says so once.
+> 5. **Per network (same routes, the header picks):** the wallet and its PIN (each network is its own Circle user; `sdk.appId` is the request's network's), group wallets, chama data, payment limits, the PIN Vault.
+> 6. **Solana (`SOL`, `SOL-DEVNET`):** no Circaso fee and no sponsored gas; the person pays the network fee in SOL. Too little SOL is **`wallet.insufficient_gas`** from W4 and W17, and W17's `problem` is **`INSUFFICIENT_GAS`**.
+> 7. **Hosts:** `https://api.circaso.com` is the API host (the app's base URL since this date); `https://sandbox.circaso.com` is the same server and keeps working. Circle webhooks: testnet `/v1/hooks/circle`, mainnet `/v1/hooks/circle-mainnet`.
+>
 > **Changed on 2026-11-14, pushes about a person carry who it is, so the phone shows their photo (Android: a data-only push needs the app to word it):**
 > 1. **`moment.loved`** (a reaction on my moment) is now **data-only** and carries `userId` (who reacted), `momentId` and `reaction` (the emoji). The phone names them as it knows them (a saved name first), shows their photo the way a chat message does, gathers one moment's reactions in one notification, and with Notification privacy on says only "Someone reacted to your moment". A frame whose reactor has no profile name now pushes too ("Someone reacted 🔥 to your moment"). The title and body stay as the fallback (iOS alert, and FCM `data.title` / `data.body`).
 > 2. **`contact.joined` and `connection.added`** are now **data-only** (they already carried `userId`): the app words them ("Amina is on Circaso") with the person's photo.
@@ -614,6 +623,18 @@ A Circle user-controlled wallet: the server never holds keys and never moves mon
 | `GET /v1/wallet/recipients/{userId}`<br>**W9** Can this person be paid, and where | `app` | — → RecipientResponse | **PARTIAL** | Query `blockchain` (optional, the chain you mean to pay on) and `chatId` (optional). `status`: `CAN_RECEIVE`, `NO_WALLET` (offer W10: "Amina hasn't set up her wallet yet") or `NO_WALLET_ON_CHAIN` (pick one of `blockchains`, where they can be paid now). Errors: `users.not_reachable`, `wallet.self_transfer`, `wallet.chain_unsupported`, `request.malformed`, `wallet.support_account_has_no_wallet`. |
 | `POST /v1/wallet/recipients/{userId}/remind`<br>**W10** Remind a contact to set up a wallet | `app` | — → RemindResponse | **PARTIAL** | They get a `wallet` / `setup.requested` frame and a push. `status`: `SENT`, `ALREADY_SENT` (once per person per 24 hours) or `HAS_WALLET` (pay them instead). Errors: `users.not_reachable`, `wallet.self_transfer`, `request.malformed`, `wallet.support_account_has_no_wallet`. |
 | `POST /v1/wallet/addresses/validate`<br>**W11** Check an outside address on a chain | `app` | ValidateAddressRequest → ValidateAddressResponse | **PARTIAL** | `{ "blockchain", "address" }` → `valid` (an answer, not an error) and `address` as it will be paid (EVM lowercase). Check before W4 to an address. Errors: `wallet.chain_unsupported`, `wallet.custody_unavailable`, `request.malformed`. |
+
+### Wallet networks (2026-11-18; BACKEND PR PENDING)
+
+One server talks to Circle Mainnet and Testnet. Everything about money carries a `network` (`MAINNET` or `TESTNET`, upper case). Not deployed when this was written: until it is, `GET /v1/wallet/networks` answers `404` and the app behaves as one network with no header.
+
+| Route | Scope | Types | Status | Notes |
+| --- | --- | --- | --- | --- |
+| `GET /v1/wallet/networks` | `app` | → `{ networks: [ { network, walletStatus } ], default }` | **PENDING** | Only the networks the person may use; `default` is MAINNET when usable, else TESTNET. `walletStatus` is `NONE`, `SETTING_UP` or `ACTIVE`. Sent without `X-Wallet-Network`. |
+
+- **`X-Wallet-Network`** goes on every other wallet-scoped call (`/v1/wallet*`, `/v1/wallets`, `/v1/vault*`, `/v1/chama/*`, Asha's `POST /v1/assistant/chat/messages`). A network the person may not use is `403 wallet.network_unavailable`.
+- Wallets, PINs, group wallets, chama data, limits and the PIN Vault are per network; a first visit to a network with no wallet runs W2 for that network (a new PIN).
+- Solana: no Circaso fee, the network fee in SOL from the wallet; `wallet.insufficient_gas` (W4, W17) and W17 `problem: "INSUFFICIENT_GAS"` when there is too little SOL.
 
 ### Chama (a group's shared goal)
 

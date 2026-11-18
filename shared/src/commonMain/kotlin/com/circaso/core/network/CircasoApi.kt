@@ -180,3 +180,14 @@ internal fun <T> mapEnvelope(httpStatus: Int, envelope: Envelope<T>?, retryAfter
         ),
     )
 }
+
+/**
+ * A call on a wallet-scoped route (`/v1/wallet*`, `/v1/wallets`, `/v1/vault*`, the chama money routes): it carries
+ * `X-Wallet-Network` from [gate], and a network the server refuses is reported back to it.
+ */
+suspend inline fun <reified T> CircasoApi.walletCall(gate: WalletNetworkGate, noinline block: HttpRequestBuilder.() -> Unit): AppResult<T> {
+    val network = gate.header()
+    val result = call(serializer<T>()) { block(); walletNetwork(network) }
+    if (result is AppResult.Failure && (result.error as? AppError.Api)?.code == "wallet.network_unavailable") gate.refused(network)
+    return result
+}

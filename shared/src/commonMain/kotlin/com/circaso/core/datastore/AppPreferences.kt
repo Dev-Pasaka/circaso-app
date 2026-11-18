@@ -74,6 +74,15 @@ class AppPreferences(private val store: DataStore<Preferences>) : com.circaso.co
     fun text(name: String): Flow<String?> = store.data.map { it[stringPreferencesKey("text.$name")] }
     suspend fun setText(name: String, value: String?) { store.edit { if (value == null) it.remove(stringPreferencesKey("text.$name")) else it[stringPreferencesKey("text.$name")] = value } }
 
+    /** The selected wallet network and the server's last list, written together so a restart never reads half of it. */
+    suspend fun setWalletNetworks(selected: String?, list: String?) {
+        store.edit { prefs ->
+            val s = stringPreferencesKey("text.$WalletNetworkText"); val l = stringPreferencesKey("text.$WalletNetworksText")
+            if (selected == null) prefs.remove(s) else prefs[s] = selected
+            if (list == null) prefs.remove(l) else prefs[l] = list
+        }
+    }
+
     /** Small one-time flags ("asha.met"). */
     fun flag(name: String): Flow<Boolean> = store.data.map { it[booleanPreferencesKey("flag.$name")] ?: false }
     suspend fun setFlag(name: String, value: Boolean) { store.edit { it[booleanPreferencesKey("flag.$name")] = value } }
@@ -88,9 +97,17 @@ class AppPreferences(private val store: DataStore<Preferences>) : com.circaso.co
     }
 
 
-    /** Fingerprint / Face ID approval for one wallet ([walletId] null: the personal wallet). Each wallet has its own. */
-    fun walletBiometrics(walletId: String?): Flow<Boolean> = flag(biometricFlag(walletId))
-    suspend fun setWalletBiometrics(walletId: String?, on: Boolean) = setFlag(biometricFlag(walletId), on)
+    /**
+     * Fingerprint / Face ID approval for one wallet ([walletId] null: the personal wallet). Each wallet has its own,
+     * and so does each wallet network ([network] `MAINNET` or `TESTNET`; null is Testnet, as before networks): the
+     * Mainnet wallet is another Circle user with another PIN.
+     */
+    fun walletBiometrics(walletId: String?, network: String? = null): Flow<Boolean> = flag(biometricFlag(walletId, network))
+    suspend fun setWalletBiometrics(walletId: String?, on: Boolean, network: String? = null) = setFlag(biometricFlag(walletId, network), on)
+
+    /** Circle said this wallet's biometrics are gone (its row says why until they're turned on again), per network. */
+    fun walletBiometricsLost(walletId: String?, network: String? = null): Flow<Boolean> = flag(biometricLostFlag(walletId, network))
+    suspend fun setWalletBiometricsLost(walletId: String?, lost: Boolean, network: String? = null) = setFlag(biometricLostFlag(walletId, network), lost)
 
     suspend fun setDark(value: Boolean?) = store.edit { prefs ->
         if (value == null) prefs.remove(darkKey) else prefs[darkKey] = value.toString()
@@ -131,7 +148,20 @@ class AppPreferences(private val store: DataStore<Preferences>) : com.circaso.co
         /** The join links of the groups I administer, as the server last gave them, so a link shows offline; the account's. */
         const val GroupLinksText = "group_links"
 
-        /** The flag that says a wallet approves with biometrics: the personal one keeps its old name. */
-        fun biometricFlag(walletId: String?) = if (walletId == null) BiometricApproval else "$BiometricApproval.$walletId"
+        /**
+         * The flag that says a wallet approves with biometrics: the personal one keeps its old name, and Testnet keeps
+         * the names from before networks, so nobody's setting is lost; Mainnet's carry `mainnet`.
+         */
+        fun biometricFlag(walletId: String?, network: String? = null): String {
+            val scope = if (network == "MAINNET") "$BiometricApproval.mainnet" else BiometricApproval
+            return if (walletId == null) scope else "$scope.$walletId"
+        }
+
+        fun biometricLostFlag(walletId: String?, network: String? = null): String =
+            "biometric_lost." + (if (network == "MAINNET") "mainnet." else "") + (walletId ?: "personal")
+
+        /** The selected wallet network and the server's last list of them (`text.wallet.*`: wiped at sign-out). */
+        const val WalletNetworkText = "wallet.network"
+        const val WalletNetworksText = "wallet.networks"
     }
 }

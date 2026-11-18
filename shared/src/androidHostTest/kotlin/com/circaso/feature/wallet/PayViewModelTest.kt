@@ -112,7 +112,7 @@ class PayViewModelTest {
 
     private val walletRepo = fake<WalletRepository> { name, args ->
         when (name) {
-            "getWallet" -> flowOf(wallet)
+            "getWallet", "walletOn" -> flowOf(wallet)
             "recipient" -> AppResult.Success(Recipient(args[0] as String, RecipientStatus.CanReceive, listOf("BASE-SEPOLIA")))
             "pay" -> { val r = args[0] as PaymentRequest; payments += r; AppResult.Success(transfer("t${payments.size}", r.amountMinor)) }
             else -> null

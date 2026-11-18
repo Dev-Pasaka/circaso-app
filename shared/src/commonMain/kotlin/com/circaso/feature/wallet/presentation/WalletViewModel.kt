@@ -16,6 +16,9 @@ import com.circaso.feature.wallet.domain.CreateWalletUseCase
 import com.circaso.feature.wallet.domain.ObserveWalletUseCase
 import com.circaso.feature.wallet.domain.RefreshWalletUseCase
 import com.circaso.feature.wallet.domain.Wallet
+import com.circaso.feature.wallet.domain.WalletNetwork
+import com.circaso.feature.wallet.domain.WalletNetworks
+import com.circaso.feature.wallet.domain.WalletNetworksState
 import com.circaso.feature.wallet.domain.WalletStatus
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -91,7 +94,27 @@ data class WalletUiState(
     val balances: Map<String?, Wallet?> = emptyMap(),
     /** Group wallets whose signer has left the group: nothing can leave them (GW8b). */
     val lockedWallets: Set<String> = emptySet(),
+    /** The wallet network on screen (wallet networks, 2026-11-18): every part of the tab is that network's copy. */
+    val network: WalletNetwork = WalletNetwork.TESTNET,
+    /** The networks the person may use; the Mainnet | Testnet switch shows only with more than one. */
+    val networks: List<WalletNetwork> = emptyList(),
+    /** Test money is on screen (the server has said the selected network is Testnet). */
+    val testnet: Boolean = false,
+    /** The network that was on screen stopped being usable: said once, then cleared. */
+    val networkNotice: com.circaso.feature.wallet.domain.NetworkNotice? = null,
+    /** The selected network's wallet as the server's list of networks last had it; null when it didn't say. */
+    val networkWalletStatus: WalletStatus? = null,
 ) {
+    /** Someone with both networks: the switch shows, and a missing wallet is explained as a separate one. */
+    val showNetworkSwitch get() = networks.size > 1
+    /**
+     * Nothing of this network's wallet has been read on this phone, but the server's list already says there is none
+     * (or one half set up): the create screen shows at once, online or not, instead of a skeleton that offline would
+     * never end (a first visit to the other network).
+     */
+    val createAtOnce get() = wallet == null && group == null && (networkWalletStatus == WalletStatus.None || networkWalletStatus == WalletStatus.SettingUp)
+    /** Where the create screen stands: the wallet's own status once read, else the server's list. */
+    val createStatus get() = wallet?.status ?: networkWalletStatus ?: WalletStatus.None
     val selected: NamedWallet get() = wallets.firstOrNull { it.walletId == selectedWalletId } ?: NamedWallet.Personal
     /** The chosen group's chat, when the tab shows a group wallet. */
     val selectedGroupChat: String? get() = selected.chatId.takeIf { !selected.personal }
@@ -132,6 +155,8 @@ class WalletViewModel(
     private val privacy: BalancePrivacy = BalancePrivacy(),
     /** Remembers Personal or Groups, and which group, between launches. */
     private val choices: WalletChoiceStore = WalletChoiceStore.memory(),
+    /** The selected wallet network and the ones the person may use. */
+    private val networks: WalletNetworks = WalletNetworks.Single,
 ) : ViewModel() {
     // Until the remembered side and the saved list are read, the tab knows group wallets may be on (so it waits).
     private val local = MutableStateFlow(WalletUiState(choiceRestored = false, walletsLoaded = sources == null, groupsEnabled = sources != null && groupWallets.isOn))
@@ -244,23 +269,51 @@ class WalletViewModel(
         }
     }
 
+    /** One network's money as the tab draws it: every part read for [network], so none is ever shown under another's name. */
+    private class NetworkSide(val network: WalletNetwork, val wallet: Wallet?, val group: GroupWalletUiState?, val balances: Map<String?, Wallet?>, val locked: Set<String>)
+
+    /**
+     * The wallet, the picked group and the switcher's balances, re-read from the phone for each selected network and
+     * handed on together with that network. The label the tab shows comes from here, not from the selection itself,
+     * so in the instant between a switch and the other network's copy arriving the tab still shows the old network
+     * whole (its name with its money), then the new one whole: never one's balance under the other's label. A copy
+     * that says it is another network's (its row's `network`) is dropped rather than drawn.
+     */
+    private val networkSide = networks.selected.flatMapLatest { on ->
+        fun Wallet?.ofThis() = this?.takeIf { it.network == null || it.network == on }
+        combine(observeWallet(on), groupSide, switcherSide) { wallet, group, switcher ->
+            NetworkSide(
+                on, wallet.ofThis(),
+                group?.let { g -> if (g.wallet != null && g.wallet.ofThis() == null) g.copy(wallet = null, activity = emptyList()) else g },
+                switcher.first.mapValues { it.value.ofThis() }, switcher.second,
+            )
+        }
+    }
+
     val state: StateFlow<WalletUiState> = combine(
-        local, observeWallet(), connection.status, observeProfile(), repository.setupRequestedBy, groupSide, switcherSide, privacy.hidden,
+        local, networkSide, connection.status, observeProfile(), repository.setupRequestedBy, privacy.hidden, networks.state,
     ) { values ->
-        @Suppress("UNCHECKED_CAST")
         val ui = values[0] as WalletUiState
+        val side = values[1] as NetworkSide
         val online = values[2] == ConnectionStatus.Online
-        @Suppress("UNCHECKED_CAST")
-        val switcher = values[6] as Pair<Map<String?, Wallet?>, Set<String>>
+        val all = values[6] as WalletNetworksState
         ui.copy(
-            wallet = values[1] as Wallet?,
+            wallet = side.wallet,
             online = online,
             handle = (values[3] as com.circaso.feature.profile.domain.Profile?)?.handle,
             setupRequestedBy = values[4] as String?,
-            group = (values[5] as GroupWalletUiState?)?.copy(online = online),
-            balances = switcher.first,
-            lockedWallets = switcher.second,
-            hidden = values[7] as Boolean,
+            group = side.group?.copy(online = online),
+            balances = side.balances,
+            lockedWallets = side.locked,
+            hidden = values[5] as Boolean,
+            // The network of the data on screen (see [networkSide]), and the Testnet mark from that same data.
+            network = side.network,
+            networks = all.options.map { it.network },
+            testnet = all.known && side.network == WalletNetwork.TESTNET,
+            networkNotice = all.notice,
+            // What the server last said about this network's wallet, for a first visit with nothing read yet. A
+            // server without networks says nothing about it (its one entry is a stand-in).
+            networkWalletStatus = if (!all.known || all.legacy) null else all.statusOf(side.network),
         )
     // The first frame, before the phone's copy is read: the wallet's skeleton (loading), never "Couldn't open your
     // wallet", and the same wait for the remembered side as [local].
@@ -268,18 +321,41 @@ class WalletViewModel(
 
     init { refresh() }
 
+    /** The refresh under way, so a switch of network can drop it: its answer is for the network that was left. */
+    private var refreshing: kotlinx.coroutines.Job? = null
+
     /** [fromPull]: the person asked, so a failure is said out loud; the quiet background refreshes stay quiet. */
     fun refresh(fromPull: Boolean = false) {
         if (!local.value.selected.personal) refreshGroup()
         if (local.value.loading) return
         local.update { it.copy(loading = true, error = null) }
-        viewModelScope.launch {
+        refreshing = viewModelScope.launch {
+            // Which networks the person has, first: a network taken away is left before its wallet is asked for.
+            networks.refresh()
             val result = refreshWallet()
             if (groupWallets.isOn) sources?.refresh(null, null)
             loadMissingNetworks()
             local.update { it.copy(loading = false, error = (result as? AppResult.Failure)?.let { f -> ErrorMessages.forError(f.error) }?.takeIf { _ -> fromPull || state.value.wallet == null }) }
         }
     }
+
+    /**
+     * Mainnet | Testnet. Instant: every part of the tab already reads the picked network's copy from the phone (the
+     * repositories follow the selection), then it is refreshed. What belonged to the network that was left (an error,
+     * its missing chains, an open sheet, a refresh still in the air) goes with it. A first visit to a network with no
+     * wallet lands on the create screen, which says it is a separate wallet with its own PIN.
+     */
+    fun onNetwork(network: WalletNetwork) {
+        if (local.value.creating || local.value.addingNetworks || network == networks.current()) return
+        viewModelScope.launch {
+            if (!networks.select(network)) return@launch
+            refreshing?.cancel()
+            reselect { it.copy(loading = false, error = null, missingNetworks = emptyList(), offerBiometrics = false, receiveSheet = false, coming = null, switching = false, allGroups = false) }
+            refresh()
+        }
+    }
+
+    fun onNetworkNoticeShown() = networks.noticeShown()
 
     /** The picked group's CH7, W1 and W6. Its failure shows only while the phone has nothing of that wallet. */
     private fun refreshGroup() {

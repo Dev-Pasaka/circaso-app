@@ -71,6 +71,8 @@ fun GroupWalletSetupContent(
     val closable = state.problem != null
     CircasoScaffold(
         topBar = { CircasoNavBar(title = if (closable) name else "", onBack = if (closable) onOpenGroup else null) },
+        // The group's wallet is made on the selected network: a Testnet one says so before its PIN is set.
+        strip = { com.circaso.feature.wallet.presentation.TestnetStrip() },
     ) { padding ->
         val phase = when {
             state.problem != null -> "problem"

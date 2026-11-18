@@ -36,7 +36,7 @@ import org.koin.dsl.module
 val assistantModule = module {
     viewModel { com.circaso.feature.assistant.presentation.AshaVoiceViewModel(get(), get(), get()) }
     single { get<CircasoDatabase>().ashaDao() }
-    single<AshaRemote> { KtorAshaRemote(get(), get(), get(), get(), get()) }
+    single<AshaRemote> { KtorAshaRemote(get(), get(), get(), get(), get(), walletNetwork = get()) }
     // Replaced when messaging exists and chats can be searched on the phone.
     single<DeviceToolRunner> { NoChatsToolRunner }
     single { AshaDeleteMessageHandler(get()) } bind OutboxHandler::class

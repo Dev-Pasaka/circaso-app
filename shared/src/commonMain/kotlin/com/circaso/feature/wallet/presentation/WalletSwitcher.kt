@@ -119,13 +119,48 @@ internal fun shortWalletName(name: String): String {
  * the lift follows. Each side reads out as "Wallet: Personal" / "Wallet: Groups", a tab, selected or not.
  */
 @Composable
-fun WalletModeControl(groups: Boolean, onMode: (WalletMode) -> Unit, modifier: Modifier = Modifier) {
+fun WalletModeControl(groups: Boolean, onMode: (WalletMode) -> Unit, modifier: Modifier = Modifier, segmentMinWidth: androidx.compose.ui.unit.Dp? = null) {
+    TwoSegmentControl(
+        first = "Personal", second = "Groups", secondSelected = groups,
+        onSelect = { second -> onMode(if (second) WalletMode.Groups else WalletMode.Personal) },
+        describe = { "Wallet: $it" }, modifier = modifier, segmentMinWidth = segmentMinWidth,
+    )
+}
+
+/**
+ * A segment's least width when the network switch and Personal | Groups share the Wallet tab's row, so the two pills
+ * come out the same width, side by side or one above the other. 84 dp is about what the longest of the four words
+ * needs with its padding ("Personal", and "Testnet" with its dot) at the default text size; 80 dp would be under the
+ * words, and the pills would then differ. Two pills of 168 dp and their gap need 348 dp, so they sit side by side on
+ * a 393 dp phone and wider, and stack, deliberately, on a 360 dp phone (328 dp of room) and at large text: two full
+ * controls, each with its 44 dp targets, read better there than two squeezed ones.
+ */
+internal val PairedSegmentMinWidth = CircasoSpacing.s10 * 2 + CircasoSpacing.s1
+
+/**
+ * The two-word segmented pill both of the Wallet tab's switches are (Personal | Groups, Mainnet | Testnet): one
+ * drawing, one motion, one touch target, so the two read as a pair. [secondDot] puts a small dot in [dotColor] before
+ * the second word (Testnet's caution mark); it is drawn, never laid out, so the lift's maths is untouched.
+ */
+@Composable
+internal fun TwoSegmentControl(
+    first: String,
+    second: String,
+    secondSelected: Boolean,
+    onSelect: (second: Boolean) -> Unit,
+    describe: (String) -> String,
+    modifier: Modifier = Modifier,
+    secondDot: Boolean = false,
+    dotColor: androidx.compose.ui.graphics.Color = androidx.compose.ui.graphics.Color.Unspecified,
+    /** Wider segments than the words need, so two controls in one row come out the same width. */
+    segmentMinWidth: androidx.compose.ui.unit.Dp? = null,
+) {
     val c = CircasoTheme.colors
     val t = CircasoTheme.typography
     val still = CircasoTheme.reduceMotion
     // Critically damped: it glides to the side and stops, never past it; a second tap mid-slide turns it round.
     val at by animateFloatAsState(
-        if (groups) 1f else 0f,
+        if (secondSelected) 1f else 0f,
         if (still) snap() else spring(dampingRatio = 1f, stiffness = Spring.StiffnessMedium),
         label = "segment",
     )
@@ -146,7 +181,7 @@ fun WalletModeControl(groups: Boolean, onMode: (WalletMode) -> Unit, modifier: M
                 drawRoundRect(track, androidx.compose.ui.geometry.Offset(0f, top), androidx.compose.ui.geometry.Size(size.width, trackH), radius)
                 val inset = TrackInset.toPx()
                 val half = size.width / 2f
-                // Physical x: in RTL Personal (0) is the right half.
+                // Physical x: in RTL the first side (0) is the right half.
                 val x = (if (rtl) 1f - at else at) * half + inset
                 val liftSize = androidx.compose.ui.geometry.Size(half - inset * 2, trackH - inset * 2)
                 val liftRadius = androidx.compose.ui.geometry.CornerRadius(liftSize.height / 2f)
@@ -157,20 +192,32 @@ fun WalletModeControl(groups: Boolean, onMode: (WalletMode) -> Unit, modifier: M
             },
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        listOf(WalletMode.Personal to "Personal", WalletMode.Groups to "Groups").forEach { (mode, label) ->
-            val on = (mode == WalletMode.Groups) == groups
+        listOf(false to first, true to second).forEach { (isSecond, label) ->
+            val on = isSecond == secondSelected
             Box(
-                Modifier.weight(1f).widthIn(min = SegmentMinWidth).heightIn(min = TouchHeight * scale)
+                Modifier.weight(1f).widthIn(min = (segmentMinWidth ?: SegmentMinWidth) * scale.coerceAtMost(if (segmentMinWidth != null) 1.3f else 1f)).heightIn(min = TouchHeight * scale)
                     // The lift sliding across is the feedback: no ripple or press scale over the 44 dp target.
                     .selectable(
                         selected = on, role = Role.Tab, interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() },
-                        indication = null, onClick = { if (!on) onMode(mode) },
+                        indication = null, onClick = { if (!on) onSelect(isSecond) },
                     )
-                    .semantics(mergeDescendants = true) { contentDescription = "Wallet: $label" },
+                    .semantics(mergeDescendants = true) { contentDescription = describe(label) },
                 contentAlignment = Alignment.Center,
             ) {
+                val dotted = isSecond && secondDot
                 BasicText(
-                    label, Modifier.padding(horizontal = SegmentPadding),
+                    label,
+                    // The dot's own room is added before the word, so dot and word are centred in the segment as one.
+                    Modifier.padding(horizontal = SegmentPadding).padding(start = if (dotted) TestnetDot + SegmentDotGap else 0.dp).then(
+                        if (!dotted) Modifier else Modifier.drawBehind {
+                            // Before the word, in the reading direction, level with its middle.
+                            val r = TestnetDot.toPx() / 2f
+                            val gap = SegmentDotGap.toPx()
+                            val cx = if (rtl) size.width + gap + r else -gap - r
+                            // Softer while its side isn't selected, but never in high contrast, where it must hold 3:1.
+                            drawCircle(dotColor, r, androidx.compose.ui.geometry.Offset(cx, size.height / 2f), alpha = if (on || c.isHighContrast) 1f else 0.55f)
+                        },
+                    ),
                     style = t.footnote.copy(color = if (on) c.ink else c.inkSecondary, fontWeight = FontWeight.SemiBold, textAlign = TextAlign.Center),
                     maxLines = 1,
                 )
@@ -178,6 +225,9 @@ fun WalletModeControl(groups: Boolean, onMode: (WalletMode) -> Unit, modifier: M
         }
     }
 }
+
+/** The space between Testnet's dot ([TestnetDot], shared with the tag) and its word in the network switch. */
+private val SegmentDotGap = CircasoSpacing.s1
 
 /** What a group wallet lets this person do, in a few words (the menu's and the full list's second line). */
 internal fun walletLine(w: NamedWallet, locked: Boolean): String = when {

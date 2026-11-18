@@ -1,5 +1,8 @@
 package com.circaso.feature.chama.data.repository
 
+import com.circaso.feature.wallet.domain.PinnedNetwork
+import com.circaso.feature.wallet.domain.WalletNetwork
+import kotlinx.coroutines.withContext
 import com.circaso.core.common.AppResult
 import com.circaso.feature.chama.domain.ChamaRepository
 import com.circaso.feature.wallet.domain.Transfer
@@ -41,8 +44,10 @@ class GroupMoneyLive(
     suspend fun onSettled(transfer: Transfer) {
         if (!groupWallets()) return
         val chatId = transfer.toGroupId ?: transfer.fromGroupId ?: return
-        reload(chatId, transfer.walletId)
-        scope.launch { delay(againAfterMillis); reload(chatId, transfer.walletId) }
+        // The group's money on the payment's own network, whatever is on screen by now.
+        val on = PinnedNetwork(transfer.network)
+        withContext(on) { reload(chatId, transfer.walletId) }
+        scope.launch(on) { delay(againAfterMillis); reload(chatId, transfer.walletId) }
     }
 
     /** After [ChamaRepository.onFrame]: the group's money is fresh; bring its wallet's balance and history along. */
@@ -55,7 +60,14 @@ class GroupMoneyLive(
             else -> false
         }
         if (!moved) return
-        val walletId = chama.money(chatId).first()?.wallet?.walletId ?: return
+        val named = WalletNetwork.of(data["network"]?.jsonPrimitive?.contentOrNull)
+        if (named == null) { reloadWallet(chatId); return }
+        // The frame's network: its group wallet's balance and history, not the visible network's.
+        withContext(PinnedNetwork(named)) { reloadWallet(chatId, (chama.refreshMoney(chatId) as? AppResult.Success)?.value?.wallet?.walletId) }
+    }
+
+    private suspend fun reloadWallet(chatId: String, known: String? = null) {
+        val walletId = known ?: chama.money(chatId).first()?.wallet?.walletId ?: return
         wallet.refreshWallet(walletId)
         wallet.refreshActivity(walletId)
     }

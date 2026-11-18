@@ -9,9 +9,15 @@ import androidx.room.PrimaryKey
 import androidx.room.Query
 import kotlinx.coroutines.flow.Flow
 
-/** The last W1 answer as JSON, one row; the domain model is rebuilt from it so the schema never chases the API. */
+/** What a row from before wallet networks (DB v24) belongs to: everything then was Circle's testnet. */
+const val LegacyNetwork = "TESTNET"
+
+/**
+ * The last W1 answer as JSON, one row per wallet network (DB v24; it was a single row); the domain model is rebuilt
+ * from it so the schema never chases the API.
+ */
 @Entity(tableName = "wallet_snapshot")
-data class WalletSnapshotEntity(@PrimaryKey val id: Int = 1, val json: String, val fetchedAt: Long)
+data class WalletSnapshotEntity(@PrimaryKey @ColumnInfo(defaultValue = LegacyNetwork) val network: String, val json: String, val fetchedAt: Long)
 
 /** A payment this phone knows: made here (W4), read (W5), or heard of (`transfer.updated`, `payment.received`). */
 @Entity(tableName = "transfer")
@@ -46,21 +52,23 @@ data class TransferEntity(
     @ColumnInfo(defaultValue = "NULL") val payoutRequestId: String? = null,
     /** The other person on Circaso (either direction), so the row shows the name I saved for them (DB v22). */
     @ColumnInfo(defaultValue = "NULL") val counterpartUserId: String? = null,
+    /** The wallet network it moved on (DB v24): lists show one network's payments; a card finds its payment by id. */
+    @ColumnInfo(defaultValue = LegacyNetwork) val network: String = LegacyNetwork,
 )
 
 /** The last W1 answer for a group wallet, one row per wallet; the personal wallet stays in `wallet_snapshot`. */
-@Entity(tableName = "wallet_cache")
-data class WalletCacheEntity(@PrimaryKey val walletId: String, val json: String, val fetchedAt: Long)
+@Entity(tableName = "wallet_cache", primaryKeys = ["network", "walletId"])
+data class WalletCacheEntity(val walletId: String, val json: String, val fetchedAt: Long, @ColumnInfo(defaultValue = LegacyNetwork) val network: String = LegacyNetwork)
 
-/** The last W16 answer (every wallet the person can see), as JSON in one row. */
+/** The last W16 answer (every wallet the person can see), as JSON in one row per wallet network. */
 @Entity(tableName = "wallet_list")
-data class WalletListEntity(@PrimaryKey val id: Int = 1, val json: String, val fetchedAt: Long)
+data class WalletListEntity(@PrimaryKey @ColumnInfo(defaultValue = LegacyNetwork) val network: String, val json: String, val fetchedAt: Long)
 
 /**
  * A group wallet's history (W6 `?walletId=`), kept apart from the person's own payments: a contribution is one
  * transfer that is OUT of a personal wallet and IN to the group's, so the two lists can't share rows.
  */
-@Entity(tableName = "wallet_activity", primaryKeys = ["walletId", "rowId"])
+@Entity(tableName = "wallet_activity", primaryKeys = ["network", "walletId", "rowId"])
 data class WalletActivityEntity(
     val walletId: String,
     val rowId: String,
@@ -80,25 +88,30 @@ data class WalletActivityEntity(
     val chatId: String?,
     val txHash: String?,
     val occurredAt: Long,
+    @ColumnInfo(defaultValue = LegacyNetwork) val network: String = LegacyNetwork,
 )
 
+/**
+ * Every list and copy is one wallet network's ([network] is `MAINNET` or `TESTNET`), so switching shows the other
+ * network's copy at once and never mixes the two. A single payment is found by its id alone: ids are unique.
+ */
 @Dao
 interface WalletDao {
-    @Query("SELECT * FROM wallet_snapshot WHERE id = 1")
-    fun observeSnapshot(): Flow<WalletSnapshotEntity?>
+    @Query("SELECT * FROM wallet_snapshot WHERE network = :network")
+    fun observeSnapshot(network: String): Flow<WalletSnapshotEntity?>
 
-    @Query("SELECT * FROM wallet_snapshot WHERE id = 1")
-    suspend fun snapshot(): WalletSnapshotEntity?
+    @Query("SELECT * FROM wallet_snapshot WHERE network = :network")
+    suspend fun snapshot(network: String): WalletSnapshotEntity?
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun saveSnapshot(row: WalletSnapshotEntity)
 
-    /** The person's own payments: a group wallet's live elsewhere. */
-    @Query("SELECT * FROM transfer WHERE walletId IS NULL ORDER BY createdAt DESC")
-    fun observeTransfers(): Flow<List<TransferEntity>>
+    /** The person's own payments on one network: a group wallet's live elsewhere. */
+    @Query("SELECT * FROM transfer WHERE walletId IS NULL AND network = :network ORDER BY createdAt DESC")
+    fun observeTransfers(network: String): Flow<List<TransferEntity>>
 
-    @Query("SELECT * FROM transfer WHERE walletId = :walletId ORDER BY createdAt DESC")
-    fun observeTransfersOf(walletId: String): Flow<List<TransferEntity>>
+    @Query("SELECT * FROM transfer WHERE walletId = :walletId AND network = :network ORDER BY createdAt DESC")
+    fun observeTransfersOf(walletId: String, network: String): Flow<List<TransferEntity>>
 
     @Query("SELECT * FROM transfer WHERE transferId = :id")
     fun observeTransfer(id: String): Flow<TransferEntity?>
@@ -117,23 +130,23 @@ interface WalletDao {
     @Query("DELETE FROM transfer WHERE transferId = :id AND direction = 'In'")
     suspend fun deleteIncoming(id: String)
 
-    @Query("SELECT * FROM wallet_cache WHERE walletId = :walletId")
-    fun observeCached(walletId: String): Flow<WalletCacheEntity?>
+    @Query("SELECT * FROM wallet_cache WHERE walletId = :walletId AND network = :network")
+    fun observeCached(walletId: String, network: String): Flow<WalletCacheEntity?>
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun saveCached(row: WalletCacheEntity)
 
-    @Query("SELECT * FROM wallet_list WHERE id = 1")
-    fun observeList(): Flow<WalletListEntity?>
+    @Query("SELECT * FROM wallet_list WHERE network = :network")
+    fun observeList(network: String): Flow<WalletListEntity?>
 
-    @Query("SELECT * FROM wallet_list WHERE id = 1")
-    suspend fun list(): WalletListEntity?
+    @Query("SELECT * FROM wallet_list WHERE network = :network")
+    suspend fun list(network: String): WalletListEntity?
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun saveList(row: WalletListEntity)
 
-    @Query("SELECT * FROM wallet_activity WHERE walletId = :walletId ORDER BY occurredAt DESC")
-    fun observeActivity(walletId: String): Flow<List<WalletActivityEntity>>
+    @Query("SELECT * FROM wallet_activity WHERE walletId = :walletId AND network = :network ORDER BY occurredAt DESC")
+    fun observeActivity(walletId: String, network: String): Flow<List<WalletActivityEntity>>
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun saveActivity(rows: List<WalletActivityEntity>)

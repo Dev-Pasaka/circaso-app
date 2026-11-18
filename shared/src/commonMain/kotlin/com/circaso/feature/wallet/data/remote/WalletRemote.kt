@@ -4,7 +4,9 @@ import com.circaso.core.common.AppError
 import com.circaso.core.common.AppResult
 import com.circaso.core.flags.GroupWalletsFlag
 import com.circaso.core.network.CircasoApi
+import com.circaso.core.network.WalletNetworkGate
 import com.circaso.core.network.call
+import com.circaso.core.network.walletCall
 import com.circaso.core.network.idempotencyKey
 import io.ktor.client.request.HttpRequestBuilder
 import io.ktor.client.request.parameter
@@ -45,6 +47,12 @@ interface WalletRemote {
 
     /** W14: set up a group's wallet (the owner); run its challenge with its own `sdk`. */
     suspend fun setUpGroupWallet(chatId: String, idempotencyKey: String): AppResult<GroupWalletSetupResponse>
+
+    /**
+     * `GET /v1/wallet/networks`: the networks the person may use. A server from before networks answers
+     * `404 request.not_found`, which the caller reads as "one network, as before".
+     */
+    suspend fun networks(): AppResult<NetworksResponse> = AppResult.Failure(AppError.Api("request.not_found", 404, null, null, emptyMap()))
 }
 
 /**
@@ -52,7 +60,17 @@ interface WalletRemote {
  * `to.groupId`) is never sent to a server that hasn't shown it understands them, because an older server ignores them
  * and would act on the personal wallet instead. The group-wallet routes tell the flag what the server is.
  */
-class KtorWalletRemote(private val api: CircasoApi, private val groupWallets: GroupWalletsFlag = GroupWalletsFlag.off()) : WalletRemote {
+class KtorWalletRemote(
+    private val api: CircasoApi,
+    private val groupWallets: GroupWalletsFlag = GroupWalletsFlag.off(),
+    /** Every route here is wallet-scoped: each call says which network it is for. */
+    private val network: WalletNetworkGate = WalletNetworkGate.None,
+) : WalletRemote {
+    private suspend inline fun <reified T> call(noinline block: HttpRequestBuilder.() -> Unit): AppResult<T> = api.walletCall(network, block)
+
+    /** The one call that carries no network: it is how the app learns which there are. */
+    override suspend fun networks(): AppResult<NetworksResponse> = api.call<NetworksResponse> { method = HttpMethod.Get; url("/v1/wallet/networks") }
+
     /** The answer for a group-wallet call the server can't be trusted with yet: nothing was sent. */
     private fun <T> refused(): AppResult<T> = AppResult.Failure(AppError.Api(GroupWalletsUnavailable, 400, null, null, emptyMap()))
 
@@ -60,7 +78,7 @@ class KtorWalletRemote(private val api: CircasoApi, private val groupWallets: Gr
 
     override suspend fun wallet(currency: String?, walletId: String?): AppResult<WalletResponse> {
         if (walletId != null && !groupWallets.canSendWalletId) return refused()
-        return api.call<WalletResponse> {
+        return call<WalletResponse> {
             method = HttpMethod.Get
             url("/v1/wallet")
             currency?.let { parameter("currency", it) }
@@ -68,7 +86,7 @@ class KtorWalletRemote(private val api: CircasoApi, private val groupWallets: Gr
         }
     }
 
-    override suspend fun create(idempotencyKey: String) = api.call<CreateWalletResponse> {
+    override suspend fun create(idempotencyKey: String) = call<CreateWalletResponse> {
         method = HttpMethod.Post
         url("/v1/wallet")
         idempotencyKey(idempotencyKey)
@@ -76,7 +94,7 @@ class KtorWalletRemote(private val api: CircasoApi, private val groupWallets: Gr
 
     override suspend fun session(walletId: String?): AppResult<SdkDto> {
         if (walletId != null && !groupWallets.canSendWalletId) return refused()
-        return api.call<SdkDto> {
+        return call<SdkDto> {
             method = HttpMethod.Post
             url("/v1/wallet/session")
             wallet(walletId)
@@ -86,7 +104,7 @@ class KtorWalletRemote(private val api: CircasoApi, private val groupWallets: Gr
 
     override suspend fun chains(walletId: String?): AppResult<ChainsResponse> {
         if (walletId != null && !groupWallets.canSendWalletId) return refused()
-        return api.call<ChainsResponse> {
+        return call<ChainsResponse> {
             method = HttpMethod.Get
             url("/v1/wallet/chains")
             wallet(walletId)
@@ -95,7 +113,7 @@ class KtorWalletRemote(private val api: CircasoApi, private val groupWallets: Gr
 
     override suspend fun addMissingChains(idempotencyKey: String, walletId: String?): AppResult<AddMissingChainsResponse> {
         if (walletId != null && !groupWallets.canSendWalletId) return refused()
-        return api.call<AddMissingChainsResponse> {
+        return call<AddMissingChainsResponse> {
             method = HttpMethod.Post
             url("/v1/wallet/chains/missing")
             wallet(walletId)
@@ -103,7 +121,7 @@ class KtorWalletRemote(private val api: CircasoApi, private val groupWallets: Gr
         }
     }
 
-    override suspend fun addChain(blockchain: String, idempotencyKey: String) = api.call<AddChainResponse> {
+    override suspend fun addChain(blockchain: String, idempotencyKey: String) = call<AddChainResponse> {
         method = HttpMethod.Post
         url("/v1/wallet/chains")
         idempotencyKey(idempotencyKey)
@@ -114,7 +132,7 @@ class KtorWalletRemote(private val api: CircasoApi, private val groupWallets: Gr
     override suspend fun prepare(request: PrepareTransferRequest, idempotencyKey: String): AppResult<PrepareTransferResponse> {
         val groupShaped = request.walletId != null || request.payoutRequestId != null || request.to.groupId != null
         if (groupShaped && !groupWallets.canSendWalletId) return refused()
-        return api.call<PrepareTransferResponse> {
+        return call<PrepareTransferResponse> {
             method = HttpMethod.Post
             url("/v1/wallet/transfers")
             idempotencyKey(idempotencyKey)
@@ -126,7 +144,7 @@ class KtorWalletRemote(private val api: CircasoApi, private val groupWallets: Gr
     override suspend fun quote(request: PrepareTransferRequest, idempotencyKey: String): AppResult<QuoteTransferResponse?> {
         val groupShaped = request.walletId != null || request.to.groupId != null
         if (groupShaped && !groupWallets.canSendWalletId) return refused()
-        val answer = api.call<QuoteTransferResponse> {
+        val answer = call<QuoteTransferResponse> {
             method = HttpMethod.Post
             url("/v1/wallet/transfers/quote")
             idempotencyKey(idempotencyKey)
@@ -138,14 +156,14 @@ class KtorWalletRemote(private val api: CircasoApi, private val groupWallets: Gr
         return answer
     }
 
-    override suspend fun transfer(transferId: String) = api.call<TransferResponse> {
+    override suspend fun transfer(transferId: String) = call<TransferResponse> {
         method = HttpMethod.Get
         url("/v1/wallet/transfers/$transferId")
     }
 
     override suspend fun transactions(cursor: String?, limit: Int, walletId: String?): AppResult<TransactionsResponse> {
         if (walletId != null && !groupWallets.canSendWalletId) return refused()
-        return api.call<TransactionsResponse> {
+        return call<TransactionsResponse> {
             method = HttpMethod.Get
             url("/v1/wallet/transactions")
             cursor?.let { parameter("cursor", it) }
@@ -154,20 +172,20 @@ class KtorWalletRemote(private val api: CircasoApi, private val groupWallets: Gr
         }
     }
 
-    override suspend fun recipient(userId: String, blockchain: String?, chatId: String?) = api.call<RecipientResponse> {
+    override suspend fun recipient(userId: String, blockchain: String?, chatId: String?) = call<RecipientResponse> {
         method = HttpMethod.Get
         url("/v1/wallet/recipients/$userId")
         blockchain?.let { parameter("blockchain", it) }
         chatId?.let { parameter("chatId", it) }
     }
 
-    override suspend fun remind(userId: String, idempotencyKey: String) = api.call<RemindResponse> {
+    override suspend fun remind(userId: String, idempotencyKey: String) = call<RemindResponse> {
         method = HttpMethod.Post
         url("/v1/wallet/recipients/$userId/remind")
         idempotencyKey(idempotencyKey)
     }
 
-    override suspend fun validateAddress(request: ValidateAddressRequest) = api.call<ValidateAddressResponse> {
+    override suspend fun validateAddress(request: ValidateAddressRequest) = call<ValidateAddressResponse> {
         method = HttpMethod.Post
         url("/v1/wallet/addresses/validate")
         idempotencyKey(com.circaso.core.network.newIdempotencyKey())
@@ -177,12 +195,12 @@ class KtorWalletRemote(private val api: CircasoApi, private val groupWallets: Gr
 
     override suspend fun wallets(): AppResult<WalletsResponse> {
         if (!groupWallets.isOn) return refused()
-        return api.call<WalletsResponse> { method = HttpMethod.Get; url("/v1/wallets") }.also(::learn)
+        return call<WalletsResponse> { method = HttpMethod.Get; url("/v1/wallets") }.also(::learn)
     }
 
     override suspend fun groupWallet(chatId: String): AppResult<GroupWalletResponse> {
         if (!groupWallets.isOn) return refused()
-        return api.call<GroupWalletResponse> { method = HttpMethod.Get; url("/v1/wallet/groups/$chatId") }.also(::learn)
+        return call<GroupWalletResponse> { method = HttpMethod.Get; url("/v1/wallet/groups/$chatId") }.also(::learn)
     }
 
     override suspend fun setUpGroupWallet(chatId: String, idempotencyKey: String): AppResult<GroupWalletSetupResponse> {
@@ -191,7 +209,7 @@ class KtorWalletRemote(private val api: CircasoApi, private val groupWallets: Gr
             wallets()
             if (!groupWallets.canSendWalletId) return refused()
         }
-        return api.call<GroupWalletSetupResponse> {
+        return call<GroupWalletSetupResponse> {
             method = HttpMethod.Post
             url("/v1/wallet/groups/$chatId")
             idempotencyKey(idempotencyKey)

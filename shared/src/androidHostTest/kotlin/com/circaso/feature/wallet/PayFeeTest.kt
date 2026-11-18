@@ -119,7 +119,7 @@ class PayFeeTest {
 
     private val walletRepo = fake<WalletRepository> { name, args ->
         when (name) {
-            "getWallet" -> flowOf(wallet)
+            "getWallet", "walletOn" -> flowOf(wallet)
             "recipient" -> AppResult.Success(Recipient(args[0] as String, RecipientStatus.CanReceive, listOf("BASE-SEPOLIA")))
             "quote" -> { val r = args[0] as PaymentRequest; asked += r; answers[r.amountMinor] ?: fallback }
             "pay" -> { val r = args[0] as PaymentRequest; paid += r; payAnswer(r) }

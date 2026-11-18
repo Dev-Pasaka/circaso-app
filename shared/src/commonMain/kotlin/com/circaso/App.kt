@@ -88,7 +88,10 @@ fun App() {
         com.circaso.gallery.DebugFrame { com.circaso.designsystem.adaptive.ProvideWindowLayout {
             // Links open the Circaso way (core/web): web pages in the in-app browser drawn over everything here, other
             // apps' links (mail, phone, stores) in the system. Text links (Asha's answers) go through LocalUriHandler.
-            CompositionLocalProvider(LocalUriHandler provides CircasoUriHandler) {
+            // Test money on screen (the selected wallet network is Testnet): every money screen marks itself from this.
+            val walletNetworks: com.circaso.feature.wallet.domain.WalletNetworks = koinInject()
+            val networkState by walletNetworks.state.collectAsState()
+            CompositionLocalProvider(LocalUriHandler provides CircasoUriHandler, com.circaso.feature.wallet.presentation.LocalTestnet provides networkState.testnet) {
                 val browsing by InAppBrowser.page.collectAsState()
                 Box(Modifier.fillMaxSize()) {
                     // While a page is open, screen readers stay in the browser, not in the app underneath it.

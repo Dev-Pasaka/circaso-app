@@ -3,7 +3,8 @@ package com.circaso.feature.vault.data
 import com.circaso.core.common.AppResult
 import com.circaso.core.network.CircasoApi
 import com.circaso.core.network.NoBody
-import com.circaso.core.network.call
+import com.circaso.core.network.WalletNetworkGate
+import com.circaso.core.network.walletCall
 import com.circaso.core.network.idempotencyKey
 import io.ktor.client.request.setBody
 import io.ktor.client.request.url
@@ -45,18 +46,19 @@ interface VaultRemote {
     suspend fun remove(): AppResult<NoBody>
 }
 
-class KtorVaultRemote(private val api: CircasoApi) : VaultRemote {
-    override suspend fun status() = api.call<VaultStatusDto> {
+/** The vault is per wallet network (each network's wallet has its own PIN): every call says which. */
+class KtorVaultRemote(private val api: CircasoApi, private val network: WalletNetworkGate = WalletNetworkGate.None) : VaultRemote {
+    override suspend fun status() = api.walletCall<VaultStatusDto>(network) {
         method = HttpMethod.Get
         url("/v1/vault/status")
     }
 
-    override suspend fun open() = api.call<VaultDto> {
+    override suspend fun open() = api.walletCall<VaultDto>(network) {
         method = HttpMethod.Get
         url("/v1/vault")
     }
 
-    override suspend fun save(request: SaveVaultRequest, idempotencyKey: String) = api.call<VaultStatusDto> {
+    override suspend fun save(request: SaveVaultRequest, idempotencyKey: String) = api.walletCall<VaultStatusDto>(network) {
         method = HttpMethod.Put
         url("/v1/vault")
         idempotencyKey(idempotencyKey)
@@ -64,7 +66,7 @@ class KtorVaultRemote(private val api: CircasoApi) : VaultRemote {
         setBody(request)
     }
 
-    override suspend fun remove() = api.call<NoBody> {
+    override suspend fun remove() = api.walletCall<NoBody>(network) {
         method = HttpMethod.Delete
         url("/v1/vault")
         idempotencyKey(com.circaso.core.network.newIdempotencyKey())

@@ -18,6 +18,12 @@ data class Wallet(
     val canSign: Boolean = true,
     /** Why sending is held: `VAULT_OPENED`, or a recovery (`RELINKED`); null when not held or unknown. */
     val holdReason: String? = null,
+    /**
+     * The wallet network this copy is of, from the phone's row (wallet networks). A screen that shows a network's name
+     * beside a balance checks it, so one network's money is never drawn under the other's label; null from a caller
+     * that built the wallet by hand (tests, previews).
+     */
+    val network: WalletNetwork? = null,
 ) {
     val isGroup get() = owner?.type == WalletOwnerType.Group
 
@@ -109,6 +115,8 @@ data class Transfer(
     val counterpartUserId: String? = null,
     /** Their own name when [counterpartName] is one I saved for them: shown beside it wherever money is involved. */
     val counterpartOwnName: String? = null,
+    /** The wallet network it moved on; a row from before networks is Testnet's. */
+    val network: WalletNetwork = WalletNetwork.TESTNET,
 ) {
     val outgoing get() = direction == TransferDirection.Out
     val settled get() = state == TransferState.Confirmed
@@ -397,10 +405,19 @@ internal fun bigSubtract(a: String, b: String): String {
     return out.reverse().toString().trimStart('0').ifEmpty { "0" }
 }
 
-/** Chain names as people read them (`BASE-SEPOLIA` → "Base", with the testnet named when it is one). */
+/**
+ * Chain names as people read them (`BASE-SEPOLIA` → "Base", with the testnet named when it is one: `SEPOLIA`, `AMOY`,
+ * `DEVNET`, `FUJI`, `TESTNET`; see [isTestnetChain]). A Mainnet chain never carries the word.
+ */
 fun chainName(blockchain: String): String {
+    val base = chainBaseName(blockchain)
+    return if (isTestnetChain(blockchain)) "$base (testnet)" else base
+}
+
+/** The chain's name alone ("Base"), for places that say the network apart (a Testnet badge beside it). */
+fun chainBaseName(blockchain: String): String {
     val up = blockchain.uppercase()
-    val base = when {
+    return when {
         up.startsWith("BASE") -> "Base"
         up.startsWith("MATIC") || up.startsWith("POLYGON") -> "Polygon"
         up.startsWith("ETH") -> "Ethereum"
@@ -410,8 +427,6 @@ fun chainName(blockchain: String): String {
         up.startsWith("ARC") -> "Arc"
         else -> blockchain.lowercase().replaceFirstChar { it.uppercase() }
     }
-    val testnet = up.endsWith("SEPOLIA") || up.endsWith("AMOY") || up.endsWith("DEVNET") || up.endsWith("TESTNET")
-    return if (testnet) "$base (testnet)" else base
 }
 
 /** `0x7a3F…9c21E4b0`: enough of an address to recognise it, never the whole thing in a row. */

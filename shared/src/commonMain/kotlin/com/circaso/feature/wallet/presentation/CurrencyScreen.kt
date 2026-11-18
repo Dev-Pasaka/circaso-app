@@ -96,7 +96,7 @@ fun CurrencyContent(state: CurrencyUiState, onChoose: (String?) -> Unit, onBack:
     val c = CircasoTheme.colors
     val t = CircasoTheme.typography
     val inUse = state.inUse?.let(::currencyOption)
-    CircasoScaffold(grouped = true, topBar = { CircasoNavBar(title = "Currency", onBack = onBack) }) { padding ->
+    CircasoScaffold(grouped = true, topBar = { CircasoNavBar(title = "Currency", onBack = onBack) }, strip = { TestnetStrip(onGrouped = true) }) { padding ->
         LazyColumn(
             Modifier.fillMaxSize(),
             contentPadding = PaddingValues(start = CircasoSpacing.s4, end = CircasoSpacing.s4, top = CircasoSpacing.s3, bottom = padding.calculateBottomPadding() + CircasoSpacing.s4),

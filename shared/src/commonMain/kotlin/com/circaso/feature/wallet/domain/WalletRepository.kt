@@ -11,6 +11,12 @@ interface WalletRepository {
     /** The last wallet read, null before the first; `status` None until a wallet exists. */
     val wallet: Flow<Wallet?>
 
+    /**
+     * The phone's copy of the person's wallet on one network, whatever is selected: a payment under way reads the
+     * wallet of the network it is pinned to, and a screen pairs a balance with the network it belongs to.
+     */
+    fun walletOn(network: WalletNetwork): Flow<Wallet?> = wallet
+
     /** Transfers this phone knows, newest first. */
     val transfers: Flow<List<Transfer>>
 
@@ -70,6 +76,9 @@ interface WalletRepository {
 
     /** One wallet from the phone's copy; [walletId] null is the person's own. */
     fun walletOf(walletId: String?): Flow<Wallet?>
+
+    /** [walletOf] on one network, whatever is selected: what a payment pinned to that network pays from. */
+    fun walletOfOn(walletId: String?, network: WalletNetwork): Flow<Wallet?> = walletOf(walletId)
 
     /** W1 for one wallet (`?walletId=`); null is the person's own. */
     suspend fun refreshWallet(walletId: String?): AppResult<Wallet>
@@ -133,10 +142,19 @@ data class PaymentRequest(
     val toSpaceId: String? = null,
     /** SP13's membership quote: personal wallet only, exactly its amount (SM1). */
     val spacePaymentId: String? = null,
+    /**
+     * The wallet network this payment was reviewed on, fixed when the pay or send flow started: W4 and its PIN run
+     * for it alone, and if the selection has moved since, nothing is sent or signed. Null: the selected network.
+     */
+    val network: WalletNetwork? = null,
 )
 
 /** What stops a quoted payment as it is (W17 reports it; W4 would refuse it). */
-enum class QuoteProblem { InsufficientFunds, PerPaymentLimit, DailyLimit }
+enum class QuoteProblem {
+    InsufficientFunds, PerPaymentLimit, DailyLimit,
+    /** The wallet can't pay the chain's own network fee (Solana: paid in SOL by the person, never sponsored). */
+    InsufficientGas,
+}
 
 /**
  * W17's answer (phase 2F, spaces-plan §7b): the one Circaso fee for exactly this payment, in the payment's coin

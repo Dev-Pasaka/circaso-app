@@ -91,40 +91,50 @@ class MoneyMathTest {
         assertEquals("Base", chainName("BASE"))
         assertEquals("Polygon (testnet)", chainName("MATIC-AMOY"))
         assertEquals("Solana (testnet)", chainName("SOL-DEVNET"))
+        // Wallet networks: every test suffix is read (FUJI was missed), and a Mainnet chain never carries the word.
+        assertEquals("Avalanche (testnet)", chainName("AVAX-FUJI"))
+        assertEquals("Arc (testnet)", chainName("ARC-TESTNET"))
+        assertEquals("Ethereum (testnet)", chainName("ETH-SEPOLIA"))
+        listOf("BASE", "MATIC", "ETH", "SOL", "AVAX", "ARB").forEach { assertTrue("testnet" !in chainName(it).lowercase(), it) }
+        assertEquals("Polygon", chainName("MATIC")); assertEquals("Ethereum", chainName("ETH")); assertEquals("Solana", chainName("SOL"))
         assertEquals("0x7a3f…1e4b00", shortAddress("0x7a3f0000000000000000000000000000001e4b00"))
     }
 }
 
+/** Room's wallet tables in memory, keyed by wallet network exactly as the real ones are (DB v24). */
 internal class FakeWalletDao : WalletDao {
-    val snapshot = MutableStateFlow<WalletSnapshotEntity?>(null)
+    val snapshots = MutableStateFlow<Map<String, WalletSnapshotEntity>>(emptyMap())
     val transfers = MutableStateFlow<Map<String, TransferEntity>>(emptyMap())
-    val cached = MutableStateFlow<Map<String, com.circaso.feature.wallet.data.local.WalletCacheEntity>>(emptyMap())
-    val list = MutableStateFlow<com.circaso.feature.wallet.data.local.WalletListEntity?>(null)
+    val cached = MutableStateFlow<Map<Pair<String, String>, com.circaso.feature.wallet.data.local.WalletCacheEntity>>(emptyMap())
+    val lists = MutableStateFlow<Map<String, com.circaso.feature.wallet.data.local.WalletListEntity>>(emptyMap())
     val activity = MutableStateFlow<List<com.circaso.feature.wallet.data.local.WalletActivityEntity>>(emptyList())
-    override fun observeSnapshot(): Flow<WalletSnapshotEntity?> = snapshot
-    override suspend fun snapshot() = snapshot.value
-    override suspend fun saveSnapshot(row: WalletSnapshotEntity) { snapshot.value = row }
-    override fun observeTransfers(): Flow<List<TransferEntity>> = transfers.map { it.values.filter { t -> t.walletId == null }.sortedByDescending { t -> t.createdAt } }
-    override fun observeTransfersOf(walletId: String): Flow<List<TransferEntity>> = transfers.map { it.values.filter { t -> t.walletId == walletId }.sortedByDescending { t -> t.createdAt } }
-    override fun observeCached(walletId: String) = cached.map { it[walletId] }
-    override suspend fun saveCached(row: com.circaso.feature.wallet.data.local.WalletCacheEntity) { cached.value = cached.value + (row.walletId to row) }
-    override fun observeList() = list
-    override suspend fun list() = list.value
-    override suspend fun saveList(row: com.circaso.feature.wallet.data.local.WalletListEntity) { list.value = row }
-    override fun observeActivity(walletId: String) = activity.map { rows -> rows.filter { it.walletId == walletId }.sortedByDescending { it.occurredAt } }
+    override fun observeSnapshot(network: String): Flow<WalletSnapshotEntity?> = snapshots.map { it[network] }
+    override suspend fun snapshot(network: String) = snapshots.value[network]
+    override suspend fun saveSnapshot(row: WalletSnapshotEntity) { snapshots.value = snapshots.value + (row.network to row) }
+    override fun observeTransfers(network: String): Flow<List<TransferEntity>> =
+        transfers.map { it.values.filter { t -> t.walletId == null && t.network == network }.sortedByDescending { t -> t.createdAt } }
+    override fun observeTransfersOf(walletId: String, network: String): Flow<List<TransferEntity>> =
+        transfers.map { it.values.filter { t -> t.walletId == walletId && t.network == network }.sortedByDescending { t -> t.createdAt } }
+    override fun observeCached(walletId: String, network: String) = cached.map { it[network to walletId] }
+    override suspend fun saveCached(row: com.circaso.feature.wallet.data.local.WalletCacheEntity) { cached.value = cached.value + ((row.network to row.walletId) to row) }
+    override fun observeList(network: String) = lists.map { it[network] }
+    override suspend fun list(network: String) = lists.value[network]
+    override suspend fun saveList(row: com.circaso.feature.wallet.data.local.WalletListEntity) { lists.value = lists.value + (row.network to row) }
+    override fun observeActivity(walletId: String, network: String) =
+        activity.map { rows -> rows.filter { it.walletId == walletId && it.network == network }.sortedByDescending { it.occurredAt } }
     override suspend fun saveActivity(rows: List<com.circaso.feature.wallet.data.local.WalletActivityEntity>) {
-        val keys = rows.map { it.walletId to it.rowId }.toSet()
-        activity.value = activity.value.filter { (it.walletId to it.rowId) !in keys } + rows
+        val keys = rows.map { Triple(it.network, it.walletId, it.rowId) }.toSet()
+        activity.value = activity.value.filter { Triple(it.network, it.walletId, it.rowId) !in keys } + rows
     }
     override suspend fun clearCached() { cached.value = emptyMap() }
-    override suspend fun clearList() { list.value = null }
+    override suspend fun clearList() { lists.value = emptyMap() }
     override suspend fun clearActivity() { activity.value = emptyList() }
     override fun observeTransfer(id: String): Flow<TransferEntity?> = transfers.map { it[id] }
     override suspend fun transfer(id: String) = transfers.value[id]
     override fun observeTransfersIn(ids: List<String>): Flow<List<TransferEntity>> = transfers.map { m -> ids.mapNotNull { m[it] } }
     override suspend fun upsert(row: TransferEntity) { transfers.value = transfers.value + (row.transferId to row) }
     override suspend fun deleteIncoming(id: String) { if (transfers.value[id]?.direction == "In") transfers.value = transfers.value - id }
-    override suspend fun clearSnapshot() { snapshot.value = null }
+    override suspend fun clearSnapshot() { snapshots.value = emptyMap() }
     override suspend fun clearTransfers() { transfers.value = emptyMap() }
 }
 
@@ -287,6 +297,6 @@ class WalletRepositoryTest {
         assertEquals(TransferState.Confirmed, received.state)
 
         repo.onFrame("setup.requested", buildJsonObject { put("fromName", "Otieno") })
-        assertEquals("Otieno", repo.setupRequestedBy.value)
+        assertEquals("Otieno", repo.setupRequestedBy.first())
     }
 }

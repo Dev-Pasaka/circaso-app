@@ -52,14 +52,29 @@ class VaultRepository(
     private val writeCache: suspend (String?) -> Unit = {},
     /** Told the passkey's PRF secret right after it answered (the group key backup turns on with it, no extra prompt). */
     private val afterSecret: suspend (credentialId: ByteArray, secret: ByteArray) -> Unit = { _, _ -> },
+    /**
+     * Which wallet network's vault this is right now (each network's wallet has its own PIN, so its own vault slot;
+     * the server picks it from `X-Wallet-Network`). What is remembered is forgotten when it changes.
+     */
+    private val network: () -> String = { "" },
 ) {
     private val sealer = VaultCrypto(crypto)
     private val knownStatus = MutableStateFlow<VaultStatus?>(null)
     val known: StateFlow<VaultStatus?> = knownStatus
     private var cacheRead = false
+    private var knownFor: String? = null
 
-    /** The cached status from the last visit, once per app run. */
+    /** The other network's vault is another vault: nothing known about one is shown for the other. */
+    private fun follow() {
+        val on = network()
+        if (knownFor == on) return
+        if (knownFor != null) { knownStatus.value = null; cacheRead = false }
+        knownFor = on
+    }
+
+    /** The cached status from the last visit, once per app run (and again after a network switch). */
     suspend fun warm() {
+        follow()
         if (cacheRead) return
         cacheRead = true
         if (knownStatus.value != null) return
@@ -68,6 +83,7 @@ class VaultRepository(
     }
 
     private suspend fun remember(status: VaultStatus) {
+        follow()
         knownStatus.value = status
         writeCache((if (status.exists) "1" else "0") + "|" + (status.updatedAt ?: ""))
     }

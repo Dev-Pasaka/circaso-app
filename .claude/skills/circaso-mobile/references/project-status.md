@@ -192,6 +192,20 @@ Media3 1.4.1, multiplatform-markdown-renderer 0.46.0.
 - D-P6 The name is **Circaso** everywhere; never ship "CoinX".
 
 ### Money
+- D-M12 **Wallet networks** (Pasaka, 2026-11-18; branch `feat/wallet-networks`): one server, Circle Mainnet and
+  Testnet side by side, closed testing with real crypto. People with a Testnet wallet keep it and get a Mainnet |
+  Testnet switch in the Wallet tab; new people are Mainnet only and never see the switch or the word testnet. Mainnet
+  is a separate wallet with a new PIN. The app sends `X-Wallet-Network`, keeps every copy of money per network (Room
+  v24, old rows are Testnet's), pins a payment to the network it was reviewed on, and works unchanged against a server
+  without `GET /v1/wallet/networks` (404: one network, no switch, no header). Solana: no Circaso fee, the network fee
+  in SOL. The API host is `https://api.circaso.com` (same server as `sandbox.circaso.com`). See `app-architecture.md`
+  → "Wallet networks". Previews `-preview=wallet-network-mainnet|wallet-network-testnet|wallet-network-groups|wallet-network-groups-testnet|wallet-network-create-mainnet|wallet-network-create-testnet|wallet-network-offline|wallet-testnet-only|wallet-mainnet-only|gw-pay-sol|gw-pay-sol-gas|gw-send-sol-gas|gw-pay-testnet`.
+  Decided in the design review (2026-11-18): **old Testnet cards and receipts stay marked "Testnet" for someone who
+  later becomes Mainnet only** (honest about that money; hiding it would make test money read as real); Pay and Send
+  show the network they are pinned to; the gas error is one code, `wallet.insufficient_gas`, and one W17 `problem`,
+  `INSUFFICIENT_GAS`.
+  **Not verified yet:** against a server with networks (built to the contract before the backend was live), on a
+  device, and the design-reviewer pass on the new switch and Testnet marks.
 - D-M1 Circle user-controlled wallets: the server makes challenges, the person signs with a PIN in Circle's SDK; the
   server never holds keys. Testnet on dev (Base Sepolia default, USDC). Circle's own social login removed.
 - D-M2 Amounts are decimal strings, never floats. Fiat is the phone's region currency (USDC = 1 USD), credited "Rates by Exchange Rate API".

@@ -110,15 +110,14 @@ private class FakeLinks : PendingLinks {
 }
 
 private class FakeDao : ChamaDao {
-    val rows = MutableStateFlow<Map<String, ChamaSnapshotEntity>>(emptyMap())
-    override fun observe(chatId: String): Flow<ChamaSnapshotEntity?> = rows.map { it[chatId] }
-    override suspend fun save(row: ChamaSnapshotEntity) { rows.value = rows.value + (row.chatId to row) }
-    override suspend fun delete(chatId: String) { rows.value = rows.value - chatId }
+    val rows = MutableStateFlow<Map<Pair<String, String>, ChamaSnapshotEntity>>(emptyMap())
+    override fun observe(chatId: String, network: String): Flow<ChamaSnapshotEntity?> = rows.map { it[network to chatId] }
+    override suspend fun save(row: ChamaSnapshotEntity) { rows.value = rows.value + ((row.network to row.chatId) to row) }
+    override suspend fun delete(chatId: String, network: String) { rows.value = rows.value - (network to chatId) }
     override suspend fun clearAll() { rows.value = emptyMap() }
-    val money = MutableStateFlow<Map<String, com.circaso.feature.chama.data.local.GroupMoneyEntity>>(emptyMap())
-    override fun observeMoney(chatId: String) = money.map { it[chatId] }
-    override fun observeAllMoney() = money.map { it.values.toList() }
-    override suspend fun saveMoney(row: com.circaso.feature.chama.data.local.GroupMoneyEntity) { money.value = money.value + (row.chatId to row) }
+    val money = MutableStateFlow<Map<Pair<String, String>, com.circaso.feature.chama.data.local.GroupMoneyEntity>>(emptyMap())
+    override fun observeMoney(chatId: String, network: String) = money.map { it[network to chatId] }
+    override suspend fun saveMoney(row: com.circaso.feature.chama.data.local.GroupMoneyEntity) { money.value = money.value + ((row.network to row.chatId) to row) }
     override suspend fun clearMoney() { money.value = emptyMap() }
 }
 

@@ -40,7 +40,7 @@ class PayoutWaitsTest {
     private val repo = Proxy.newProxyInstance(WalletRepository::class.java.classLoader, arrayOf(WalletRepository::class.java)) { _, method, args ->
         val list = args.orEmpty().toList().filterNot { it is kotlin.coroutines.Continuation<*> }
         when (method.name) {
-            "walletOf" -> flowOf(groupWallet)
+            "walletOf", "walletOfOn" -> flowOf(groupWallet)
             "quote" -> { asked += "quote" to (list[0] as PaymentRequest); answer }
             "hashCode" -> 0
             "toString" -> "fake"

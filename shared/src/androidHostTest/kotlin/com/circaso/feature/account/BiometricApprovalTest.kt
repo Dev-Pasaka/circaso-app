@@ -53,7 +53,7 @@ class BiometricApprovalTest {
 
     private val repo = Proxy.newProxyInstance(WalletRepository::class.java.classLoader, arrayOf(WalletRepository::class.java)) { _, method, _ ->
         when (method.name) {
-            "getWallet" -> wallet
+            "getWallet", "walletOn" -> wallet
             else -> error("not used: ${method.name}")
         }
     } as WalletRepository
