@@ -124,6 +124,8 @@ data class ChatInfoRoute(val chatId: String, val security: Boolean = false) : Ro
 data class PayRoute(
     val userId: String? = null, val chatId: String? = null, val displayName: String? = null, val amount: String? = null, val address: String? = null,
     val goalName: String? = null, val requestId: String? = null, val groupId: String? = null, val fromWalletId: String? = null, val note: String? = null,
+    /** A group's money on one named network (opened from that network's group wallet); null: the group's own, by the rule. */
+    val network: String? = null,
 ) : Route
 
 /** Set up (or finish setting up) a group's wallet (GW2–GW5c), carrying what New Group chose (GW1b). */
@@ -131,15 +133,24 @@ data class PayRoute(
 data class GroupWalletSetupRoute(
     val chatId: String, val approvalPolicy: String? = null, val targetMinor: String? = null, val targetName: String? = null, val deadline: String? = null,
     val thenTarget: Boolean = false,
+    /**
+     * The network the wallet is made on, fixed when the set-up opens (`groupNetwork`: Mainnet whenever the person may
+     * use it, the network of a set-up already started, or MAINNET for an old group's second wallet). Never picked.
+     */
+    val network: String? = null,
 ) : Route
 
 /** A group's own wallet, pushed (group info, the goal strip): the Wallet tab's own design with that wallet on screen. */
 @Serializable
-data class GroupWalletRoute(val chatId: String) : Route
+data class GroupWalletRoute(
+    val chatId: String,
+    /** One of a group's two wallets, by its network; null is the group's own network by the rule (`groupNetwork`). */
+    val network: String? = null,
+) : Route
 
 /** Add or change a group's target (GW7b). */
 @Serializable
-data class TargetRoute(val chatId: String, val walletReady: Boolean = false) : Route
+data class TargetRoute(val chatId: String, val walletReady: Boolean = false, val network: String? = null) : Route
 
 /** Send to an outside wallet address (design E5); from a group wallet its owner signs for ([fromWalletId], 2026-11-06). */
 @Serializable

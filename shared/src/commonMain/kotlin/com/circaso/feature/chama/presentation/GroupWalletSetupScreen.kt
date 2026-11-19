@@ -71,8 +71,8 @@ fun GroupWalletSetupContent(
     val closable = state.problem != null
     CircasoScaffold(
         topBar = { CircasoNavBar(title = if (closable) name else "", onBack = if (closable) onOpenGroup else null) },
-        // The group's wallet is made on the selected network: a Testnet one says so before its PIN is set.
-        strip = { com.circaso.feature.wallet.presentation.TestnetStrip() },
+        // The mark is the set-up's own network's (never the Wallet tab's): a Testnet wallet says so before its PIN is set.
+        strip = { com.circaso.feature.wallet.presentation.TestnetStrip(show = state.testnet) },
     ) { padding ->
         val phase = when {
             state.problem != null -> "problem"
@@ -107,7 +107,7 @@ private fun Steps(state: GroupWalletSetupState, name: String) {
     Spacer(Modifier.height(120.dp))
     Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(22.dp)) {
         WalletAvatar(name, state.avatarUrl, group = true)
-        BasicText("Setting up $name’s wallet", Modifier.semantics { heading() }, style = t.title2.copy(color = c.ink, textAlign = TextAlign.Center))
+        BasicText(state.network?.let { "Setting up $name’s ${it.label} wallet" } ?: "Setting up $name’s wallet", Modifier.semantics { heading() }, style = t.title2.copy(color = c.ink, textAlign = TextAlign.Center))
         Column(Modifier.semantics(mergeDescendants = true) { liveRegion = LiveRegionMode.Polite }, verticalArrangement = Arrangement.spacedBy(10.dp)) {
             StepLine(if (state.pinSet) "PIN set" else "Set the wallet’s PIN", done = state.pinSet, running = state.step == SetupStep.Pin)
             StepLine(if (state.created) "Wallet created" else "Creating the wallet", done = state.created, running = state.step == SetupStep.Creating)

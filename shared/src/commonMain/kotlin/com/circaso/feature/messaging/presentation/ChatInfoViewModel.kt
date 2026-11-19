@@ -115,8 +115,9 @@ data class ChatInfoUiState(
     val leavingBlocked: Boolean get() {
         val m = money.money ?: return false
         if (!money.enabled || !m.isSigner || !m.hasWallet) return false
-        val held = money.balance?.totals.orEmpty().any { !com.circaso.feature.wallet.domain.MinorUnits.isZero(it.amountMinor) }
-        return held
+        // A group with a wallet on each network: money in either one would be locked by leaving.
+        val copies = listOfNotNull(money.balance) + money.wallets.mapNotNull { it.balance }
+        return copies.any { w -> w.totals.any { !com.circaso.feature.wallet.domain.MinorUnits.isZero(it.amountMinor) } }
     }
     val moneyBalanceText: String? get() = money.balance?.usdc?.let { com.circaso.feature.chama.presentation.amountText(it.amountMinor, money.balance.fiat) }
     /** Text messages containing the query, newest first. */
@@ -346,11 +347,11 @@ class ChatInfoViewModel(
         val source = groupMoney ?: return
         val s = _state.value
         val walletId = s.money.money?.wallet?.walletId ?: return
-        if (!on) { viewModelScope.launch { source.turnOffBiometrics(walletId) }; return }
+        if (!on) { viewModelScope.launch { source.turnOffBiometrics(chatId, walletId) }; return }
         if (!s.canChange) return
         _state.update { it.copy(busy = true) }
         viewModelScope.launch {
-            val r = source.turnOnBiometrics(walletId, s.chat?.title ?: "the group")
+            val r = source.turnOnBiometrics(chatId, walletId, s.chat?.title ?: "the group")
             val cancelled = ((r as? AppResult.Failure)?.error as? com.circaso.core.common.AppError.Api)?.code == "wallet.cancelled"
             _state.update { it.copy(busy = false, message = (r as? AppResult.Failure)?.takeIf { !cancelled }?.let { f -> withRef(f.error) }) }
         }

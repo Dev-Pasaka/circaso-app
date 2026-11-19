@@ -152,9 +152,12 @@ internal class FakeWalletRemote : WalletRemote {
     val missingFor = mutableListOf<String?>()
     var setups = 0
     var groupBalance = "50000000"
+    /** W16's group rows when a test sets them (a network's own groups); null keeps the two below. */
+    var groupListings: List<com.circaso.feature.wallet.data.remote.WalletListingDto>? = null
+    var listReads = 0
     override suspend fun wallets() = AppResult.Success(
         com.circaso.feature.wallet.data.remote.WalletsResponse(
-            listOf(
+            groupListings?.let { listReads++; listOf(com.circaso.feature.wallet.data.remote.WalletListingDto("me", com.circaso.feature.wallet.data.remote.WalletOwnerDto("PERSON", userId = "me", signerUserId = "me"), status, true, emptyList())) + it } ?: listOf(
                 com.circaso.feature.wallet.data.remote.WalletListingDto("me", com.circaso.feature.wallet.data.remote.WalletOwnerDto("PERSON", userId = "me", signerUserId = "me"), status, true, listOf("BASE-SEPOLIA")),
                 com.circaso.feature.wallet.data.remote.WalletListingDto("gw-1", com.circaso.feature.wallet.data.remote.WalletOwnerDto("GROUP", chatId = "g1", signerUserId = "me"), "ACTIVE", true, listOf("BASE-SEPOLIA")),
                 com.circaso.feature.wallet.data.remote.WalletListingDto("gw-2", com.circaso.feature.wallet.data.remote.WalletOwnerDto("GROUP", chatId = "g2", signerUserId = "amina"), "ACTIVE", false, listOf("BASE-SEPOLIA")),

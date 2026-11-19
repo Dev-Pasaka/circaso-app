@@ -70,6 +70,7 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import com.circaso.feature.wallet.domain.pinnedTo
 
 data class GroupWalletUiState(
     val chat: Chat? = null,
@@ -172,7 +173,13 @@ class GroupWalletViewModel(
     private val reader: GroupWalletReader,
     connection: ConnectionState,
     private val privacy: com.circaso.feature.wallet.presentation.BalancePrivacy = com.circaso.feature.wallet.presentation.BalancePrivacy(),
+    /**
+     * The network this group's wallet is on (`groupNetwork`, or the one of two the person opened): everything here is
+     * read and asked for it, whatever the Wallet tab shows. Null follows the selection (before networks).
+     */
+    val network: com.circaso.feature.wallet.domain.WalletNetwork? = null,
 ) : ViewModel() {
+    private val scope = viewModelScope.pinnedTo(network)
     private val local = MutableStateFlow(GroupWalletUiState(myUserId = reader.myUserId))
 
     /** Hide balances, shared with the Wallet tab. */
@@ -180,14 +187,16 @@ class GroupWalletViewModel(
     fun onToggleHidden() = privacy.toggle()
 
     val state: StateFlow<GroupWalletUiState> = combine(local, reader.observe(chatId), connection.status) { ui, d, c ->
-        ui.copy(chat = d.chat, money = d.money, wallet = d.wallet, activity = d.activity, online = c == ConnectionStatus.Online)
-    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), local.value)
+        // A copy that says it is another network's is never drawn here.
+        val wallet = d.wallet?.takeIf { network == null || it.network == null || it.network == network }
+        ui.copy(chat = d.chat, money = d.money, wallet = wallet, activity = if (wallet == null && d.wallet != null) emptyList() else d.activity, online = c == ConnectionStatus.Online)
+    }.stateIn(scope, SharingStarted.WhileSubscribed(5_000), local.value)
 
     init { refresh() }
 
     fun refresh() {
         local.update { it.copy(loading = true) }
-        viewModelScope.launch {
+        scope.launch {
             val f = reader.refresh(chatId) as? AppResult.Failure
             local.update { it.copy(loading = false, error = f?.let { e -> ErrorMessages.forError(e.error) }, reference = f?.let { e -> ErrorMessages.reference(e.error) }) }
         }
@@ -197,7 +206,7 @@ class GroupWalletViewModel(
     fun onDecide(request: ChamaRequest, approve: Boolean) {
         if (local.value.busy || !state.value.online) return
         local.update { it.copy(busy = true) }
-        viewModelScope.launch {
+        scope.launch {
             val r = reader.decide(request, approve)
             local.update { it.copy(busy = false, message = (r as? AppResult.Failure)?.let(::decideFailed)) }
         }

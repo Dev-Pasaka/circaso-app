@@ -56,12 +56,14 @@ class ChamaRepositoryImpl(
     private val groupWallets: () -> Boolean = { false },
     /** A group's money is per wallet network: the copies are keyed on it and follow the selected one. */
     private val networks: com.circaso.feature.wallet.domain.WalletNetworks = com.circaso.feature.wallet.domain.WalletNetworks.Single,
+    /** The network a group's money is on (`groupNetwork`), for a frame that doesn't name one; null: the selected one. */
+    private val groupNetworkOf: (chatId: String) -> com.circaso.feature.wallet.domain.WalletNetwork? = { null },
 ) : ChamaRepository {
     private val linking = Mutex()
 
     /** The copy, with any payment still being linked shown on its request, so nobody is offered to pay it again. */
     @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
-    override fun chama(chatId: String): Flow<Chama?> = combine(networks.selected.flatMapLatest { dao.observe(chatId, it.wire) }, links.pendingLinks) { row, pending ->
+    override fun chama(chatId: String): Flow<Chama?> = combine(networks.followed.flatMapLatest { dao.observe(chatId, it.wire) }, links.pendingLinks) { row, pending ->
         row?.let { decode(it) }?.let { c ->
             c.copy(openRequests = c.openRequests.map { r -> if (r.transferId == null) pending[r.requestId]?.let { r.copy(transferId = it.second) } ?: r else r })
         }
@@ -125,8 +127,8 @@ class ChamaRepositoryImpl(
 
     override suspend fun onFrame(type: String, data: JsonObject?) {
         val chatId = data?.get("chatId")?.jsonPrimitive?.contentOrNull ?: return
-        // A frame says which network's money moved; without one (an older server) it is the selected network's.
-        val network = com.circaso.feature.wallet.domain.WalletNetwork.of(data["network"]?.jsonPrimitive?.contentOrNull) ?: networks.effective()
+        // A frame says which network's money moved; without one it is the group's own network (else the selected one).
+        val network = com.circaso.feature.wallet.domain.WalletNetwork.of(data["network"]?.jsonPrimitive?.contentOrNull) ?: groupNetworkOf(chatId) ?: networks.effective()
         withContext(com.circaso.feature.wallet.domain.PinnedNetwork(network)) { handleFrame(type, chatId) }
     }
 
@@ -142,7 +144,7 @@ class ChamaRepositoryImpl(
     }
 
     @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
-    override fun money(chatId: String): Flow<GroupMoney?> = networks.selected.flatMapLatest { dao.observeMoney(chatId, it.wire) }.map { row ->
+    override fun money(chatId: String): Flow<GroupMoney?> = networks.followed.flatMapLatest { dao.observeMoney(chatId, it.wire) }.map { row ->
         row?.let { runCatching { json.decodeFromString(GroupMoneyResponse.serializer(), it.json).toDomain(it.fetchedAt) }.getOrNull() }
     }
 

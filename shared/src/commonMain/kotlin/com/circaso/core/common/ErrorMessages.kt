@@ -87,6 +87,8 @@ object ErrorMessages {
         "wallet.cancelled" to "Nothing was sent.",
         // wallet networks (2026-11-18)
         "wallet.network_unavailable" to "That network isn't available on your account.",
+        // W14 on Testnet for a group with no Testnet wallet, when its owner may use Mainnet (2026-11-19).
+        "wallet.group_mainnet_only" to "New group wallets are made on Mainnet.",
         "wallet.network_changed" to "You switched networks while this payment was open. Nothing was sent. Go back and start it again.",
         // Solana: the person pays the network fee in SOL themselves (no Circaso fee, no sponsored gas there).
         "wallet.insufficient_gas" to "You need a little SOL in this wallet to pay Solana's network fee. Nothing was sent.",

@@ -85,6 +85,10 @@ fun ChatInfoScreen(
     onOpenMessage: (localId: Long) -> Unit = {},
     /** Group wallets: set up (or finish) the group's wallet (GW2–GW5); [thenTarget] ends on the target form (GW7). */
     onSetUpWallet: (thenTarget: Boolean) -> Unit = {},
+    /** A group with a wallet on each network: open the one on this network. */
+    onGroupWalletOn: (com.circaso.feature.wallet.domain.WalletNetwork) -> Unit = {},
+    /** An old group's owner adds (or finishes) its Mainnet wallet. */
+    onAddMainnetWallet: () -> Unit = {},
     /** Group wallets: add or change the target (GW7b). */
     onTarget: () -> Unit = {},
     /** The group wallet's owner (2026-11-06): pay from it, or send it to an outside address. */
@@ -325,6 +329,7 @@ fun ChatInfoScreen(
                                     onBiometrics = viewModel::onWalletBiometrics, onChangePin = { viewModel.onMoneySheet(MoneySheet.ChangePin) },
                                     onApprovals = { viewModel.onMoneySheet(MoneySheet.Approvals) }, onRetry = viewModel::onRetryMoney,
                                     onPay = onPayFromWallet, onSendToWallet = onSendToWallet,
+                                    onOpenWalletOn = onGroupWalletOn, onAddMainnetWallet = onAddMainnetWallet,
                                 ),
                             )
                         }

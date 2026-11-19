@@ -74,6 +74,14 @@ val walletModule = module {
         names = get(),
     ) }
     single<WalletRepository> { get<WalletRepositoryImpl>() }
+    // Group wallets and networks (2026-11-19): which network each group's money is on, from the per-network W16 copies.
+    single {
+        com.circaso.feature.wallet.domain.GroupNetworks(
+            networks = get(), listingsOn = { network -> get<WalletRepository>().walletsOn(network) },
+            refreshListings = { if (get<com.circaso.core.flags.GroupWalletsFlag>().isOn) get<WalletRepository>().refreshWallets() else com.circaso.core.common.AppResult.Success(Unit) },
+            scope = get(),
+        )
+    }
     factory { ObserveWalletUseCase(get()) }
     factory { RefreshWalletUseCase(get()) }
     factory { CreateWalletUseCase(get()) }
@@ -103,11 +111,14 @@ val walletModule = module {
     viewModel { com.circaso.feature.account.presentation.BiometricApprovalViewModel(get(), get(), get(), get(), networks = get()) }
     viewModel { WalletViewModel(get(), get(), get(), get(), get(), get(), getChains = get(), addMissingChains = get(), groupWallets = get(), sources = get(), groupReader = get(), privacy = get(),
         choices = get<com.circaso.core.datastore.AppPreferences>().let { p -> com.circaso.feature.wallet.presentation.WalletChoiceStore.of(p::text, p::setText) },
-        networks = get()) }
+        networks = get(), groupNetworks = get()) }
     single { com.circaso.feature.wallet.presentation.BalancePrivacy() }
     viewModel { com.circaso.feature.wallet.presentation.CurrencyViewModel(get(), get()) }
-    viewModel { (blockchain: String?, symbol: String?, walletId: String?) -> ActivityViewModel(get(), get(), blockchain, symbol, walletId, get(), get(), get(), loadPage = get(), connection = get()) }
-    viewModel { (blockchain: String, walletId: String?) -> com.circaso.feature.wallet.presentation.NetworkAssetsViewModel(get(), blockchain, walletId, get()) }
+    viewModel { (blockchain: String?, symbol: String?, walletId: String?) -> ActivityViewModel(get(), get(), blockchain, symbol, walletId, get(), get(), get(), loadPage = get(), connection = get(),
+        // A group wallet is on one network: its payments are that network's, whatever is selected.
+        network = walletId?.let { get<com.circaso.feature.wallet.domain.GroupNetworks>().ofWalletNow(it) }) }
+    viewModel { (blockchain: String, walletId: String?) -> com.circaso.feature.wallet.presentation.NetworkAssetsViewModel(get(), blockchain, walletId, get(),
+        network = walletId?.let { get<com.circaso.feature.wallet.domain.GroupNetworks>().ofWalletNow(it) }) }
     viewModel { (transferId: String) -> TransferViewModel(transferId, get(), get(), get(), get()) }
     viewModel { NetworksViewModel(get(), get(), get()) }
     viewModel { (intent: PayIntent) ->
@@ -117,12 +128,12 @@ val walletModule = module {
         PayViewModel(intent, get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), scanner = get(), findHandle = { profiles.findByHandle(it) }, groupWallets = get(), wallets = get(), observeTransfer = get(), quotePayment = get(),
             refreshPrices = { id -> if (id == null) refreshWallet() else refreshWalletOf(id) },
             observeMe = profiles.profile.map { p -> p?.let { com.circaso.feature.contacts.domain.Person(it.userId, it.displayName, it.handle, it.avatarUrl, it.about) } },
-            networks = get())
+            networks = get(), groupNetworks = get())
     }
     factory {
         com.circaso.feature.wallet.presentation.GroupWalletSources(
             get(), get(), get(), get(), get(), get(), get(), get(), get(),
         )
     }
-    viewModel { (fromWalletId: String?) -> SendToWalletViewModel(get(), get(), get(), get(), scanner = get(), fromWalletId = fromWalletId, wallets = get(), quotePayment = get(), sendCard = get(), networks = get()) }
+    viewModel { (fromWalletId: String?) -> SendToWalletViewModel(get(), get(), get(), get(), scanner = get(), fromWalletId = fromWalletId, wallets = get(), quotePayment = get(), sendCard = get(), networks = get(), groupNetworks = get()) }
 }

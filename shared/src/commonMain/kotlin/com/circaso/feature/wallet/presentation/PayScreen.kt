@@ -307,6 +307,9 @@ private fun AmountStep(state: PayUiState, padding: PaddingValues, onAmount: (Str
 
         CircasoTextField(state.note, onNote, label = "Note", placeholder = "What's it for?", enabled = state.step == PayStep.Amount)
 
+        // The person's own wallet on this payment's network isn't set up yet: said plainly, where the payee's problems are said.
+        state.needsWalletLine?.let { com.circaso.designsystem.chrome.Banner(it, CircasoIcon.Wallet, tone = com.circaso.designsystem.chrome.BannerTone.Warning) }
+
         when (val p = state.problem) {
             PayeeProblem.NoWallet -> Problem(
                 "${payee?.displayName?.substringBefore(' ') ?: "They"} hasn't set up a wallet yet.",

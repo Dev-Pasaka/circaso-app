@@ -1,5 +1,6 @@
 package com.circaso.feature.wallet.presentation
 
+import com.circaso.feature.wallet.domain.pinnedTo
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.circaso.core.common.AppResult
@@ -139,7 +140,10 @@ class ActivityViewModel(
     /** W6 a page at a time; null (previews, tests) reads nothing and the phone's copy is all there is. */
     private val loadPage: com.circaso.feature.wallet.domain.LoadActivityPageUseCase? = null,
     connection: ConnectionState? = null,
+    /** A group wallet's own network (a wallet is on one): its payments are read and asked for it. Null follows the selection. */
+    network: com.circaso.feature.wallet.domain.WalletNetwork? = null,
 ) : ViewModel() {
+    private val scope = viewModelScope.pinnedTo(network)
     private data class Paging(
         val read: Boolean = false, val error: String? = null, val errorRef: String? = null, val cursor: String? = null,
         val loadingMore: Boolean = false, val refreshing: Boolean = false, val moreFailed: Boolean = false,
@@ -171,12 +175,12 @@ class ActivityViewModel(
             errorRef = p.errorRef, moreFailed = p.moreFailed,
             today = com.circaso.core.platform.localDayIndex(com.circaso.core.sync.nowMillis()),
         )
-    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), ActivityUiState(blockchain = blockchain, symbol = symbol, groupWallet = group))
+    }.stateIn(scope, SharingStarted.WhileSubscribed(5_000), ActivityUiState(blockchain = blockchain, symbol = symbol, groupWallet = group))
 
     init {
         refresh()
         // Back online: an older page that failed may be tried again (the scroll position asks for it).
-        viewModelScope.launch {
+        scope.launch {
             online.distinctUntilChanged().collect { o -> isOnline = o; if (o) paging.update { it.copy(moreFailed = false) } }
         }
     }
@@ -191,7 +195,7 @@ class ActivityViewModel(
         // A read already running answers this one too: a pull only shows its spinner until it lands.
         if (latest?.isActive == true) { if (fromPull) paging.update { it.copy(refreshing = true) }; return }
         paging.update { it.copy(refreshing = fromPull) }
-        latest = viewModelScope.launch {
+        latest = scope.launch {
             when (val r = load(walletId, null)) {
                 is AppResult.Success -> paging.update { it.copy(read = true, refreshing = false, error = null, errorRef = null, cursor = r.value, moreFailed = false) }
                 is AppResult.Failure -> paging.update {
@@ -211,7 +215,7 @@ class ActivityViewModel(
         val cursor = p.cursor ?: return
         if (p.loadingMore || p.moreFailed || !isOnline) return
         paging.update { it.copy(loadingMore = true) }
-        viewModelScope.launch {
+        scope.launch {
             val r = load(walletId, cursor)
             paging.update {
                 if (r is AppResult.Success) it.copy(loadingMore = false, cursor = r.value) else it.copy(loadingMore = false, moreFailed = true)

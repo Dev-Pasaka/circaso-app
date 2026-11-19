@@ -32,6 +32,8 @@ class GroupMoneyLive(
     private val scope: CoroutineScope,
     private val groupWallets: () -> Boolean,
     private val againAfterMillis: Long = AgainAfterMillis,
+    /** The network a group's money is on, for a frame that doesn't name one; null: the selected one. */
+    private val groupNetworkOf: (chatId: String) -> WalletNetwork? = { null },
 ) {
     private var started = false
 
@@ -60,7 +62,7 @@ class GroupMoneyLive(
             else -> false
         }
         if (!moved) return
-        val named = WalletNetwork.of(data["network"]?.jsonPrimitive?.contentOrNull)
+        val named = WalletNetwork.of(data["network"]?.jsonPrimitive?.contentOrNull) ?: groupNetworkOf(chatId)
         if (named == null) { reloadWallet(chatId); return }
         // The frame's network: its group wallet's balance and history, not the visible network's.
         withContext(PinnedNetwork(named)) { reloadWallet(chatId, (chama.refreshMoney(chatId) as? AppResult.Success)?.value?.wallet?.walletId) }

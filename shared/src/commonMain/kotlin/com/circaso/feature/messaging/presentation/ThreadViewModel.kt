@@ -85,6 +85,8 @@ data class ThreadUiState(
     val chamaBusy: Boolean = false,
     /** Group wallets (GW9a2, GW9): the group's money; a wallet that's active turns `#` into a contribution. */
     val groupMoney: com.circaso.feature.chama.domain.GroupMoney? = null,
+    /** The group's money is test money (the group's own network is Testnet, whatever the Wallet tab shows). */
+    val moneyTestnet: Boolean = false,
     /** GW14c: approved payouts that wait for the group wallet's daily limit, by request id, and when they fit (ISO). */
     val payoutWaits: Map<String, String> = emptyMap(),
     /** SP05: the person said that's all; ask whether it was sorted. */
@@ -260,7 +262,7 @@ class ThreadViewModel(
         }
         if (chama != null) viewModelScope.launch {
             chama.observe(chatId).collect { s ->
-                _state.update { it.copy(chama = s.chama, fiat = s.fiat, showIntro = s.showIntro, myUserId = s.myUserId, groupMoney = s.groupMoney) }
+                _state.update { it.copy(chama = s.chama, fiat = s.fiat, showIntro = s.showIntro, myUserId = s.myUserId, groupMoney = s.groupMoney, moneyTestnet = s.testnet) }
                 s.groupMoney?.let { checkPayoutWaits(chama, it) }
             }
         }

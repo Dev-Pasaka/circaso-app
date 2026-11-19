@@ -1,5 +1,6 @@
 package com.circaso.feature.chama.presentation
 
+import com.circaso.feature.wallet.domain.pinnedTo
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -105,15 +106,18 @@ class TargetViewModel(
     observeWallet: ObserveWalletUseCase,
     connection: ConnectionState,
     private val refreshMoney: RefreshGroupMoneyUseCase,
+    /** The network the group's wallet is on: the target is that wallet's. Null follows the selection (before networks). */
+    network: com.circaso.feature.wallet.domain.WalletNetwork? = null,
 ) : ViewModel() {
+    private val scope = viewModelScope.pinnedTo(network)
     private val _state = MutableStateFlow(TargetUiState(walletJustReady = walletReady))
     val state: StateFlow<TargetUiState> = _state.asStateFlow()
     private var filled = false
 
     init {
-        viewModelScope.launch { observeChat(chatId).collect { chat -> _state.update { it.copy(groupName = chat?.title.orEmpty()) } } }
-        viewModelScope.launch { connection.status.collect { s -> _state.update { it.copy(online = s == ConnectionStatus.Online) } } }
-        viewModelScope.launch {
+        scope.launch { observeChat(chatId).collect { chat -> _state.update { it.copy(groupName = chat?.title.orEmpty()) } } }
+        scope.launch { connection.status.collect { s -> _state.update { it.copy(online = s == ConnectionStatus.Online) } } }
+        scope.launch {
             // Money and rate together, so a changed target is filled in the unit its field shows (never USDC under KES).
             kotlinx.coroutines.flow.combine(observeMoney(chatId), observeWallet()) { m, w -> m to w?.fiat }.collect { (m, fiat) ->
                 _state.update { it.copy(money = m, fiat = fiat) }
@@ -126,7 +130,7 @@ class TargetViewModel(
                 }
             }
         }
-        viewModelScope.launch { refreshMoney(chatId) }
+        scope.launch { refreshMoney(chatId) }
     }
 
     fun onName(text: String) = _state.update { it.copy(name = text.take(60), error = null) }
@@ -144,7 +148,7 @@ class TargetViewModel(
         val minor = s.amountMinor ?: return
         if (!s.canSave) return
         _state.update { it.copy(saving = true, error = null, reference = null) }
-        viewModelScope.launch {
+        scope.launch {
             when (val r = setGoal(chatId, s.name.trim(), minor, s.deadlineToSave)) {
                 is AppResult.Success -> { refreshMoney(chatId); _state.update { it.copy(saving = false, done = true) } }
                 is AppResult.Failure -> _state.update { it.copy(saving = false, error = ErrorMessages.forError(r.error), reference = ErrorMessages.reference(r.error)) }
@@ -156,7 +160,7 @@ class TargetViewModel(
         val s = _state.value
         if (!s.online || s.removing || !s.editing) return
         _state.update { it.copy(removing = true, error = null, confirmingRemove = false) }
-        viewModelScope.launch {
+        scope.launch {
             when (val r = removeGoal(chatId)) {
                 is AppResult.Success -> _state.update { it.copy(removing = false, done = true) }
                 is AppResult.Failure -> _state.update { it.copy(removing = false, error = ErrorMessages.forError(r.error), reference = ErrorMessages.reference(r.error)) }

@@ -468,7 +468,7 @@ fun ThreadContent(
                 enter = if (still) fadeIn(tween(CircasoMotion.QuickMs)) else fadeIn(tween(CircasoMotion.BaseMs)) + expandVertically(tween(CircasoMotion.BaseMs)),
                 exit = if (still) fadeOut(tween(CircasoMotion.QuickMs)) else fadeOut(tween(CircasoMotion.QuickMs)) + shrinkVertically(tween(CircasoMotion.QuickMs)),
             ) {
-                if (chama != null) GoalStrip(chama, state.fiat, showAdd = state.canContribute && (payable || onContribute != null), canAdd = state.online, onAdd = { if (payable) startMoney() else onContribute?.invoke(null) }, onOpen = { onOpenGoal?.invoke() })
+                if (chama != null) GoalStrip(chama, state.fiat, showAdd = state.canContribute && (payable || onContribute != null), canAdd = state.online, onAdd = { if (payable) startMoney() else onContribute?.invoke(null) }, onOpen = { onOpenGoal?.invoke() }, testnet = state.moneyTestnet)
             }
         },
         topBar = {

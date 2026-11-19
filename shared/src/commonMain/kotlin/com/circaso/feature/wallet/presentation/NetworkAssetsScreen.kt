@@ -1,5 +1,6 @@
 package com.circaso.feature.wallet.presentation
 
+import com.circaso.feature.wallet.domain.pinnedTo
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -54,12 +55,15 @@ class NetworkAssetsViewModel(
     /** A group wallet's assets instead of the person's own; null for the personal wallet. */
     walletId: String? = null,
     observeWalletOf: com.circaso.feature.wallet.domain.ObserveWalletOfUseCase? = null,
+    /** A group wallet's own network. Null follows the selection. */
+    network: com.circaso.feature.wallet.domain.WalletNetwork? = null,
 ) : ViewModel() {
+    private val scope = viewModelScope.pinnedTo(network)
     private val query = MutableStateFlow("")
     private val held = if (walletId != null && observeWalletOf != null) observeWalletOf(walletId) else observeWallet()
     val state: StateFlow<NetworkAssetsUiState> = combine(held, query) { wallet, q ->
         NetworkAssetsUiState(wallet?.chains?.firstOrNull { it.blockchain == blockchain }, wallet?.fiat, q)
-    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), NetworkAssetsUiState())
+    }.stateIn(scope, SharingStarted.WhileSubscribed(5_000), NetworkAssetsUiState())
 
     fun onQuery(text: String) { query.value = text }
 }
