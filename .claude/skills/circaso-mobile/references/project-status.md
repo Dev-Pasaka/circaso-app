@@ -192,6 +192,22 @@ Media3 1.4.1, multiplatform-markdown-renderer 0.46.0.
 - D-P6 The name is **Circaso** everywhere; never ship "CoinX".
 
 ### Money
+- D-M13 **Group wallets and networks; the Wallet tab's top row** (Pasaka, 2026-11-19, after testing PR #74 on his
+  phone; branch `feat/group-networks`). **The principle:** a group's money is on the network its wallet is on, not on
+  whatever the Wallet tab has selected. Existing groups with a Testnet wallet can **also** get a Mainnet wallet (both);
+  a new group has one wallet, on Mainnet. One rule decides a group's network (`groupNetwork` in
+  `feature/wallet/domain/GroupNetwork.kt`): the selected network when the group has a wallet there, else its only
+  wallet's network, else where a new one is made (Mainnet whenever the person may use it, else Testnet; never a
+  picker). Every group money screen runs pinned to that network and takes its Testnet mark from it. Group info: "Add a
+  Mainnet Wallet" for an old group's owner, a row per wallet for a group with both. Wallet tab, Groups side: follows
+  the selected network; on Mainnet the Group Wallets sheet lists the owner's groups "Without a Mainnet wallet", and
+  with none at all Groups is a calm "No Mainnet group wallets yet" with the same list. New error code
+  `wallet.group_mainnet_only`. **The top row:** the two equal pills (`Mainnet | Testnet` beside `Personal | Groups`)
+  had no hierarchy ("the chip up there is not well designed ... this is a premium app"); it is now one control and one
+  quiet status chip: Personal | Groups at the start, a **network chip** (dot, name, chevron) at the end that opens a
+  **Network sheet**. See `app-architecture.md` → "Group wallets and networks" and "Wallet networks" → UI. Previews
+  `-preview=wallet-network-sheet|wallet-network-sheet-testnet|wallet-network-sheet-new|wallet-network-no-groups|wallet-network-no-groups-offline|wallet-network-groups-add|gw-info-testnet|gw-info-add-mainnet|gw-info-add-mainnet-offline|gw-info-finish-mainnet|gw-info-both|gw-info-both-member`
+  (the `wallet-network-*` previews below now draw the chip). **Not seen on a device or against the server yet.**
 - D-M12 **Wallet networks** (Pasaka, 2026-11-18; branch `feat/wallet-networks`): one server, Circle Mainnet and
   Testnet side by side, closed testing with real crypto. People with a Testnet wallet keep it and get a Mainnet |
   Testnet switch in the Wallet tab; new people are Mainnet only and never see the switch or the word testnet. Mainnet

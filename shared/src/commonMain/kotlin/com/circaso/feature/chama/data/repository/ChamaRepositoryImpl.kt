@@ -56,6 +56,8 @@ class ChamaRepositoryImpl(
     private val groupWallets: () -> Boolean = { false },
     /** A group's money is per wallet network: the copies are keyed on it and follow the selected one. */
     private val networks: com.circaso.feature.wallet.domain.WalletNetworks = com.circaso.feature.wallet.domain.WalletNetworks.Single,
+    /** The network a group's money is on (`groupNetwork`), for a frame that doesn't name one; null: the selected one. */
+    private val groupNetworkOf: (chatId: String) -> com.circaso.feature.wallet.domain.WalletNetwork? = { null },
 ) : ChamaRepository {
     private val linking = Mutex()
 
@@ -125,8 +127,8 @@ class ChamaRepositoryImpl(
 
     override suspend fun onFrame(type: String, data: JsonObject?) {
         val chatId = data?.get("chatId")?.jsonPrimitive?.contentOrNull ?: return
-        // A frame says which network's money moved; without one (an older server) it is the selected network's.
-        val network = com.circaso.feature.wallet.domain.WalletNetwork.of(data["network"]?.jsonPrimitive?.contentOrNull) ?: networks.effective()
+        // A frame says which network's money moved; without one it is the group's own network (else the selected one).
+        val network = com.circaso.feature.wallet.domain.WalletNetwork.of(data["network"]?.jsonPrimitive?.contentOrNull) ?: groupNetworkOf(chatId) ?: networks.effective()
         withContext(com.circaso.feature.wallet.domain.PinnedNetwork(network)) { handleFrame(type, chatId) }
     }
 

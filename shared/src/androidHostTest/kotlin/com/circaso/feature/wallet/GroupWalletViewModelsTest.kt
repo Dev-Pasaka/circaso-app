@@ -772,6 +772,49 @@ class GroupWalletSetupViewModelTest {
         assertTrue(prefs.walletBiometrics("gw-1").first())
     }
 
+    // Group wallets and networks (2026-11-19): the set-up and the group's screens work for the group's own network.
+    private val mainnetSide = FakeWalletRemote()
+    private val testnetSide = FakeWalletRemote().apply { status = "ACTIVE" }
+    private val twoSided = TwoSidedRemote(mainnetSide, testnetSide)
+    private val testnetSelected = com.circaso.feature.wallet.domain.WalletNetworks.fixed(com.circaso.feature.wallet.domain.WalletNetwork.TESTNET, switchable = true, known = true)
+    private fun realRepo(networks: com.circaso.feature.wallet.domain.WalletNetworks) = com.circaso.feature.wallet.data.repository.WalletRepositoryImpl(
+        twoSided, FakeWalletDao(), { FakeSigner(onExecute = { mainnetSide.groupStatus = "ACTIVE" }) }, { "KES" }, kotlinx.serialization.json.Json { ignoreUnknownKeys = true; explicitNulls = false }, networks = networks,
+    )
+
+    @Test fun aGroupsWalletIsSetUpOnItsOwnNetworkWhateverIsSelected() = runTest(dispatcher) {
+        val repo = realRepo(testnetSelected)
+        val vm = GroupWalletSetupViewModel(
+            "g1", GroupWalletPlan(), ObserveChatUseCase(chats), StartGroupWalletUseCase(repo), AwaitGroupWalletUseCase(repo), EnableWalletBiometricsUseCase(repo),
+            AddWalletNetworksUseCase(repo), SetApprovalPolicyUseCase(chamas), SetGoalUseCase(chamas), RefreshGroupMoneyUseCase(chamas), prefs, connection, biometricLabel = null,
+            networks = testnetSelected, network = com.circaso.feature.wallet.domain.WalletNetwork.MAINNET, namesNetwork = true,
+        )
+        vm.onStart()
+        assertEquals(SetupStep.Done, vm.state.value.step)
+        assertEquals(1, mainnetSide.setups, "W14 went to Mainnet")
+        assertEquals(0, testnetSide.setups)
+        assertTrue(twoSided.asked.isNotEmpty() && twoSided.asked.all { it == com.circaso.feature.wallet.domain.WalletNetwork.MAINNET }, twoSided.asked.toString())
+        assertEquals(com.circaso.feature.wallet.domain.WalletNetwork.MAINNET, vm.state.value.network, "named for someone with both networks")
+        assertTrue(!vm.state.value.testnet, "a Mainnet set-up wears no Testnet mark while Testnet is selected")
+        assertEquals(com.circaso.feature.wallet.domain.WalletNetwork.TESTNET, testnetSelected.current())
+    }
+
+    @Test fun aGroupWalletScreenPinnedToAnotherNetworkAsksThatNetwork() = runTest(dispatcher) {
+        val mainnetSelected = com.circaso.feature.wallet.domain.WalletNetworks.fixed(com.circaso.feature.wallet.domain.WalletNetwork.MAINNET, switchable = true, known = true)
+        val repo = realRepo(mainnetSelected)
+        val groupChamas = fake<ChamaRepository> { name, _ -> when (name) { "money" -> flowOf(money()); "refreshMoney" -> AppResult.Success(money()); else -> null } }
+        val reader = com.circaso.feature.chama.presentation.GroupWalletReader(
+            ObserveChatUseCase(chats), com.circaso.feature.chama.domain.ObserveGroupMoneyUseCase(groupChamas), RefreshGroupMoneyUseCase(groupChamas),
+            com.circaso.feature.wallet.domain.ObserveWalletOfUseCase(repo), com.circaso.feature.wallet.domain.RefreshWalletOfUseCase(repo),
+            com.circaso.feature.wallet.domain.ObserveWalletActivityUseCase(repo), com.circaso.feature.wallet.domain.RefreshWalletActivityUseCase(repo),
+            com.circaso.feature.chama.domain.DecideChamaRequestUseCase(groupChamas), auth = null,
+        )
+        val vm = com.circaso.feature.chama.presentation.GroupWalletViewModel("g1", reader, connection, network = com.circaso.feature.wallet.domain.WalletNetwork.TESTNET)
+        backgroundScope.launch(dispatcher) { vm.state.collect { } }
+        assertTrue(twoSided.asked.isNotEmpty() && twoSided.asked.all { it == com.circaso.feature.wallet.domain.WalletNetwork.TESTNET }, "W1 and W6 for the group's wallet went to Testnet: ${twoSided.asked}")
+        assertEquals(listOf<String?>("gw-1"), testnetSide.walletReads); assertTrue(mainnetSide.walletReads.isEmpty())
+        assertEquals(com.circaso.feature.wallet.domain.WalletNetwork.TESTNET, vm.state.value.wallet?.network, "and its Testnet copy is what the screen shows, with Mainnet selected")
+    }
+
     @Test fun twoAdminsIsTheDefaultAndIsntSent() = runTest(dispatcher) {
         val vm = vm(GroupWalletPlan(ApprovalPolicy.TwoAdmins), bio = null)
         vm.onStart()

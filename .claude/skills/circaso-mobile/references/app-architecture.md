@@ -363,10 +363,21 @@ the switch or the word testnet. This is closed testing with real crypto.
   network)`: Testnet keeps the names from before, Mainnet's carry `mainnet`), the PIN Vault's remembered status
   (`vault.status` / `vault.status.mainnet`; the server picks the slot from the header), the create and group set-up
   idempotency keys, the tab's "wants to send you money" nudge.
-- **UI** (no design frame; decided to the premium bar): `WalletNetworkControl` is the Personal | Groups pill
-  (`TwoSegmentControl` in `WalletSwitcher.kt`: same track, lift, spring, 44 dp target, reduced motion, RTL) with a
-  caution dot on Testnet. It shares the tab's top row with Personal | Groups in a `FlowRow`: side by side where both
-  fit, stacked where they don't (equal widths, `PairedSegmentMinWidth`); each pill eases in on its own. Test money is
+- **UI** (no design frame; decided to the premium bar; the top row redesigned 2026-11-19 after Pasaka saw two equal
+  pills fill the row on his 384 dp phone): the Wallet tab's top row is **one control and one quiet status chip**
+  (`WalletTopRow` in `WalletScreens.kt`, a small custom layout inside the page's `s4` inset). Personal | Groups
+  (`WalletModeControl`, at its own size) sits at the start; `NetworkChip` (`WalletNetworkParts.kt`: the network's dot,
+  its name in `footnote` semibold, a small chevron, a 32 dp capsule on `fill` inside the row's 44 dp target, outlined
+  in high contrast, the word crossfading on a change) sits at the end and only shows for someone with both networks.
+  With no chip the control is centred as before networks and eases to the start if a chip arrives later; the chip
+  alone still sits at the end; where the two don't fit on one line (large text) the chip takes its own line,
+  end-aligned. The chip opens the **Network sheet** (`NetworkSheetContent`, drawn in `WalletOverlay`;
+  `WalletUiState.networkSheet`, `WalletViewModel.onNetworkSheet`): the person's networks as radio rows on the Group
+  Wallets sheet's grid ("Real money" / "Test money, no real value", plus "· Not set up yet" from
+  `WalletNetworksState.statusOf`), a tick on the selected one, a footnote that each is a separate wallet with its own
+  PIN; a tap picks and closes, offline too. `TwoSegmentControl` serves Personal | Groups only again. Mainnet's dot is
+  ink held back (the theme has no positive role: `money` is ink), Testnet's is `warning`; `NetworkDot` draws both and
+  the Testnet tag uses it, so chip, sheet and tag are one family. Test money is
   marked by `TestnetTag` / `TestnetNote`, and on screens by the one `TestnetStrip(show)` (`WalletNetworkParts.kt`;
   it owns its padding and eases open, a fade with reduced motion; the note wraps at large text): in the scaffold's
   `strip` on Pay and Send (from their pinned network), Transactions, Networks, Assets, Currency, the group wallet,
@@ -390,8 +401,73 @@ the switch or the word testnet. This is closed testing with real crypto.
   `androidHostTest/feature/wallet/WalletNetworkViewModelsTest.kt` (Pay and Send show and follow their pin, the reset
   on a switch, `PayBlock.Gas` from W17 and W4, the Solana fee lines, the Wallet tab never pairing one network's label
   with the other's money, `onNetwork`, the notice, the create screen at once).
+- **Group wallets are not on "the selected network"**: see "Group wallets and networks" below.
 - **Not done:** Circle's own PIN screens don't name the network; the treasurer-model link retry (`PendingLinks`) is
   not per network; nothing here has run against a server with networks (the routes were not live when it was built).
+
+## Group wallets and networks (2026-11-19, Pasaka after testing PR #74)
+
+**The principle, across the app:** a group's money is on the network its wallet is on. An existing group with a
+Testnet wallet can also get a Mainnet wallet (then it has both); a new group has one wallet, on Mainnet. So a new
+Mainnet group shows and takes Mainnet money while the Wallet tab is on Testnet (with no Testnet mark), and an old
+Testnet group shows its Testnet wallet, marked, while the tab is on Mainnet.
+
+- **One rule, one place** (`feature/wallet/domain/GroupNetwork.kt`, pure, tested): `groupNetwork(usable, selected,
+  wallets)` is the selected network when the group has a wallet there; otherwise its only wallet's network (when the
+  person may use it); otherwise the network a new wallet is made on, `newGroupWalletNetwork`: Mainnet whenever the
+  person may use it, else Testnet. A wallet that works comes before one still being set up. Before the server has said
+  which networks there are (or on a server without networks) nothing is decided: the selected one.
+- **Where the facts come from:** `GroupNetworks` (a Koin single) keeps `GroupNetworksState` in memory from
+  `WalletNetworks` and the per-network W16 copies (`WalletRepository.walletsOn(network)`, Room `wallet_list`). Its
+  `refresh()` reads W16 on **each network in the person's options and never on another** (that would be
+  `wallet.network_unavailable` and move the selection); the Wallet tab's refresh, group info's refresh and the end of a
+  group wallet set-up call it. `networkOf(chatId)` is the rule; `networkOfWallet(walletId)` is the list that holds the
+  wallet (a wallet is on one network); `mainnetFor(chatId)` says whether an old group's owner can add (or must finish) a
+  Mainnet wallet; `withoutMainnet` lists those groups.
+- **How a screen is pinned.** `WalletNetworks.followed` is "the network pinned on the collector, else the selected
+  one", and every repository flow is built on it (`WalletRepositoryImpl`, `ChamaRepositoryImpl`), as every call
+  already was through `effective()`. So pinning is one line: a view model works in `viewModelScope.pinnedTo(network)`
+  (everything it launches and collects), and a flow is read with `.on(network)` (`flowOn(PinnedNetwork)`).
+  `GroupWalletViewModel`, `TargetViewModel`, `ChamaViewModel`, `GroupWalletSetupViewModel`, and by wallet id
+  `ActivityViewModel` and `NetworkAssetsViewModel` take a `network`; the navigation entry works it out
+  (`groupNetworkOf` / `walletNetworkOf` in `AppNavigation.kt`), keys the view model on it and wraps the screen in
+  `OnWalletNetwork`, which provides `LocalTestnet` from **that** network, so the screen's `TestnetStrip` /
+  `TestnetNote` never follow the tab's selection. `GroupInfoMoneySource` and `ThreadChama` follow
+  `GroupNetworks` themselves (the goal strip's "Testnet ·" is `ThreadUiState.moneyTestnet`).
+- **Paying.** `PayViewModel.target()`: money into a group is on the group's network, paid from the person's own wallet
+  **on that network**; money out of a group's wallet is on that wallet's network; anything else follows the
+  selection as before. `PayIntent.network` / `PayRoute.network` fix it when the card was opened from one of a group's
+  two wallets. `PaymentRequest.followsSelection` is false for group money, so `WalletRepositoryImpl.pay` no longer
+  refuses it with `wallet.network_changed` when the tab shows the other network. If the person has no wallet on that
+  network yet, `PayUiState.needsWalletLine` says "Set up your Mainnet wallet to pay into {group}." (the network named
+  only for someone with both), on the Pay screen and the chat's money card. `SendToWalletViewModel` does the same for
+  a group wallet's send.
+- **Creating.** No picker anywhere. `GroupWalletSetupRoute.network` is fixed when the set-up opens
+  (`AppNavigation.setUpGroupWallet`: the rule, so Mainnet for a new wallet and the old network for a set-up already
+  started; New Group passes `newWalletNetwork()`), and the whole set-up (W14, PIN, W15, biometrics, W13, CH9, CH2)
+  runs pinned to it. The screen names the network for someone with both ("Setting up Kilimani Chama’s Mainnet
+  wallet") and takes its Testnet strip from `GroupWalletSetupState.testnet`.
+- **Group info** (`GroupMoneyRows`): `GroupInfoMoney.network/testnet/wallets/mainnet`. One wallet: "Group Wallet"
+  with `TestnetTag` when it is test money. An old group's owner: "Add a Mainnet Wallet" ("Real money · its own PIN")
+  or "Finish Mainnet Wallet Setup", which run the normal set-up for Mainnet; members see nothing until it exists. Both
+  wallets: "Mainnet wallet" then "Testnet wallet" (tagged), each with its balance, each opening
+  `GroupWalletRoute(chatId, network)`; the rows under them (pay from, target, security) are for the rule's network and
+  say which. Leaving stays blocked while either wallet holds money.
+- **Wallet tab, Groups side:** still the selected network's group wallets. On Mainnet, `WalletUiState.withoutMainnet`
+  (the owner's old groups with nothing started on Mainnet) is a section "Without a Mainnet wallet" in the Group
+  Wallets sheet; a tap opens that group's Mainnet set-up. With no Mainnet group wallet at all but such groups,
+  Personal | Groups still shows and Groups is `NoMainnetGroupWallets` ("No Mainnet group wallets yet") with the list.
+- **`wallet.group_mainnet_only`** (W14 on Testnet for a group with no Testnet wallet): "New group wallets are made on
+  Mainnet." in `ErrorMessages`, keyed on the code.
+- **Tests:** `commonTest/feature/wallet/GroupNetworksTest.kt` (the rule; the state's lookups; W16 only on usable
+  networks; a new wallet made on Mainnet with Testnet selected; a pinned read asked, saved and read for its network;
+  a group payment not stopped by the selection; the header on the wire; the new code's words) and two view-model tests
+  in `androidHostTest/feature/wallet/GroupWalletViewModelsTest.kt` (the set-up and the pushed group wallet on a
+  network other than the selected one).
+- **Not done / only reasoned:** nothing here has run on a device or against the deployed server. Asha's wallet tools
+  and the call's money sheet use the selected network (the call sheet's group contribution goes through
+  `PayViewModel`, so it follows the group). The treasurer-model link retry (`PendingLinks`) is still not per network.
+  Circle's PIN screens name the group, not the network.
 
 ## Money in the chat (2026-11-04, Pasaka's correction; C3–C6, GW9a/GW9a2/GW9b/GW9d/GW15/GW17–GW19)
 

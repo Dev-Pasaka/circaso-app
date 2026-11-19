@@ -94,9 +94,13 @@ data class GroupNetworksState(
         }
     }
 
-    /** The groups this person owns that have a Testnet wallet and no working Mainnet one, in the Testnet list's order. */
+    /**
+     * The groups this person owns that have a Testnet wallet and nothing on Mainnet, in the Testnet list's order: what
+     * the Wallet tab offers a Mainnet wallet to. One whose Mainnet set-up was started is already in Mainnet's own list
+     * ("Being set up"), so it isn't listed twice.
+     */
     val withoutMainnet: List<WalletListing> get() =
-        listings[WalletNetwork.TESTNET].orEmpty().filter { w -> w.owner.type == WalletOwnerType.Group && w.owner.chatId?.let { mainnetFor(it) } != null }
+        listings[WalletNetwork.TESTNET].orEmpty().filter { w -> w.owner.type == WalletOwnerType.Group && w.owner.chatId?.let { mainnetFor(it) } == GroupMainnet.Add }
 }
 
 /** Where a group's second, Mainnet wallet stands for its owner. */
@@ -139,12 +143,15 @@ class GroupNetworks(
         newGroupWalletNetwork(if (!s.known || s.legacy) emptyList() else s.options.map { it.network }, s.selected)
     }
 
-    /** W16 on every network the person may use, so the rule knows where each group's wallets are. */
-    suspend fun refresh() {
+    /**
+     * W16 on every network the person may use, so the rule knows where each group's wallets are. [except]: a network
+     * the caller has just read itself (the Wallet tab reads the selected one's).
+     */
+    suspend fun refresh(except: WalletNetwork? = null) {
         networks.refresh()
         val s = networks.state.value
-        if (!s.known || s.legacy) { refreshListings(); return }
-        s.options.forEach { option -> withContext(PinnedNetwork(option.network)) { refreshListings() } }
+        if (!s.known || s.legacy) { if (except == null) refreshListings(); return }
+        s.options.forEach { option -> if (option.network != except) withContext(PinnedNetwork(option.network)) { refreshListings() } }
     }
 
     companion object {

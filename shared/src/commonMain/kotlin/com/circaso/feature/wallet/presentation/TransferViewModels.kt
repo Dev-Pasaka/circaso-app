@@ -240,12 +240,12 @@ class TransferViewModel(
     private val local = MutableStateFlow(TransferUiState())
     val state: StateFlow<TransferUiState> = combine(local, observeTransfer(transferId), observeWallet(), connection.status) { ui, t, w, c ->
         ui.copy(transfer = t, fiat = w?.fiat, online = c == ConnectionStatus.Online)
-    }.stateIn(scope, SharingStarted.WhileSubscribed(5_000), TransferUiState())
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), TransferUiState())
 
     init { refresh() }
 
     fun refresh() {
-        scope.launch {
+        viewModelScope.launch {
             // Money received has no transfer on the server (it is read from the history); only a sent one is fetched.
             if (state.value.transfer?.direction == TransferDirection.In) return@launch
             val r = loadTransfer(transferId)

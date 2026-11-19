@@ -72,6 +72,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
 import com.circaso.feature.wallet.presentation.GroupMenuActions
 import com.circaso.feature.wallet.presentation.AllGroupWalletsContent
+import com.circaso.feature.wallet.presentation.NetworkSheetContent
 
 // Debug previews for group wallets (Spaces phase 2, frames GW1–GW19): `-preview=gw-…` on iOS, `--es preview gw-…` on Android.
 
@@ -204,7 +205,7 @@ private fun twoNetworks(): Wallet {
     return base.copy(chains = listOf(baseChain, polygon), totals = listOf(AssetTotal("USDC", 6, "291970000", "")), fiat = gwFiat.copy(amount = "37722.52"))
 }
 
-private val sheetMenu = GroupMenuActions({}, {}, onPay = {}, onSendToWallet = {}, onNetwork = { _, _ -> })
+private val sheetMenu = GroupMenuActions({}, {}, onPay = {}, onSendToWallet = {}, onNetwork = { _, _ -> }, onAddMainnetWallet = {})
 
 /** The Group Wallets sheet's states: the group on screen (an owner, two networks) and the others. */
 private fun allSheet(groups: WalletUiState, variant: String): WalletUiState {
@@ -276,11 +277,17 @@ private fun TabPreview(start: WalletUiState, gwActions: GroupWalletActions = Gro
                 onMode = { m -> state = state.copy(mode = m, selectedWalletId = if (m == WalletMode.Groups) state.lastGroupWalletId ?: state.groupWallets.firstOrNull()?.walletId else null, switching = false) },
                 onCreate = {}, onRefresh = {}, onReceive = {}, onComing = {},
                 groupMenu = sheetMenu,
-                // Mainnet | Testnet by touch: each side shows its own wallet (the other network's, or none yet).
-                onNetwork = { n -> state = networkSide(state, n) },
+                // The network chip opens its sheet; a pick there shows that network's own wallet (or none yet).
+                onNetworkSheet = { open -> state = state.copy(networkSheet = open) },
             )
         },
         walletOverlay = {
+            CircasoSheet(state.networkSheet, { state = state.copy(networkSheet = false) }, label = "Network") {
+                NetworkSheetContent(
+                    state.network, state.networks, statusOf = { state.networkStatuses[it] },
+                    onPick = { n -> state = networkSide(state, n).copy(networkSheet = false) }, onClose = { state = state.copy(networkSheet = false) },
+                )
+            }
             CircasoSheet(state.allGroups, { state = state.copy(allGroups = false) }, label = "Group Wallets") {
                 AllGroupWalletsContent(state, onPick = { w -> state = state.copy(selectedWalletId = w.walletId, allGroups = false) }, onClose = { state = state.copy(allGroups = false) }, menu = sheetMenu, initialQuery = query)
             }
@@ -310,8 +317,22 @@ private fun networkState(network: com.circaso.feature.wallet.domain.WalletNetwor
     return base.copy(
         wallet = if (created) wallet else wallet.copy(status = WalletStatus.None, chains = emptyList(), totals = emptyList()),
         network = network, networks = BothNetworks, testnet = testnet,
+        // The other network's wallet isn't set up yet when this one isn't either (the previews' first visit).
+        networkStatuses = BothNetworks.associateWith { if (created || it != network) WalletStatus.Active else WalletStatus.None },
     )
 }
+
+/** Old groups of the person's with only a Testnet wallet, as the Mainnet side lists them (2026-11-19). */
+private val oldGroups = listOf(
+    NamedWallet("gw-t1", "g1", "Kilimani Chama", null, WalletOwnerType.Group, true, WalletStatus.Active, "me"),
+    NamedWallet("gw-t3", "g3", "Mama Mboga Savings Group", null, WalletOwnerType.Group, true, WalletStatus.Active, "me"),
+)
+
+/** One of a group's two wallets in group info. */
+private fun bothWallets() = listOf(
+    com.circaso.feature.chama.presentation.GroupNetworkWallet(com.circaso.feature.wallet.domain.WalletNetwork.MAINNET, "gw-m1", gwWallet("84250000", "gw-m1")),
+    com.circaso.feature.chama.presentation.GroupNetworkWallet(com.circaso.feature.wallet.domain.WalletNetwork.TESTNET, "gw-1", gwWallet(), testnet = true),
+)
 
 /** What the switch does in a preview: the other network's wallet; Mainnet's doesn't exist yet when the preview began without one. */
 private fun networkSide(state: WalletUiState, network: com.circaso.feature.wallet.domain.WalletNetwork): WalletUiState =
@@ -349,6 +370,14 @@ internal fun GroupWalletPreview(name: String): Boolean {
         "gw-setup-failed" -> GroupWalletSetupContent(setup.copy(step = SetupStep.Creating, problem = SetupProblem.Failed, reference = "req_P3kq9X"), {}, {}, {}, {})
         "gw-setup-offline" -> GroupWalletSetupContent(setup.copy(step = SetupStep.Creating, problem = SetupProblem.Offline, online = false), {}, {}, {}, {})
         "gw-setup-cancelled" -> GroupWalletSetupContent(setup.copy(problem = SetupProblem.Cancelled), {}, {}, {}, {})
+        // Group wallets and networks (2026-11-19): an old Testnet group (its wallet marked), its owner's way to a
+        // Mainnet wallet, that set-up left unfinished, and a group with a wallet on each network.
+        "gw-info-testnet" -> InfoPreview(GroupInfoMoney(true, gwMoney(), gwWallet(), biometricLabel = "Fingerprint", network = com.circaso.feature.wallet.domain.WalletNetwork.TESTNET, testnet = true))
+        "gw-info-add-mainnet" -> InfoPreview(GroupInfoMoney(true, gwMoney(), gwWallet(), biometricLabel = "Fingerprint", network = com.circaso.feature.wallet.domain.WalletNetwork.TESTNET, testnet = true, mainnet = com.circaso.feature.wallet.domain.GroupMainnet.Add))
+        "gw-info-add-mainnet-offline" -> InfoPreview(GroupInfoMoney(true, gwMoney(), gwWallet(), biometricLabel = "Fingerprint", network = com.circaso.feature.wallet.domain.WalletNetwork.TESTNET, testnet = true, mainnet = com.circaso.feature.wallet.domain.GroupMainnet.Add), online = false)
+        "gw-info-finish-mainnet" -> InfoPreview(GroupInfoMoney(true, gwMoney(), gwWallet(), biometricLabel = "Fingerprint", network = com.circaso.feature.wallet.domain.WalletNetwork.TESTNET, testnet = true, mainnet = com.circaso.feature.wallet.domain.GroupMainnet.SettingUp))
+        "gw-info-both" -> InfoPreview(GroupInfoMoney(true, gwMoney(), gwWallet("84250000", "gw-m1"), biometricLabel = "Fingerprint", network = com.circaso.feature.wallet.domain.WalletNetwork.MAINNET, wallets = bothWallets()))
+        "gw-info-both-member" -> InfoPreview(GroupInfoMoney(true, gwMoney(signer = false).copy(isOwner = false, isAdmin = false), gwWallet("84250000", "gw-m1"), network = com.circaso.feature.wallet.domain.WalletNetwork.MAINNET, wallets = bothWallets()), chat = kilimani.copy(myRole = MemberRole.Member))
         "gw-info-none" -> InfoPreview(GroupInfoMoney(true, gwMoney(wallet = false, goal = false)))
         "gw-info-finish" -> InfoPreview(GroupInfoMoney(true, gwMoney(active = false, goal = false)))
         "gw-info-offline" -> InfoPreview(GroupInfoMoney(true, gwMoney(wallet = false, goal = false)), online = false)
@@ -367,12 +396,22 @@ internal fun GroupWalletPreview(name: String): Boolean {
         "gw-wallet-loading" -> PushedWallet(GroupWalletUiState(chat = kilimani, money = gwMoney()), gwActions)
         "gw-wallet-error" -> PushedWallet(GroupWalletUiState(chat = kilimani, loading = false, error = "Circaso is busy right now. Please try again in a moment.", reference = "req_W9s"), gwActions)
         // The Wallet tab with the corner switcher (Pasaka, 2026-11-04): closed, open, three groups, a locked wallet.
-        // Wallet networks (2026-11-18): the Mainnet | Testnet switch, alone and beside Personal | Groups, the first
-        // visit to a network (a separate wallet, its own PIN), and Testnet for someone who has nothing else.
+        // Wallet networks (2026-11-18; the top row redesigned 2026-11-19): the network chip, alone at the row's end and
+        // beside Personal | Groups (each network, with and without groups), the first visit to a network (a separate
+        // wallet, its own PIN), and Testnet for someone who has nothing else.
         "wallet-network-mainnet" -> TabPreview(networkState(com.circaso.feature.wallet.domain.WalletNetwork.MAINNET))
         "wallet-network-testnet" -> TabPreview(networkState(com.circaso.feature.wallet.domain.WalletNetwork.TESTNET))
         "wallet-network-groups" -> TabPreview(networkState(com.circaso.feature.wallet.domain.WalletNetwork.MAINNET, base = tabState(gwState)))
         "wallet-network-groups-testnet" -> TabPreview(networkState(com.circaso.feature.wallet.domain.WalletNetwork.TESTNET, base = tabState(gwState)).copy(selectedWalletId = "gw-1"), gwActions)
+        // The network chip's sheet (2026-11-19): each network selected, and a network whose wallet isn't set up yet.
+        "wallet-network-sheet" -> TabPreview(networkState(com.circaso.feature.wallet.domain.WalletNetwork.MAINNET).copy(networkSheet = true))
+        "wallet-network-sheet-testnet" -> TabPreview(networkState(com.circaso.feature.wallet.domain.WalletNetwork.TESTNET, base = tabState(gwState)).copy(networkSheet = true))
+        "wallet-network-sheet-new" -> TabPreview(networkState(com.circaso.feature.wallet.domain.WalletNetwork.TESTNET).copy(networkSheet = true, networkStatuses = mapOf(com.circaso.feature.wallet.domain.WalletNetwork.MAINNET to WalletStatus.None, com.circaso.feature.wallet.domain.WalletNetwork.TESTNET to WalletStatus.Active)))
+        // Groups on Mainnet for someone whose groups only have Testnet wallets: the calm empty state with those
+        // groups listed; and the Group Wallets sheet's "Without a Mainnet wallet" section beside a Mainnet group.
+        "wallet-network-no-groups" -> TabPreview(networkState(com.circaso.feature.wallet.domain.WalletNetwork.MAINNET, base = WalletUiState(wallets = listOf(NamedWallet.Personal), groupsEnabled = true, mode = WalletMode.Groups, testnetOnlyGroups = oldGroups, onMainnet = true)))
+        "wallet-network-no-groups-offline" -> TabPreview(networkState(com.circaso.feature.wallet.domain.WalletNetwork.MAINNET, base = WalletUiState(wallets = listOf(NamedWallet.Personal), groupsEnabled = true, mode = WalletMode.Groups, testnetOnlyGroups = oldGroups, onMainnet = true, online = false)))
+        "wallet-network-groups-add" -> TabPreview(networkState(com.circaso.feature.wallet.domain.WalletNetwork.MAINNET, base = tabState(gwState)).copy(selectedWalletId = "gw-1", allGroups = true, testnetOnlyGroups = oldGroups.drop(1), onMainnet = true), gwActions)
         "wallet-network-create-mainnet" -> TabPreview(networkState(com.circaso.feature.wallet.domain.WalletNetwork.MAINNET, created = false))
         "wallet-network-create-testnet" -> TabPreview(networkState(com.circaso.feature.wallet.domain.WalletNetwork.TESTNET, created = false))
         // A first visit to the other network with no connection: nothing of it was ever read, the server's list says

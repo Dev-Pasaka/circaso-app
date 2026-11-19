@@ -24,9 +24,10 @@ val chamaModule = module {
     single {
         com.circaso.feature.chama.data.repository.GroupMoneyLive(
             get(), get(), scope = get(), groupWallets = { get<com.circaso.core.flags.GroupWalletsFlag>().isOn },
+            groupNetworkOf = { chatId -> get<com.circaso.feature.wallet.domain.GroupNetworks>().now(chatId) },
         )
     }
-    single { ChamaRepositoryImpl(get(), get(), get(), links = get<com.circaso.core.datastore.AppPreferences>(), scope = get(), groupWallets = { get<com.circaso.core.flags.GroupWalletsFlag>().isOn }, networks = get()) }
+    single { ChamaRepositoryImpl(get(), get(), get(), links = get<com.circaso.core.datastore.AppPreferences>(), scope = get(), groupWallets = { get<com.circaso.core.flags.GroupWalletsFlag>().isOn }, networks = get(), groupNetworkOf = { chatId -> get<com.circaso.feature.wallet.domain.GroupNetworks>().now(chatId) }) }
     single<ChamaRepository> { get<ChamaRepositoryImpl>() }
     single { com.circaso.feature.chama.data.repository.ContributionFeed() } // contributions landing live (a group call)
     factory { ObserveChamaUseCase(get()) }

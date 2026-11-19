@@ -56,8 +56,8 @@ import kotlin.test.assertFalse
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
-private val Both = NetworksResponse(listOf(NetworkDto("MAINNET", "NONE"), NetworkDto("TESTNET", "ACTIVE")), default = "MAINNET")
-private val MainnetOnly = NetworksResponse(listOf(NetworkDto("MAINNET", "ACTIVE")), default = "MAINNET")
+internal val Both = NetworksResponse(listOf(NetworkDto("MAINNET", "NONE"), NetworkDto("TESTNET", "ACTIVE")), default = "MAINNET")
+internal val MainnetOnly = NetworksResponse(listOf(NetworkDto("MAINNET", "ACTIVE")), default = "MAINNET")
 private val NotFound = AppResult.Failure(AppError.Api("request.not_found", 404, null, null, emptyMap()))
 
 /** The two small settings the store keeps, in memory; a sign-out is `saved.value = SavedNetworks()`. */
@@ -265,7 +265,7 @@ class WalletNetworkHeaderTest {
 }
 
 /** One side of Circle per network, picked by the network the call is pinned to (what the real remote puts in the header). */
-private class TwoSidedRemote(val mainnet: FakeWalletRemote, val testnet: FakeWalletRemote, var listed: NetworksResponse? = Both) : WalletRemote {
+internal class TwoSidedRemote(val mainnet: FakeWalletRemote, val testnet: FakeWalletRemote, var listed: NetworksResponse? = Both) : WalletRemote {
     val asked = mutableListOf<WalletNetwork?>()
     /** Runs while W4 is answering, so a test can move the selection between the prepare and the PIN. */
     var duringPrepare: suspend () -> Unit = {}
