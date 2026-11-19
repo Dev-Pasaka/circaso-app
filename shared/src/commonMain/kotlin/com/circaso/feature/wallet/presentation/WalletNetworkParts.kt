@@ -90,8 +90,8 @@ private val ChipHeight = 32.dp
  * The Wallet tab's network chip (Pasaka, 2026-11-19; it replaced a second Mainnet | Testnet pill that sat beside
  * Personal | Groups as its equal). One quiet status capsule at the end of the tab's top row: the network's dot, its
  * name and a small chevron; a tap opens the Network sheet ([NetworkSheetContent]). Only for someone with both
- * networks. It is the same family as [TestnetTag] (the dot, the word's weight, the capsule on `fill`, an outline in
- * high contrast), a size up because it is a control. When the network changes the word crossfades and nothing else
+ * networks. It is the same family as [TestnetTag] (the dot and the word), outlined with a hairline
+ * instead of filled so it never reads as a second switch beside the filled track. When the network changes the word crossfades and nothing else
  * moves. Read out as "Network: Mainnet" (or "Network: Testnet, test money"), a button whose action is "change".
  */
 @Composable
@@ -111,8 +111,10 @@ fun NetworkChip(network: WalletNetwork, onClick: () -> Unit, modifier: Modifier 
         contentAlignment = Alignment.Center,
     ) {
         Row(
-            Modifier.heightIn(min = ChipHeight * scale).clip(CircasoShapes.circle).background(c.fill)
-                .then(if (c.isHighContrast) Modifier.border(1.dp, c.ink, CircasoShapes.circle) else Modifier)
+            // Outlined, never filled: beside the filled Personal | Groups track a second filled capsule read as a
+            // second switch. A hairline keeps it a quiet status that can be tapped.
+            Modifier.heightIn(min = ChipHeight * scale).clip(CircasoShapes.circle)
+                .border(1.dp, if (c.isHighContrast) c.ink else c.separator, CircasoShapes.circle)
                 .pressIndication(source)
                 .padding(start = CircasoSpacing.s3, end = CircasoSpacing.s2 + CircasoSpacing.s1 / 2),
             horizontalArrangement = Arrangement.spacedBy(CircasoSpacing.s1 + CircasoSpacing.s1 / 2), verticalAlignment = Alignment.CenterVertically,
@@ -128,7 +130,7 @@ fun NetworkChip(network: WalletNetwork, onClick: () -> Unit, modifier: Modifier 
             ) { on ->
                 Row(horizontalArrangement = Arrangement.spacedBy(CircasoSpacing.s1 + CircasoSpacing.s1 / 2), verticalAlignment = Alignment.CenterVertically) {
                     NetworkDot(on)
-                    BasicText(on.label, style = t.footnote.copy(color = c.ink, fontWeight = FontWeight.SemiBold), maxLines = 1)
+                    BasicText(on.label, style = t.footnote.copy(color = c.ink, fontWeight = FontWeight.Medium), maxLines = 1)
                 }
             }
             CircasoIconImage(CircasoIcon.ChevronDown, c.inkSecondary, Modifier.size(CircasoSpacing.s3 + CircasoSpacing.s1 / 2))
