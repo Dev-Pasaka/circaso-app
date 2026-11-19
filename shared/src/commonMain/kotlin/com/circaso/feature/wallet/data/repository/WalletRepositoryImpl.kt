@@ -151,12 +151,12 @@ class WalletRepositoryImpl(
     }
 
     @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
-    override val wallet: Flow<Wallet?> = networks.selected.flatMapLatest { dao.observeSnapshot(it.wire) }.map { row -> row?.let { decode(it) } }
+    override val wallet: Flow<Wallet?> = networks.followed.flatMapLatest { dao.observeSnapshot(it.wire) }.map { row -> row?.let { decode(it) } }
     override fun walletOn(network: WalletNetwork): Flow<Wallet?> = dao.observeSnapshot(network.wire).map { row -> row?.let { decode(it) } }
 
     @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
     override val transfers: Flow<List<Transfer>> =
-        combine(networks.selected.flatMapLatest { dao.observeTransfers(it.wire) }, names.saved) { rows, saved -> rows.map { it.toDomain().named(saved) } }
+        combine(networks.followed.flatMapLatest { dao.observeTransfers(it.wire) }, names.saved) { rows, saved -> rows.map { it.toDomain().named(saved) } }
     override fun transfer(transferId: String): Flow<Transfer?> = combine(dao.observeTransfer(transferId), names.saved) { row, saved -> row?.toDomain()?.named(saved) }
 
     /** Who asked this person to set up a wallet (`setup.requested`), for the tab's nudge; cleared once a wallet exists. */
@@ -363,10 +363,12 @@ class WalletRepositoryImpl(
     /**
      * A payment is prepared and signed for one network: the one its review was shown for ([PaymentRequest.network]).
      * If the selection has moved since, nothing is sent; if it moves between W4 and the PIN, nothing is signed.
+     * A group's money is the exception ([PaymentRequest.followsSelection]): it moves on the network the group's wallet
+     * is on, whatever the Wallet tab shows, so the selection never stops it.
      */
     override suspend fun pay(request: PaymentRequest, idempotencyKey: String): AppResult<Transfer> {
         val network = request.network ?: net()
-        if (moved(network)) return AppResult.Failure(networkChanged())
+        if (request.followsSelection && moved(network)) return AppResult.Failure(networkChanged())
         return on(network) { payOn(request, idempotencyKey, network) }
     }
 
@@ -405,7 +407,7 @@ class WalletRepositoryImpl(
         val sdk = prepared.sdk
         if (challenge != null && sdk != null) {
             // The person moved to the other network while W4 was answering: its PIN screen never opens for this one.
-            if (moved(network)) {
+            if (request.followsSelection && moved(network)) {
                 dao.upsert(row.copy(state = "EXPIRED", failureReason = "network_changed", updatedAt = nowMillis()))
                 return AppResult.Failure(networkChanged())
             }
@@ -441,8 +443,12 @@ class WalletRepositoryImpl(
     // ---- Group wallets (phase 2)
 
     @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
-    override val wallets: Flow<List<WalletListing>> = networks.selected.flatMapLatest { dao.observeList(it.wire) }.map { row ->
+    override val wallets: Flow<List<WalletListing>> = networks.followed.flatMapLatest { dao.observeList(it.wire) }.map { row ->
         row?.let { runCatching { json.decodeFromString(WalletsResponse.serializer(), it.json) }.getOrNull() }?.wallets.orEmpty().map { it.toDomain() }
+    }
+
+    override fun walletsOn(network: WalletNetwork): Flow<List<WalletListing>?> = dao.observeList(network.wire).map { row ->
+        row?.let { runCatching { json.decodeFromString(WalletsResponse.serializer(), it.json) }.getOrNull() }?.wallets?.map { it.toDomain() }
     }
 
     override suspend fun refreshWallets(): AppResult<List<WalletListing>> {
@@ -457,7 +463,7 @@ class WalletRepositoryImpl(
 
     @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
     override fun walletOf(walletId: String?): Flow<Wallet?> =
-        if (walletId == null) wallet else networks.selected.flatMapLatest { dao.observeCached(walletId, it.wire) }.map { row -> row?.let { decodeCached(it) } }
+        if (walletId == null) wallet else networks.followed.flatMapLatest { dao.observeCached(walletId, it.wire) }.map { row -> row?.let { decodeCached(it) } }
 
     override fun walletOfOn(walletId: String?, network: WalletNetwork): Flow<Wallet?> =
         if (walletId == null) walletOn(network) else dao.observeCached(walletId, network.wire).map { row -> row?.let { decodeCached(it) } }
@@ -476,7 +482,7 @@ class WalletRepositoryImpl(
     }
 
     @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
-    override fun activity(walletId: String): Flow<List<Transfer>> = networks.selected.flatMapLatest { on ->
+    override fun activity(walletId: String): Flow<List<Transfer>> = networks.followed.flatMapLatest { on ->
         combine(dao.observeActivity(walletId, on.wire), dao.observeTransfersOf(walletId, on.wire), names.saved) { history, signedHere, saved ->
             val known = history.mapNotNull { it.transferId }.toSet()
             (history.map { it.toDomain() } + signedHere.filter { it.transferId !in known }.map { it.toDomain() }).sortedByDescending { it.createdAt }

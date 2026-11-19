@@ -1,5 +1,6 @@
 package com.circaso.feature.wallet.presentation
 
+import com.circaso.feature.wallet.domain.on
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.circaso.core.common.AppError
@@ -118,9 +119,18 @@ class SendToWalletViewModel(
     private val sendCard: SendPaymentCardUseCase? = null,
     /** The wallet network this send is on, fixed for the life of the screen: review, W4 and the PIN are all its. */
     private val networks: com.circaso.feature.wallet.domain.WalletNetworks = com.circaso.feature.wallet.domain.WalletNetworks.Single,
+    /** Where group wallets are: a send from a group's wallet is on that wallet's network, whatever is selected. */
+    private val groupNetworks: com.circaso.feature.wallet.domain.GroupNetworks? = null,
 ) : ViewModel() {
+    /** The network this send belongs on now: the group wallet's own, else the selected one. */
+    private fun target(): com.circaso.feature.wallet.domain.WalletNetwork =
+        if (fromWalletId != null && groupNetworks != null) groupNetworks.ofWalletNow(fromWalletId) else networks.current()
+    private val targets: Flow<com.circaso.feature.wallet.domain.WalletNetwork> =
+        if (fromWalletId != null && groupNetworks != null) groupNetworks.ofWallet(fromWalletId) else networks.selected
+    private suspend fun <T> onPin(block: suspend () -> T): T = kotlinx.coroutines.withContext(com.circaso.feature.wallet.domain.PinnedNetwork(pinned)) { block() }
+
     /** The network the form on screen is for. It moves only while nothing is being signed, and the form says when it has. */
-    private val pin = MutableStateFlow(networks.current())
+    private val pin = MutableStateFlow(target())
     private val pinned: com.circaso.feature.wallet.domain.WalletNetwork get() = pin.value
     private val local = MutableStateFlow(SendToWalletUiState(canScan = scanner.available, group = fromWalletId != null))
     private var idempotencyKey = newIdempotencyKey()
@@ -131,7 +141,7 @@ class SendToWalletViewModel(
         (if (fromWalletId != null && wallets != null) wallets.walletOf(fromWalletId, on) else observeWallet(on)).map { w -> w?.takeIf { it.network == null || it.network == on } }
     }
     private val from: Flow<NamedWallet?> = if (fromWalletId == null || wallets == null) flowOf(null)
-    else wallets.named.map { list -> list.firstOrNull { it.walletId == fromWalletId } }
+    else pin.flatMapLatest { on -> wallets.named.on(on) }.map { list -> list.firstOrNull { it.walletId == fromWalletId } }
 
     val state: StateFlow<SendToWalletUiState> = combine(local, source, connection.status, from, combine(pin, networks.state) { on, all -> on to (all.known && on == com.circaso.feature.wallet.domain.WalletNetwork.TESTNET) }) { ui, w, c, f, net ->
         ui.copy(
@@ -149,10 +159,10 @@ class SendToWalletViewModel(
         // check, the fee, the chain) was the other network's and is dropped; a payment being signed keeps its network
         // (the wallet refuses to sign across a switch) and this runs when it ends.
         viewModelScope.launch {
-            combine(networks.selected, local.map { it.step == ExternalStep.Signing }.distinctUntilChanged()) { on, signing -> on to signing }
+            combine(targets, local.map { it.step == ExternalStep.Signing }.distinctUntilChanged()) { on, signing -> on to signing }
                 .collect { (on, signing) -> if (!signing && on != pinned) moveTo(on) }
         }
-        if (fromWalletId != null) wallets?.let { w -> viewModelScope.launch { w.refresh(fromWalletId, null) } }
+        if (fromWalletId != null) wallets?.let { w -> viewModelScope.launch { onPin { w.refresh(fromWalletId, null) } } }
     }
 
     private fun moveTo(on: com.circaso.feature.wallet.domain.WalletNetwork) {
@@ -213,7 +223,7 @@ class SendToWalletViewModel(
         if (!s.canReview) return
         local.update { it.copy(checking = true, error = null, gasShort = false) }
         viewModelScope.launch {
-            when (val r = validateAddress(s.blockchain!!, s.address)) {
+            when (val r = onPin { validateAddress(s.blockchain!!, s.address) }) {
                 is AppResult.Success -> {
                     val ok = r.value
                     if (ok == null) { local.update { it.copy(checking = false, checkedAddress = null, error = "That isn't a valid address on this network.") }; return@launch }
@@ -290,7 +300,7 @@ class SendToWalletViewModel(
                     // request.in_progress keeps it, so Try Again can never send to the address twice.
                     if (code == "wallet.sdk_failed" || code == "wallet.payout_in_progress" || code in Refused) idempotencyKey = newIdempotencyKey()
                     // The network moved under this send: nothing was sent or signed; back to the form on the new one.
-                    if (code == com.circaso.feature.wallet.domain.NetworkChangedCode) { moveTo(networks.current()); return@launch }
+                    if (code == com.circaso.feature.wallet.domain.NetworkChangedCode) { moveTo(target()); return@launch }
                     // W4 found too little SOL for Solana's fee: the form's note, with the address to add SOL to.
                     if (com.circaso.feature.wallet.domain.isGasProblem(code)) { local.update { it.copy(step = ExternalStep.Form, failure = null, gasShort = true) }; return@launch }
                     local.update {

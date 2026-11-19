@@ -73,7 +73,11 @@ fun goalMeta(chama: Chama): String {
 
 /** Design D2: the goal floats under the group's header in a glass card, with Add. Tapping the progress opens the group wallet (D4). */
 @Composable
-fun GoalStrip(chama: Chama, fiat: FiatValue?, showAdd: Boolean, canAdd: Boolean, onAdd: () -> Unit, onOpen: () -> Unit, modifier: Modifier = Modifier) {
+fun GoalStrip(
+    chama: Chama, fiat: FiatValue?, showAdd: Boolean, canAdd: Boolean, onAdd: () -> Unit, onOpen: () -> Unit, modifier: Modifier = Modifier,
+    /** The group's money is test money: from the group's own network, not the Wallet tab's selection. */
+    testnet: Boolean = com.circaso.feature.wallet.presentation.LocalTestnet.current,
+) {
     Row(
         modifier
             .fillMaxWidth()
@@ -90,7 +94,7 @@ fun GoalStrip(chama: Chama, fiat: FiatValue?, showAdd: Boolean, canAdd: Boolean,
             of = amountNumber(chama.goal.targetMinor, fiat),
             progress = chama.progress,
             // A group's money on Testnet says so on the strip itself, in the thread where it is added to.
-            meta = (if (com.circaso.feature.wallet.presentation.LocalTestnet.current) "Testnet · " else "") + goalMeta(chama),
+            meta = (if (testnet) "Testnet · " else "") + goalMeta(chama),
             label = "${chama.goal.name} progress",
             modifier = Modifier.weight(1f),
         )

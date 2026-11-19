@@ -104,8 +104,17 @@ data class WalletUiState(
     val networkNotice: com.circaso.feature.wallet.domain.NetworkNotice? = null,
     /** The selected network's wallet as the server's list of networks last had it; null when it didn't say. */
     val networkWalletStatus: WalletStatus? = null,
+    /** The Network sheet (from the chip in the tab's top row) is open. */
+    val networkSheet: Boolean = false,
+    /** Where each of the person's wallets stands, as the server's list of networks last had it ("Not set up yet"). */
+    val networkStatuses: Map<WalletNetwork, WalletStatus> = emptyMap(),
+    /**
+     * Groups this person owns that have a Testnet wallet and no Mainnet one (2026-11-19), listed only while Mainnet
+     * is on screen: each can be given a Mainnet wallet. Empty on Testnet and for everyone else.
+     */
+    val withoutMainnet: List<NamedWallet> = emptyList(),
 ) {
-    /** Someone with both networks: the switch shows, and a missing wallet is explained as a separate one. */
+    /** Someone with both networks: the network chip shows, and a missing wallet is explained as a separate one. */
     val showNetworkSwitch get() = networks.size > 1
     /**
      * Nothing of this network's wallet has been read on this phone, but the server's list already says there is none
@@ -124,11 +133,16 @@ data class WalletUiState(
      * The Personal | Groups control shows: group wallets are on and the person has at least one (Pasaka, 2026-11-06).
      * With none there is nothing to switch to, so there is no control and no empty Groups page, just their wallet.
      */
-    val showSwitcher get() = groupsEnabled && groupWallets.isNotEmpty()
+    val showSwitcher get() = groupsEnabled && (groupWallets.isNotEmpty() || withoutMainnet.isNotEmpty())
+    /**
+     * Groups is chosen and there is no group wallet on this network, only groups that could have one: the calm empty
+     * state ("No Mainnet group wallets yet") with those groups listed.
+     */
+    val groupsEmpty get() = groupsEnabled && mode == WalletMode.Groups && groupWallets.isEmpty() && withoutMainnet.isNotEmpty()
     /** The group wallets, in the server's order: what Groups chooses from. */
     val groupWallets: List<NamedWallet> get() = wallets.filter { it.kind == com.circaso.feature.wallet.domain.WalletOwnerType.Group }
     /** Groups is chosen and a group wallet is on screen. */
-    val showingGroups get() = showSwitcher && !selected.personal
+    val showingGroups get() = showSwitcher && !selected.personal && groupWallets.isNotEmpty()
     val status get() = wallet?.status ?: WalletStatus.None
     val active get() = status == WalletStatus.Active
     val canSend get() = active && online && wallet?.holdUntil == null
@@ -157,6 +171,8 @@ class WalletViewModel(
     private val choices: WalletChoiceStore = WalletChoiceStore.memory(),
     /** The selected wallet network and the ones the person may use. */
     private val networks: WalletNetworks = WalletNetworks.Single,
+    /** Where group wallets are on every network: the groups that could get a Mainnet wallet, and W16 for each network. */
+    private val groupNetworks: com.circaso.feature.wallet.domain.GroupNetworks? = null,
 ) : ViewModel() {
     // Until the remembered side and the saved list are read, the tab knows group wallets may be on (so it waits).
     private val local = MutableStateFlow(WalletUiState(choiceRestored = false, walletsLoaded = sources == null, groupsEnabled = sources != null && groupWallets.isOn))
@@ -178,6 +194,13 @@ class WalletViewModel(
                         reselect { it.copy(wallets = named, groupsEnabled = on, walletsLoaded = true) }
                     }
             }
+        }
+        // Old groups this person owns that have no Mainnet wallet yet, named, while Mainnet is the network on screen.
+        val places = groupNetworks
+        if (sources != null && places != null) viewModelScope.launch {
+            places.state.map { s -> if (s.selected == WalletNetwork.MAINNET) s.withoutMainnet else emptyList() }.distinctUntilChanged()
+                .flatMapLatest { list -> if (list.isEmpty()) flowOf(emptyList()) else sources.named(list) }
+                .collect { addable -> reselect { it.copy(withoutMainnet = if (it.groupsEnabled) addable else emptyList()) } }
         }
         // The last mode and group, from the previous run.
         viewModelScope.launch {
@@ -314,6 +337,9 @@ class WalletViewModel(
             // What the server last said about this network's wallet, for a first visit with nothing read yet. A
             // server without networks says nothing about it (its one entry is a stand-in).
             networkWalletStatus = if (!all.known || all.legacy) null else all.statusOf(side.network),
+            networkStatuses = if (!all.known || all.legacy) emptyMap() else all.options.associate { it.network to it.walletStatus },
+            // The list belongs to Mainnet: never drawn beside Testnet's money in the instant of a switch.
+            withoutMainnet = if (side.network == WalletNetwork.MAINNET) ui.withoutMainnet else emptyList(),
         )
     // The first frame, before the phone's copy is read: the wallet's skeleton (loading), never "Couldn't open your
     // wallet", and the same wait for the remembered side as [local].
@@ -334,6 +360,8 @@ class WalletViewModel(
             networks.refresh()
             val result = refreshWallet()
             if (groupWallets.isOn) sources?.refresh(null, null)
+            // W16 on the person's other network too, so every group's screens know which network its wallet is on.
+            if (groupWallets.isOn) groupNetworks?.refresh()
             loadMissingNetworks()
             local.update { it.copy(loading = false, error = (result as? AppResult.Failure)?.let { f -> ErrorMessages.forError(f.error) }?.takeIf { _ -> fromPull || state.value.wallet == null }) }
         }
@@ -350,12 +378,15 @@ class WalletViewModel(
         viewModelScope.launch {
             if (!networks.select(network)) return@launch
             refreshing?.cancel()
-            reselect { it.copy(loading = false, error = null, missingNetworks = emptyList(), offerBiometrics = false, receiveSheet = false, coming = null, switching = false, allGroups = false) }
+            reselect { it.copy(loading = false, error = null, missingNetworks = emptyList(), offerBiometrics = false, receiveSheet = false, coming = null, switching = false, allGroups = false, networkSheet = false) }
             refresh()
         }
     }
 
     fun onNetworkNoticeShown() = networks.noticeShown()
+
+    /** The network chip's sheet. Only for someone with more than one network; reads nothing, so it opens offline too. */
+    fun onNetworkSheet(open: Boolean) = local.update { it.copy(networkSheet = open && networks.state.value.switchable) }
 
     /** The picked group's CH7, W1 and W6. Its failure shows only while the phone has nothing of that wallet. */
     private fun refreshGroup() {

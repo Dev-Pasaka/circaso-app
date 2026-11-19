@@ -41,6 +41,8 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.text.BasicText
 import androidx.compose.runtime.Composable
@@ -97,6 +99,8 @@ class GroupMenuActions(
     val onSendToWallet: ((walletId: String) -> Unit)? = null,
     /** One network of the group's wallet: its assets (the tab's See All for that card). Null leaves the rows still. */
     val onNetwork: ((walletId: String, blockchain: String) -> Unit)? = null,
+    /** An old group's owner gives it a Mainnet wallet too (2026-11-19): the normal set-up, for Mainnet. */
+    val onAddMainnetWallet: ((chatId: String) -> Unit)? = null,
 )
 
 /**
@@ -119,29 +123,15 @@ internal fun shortWalletName(name: String): String {
  * the lift follows. Each side reads out as "Wallet: Personal" / "Wallet: Groups", a tab, selected or not.
  */
 @Composable
-fun WalletModeControl(groups: Boolean, onMode: (WalletMode) -> Unit, modifier: Modifier = Modifier, segmentMinWidth: androidx.compose.ui.unit.Dp? = null) {
+fun WalletModeControl(groups: Boolean, onMode: (WalletMode) -> Unit, modifier: Modifier = Modifier) {
     TwoSegmentControl(
         first = "Personal", second = "Groups", secondSelected = groups,
         onSelect = { second -> onMode(if (second) WalletMode.Groups else WalletMode.Personal) },
-        describe = { "Wallet: $it" }, modifier = modifier, segmentMinWidth = segmentMinWidth,
+        describe = { "Wallet: $it" }, modifier = modifier,
     )
 }
 
-/**
- * A segment's least width when the network switch and Personal | Groups share the Wallet tab's row, so the two pills
- * come out the same width, side by side or one above the other. 84 dp is about what the longest of the four words
- * needs with its padding ("Personal", and "Testnet" with its dot) at the default text size; 80 dp would be under the
- * words, and the pills would then differ. Two pills of 168 dp and their gap need 348 dp, so they sit side by side on
- * a 393 dp phone and wider, and stack, deliberately, on a 360 dp phone (328 dp of room) and at large text: two full
- * controls, each with its 44 dp targets, read better there than two squeezed ones.
- */
-internal val PairedSegmentMinWidth = CircasoSpacing.s10 * 2 + CircasoSpacing.s1
-
-/**
- * The two-word segmented pill both of the Wallet tab's switches are (Personal | Groups, Mainnet | Testnet): one
- * drawing, one motion, one touch target, so the two read as a pair. [secondDot] puts a small dot in [dotColor] before
- * the second word (Testnet's caution mark); it is drawn, never laid out, so the lift's maths is untouched.
- */
+/** The two-word segmented pill that is Personal | Groups: the track, the lift that slides, one 44 dp touch target. */
 @Composable
 internal fun TwoSegmentControl(
     first: String,
@@ -150,10 +140,6 @@ internal fun TwoSegmentControl(
     onSelect: (second: Boolean) -> Unit,
     describe: (String) -> String,
     modifier: Modifier = Modifier,
-    secondDot: Boolean = false,
-    dotColor: androidx.compose.ui.graphics.Color = androidx.compose.ui.graphics.Color.Unspecified,
-    /** Wider segments than the words need, so two controls in one row come out the same width. */
-    segmentMinWidth: androidx.compose.ui.unit.Dp? = null,
 ) {
     val c = CircasoTheme.colors
     val t = CircasoTheme.typography
@@ -195,7 +181,7 @@ internal fun TwoSegmentControl(
         listOf(false to first, true to second).forEach { (isSecond, label) ->
             val on = isSecond == secondSelected
             Box(
-                Modifier.weight(1f).widthIn(min = (segmentMinWidth ?: SegmentMinWidth) * scale.coerceAtMost(if (segmentMinWidth != null) 1.3f else 1f)).heightIn(min = TouchHeight * scale)
+                Modifier.weight(1f).widthIn(min = SegmentMinWidth).heightIn(min = TouchHeight * scale)
                     // The lift sliding across is the feedback: no ripple or press scale over the 44 dp target.
                     .selectable(
                         selected = on, role = Role.Tab, interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() },
@@ -204,20 +190,8 @@ internal fun TwoSegmentControl(
                     .semantics(mergeDescendants = true) { contentDescription = describe(label) },
                 contentAlignment = Alignment.Center,
             ) {
-                val dotted = isSecond && secondDot
                 BasicText(
-                    label,
-                    // The dot's own room is added before the word, so dot and word are centred in the segment as one.
-                    Modifier.padding(horizontal = SegmentPadding).padding(start = if (dotted) TestnetDot + SegmentDotGap else 0.dp).then(
-                        if (!dotted) Modifier else Modifier.drawBehind {
-                            // Before the word, in the reading direction, level with its middle.
-                            val r = TestnetDot.toPx() / 2f
-                            val gap = SegmentDotGap.toPx()
-                            val cx = if (rtl) size.width + gap + r else -gap - r
-                            // Softer while its side isn't selected, but never in high contrast, where it must hold 3:1.
-                            drawCircle(dotColor, r, androidx.compose.ui.geometry.Offset(cx, size.height / 2f), alpha = if (on || c.isHighContrast) 1f else 0.55f)
-                        },
-                    ),
+                    label, Modifier.padding(horizontal = SegmentPadding),
                     style = t.footnote.copy(color = if (on) c.ink else c.inkSecondary, fontWeight = FontWeight.SemiBold, textAlign = TextAlign.Center),
                     maxLines = 1,
                 )
@@ -225,9 +199,6 @@ internal fun TwoSegmentControl(
         }
     }
 }
-
-/** The space between Testnet's dot ([TestnetDot], shared with the tag) and its word in the network switch. */
-private val SegmentDotGap = CircasoSpacing.s1
 
 /** What a group wallet lets this person do, in a few words (the menu's and the full list's second line). */
 internal fun walletLine(w: NamedWallet, locked: Boolean): String = when {
@@ -473,6 +444,16 @@ fun ColumnScope.AllGroupWalletsContent(
                 modifier = Modifier.moves(this),
             ) { onPick(w) }
         }
+        // Mainnet on screen: the person's old groups that have only a Testnet wallet, each a tap from its Mainnet one.
+        val add = menu?.onAddMainnetWallet
+        if (!list.searching && state.withoutMainnet.isNotEmpty() && add != null) {
+            item(key = "without-mainnet-label", contentType = "label") {
+                SheetLabel(WithoutMainnetTitle, Modifier.moves(this).padding(top = CircasoSpacing.s6, bottom = CircasoSpacing.s2))
+            }
+            item(key = "without-mainnet", contentType = "without-mainnet") {
+                WithoutMainnetRows(state.withoutMainnet, state.online, Modifier.moves(this)) { chat -> onClose(); add(chat) }
+            }
+        }
         if (list.searching && list.others.isEmpty()) item(key = "none") {
             BasicText(
                 "No group called “${query.trim()}”.", Modifier.moves(this).fillMaxWidth().padding(vertical = CircasoSpacing.s6),
@@ -493,6 +474,71 @@ internal fun offlineNote(read: List<Wallet?>, now: Long = com.circaso.core.sync.
     return "Offline · balances as of " + com.circaso.core.platform.formatLocalTime(oldest, style) + "."
 }
 
+internal const val WithoutMainnetTitle = "Without a Mainnet wallet"
+
+/**
+ * The person's old groups that have a Testnet wallet and no Mainnet one, as one rounded list on the sheet's grid: the
+ * group's picture and name, and what a tap does (its Mainnet set-up: real money, its own PIN). Online only, said on
+ * the row before the tap.
+ */
+@Composable
+internal fun WithoutMainnetRows(groups: List<NamedWallet>, online: Boolean, modifier: Modifier = Modifier, onAdd: (chatId: String) -> Unit) {
+    val c = CircasoTheme.colors
+    val t = CircasoTheme.typography
+    Column(modifier.fillMaxWidth().clip(CircasoShapes.md).background(sheetGroupColor()).sheetGroupEdge(CircasoShapes.md)) {
+        groups.forEachIndexed { i, w ->
+            if (i > 0) InsetDivider()
+            val chat = w.chatId
+            val sub = if (online) "Add a Mainnet wallet · real money, its own PIN" else "Needs a connection"
+            Row(
+                Modifier.fillMaxWidth().heightIn(min = CircasoSizes.avatarMd + CircasoSpacing.s3 * 2)
+                    .then(if (online && chat != null) Modifier.pressable(role = Role.Button, onClick = { onAdd(chat) }) else Modifier)
+                    .semantics(mergeDescendants = true) { contentDescription = if (online) "Add a Mainnet wallet for ${w.name}" else "${w.name}, adding a Mainnet wallet needs a connection" }
+                    .padding(CircasoSpacing.s3),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(CircasoSpacing.s3),
+            ) {
+                WalletGlyph(w, PictureColumn)
+                Column(Modifier.weight(1f)) {
+                    BasicText(w.name, style = t.body.copy(color = if (online) c.ink else c.inkSecondary, fontWeight = FontWeight.SemiBold), maxLines = 2, overflow = TextOverflow.Ellipsis)
+                    BasicText(sub, style = t.footnote.copy(color = c.inkSecondary), maxLines = 2, overflow = TextOverflow.Ellipsis)
+                }
+                if (online) RowChevron()
+            }
+        }
+    }
+}
+
+/**
+ * Groups, on Mainnet, for someone whose groups only have Testnet wallets so far: a calm empty state, never a blank
+ * page or their personal wallet under the wrong heading. It says what is true and lists the groups that can get a
+ * Mainnet wallet, each a tap from its set-up.
+ */
+@Composable
+internal fun NoMainnetGroupWallets(state: WalletUiState, bottom: androidx.compose.ui.unit.Dp, menu: GroupMenuActions?) {
+    val c = CircasoTheme.colors
+    val t = CircasoTheme.typography
+    Column(
+        Modifier.fillMaxWidth().fillMaxHeight().verticalScroll(rememberScrollState()).padding(horizontal = CircasoSpacing.s4).padding(top = CircasoSpacing.s10, bottom = bottom),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Box(Modifier.size(CircasoSizes.avatarMd).clip(CircasoShapes.circle).background(c.fill), contentAlignment = Alignment.Center) {
+            CircasoIconImage(CircasoIcon.People, c.inkSecondary, Modifier.size(CircasoSpacing.s6))
+        }
+        BasicText(
+            "No Mainnet group wallets yet", Modifier.padding(top = CircasoSpacing.s4).semantics { heading() },
+            style = t.title2.copy(color = c.ink, textAlign = TextAlign.Center),
+        )
+        BasicText(
+            "Your groups have Testnet wallets. Give one a Mainnet wallet to hold real money; its Testnet wallet stays as it is.",
+            Modifier.padding(top = CircasoSpacing.s2, start = CircasoSpacing.s4, end = CircasoSpacing.s4),
+            style = t.subhead.copy(color = c.inkSecondary, textAlign = TextAlign.Center),
+        )
+        SheetLabel(WithoutMainnetTitle, Modifier.padding(top = CircasoSpacing.s8, bottom = CircasoSpacing.s2))
+        WithoutMainnetRows(state.withoutMainnet, state.online) { chat -> menu?.onAddMainnetWallet?.invoke(chat) }
+    }
+}
+
 /** A small grey label over a block of the sheet (`cap`), on the same inset as the rows' content. */
 @Composable
 private fun SheetLabel(text: String, modifier: Modifier = Modifier) {
@@ -503,13 +549,13 @@ private fun SheetLabel(text: String, modifier: Modifier = Modifier) {
 }
 
 /** The picture column every row shares, so text always starts on the same line. */
-private val PictureColumn = CircasoSizes.avatarMd
+internal val PictureColumn = CircasoSizes.avatarMd
 
 /** Where a row's text starts, for the hairlines between rows. */
 private val TextInset = CircasoSpacing.s3 + PictureColumn + CircasoSpacing.s3
 
 @Composable
-private fun InsetDivider() {
+internal fun InsetDivider() {
     Box(Modifier.fillMaxWidth().padding(start = TextInset).height(0.5.dp).background(CircasoTheme.colors.separator))
 }
 
@@ -645,8 +691,9 @@ private fun ActionTiles(actions: List<SheetAction>, online: Boolean, stacked: Bo
     }
 }
 
-/** The glyph inside an action's disc and the tick on a row (the sheet's one small-icon size). */
-private val GlyphSize = CircasoSpacing.s4 + 2.dp
+/** The glyph inside an action's disc and the tick on a row (the sheets' one small-icon size). */
+internal val SheetGlyphSize = CircasoSpacing.s4 + 2.dp
+private val GlyphSize = SheetGlyphSize
 
 /**
  * A tile: the glyph in a 36 dp disc over its label, top-aligned so a row's labels share a baseline. Pay is filled.

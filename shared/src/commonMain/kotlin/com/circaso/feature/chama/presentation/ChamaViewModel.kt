@@ -1,5 +1,6 @@
 package com.circaso.feature.chama.presentation
 
+import com.circaso.feature.wallet.domain.pinnedTo
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.circaso.core.common.AppResult
@@ -90,18 +91,21 @@ class ChamaViewModel(
     connection: ConnectionState,
     auth: AuthManager,
     private val prefs: AppPreferences? = null,
+    /** The network the group's money is on. Null follows the selection (before networks). */
+    network: com.circaso.feature.wallet.domain.WalletNetwork? = null,
 ) : ViewModel() {
+    private val scope = viewModelScope.pinnedTo(network)
     private val local = MutableStateFlow(ChamaUiState(myUserId = auth.userId))
     private var requestKey = newIdempotencyKey()
 
     val state: StateFlow<ChamaUiState> = combine(local, observeChat(chatId), observeChama(chatId), observeWallet(), connection.status) { ui, chat, chama, wallet, c ->
         ui.copy(chat = chat, chama = chama, fiat = wallet?.fiat, online = c == ConnectionStatus.Online)
-    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), local.value)
+    }.stateIn(scope, SharingStarted.WhileSubscribed(5_000), local.value)
 
     init { refresh() }
 
     fun refresh() {
-        viewModelScope.launch {
+        scope.launch {
             val r = refreshChama(chatId)
             when (r) {
                 is AppResult.Success -> local.update { it.copy(noGoal = r.value == null) }
@@ -125,7 +129,7 @@ class ChamaViewModel(
         val minor = s.draftAmountMinor ?: return
         if (!s.canAsk) return
         local.update { it.copy(busy = true, error = null) }
-        viewModelScope.launch {
+        scope.launch {
             val r = createRequest(chatId, d.toUserId, d.address.trim().takeIf { d.toUserId == null && it.isNotEmpty() }, d.toName.trim().takeIf { it.isNotEmpty() }, minor, d.note.trim().takeIf { it.isNotEmpty() }, requestKey)
             when (r) {
                 is AppResult.Success -> { requestKey = newIdempotencyKey(); local.update { it.copy(busy = false, draft = null, notice = if (r.value.state == com.circaso.feature.chama.domain.RequestState.Approved) "Approved. The treasurer can pay it now." else "Sent to the admins for approval.") } }
@@ -138,7 +142,7 @@ class ChamaViewModel(
     fun onDecide(request: ChamaRequest, approve: Boolean) {
         if (local.value.busy) return
         local.update { it.copy(busy = true, error = null) }
-        viewModelScope.launch {
+        scope.launch {
             val r = decide(request.requestId, approve)
             local.update { it.copy(busy = false, error = (r as? AppResult.Failure)?.let { f -> ErrorMessages.forError(f.error) }) }
         }
@@ -154,7 +158,7 @@ class ChamaViewModel(
         val minor = (if (d.inFiat && s.fiat != null) fiatToUsdcMinor(d.targetText, s.fiat.rate) else MinorUnits.fromDisplay(d.targetText, 6)) ?: return
         if (MinorUnits.isZero(minor) || d.name.isBlank()) return
         local.update { it.copy(busy = true, error = null) }
-        viewModelScope.launch {
+        scope.launch {
             when (val r = setGoal(chatId, d.name.trim(), minor, deadlineIso(d.by))) {
                 is AppResult.Success -> {
                     // Whoever set the goal doesn't need it introduced to them (design D6).

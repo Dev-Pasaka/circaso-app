@@ -208,6 +208,8 @@ private fun statusLine(s: PayUiState, first: String): Pair<String?, Tone> = when
     s.onHold -> "Sending is paused for a short while after your account was recovered. You can still receive money." to Tone.Warning
     // The banner above says what happened; nothing more to add here.
     s.failure != null -> null to Tone.Quiet
+    // The money would leave a wallet the person hasn't set up yet (a group's money is on the group's own network).
+    s.needsWalletLine != null -> s.needsWalletLine to Tone.Warning
     s.checking -> "Checking $first’s wallet…" to Tone.Quiet
     s.problem is PayeeProblem.NoWallet -> "$first doesn’t have a Circaso wallet yet." to Tone.Critical
     s.problem is PayeeProblem.NotOnChain -> "$first can’t receive on this network yet." to Tone.Critical

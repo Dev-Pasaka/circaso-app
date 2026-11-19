@@ -55,6 +55,13 @@ import com.circaso.feature.wallet.domain.ObserveWalletOfUseCase
 import com.circaso.feature.wallet.domain.RefreshWalletOfUseCase
 import com.circaso.feature.wallet.domain.SignSubject
 import com.circaso.feature.wallet.domain.Wallet
+import com.circaso.feature.wallet.domain.GroupMainnet
+import com.circaso.feature.wallet.domain.GroupNetworks
+import com.circaso.feature.wallet.domain.PinnedNetwork
+import com.circaso.feature.wallet.domain.WalletNetwork
+import com.circaso.feature.wallet.domain.on
+import com.circaso.feature.wallet.presentation.TestnetTag
+import kotlinx.coroutines.flow.distinctUntilChanged
 import com.circaso.feature.wallet.presentation.WalletAvatar
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.withContext
@@ -82,7 +89,18 @@ data class GroupInfoMoney(
     /** The last refresh failed and there is no copy: say so, with its reference (never an empty screen). */
     val loadError: String? = null,
     val loadReference: String? = null,
+    /** The network this money is on (the group's own, by `groupNetwork`), whatever the Wallet tab shows; null before networks. */
+    val network: WalletNetwork? = null,
+    /** That network is Testnet (and the server has said so): the wallet row wears the Testnet mark. */
+    val testnet: Boolean = false,
+    /** A group with a wallet on both networks: one row each, Mainnet first. Empty for a group with one wallet. */
+    val wallets: List<GroupNetworkWallet> = emptyList(),
+    /** The owner of an old Testnet group can add (or finish) a Mainnet wallet for it; null for everyone else. */
+    val mainnet: GroupMainnet? = null,
 )
+
+/** One of a group's two wallets, as group info lists it. */
+data class GroupNetworkWallet(val network: WalletNetwork, val walletId: String, val balance: Wallet? = null, val testnet: Boolean = false)
 
 /**
  * Group info's window onto the group's money: CH7 and the group wallet's balance, refreshed when it opens, and the
@@ -101,12 +119,33 @@ class GroupInfoMoneySource(
     private val biometricLabel: String?,
     /** Each wallet network's group wallet has its own biometric setting on this phone. */
     private val networks: com.circaso.feature.wallet.domain.WalletNetworks = com.circaso.feature.wallet.domain.WalletNetworks.Single,
+    /** Which network each group's money is on; null (tests, previews) follows the selection as before. */
+    private val groupNetworks: GroupNetworks? = null,
 ) {
     private val error = MutableStateFlow<Pair<String, String?>?>(null)
 
-    // Re-read whole for each selected network (the group's money, its wallet and that wallet's settings), so nothing of
-    // one network is ever combined with the other's.
-    fun observe(chatId: String): Flow<GroupInfoMoney> = networks.selected.flatMapLatest { network -> observeOn(chatId, network) }
+    /** What decides the rows beyond the money itself: the group's network and its wallets on the others. */
+    private data class Place(val network: WalletNetwork, val testnet: Boolean, val wallets: List<Pair<WalletNetwork, String>>, val mainnet: GroupMainnet?, val known: Boolean)
+
+    private fun networkNow(chatId: String): WalletNetwork = groupNetworks?.now(chatId) ?: networks.current()
+
+    // Read whole for the group's own network (its money, its wallet and that wallet's settings), pinned, so nothing
+    // of one network is ever combined with the other's and the Wallet tab's selection has no say in it.
+    fun observe(chatId: String): Flow<GroupInfoMoney> {
+        val places: Flow<Place> = groupNetworks?.state?.map { s ->
+            val network = s.networkOf(chatId)
+            // Only wallets that work are listed as "the group's wallets"; one being set up is the row that finishes it.
+            val active = s.walletsOf(chatId).filterValues { it.status == com.circaso.feature.wallet.domain.WalletStatus.Active }
+            Place(network, s.testnet(network), if (active.size > 1) WalletNetwork.entries.mapNotNull { n -> active[n]?.let { n to it.walletId } } else emptyList(), s.mainnetFor(chatId), s.known)
+        }?.distinctUntilChanged() ?: networks.state.map { Place(it.selected, it.testnet, emptyList(), null, it.known) }.distinctUntilChanged()
+        return places.flatMapLatest { place ->
+            val both: Flow<List<GroupNetworkWallet>> = if (place.wallets.isEmpty()) flowOf(emptyList())
+            else combine(place.wallets.map { (n, id) -> observeWallet(id, n).map { w -> GroupNetworkWallet(n, id, w, place.known && n == WalletNetwork.TESTNET) } }) { it.toList() }
+            combine(observeOn(chatId, place.network).on(place.network), both) { info, wallets ->
+                if (!info.enabled) info else info.copy(network = place.network, testnet = place.testnet, wallets = wallets, mainnet = place.mainnet)
+            }
+        }
+    }
 
     private fun observeOn(chatId: String, network: com.circaso.feature.wallet.domain.WalletNetwork): Flow<GroupInfoMoney> = combine(flag.enabled, observeMoney(chatId), error) { on, money, err -> Triple(on, money, err) }
         .flatMapLatest { (on, money, err) ->
@@ -120,25 +159,34 @@ class GroupInfoMoneySource(
 
     suspend fun refresh(chatId: String) {
         if (!flag.isOn) return
-        when (val r = refreshMoney(chatId)) {
-            is AppResult.Success -> { error.value = null; r.value.wallet?.walletId?.let { refreshWallet(it) } }
-            is AppResult.Failure -> error.value = ErrorMessages.forError(r.error) to ErrorMessages.reference(r.error)
+        // Where the group's wallets are, first (W16 on each of the person's networks): the rule needs it.
+        groupNetworks?.refresh()
+        val network = networkNow(chatId)
+        withContext(PinnedNetwork(network)) {
+            when (val r = refreshMoney(chatId)) {
+                is AppResult.Success -> { error.value = null; r.value.wallet?.walletId?.let { refreshWallet(it) } }
+                is AppResult.Failure -> error.value = ErrorMessages.forError(r.error) to ErrorMessages.reference(r.error)
+            }
+        }
+        // A group with two wallets lists both balances: the other one's, on its own network.
+        groupNetworks?.state?.value?.walletsOf(chatId)?.forEach { (n, w) ->
+            if (n != network && w.status == com.circaso.feature.wallet.domain.WalletStatus.Active) withContext(PinnedNetwork(n)) { refreshWallet(w.walletId) }
         }
     }
 
     /** GW8: turn on fingerprint / Face ID for this wallet only (its own Circle user, its PIN once). */
-    suspend fun turnOnBiometrics(walletId: String, name: String): AppResult<Unit> {
+    suspend fun turnOnBiometrics(chatId: String, walletId: String, name: String): AppResult<Unit> {
         // The network is fixed before Circle's screen opens: the setting saved is for the wallet that was signed for.
-        val on = networks.current()
-        val r = withContext(com.circaso.feature.wallet.domain.PinnedNetwork(on)) { enableBiometrics(SignSubject.group(walletId, name)) }
+        val on = networkNow(chatId)
+        val r = withContext(PinnedNetwork(on)) { enableBiometrics(SignSubject.group(walletId, name)) }
         if (r is AppResult.Success) { prefs.setWalletBiometrics(walletId, true, on.wire); prefs.setWalletBiometricsLost(walletId, false, on.wire) }
         return r
     }
 
-    suspend fun setApprovalPolicy(chatId: String, policy: ApprovalPolicy, key: String) = setPolicy(chatId, policy, key)
+    suspend fun setApprovalPolicy(chatId: String, policy: ApprovalPolicy, key: String) = withContext(PinnedNetwork(networkNow(chatId))) { setPolicy(chatId, policy, key) }
 
     /** Back to the wallet's PIN on this phone (the personal Security switch does the same). */
-    suspend fun turnOffBiometrics(walletId: String) = prefs.setWalletBiometrics(walletId, false, networks.current().wire)
+    suspend fun turnOffBiometrics(chatId: String, walletId: String) = prefs.setWalletBiometrics(walletId, false, networkNow(chatId).wire)
 
     companion object {
         /** Set when Circle reports a wallet's biometrics gone, so its row says why it's off (GW8b). */
@@ -190,7 +238,31 @@ class GroupMoneyActions(
     val onPay: ((walletId: String) -> Unit)? = null,
     /** The owner only: send from the group wallet to an outside address (design E5). */
     val onSendToWallet: ((walletId: String) -> Unit)? = null,
+    /** A group with two wallets: open the one on this network. */
+    val onOpenWalletOn: (WalletNetwork) -> Unit = {},
+    /** The owner of an old Testnet group adds (or finishes) its Mainnet wallet: the normal set-up, for Mainnet. */
+    val onAddMainnetWallet: () -> Unit = {},
 )
+
+/** A group's wallet on one network, in group info's list of two: its balance, and the Testnet mark on test money. */
+@Composable
+private fun NetworkWalletRow(w: GroupNetworkWallet, onClick: () -> Unit) {
+    val balance = w.balance?.usdc?.let { amountText(it.amountMinor, w.balance.fiat) }
+    ListRow(
+        "${w.network.label} wallet", sub = balance ?: if (w.network == WalletNetwork.MAINNET) "Real money" else "Test money, no real value",
+        leading = { RowIcon(CircasoIcon.Wallet) },
+        trailing = { WalletRowEnd(w.testnet) }, onClick = onClick,
+    )
+}
+
+/** A wallet row's end: the Testnet mark when its money is test money, then the chevron. */
+@Composable
+private fun WalletRowEnd(testnet: Boolean) {
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(CircasoSpacing.s2)) {
+        if (testnet) TestnetTag()
+        RowChevron()
+    }
+}
 
 /**
  * GW6–GW8b in group info. No wallet: the owner sees Add a Group Wallet and Add a Target (members see neither: a group
@@ -237,18 +309,34 @@ fun ColumnScope.GroupMoneyRows(info: GroupInfoMoney, chat: Chat?, myUserId: Stri
                 com.circaso.core.flags.GroupPayoutApprovals.Enabled -> listOfNotNull(balance, "$who, after ${policyWords(money.approvalPolicy)}").joinToString(" · ")
                 else -> listOfNotNull(balance, who).joinToString(" · ")
             }
-            ListRow("Group Wallet", sub = walletSub, leading = { RowIcon(if (locked) CircasoIcon.Lock else CircasoIcon.Wallet, if (locked) c.warning else c.ink) }, trailing = { RowChevron() }, onClick = actions.onOpenWallet)
+            // A group with a wallet on both networks: one row each, Mainnet first, each opening that network's wallet.
+            // What follows (paying, the target, security) is for the wallet on [GroupInfoMoney.network].
+            val both = info.wallets.size > 1
+            val here = info.network?.label
+            if (both) info.wallets.forEachIndexed { i, w ->
+                if (i > 0) RowDivider(Modifier.padding(start = 64.dp))
+                NetworkWalletRow(w) { actions.onOpenWalletOn(w.network) }
+            }
+            else ListRow("Group Wallet", sub = walletSub, leading = { RowIcon(if (locked) CircasoIcon.Lock else CircasoIcon.Wallet, if (locked) c.warning else c.ink) }, trailing = { WalletRowEnd(info.testnet) }, onClick = actions.onOpenWallet)
+            // An old group's owner can give it a Mainnet wallet too (2026-11-19); members see nothing until it exists.
+            if (amOwner && info.mainnet != null) {
+                RowDivider(Modifier.padding(start = 64.dp))
+                if (info.mainnet == GroupMainnet.SettingUp) ListRow("Finish Mainnet Wallet Setup", sub = sub("$name’s Mainnet wallet isn’t ready yet"), leading = { RowIcon(CircasoIcon.Clock, c.warning, dim = off) }, trailing = { RowChevron() },
+                    onClick = if (online && !busy) actions.onAddMainnetWallet else null)
+                else ListRow("Add a Mainnet Wallet", sub = sub("Real money · its own PIN"), leading = { RowIcon(CircasoIcon.Plus, dim = off) }, trailing = { RowChevron() },
+                    onClick = if (online && !busy) actions.onAddMainnetWallet else null)
+            }
             // 2026-11-06: the owner moves the group's money straight from here; nobody else sees these rows.
             val walletId = money.wallet?.walletId
             if (money.isSigner && !locked && walletId != null) {
                 actions.onPay?.let { pay ->
                     RowDivider(Modifier.padding(start = 64.dp))
-                    ListRow("Pay from $name", sub = sub("Anyone, or your own wallet. The group sees it in the chat"), leading = { RowIcon(CircasoIcon.ArrowUp, dim = off) }, trailing = { RowChevron() },
+                    ListRow("Pay from $name", sub = sub(if (both && here != null) "From its $here wallet. The group sees it in the chat" else "Anyone, or your own wallet. The group sees it in the chat"), leading = { RowIcon(CircasoIcon.ArrowUp, dim = off) }, trailing = { RowChevron() },
                         onClick = if (online && !busy) ({ pay(walletId) }) else null)
                 }
                 actions.onSendToWallet?.let { send ->
                     RowDivider(Modifier.padding(start = 64.dp))
-                    ListRow("Send to a Wallet", sub = sub("An exchange or another wallet, on its network"), leading = { RowIcon(CircasoIcon.Forward, dim = off) }, trailing = { RowChevron() },
+                    ListRow("Send to a Wallet", sub = sub(if (both && here != null) "From its $here wallet, to an exchange or another wallet" else "An exchange or another wallet, on its network"), leading = { RowIcon(CircasoIcon.Forward, dim = off) }, trailing = { RowChevron() },
                         onClick = if (online && !busy) ({ send(walletId) }) else null)
                 }
             }
@@ -270,7 +358,7 @@ fun ColumnScope.GroupMoneyRows(info: GroupInfoMoney, chat: Chat?, myUserId: Stri
                 )
             }
             if (money.isSigner) {
-                SectionHeader("$name wallet security", Modifier.padding(top = CircasoSpacing.s4))
+                SectionHeader(if (both && here != null) "$name $here wallet security" else "$name wallet security", Modifier.padding(top = CircasoSpacing.s4))
                 info.biometricLabel?.let { label ->
                     ListRow(
                         label,

@@ -1,5 +1,6 @@
 package com.circaso.feature.wallet.presentation
 
+import com.circaso.feature.wallet.domain.on
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.circaso.core.common.AppError
@@ -76,6 +77,11 @@ data class PayIntent(
      * the chat with them carries it. Context only: it never reaches the wallet or changes the transfer.
      */
     val moment: com.circaso.core.crypto.MomentQuote? = null,
+    /**
+     * A group's money on one named network: opened from that network's group wallet (a group can have one on each),
+     * so the card is for it whatever the rule would pick. Null: the group's own network, else the selected one.
+     */
+    val network: com.circaso.feature.wallet.domain.WalletNetwork? = null,
 ) {
     val contribution get() = groupId != null || (goalName != null && requestId == null)
     val payout get() = requestId != null
@@ -208,6 +214,12 @@ data class PayUiState(
     val network: com.circaso.feature.wallet.domain.WalletNetwork = com.circaso.feature.wallet.domain.WalletNetwork.TESTNET,
     /** The card's network is Testnet (and the server has said which networks there are): test money is on screen. */
     val testnet: Boolean = false,
+    /** The person has both networks: a wallet is then named by its network ("your Mainnet wallet"). */
+    val namesNetwork: Boolean = false,
+    /** The person's own wallet on [network] as the server's list of networks last had it; null when it didn't say. */
+    val listedStatus: com.circaso.feature.wallet.domain.WalletStatus? = null,
+    /** The money would leave the person's own wallet on [network], and they haven't set one up there yet. */
+    val myWalletMissing: Boolean = false,
     /**
      * What the typed number is in, fixed when it is typed, a coin is tagged or the unit is switched: true is the
      * person's currency, false the coin; null until then (follow [inFiat]). A later wallet refresh never changes it, so
@@ -237,6 +249,15 @@ data class PayUiState(
     val toSelf get() = me != null && payee?.userId == me.userId
     /** Pay into a group wallet. */
     val toGroup get() = groupId != null
+    /**
+     * Paying needs the person's own wallet on this card's network first (a group's money is on the group's network,
+     * which may be one the person hasn't set a wallet up on yet): what to do, naming the network for someone with both.
+     */
+    val needsWalletLine: String? get() {
+        if (!myWalletMissing) return null
+        val mine = if (namesNetwork) "your ${network.label} wallet" else "your wallet"
+        return if (toGroup) "Set up $mine to pay into ${payee?.displayName ?: "the group"}. It’s in the Wallet tab." else "Set up $mine first. It’s in the Wallet tab."
+    }
     /** Show GW9b's chip: the person has other wallets, or this one is a group's. */
     val showPayingFrom get() = groupWallets && (choices.size > 1 || fromGroupWallet)
     /** The chip opens GW10: there is something to switch to, and nothing fixes the wallet (a payout, a contribution). */
@@ -452,13 +473,32 @@ class PayViewModel(
     private val refreshPrices: (suspend (walletId: String?) -> AppResult<*>)? = null,
     /** The wallet network this payment is on, fixed while it is being prepared and signed. */
     private val networks: com.circaso.feature.wallet.domain.WalletNetworks = com.circaso.feature.wallet.domain.WalletNetworks.Single,
+    /**
+     * Where group wallets are (2026-11-19): money into a group, or out of a group's wallet, is on the network that
+     * wallet is on, whatever the Wallet tab shows. Null (older tests, previews): everything follows the selection.
+     */
+    private val groupNetworks: com.circaso.feature.wallet.domain.GroupNetworks? = null,
 ) : ViewModel() {
     /**
-     * The network the card on screen was built for: every quote and W4 carries it, and the wallet refuses to send or
-     * sign if the selection has moved on since. It follows the selection only between payments (never while signing),
-     * so a payment is never prepared on one network and signed on another.
+     * The network a card belongs on now. Into a group: the group's (`groupNetwork`), paid from the person's own wallet
+     * on that network. Out of a group's wallet: that wallet's. Otherwise the selected one.
      */
-    private val pin = MutableStateFlow(networks.current())
+    private fun target(from: String? = fromId.value): com.circaso.feature.wallet.domain.WalletNetwork = when {
+        intent.network != null -> intent.network
+        groupNetworks == null -> networks.current()
+        intent.groupId != null -> groupNetworks.now(intent.groupId)
+        from != null -> groupNetworks.ofWalletNow(from)
+        else -> networks.current()
+    }
+
+    private suspend fun <T> onPin(block: suspend () -> T): T = kotlinx.coroutines.withContext(com.circaso.feature.wallet.domain.PinnedNetwork(pinned)) { block() }
+
+    /**
+     * The network the card on screen was built for: every quote and W4 carries it, and for a personal payment the
+     * wallet refuses to send or sign if the selection has moved on since. It follows [target] only between payments
+     * (never while signing), so a payment is never prepared on one network and signed on another.
+     */
+    private val pin = MutableStateFlow(target(intent.fromWalletId))
     private var pinned: com.circaso.feature.wallet.domain.WalletNetwork
         get() = pin.value
         set(value) { pin.value = value }
@@ -492,10 +532,10 @@ class PayViewModel(
     @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
     private val groupSide: kotlinx.coroutines.flow.Flow<GroupSide> = if (wallets == null) flowOf(GroupSide()) else
         // The wallet the money leaves is read for the pinned network, like the personal one: never the selected one's.
-        combine(groupWallets.enabled, fromId, wallets.named, groupChatId, pin) { on, from, named, group, net -> Triple(on, from, named) to (group to net) }
-            .flatMapLatest { (t, rest) ->
+        // The same for the wallets to pay from, the group's money and its chat: all read for the pin ([on]).
+        pin.flatMapLatest { net -> combine(groupWallets.enabled, fromId, wallets.named, groupChatId) { on, from, named, group -> Triple(on, from, named) to group }
+            .flatMapLatest { (t, group) ->
                 val (on, from, named) = t
-                val (group, net) = rest
                 if (!on) return@flatMapLatest flowOf(GroupSide())
                 val choices = named.filter { it.canSign && it.status == com.circaso.feature.wallet.domain.WalletStatus.Active }
                     .ifEmpty { listOf(NamedWallet.Personal) }
@@ -513,7 +553,7 @@ class PayViewModel(
                         groupTitle = chatName, groupAvatar = chat?.avatarUrl,
                     )
                 }
-            }
+            }.on(net) }
 
     /** Bumped when the wallet copy's prices pass [PriceFreshMillis], so [PayUiState.pricesFresh] is worked out again. */
     private val priceTick = MutableStateFlow(0)
@@ -524,7 +564,10 @@ class PayViewModel(
             // Once the payment has gone to be signed and sent, the mark is the payment's own (its chain says), so a
             // result page can never wear the mark of a network picked afterwards.
             val sent = ui.result?.takeIf { ui.step == PayStep.Sending || ui.step == PayStep.Done }
-            ui.copy(network = on, testnet = sent?.let { com.circaso.feature.wallet.domain.isTestnetChain(it.blockchain) } ?: (all.known && on == com.circaso.feature.wallet.domain.WalletNetwork.TESTNET))
+            ui.copy(
+                network = on, testnet = sent?.let { com.circaso.feature.wallet.domain.isTestnetChain(it.blockchain) } ?: (all.known && on == com.circaso.feature.wallet.domain.WalletNetwork.TESTNET),
+                namesNetwork = all.switchable, listedStatus = if (!all.known || all.legacy) null else all.statusOf(on),
+            )
         },
         pin.flatMapLatest { observeWallet(it) }, observeContacts(), connection.status,
         combine(if (intent.goalName != null && chatId != null) observeChama(chatId) else flowOf(null), groupSide, observeMe) { ch, g, m -> Triple(ch, g, m) },
@@ -534,8 +577,11 @@ class PayViewModel(
         // The money leaves the chosen wallet: its chains and balance, and its fiat rate (the server prices each one).
         // A copy that says it is another network's is not this card's wallet (a group wallet's copies follow the selection).
         val wallet = (if (group.sourceIsGroup) group.source else personal)?.takeIf { it.network == null || it.network == ui.network }
+        // The person's own wallet on this card's network: its copy when the phone has one, else the server's list.
+        val mine = personal?.takeIf { it.network == null || it.network == ui.network }?.status ?: ui.listedStatus
         ui.copy(
             wallet = wallet,
+            myWalletMissing = !group.sourceIsGroup && mine != null && mine != com.circaso.feature.wallet.domain.WalletStatus.Active,
             contacts = people,
             online = c == ConnectionStatus.Online,
             chama = chama,
@@ -605,10 +651,17 @@ class PayViewModel(
         // selected by then. Looked at again when the step changes, so a switch made during a PIN that was cancelled or
         // refused is taken up once the card is back on the amount; the next payment in a chat re-pins in onQuickReset.
         viewModelScope.launch {
-            combine(networks.selected, local.map { it.step }.distinctUntilChanged()) { on, step -> on to step }
+            // A group's money follows the group's network (and the wallet picked to pay from, its own); the rest the selection.
+            val targets = when {
+                intent.network != null -> flowOf(intent.network)
+                groupNetworks == null -> networks.selected
+                intent.groupId != null -> groupNetworks.of(intent.groupId)
+                else -> fromId.flatMapLatest { groupNetworks.ofWallet(it) }
+            }
+            combine(targets, local.map { it.step }.distinctUntilChanged()) { on, step -> on to step }
                 .collect { (on, step) -> if ((step == PayStep.Pick || step == PayStep.Amount) && on != pinned) repin(on) }
         }
-        wallets?.let { w -> viewModelScope.launch { if (groupWallets.isOn) w.refresh(intent.fromWalletId, intent.groupId ?: intent.chatId) } }
+        wallets?.let { w -> viewModelScope.launch { if (groupWallets.isOn) onPin { w.refresh(intent.fromWalletId, intent.groupId ?: intent.chatId) } } }
         viewModelScope.launch { keepPricesFresh() }
         quotePayment?.let { quote ->
             viewModelScope.launch { quoteAsTyped(quote) }
@@ -646,7 +699,7 @@ class PayViewModel(
         if (priceJob?.isActive == true || !state.value.online) return
         priceJob = viewModelScope.launch {
             local.update { it.copy(priceRefresh = PriceRefresh.Loading) }
-            val r = refresh(fromId.value)
+            val r = onPin { refresh(fromId.value) }
             local.update { it.copy(priceRefresh = if (r is AppResult.Failure) PriceRefresh.Failed(ErrorMessages.reference(r.error)) else PriceRefresh.Idle) }
         }
     }
@@ -805,7 +858,7 @@ class PayViewModel(
         local.update { it.copy(checking = true) }
         viewModelScope.launch {
             val chain = blockchain ?: state.value.blockchain
-            when (val r = checkRecipient(userId, chain, chatId)) {
+            when (val r = onPin { checkRecipient(userId, chain, chatId) }) {
                 is AppResult.Success -> local.update {
                     it.copy(
                         checking = false,
@@ -831,7 +884,7 @@ class PayViewModel(
     fun onRemind() {
         val payee = state.value.payee ?: return
         viewModelScope.launch {
-            when (val r = remind(payee.userId)) {
+            when (val r = onPin { remind(payee.userId) }) {
                 is AppResult.Success -> local.update { it.copy(reminded = r.value, problem = if (r.value == RemindOutcome.HasWallet) null else it.problem) }
                 is AppResult.Failure -> local.update { it.copy(error = ErrorMessages.forError(r.error)) }
             }
@@ -959,7 +1012,7 @@ class PayViewModel(
                     // network selected now and says why, rather than offer Try Again for a payment that can't go.
                     if (code == com.circaso.feature.wallet.domain.NetworkChangedCode) {
                         local.update { it.copy(step = PayStep.Amount, failure = null) }
-                        repin(networks.current())
+                        repin(target())
                         local.update { it.copy(error = "You switched to ${pinned.label}. Nothing was sent. Check the payment again for your ${pinned.label} wallet.") }
                         return@launch
                     }
@@ -990,7 +1043,7 @@ class PayViewModel(
         val group = s.payingFrom.chatId ?: return
         val ask = wallets?.createRequest ?: return
         viewModelScope.launch {
-            val r = ask(group, payee.userId.takeIf { it.isNotEmpty() }, address?.takeIf { payee.userId.isEmpty() }, payee.displayName, minor, s.note.trim().takeIf { it.isNotEmpty() }, idempotencyKey)
+            val r = onPin { ask(group, payee.userId.takeIf { it.isNotEmpty() }, address?.takeIf { payee.userId.isEmpty() }, payee.displayName, minor, s.note.trim().takeIf { it.isNotEmpty() }, idempotencyKey) }
             when (r) {
                 is AppResult.Success -> { idempotencyKey = newIdempotencyKey(); local.update { it.copy(step = PayStep.Done, requested = r.value) } }
                 is AppResult.Failure -> local.update { it.copy(step = PayStep.Amount, failure = PayFailure(s.walletName, ErrorMessages.forError(r.error), ErrorMessages.reference(r.error))) }
@@ -1055,12 +1108,12 @@ class PayViewModel(
      * cleared), it starts again empty, with a fresh idempotency key, and the payee check kept.
      */
     fun onQuickReset() {
-        // The next payment is for the network selected now.
-        pinned = networks.current()
         idempotencyKey = newIdempotencyKey()
         retryMoment = null
         // Personal again (GW9b's default) unless the chat fixes the wallet (a payout from the group's).
         if (fromId.value != intent.fromWalletId) fromId.value = intent.fromWalletId
+        // The next payment is for the network it belongs on now (the group's, else the selected one).
+        pinned = target()
         local.update {
             it.copy(
                 // A payout's amount is the approved one (CH3), so it comes back with it; a `#` card starts empty.
@@ -1275,6 +1328,11 @@ class GroupWalletSources(
 ) {
     val named: kotlinx.coroutines.flow.Flow<List<NamedWallet>> =
         combine(observeWallets(), observeChats()) { list, chats -> nameWallets(list, chats) }
+    /** Any wallets (another network's W16 rows), named from the person's chats; only the groups this person owns. */
+    fun named(listings: List<com.circaso.feature.wallet.domain.WalletListing>): kotlinx.coroutines.flow.Flow<List<NamedWallet>> = observeChats().map { chats ->
+        val owned = listings.filter { w -> chats.firstOrNull { it.chat.chatId == w.owner.chatId }?.let { it.chat.myRole == com.circaso.feature.messaging.domain.MemberRole.Owner } != false }
+        nameWallets(owned, chats)
+    }
     fun walletOf(walletId: String?) = observeWalletOf(walletId)
     /** The wallet's copy on one network, whatever is selected (a payment reads the wallet of the network it is pinned to). */
     fun walletOf(walletId: String?, network: com.circaso.feature.wallet.domain.WalletNetwork) = observeWalletOf(walletId, network)

@@ -1,7 +1,12 @@
 package com.circaso.feature.wallet.domain
 
 import com.circaso.core.common.AppResult
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.flow.emitAll
+import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.flowOn
+import kotlinx.coroutines.plus
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -90,6 +95,13 @@ interface WalletNetworks {
     fun current(): WalletNetwork = state.value.selected
 
     /**
+     * The network a copy on the phone is read for: the one pinned on the collector ([PinnedNetwork], a group's screen
+     * showing the network its wallet is on), else the selected one, each change once. Every repository flow is built
+     * on this, so a screen pinned to one network reads that network's copies whatever the Wallet tab shows.
+     */
+    val followed: Flow<WalletNetwork> get() = flow { pinnedNetwork()?.let { emit(it) } ?: emitAll(selected) }
+
+    /**
      * The network a call is for: the one pinned on this coroutine ([PinnedNetwork], a payment under way or a frame
      * for the other network), else the selected one once the saved choice is read and the server has been asked.
      */
@@ -136,8 +148,20 @@ class PinnedNetwork(val network: WalletNetwork) : AbstractCoroutineContextElemen
 
 suspend fun pinnedNetwork(): WalletNetwork? = currentCoroutineContext()[PinnedNetwork]?.network
 
+/** This scope, working for one network ([PinnedNetwork]): everything launched or collected in it. Null leaves it following the selection. */
+fun CoroutineScope.pinnedTo(network: WalletNetwork?): CoroutineScope = if (network == null) this else this + PinnedNetwork(network)
+
+/** This flow, read for one network whatever is selected: the repositories under it see [PinnedNetwork]. Null leaves it following the selection. */
+fun <T> Flow<T>.on(network: WalletNetwork?): Flow<T> = if (network == null) this else flowOn(PinnedNetwork(network))
+
 /** The selection moved while a payment was between its review and its PIN: nothing is signed (never sent to the server). */
 const val NetworkChangedCode = "wallet.network_changed"
+
+/**
+ * W14 on Testnet for a group with no Testnet wallet, when its owner may use Mainnet (403, 2026-11-19): new group
+ * wallets are made on Mainnet. Finishing a Testnet set-up already started is still allowed.
+ */
+const val GroupMainnetOnlyCode = "wallet.group_mainnet_only"
 
 /** The server's refusal of a network the person may not use (403). */
 const val NetworkUnavailableCode = "wallet.network_unavailable"

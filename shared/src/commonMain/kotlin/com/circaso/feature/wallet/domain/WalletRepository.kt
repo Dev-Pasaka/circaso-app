@@ -72,6 +72,9 @@ interface WalletRepository {
     /** W16 from the phone's copy: the person's own first, then their groups' (the ones they sign for first). */
     val wallets: Flow<List<WalletListing>>
 
+    /** W16's copy for one network, whatever is selected; null when this phone never read it. */
+    fun walletsOn(network: WalletNetwork): Flow<List<WalletListing>?> = kotlinx.coroutines.flow.flowOf(null)
+
     suspend fun refreshWallets(): AppResult<List<WalletListing>>
 
     /** One wallet from the phone's copy; [walletId] null is the person's own. */
@@ -147,7 +150,14 @@ data class PaymentRequest(
      * for it alone, and if the selection has moved since, nothing is sent or signed. Null: the selected network.
      */
     val network: WalletNetwork? = null,
-)
+) {
+    /**
+     * A personal payment belongs to the network the person is looking at: if the selection moves under it, nothing is
+     * sent. A group's money (paid into a group, or out of its wallet) belongs to the network that group's wallet is
+     * on, which the selection has no say in.
+     */
+    val followsSelection: Boolean get() = toGroupId == null && fromWalletId == null
+}
 
 /** What stops a quoted payment as it is (W17 reports it; W4 would refuse it). */
 enum class QuoteProblem {

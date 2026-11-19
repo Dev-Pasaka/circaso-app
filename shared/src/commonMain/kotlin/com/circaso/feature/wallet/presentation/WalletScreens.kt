@@ -38,6 +38,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.animateContentSize
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.positionInWindow
 import androidx.compose.ui.layout.boundsInWindow
@@ -144,7 +145,7 @@ fun WalletTab(
         onMode = viewModel::onMode, onAllGroups = viewModel::onAllGroups, groupMenu = groupMenu,
         onCreate = viewModel::onCreate, onRefresh = { viewModel.refresh(fromPull = true) }, onReceive = viewModel::onReceive, onComing = viewModel::onComing,
         onErrorShown = viewModel::onErrorShown, onAddNetworks = viewModel::onAddMissingNetworks, onToggleHidden = viewModel::onToggleHidden,
-        onNetwork = viewModel::onNetwork, onNetworkNoticeShown = viewModel::onNetworkNoticeShown,
+        onNetworkSheet = viewModel::onNetworkSheet, onNetworkNoticeShown = viewModel::onNetworkNoticeShown,
     )
 }
 
@@ -172,7 +173,8 @@ fun WalletTabContent(
     onMode: (WalletMode) -> Unit = {},
     onAllGroups: (Boolean) -> Unit = {},
     groupMenu: GroupMenuActions? = null,
-    onNetwork: (com.circaso.feature.wallet.domain.WalletNetwork) -> Unit = {},
+    /** The network chip: open the Network sheet (drawn by [WalletOverlay], above the tab bar). */
+    onNetworkSheet: (Boolean) -> Unit = {},
     onNetworkNoticeShown: () -> Unit = {},
 ) {
     // The network that was on screen was taken away (an admin, or it was switched off): said once, plainly.
@@ -189,14 +191,12 @@ fun WalletTabContent(
     // a moment after the page.
     if (state.groupsEnabled && (!state.choiceRestored || !state.walletsLoaded)) { Box(Modifier.fillMaxSize()); return }
     Column(Modifier.fillMaxSize()) {
-        // The Personal | Groups row. Already there when the tab opens with the flag known, it doesn't move anything;
-        // when it arrives (or goes) after the page is up, it eases open or closed instead of the page jumping by its
-        // height (a fade alone with reduced motion is still a resize, so it eases too).
-        // The Mainnet | Testnet switch shares the row (only for someone with both networks): side by side where the
-        // two fit (a wide phone, a tablet's column), the network above the wallet kind where they don't (a narrow
-        // phone, large text). Each control also eases in or out on its own (a fade alone with reduced motion), so one
-        // arriving while the other is up never pops; with both, their segments share a least width so the two pills
-        // are the same size, side by side or stacked.
+        // The tab's top row (Pasaka, 2026-11-19): one control and one quiet status chip, never two pills. Personal |
+        // Groups at the start at its own size, the network chip at the end; alone, the control is centred as it was
+        // before networks, and the chip alone still sits at the end. Already there when the tab opens with both
+        // known, it doesn't move anything; when it arrives (or goes) after the page is up, it eases open or closed
+        // instead of the page jumping by its height (a fade alone with reduced motion is still a resize, so it eases
+        // too).
         val showRow = state.showSwitcher || state.showNetworkSwitch
         val row = remember { androidx.compose.animation.core.MutableTransitionState(showRow) }
         row.targetState = showRow
@@ -205,26 +205,11 @@ fun WalletTabContent(
             enter = androidx.compose.animation.expandVertically(tween(CircasoMotion.BaseMs)) + androidx.compose.animation.fadeIn(tween(CircasoMotion.BaseMs)),
             exit = androidx.compose.animation.shrinkVertically(tween(CircasoMotion.QuickMs)) + androidx.compose.animation.fadeOut(tween(CircasoMotion.QuickMs)),
         ) {
-            @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
-            androidx.compose.foundation.layout.FlowRow(
-                Modifier.fillMaxWidth().padding(horizontal = CircasoSpacing.s4),
-                horizontalArrangement = Arrangement.spacedBy(CircasoSpacing.s3, Alignment.CenterHorizontally),
-                verticalArrangement = Arrangement.Center,
-            ) {
-                val still = CircasoTheme.reduceMotion
-                val paired = if (state.showNetworkSwitch && state.showSwitcher) PairedSegmentMinWidth else null
-                val pillIn = if (still) androidx.compose.animation.fadeIn(tween(CircasoMotion.QuickMs))
-                else androidx.compose.animation.fadeIn(tween(CircasoMotion.BaseMs)) + androidx.compose.animation.expandHorizontally(tween(CircasoMotion.BaseMs))
-                val pillOut = if (still) androidx.compose.animation.fadeOut(tween(CircasoMotion.QuickMs))
-                else androidx.compose.animation.fadeOut(tween(CircasoMotion.QuickMs)) + androidx.compose.animation.shrinkHorizontally(tween(CircasoMotion.QuickMs))
-                // Present from the first frame when the tab opens with them known: only a later arrival animates.
-                val networkPill = remember { androidx.compose.animation.core.MutableTransitionState(state.showNetworkSwitch) }
-                networkPill.targetState = state.showNetworkSwitch
-                val modePill = remember { androidx.compose.animation.core.MutableTransitionState(state.showSwitcher) }
-                modePill.targetState = state.showSwitcher
-                androidx.compose.animation.AnimatedVisibility(networkPill, enter = pillIn, exit = pillOut) { WalletNetworkControl(state.network, onNetwork, segmentMinWidth = paired) }
-                androidx.compose.animation.AnimatedVisibility(modePill, enter = pillIn, exit = pillOut) { WalletModeControl(groups = state.showingGroups, onMode = onMode, segmentMinWidth = paired) }
-            }
+            WalletTopRow(
+                showControl = state.showSwitcher, showChip = state.showNetworkSwitch,
+                control = { WalletModeControl(groups = state.showingGroups || state.groupsEmpty, onMode = onMode) },
+                chip = { NetworkChip(state.network, { onNetworkSheet(true) }) },
+            )
         }
         // Testnet without a switch to say so (someone who only has Testnet): the same mark, as a line that eases in.
         TestnetStrip(show = state.testnet && !state.showNetworkSwitch)
@@ -235,7 +220,7 @@ fun WalletTabContent(
         androidx.compose.animation.AnimatedContent(
             targetState = shown?.first ?: state.copy(group = null),
             // The other network's wallet is another wallet: it crossfades in like another group does.
-            contentKey = { (it.selectedWalletId ?: "personal") + "@" + it.network.name },
+            contentKey = { (if (it.groupsEmpty) "no-groups" else it.selectedWalletId ?: "personal") + "@" + it.network.name },
             transitionSpec = {
                 androidx.compose.animation.fadeIn(tween(CircasoMotion.BaseMs)) togetherWith androidx.compose.animation.fadeOut(tween(CircasoMotion.QuickMs))
             },
@@ -245,15 +230,63 @@ fun WalletTabContent(
             val chat = s.selectedGroupKey
             val g = s.group
             Column(Modifier.fillMaxSize()) {
+                // Groups on Mainnet with no group wallet there yet, only old groups that can get one.
+                if (s.groupsEmpty) NoMainnetGroupWallets(s, bottomPadding.calculateBottomPadding() + CircasoSpacing.s4, groupMenu)
                 // The group on screen is the page's title; its menu switches group (the person's own wallet is Personal).
                 // It is the page's first row, so it scrolls with the page (the personal wallet pins nothing either).
-                WalletContent(
+                else WalletContent(
                     s, bottomPadding, actions(s.selectedWalletId),
                     onCreate = onCreate, onRefresh = onRefresh, onReceive = onReceive, onComing = onComing, onErrorShown = onErrorShown,
                     sheets = false, onAddNetworks = onAddNetworks, onToggleHidden = onToggleHidden,
                     group = if (chat != null && g != null) groupHooks(chat, g) else null,
                     header = if (s.showingGroups) ({ inList -> GroupWalletHeader(s, onSwitching, onSelectWallet, onAllGroups, groupMenu, inList = inList) }) else null,
                 )
+            }
+        }
+    }
+}
+
+/**
+ * The Wallet tab's top row: [control] (Personal | Groups) at the start and [chip] (the network) at the end, on one
+ * line inside the page's inset. Where the two don't fit on one line (large text), the chip takes a line of its own,
+ * end-aligned; nothing is ever squeezed, clipped or scrolled. With no chip the control is centred, as it was before
+ * networks, and it eases to the start when a chip arrives after the page is up; each fades in or out on its own.
+ * Right to left, start and end swap with the reading direction.
+ */
+@Composable
+private fun WalletTopRow(showControl: Boolean, showChip: Boolean, control: @Composable () -> Unit, chip: @Composable () -> Unit) {
+    // Present from the first frame when the tab opens with them known: only a later arrival animates.
+    val controlIn = remember { androidx.compose.animation.core.Animatable(if (showControl) 1f else 0f) }
+    val chipIn = remember { androidx.compose.animation.core.Animatable(if (showChip) 1f else 0f) }
+    LaunchedEffect(showControl) { controlIn.animateTo(if (showControl) 1f else 0f, tween(if (showControl) CircasoMotion.BaseMs else CircasoMotion.QuickMs)) }
+    LaunchedEffect(showChip) { chipIn.animateTo(if (showChip) 1f else 0f, tween(if (showChip) CircasoMotion.BaseMs else CircasoMotion.QuickMs)) }
+    // Each stays composed until it has faded out.
+    val controlLeft by remember { androidx.compose.runtime.derivedStateOf { controlIn.value > 0f } }
+    val chipLeft by remember { androidx.compose.runtime.derivedStateOf { chipIn.value > 0f } }
+    val gap = CircasoSpacing.s3
+    androidx.compose.ui.layout.Layout(
+        content = {
+            Box(Modifier.graphicsLayer { alpha = controlIn.value }) { if (showControl || controlLeft) control() }
+            Box(Modifier.graphicsLayer { alpha = chipIn.value }) { if (showChip || chipLeft) chip() }
+        },
+        // A second line arriving (the chip, at large text) eases the row taller rather than pushing the page at once.
+        modifier = Modifier.fillMaxWidth().padding(horizontal = CircasoSpacing.s4).animateContentSize(tween(CircasoMotion.BaseMs)),
+    ) { measurables, constraints ->
+        val loose = constraints.copy(minWidth = 0, minHeight = 0)
+        val c = measurables[0].measure(loose)
+        val n = measurables[1].measure(loose)
+        val width = constraints.maxWidth
+        val oneLine = c.width == 0 || n.width == 0 || c.width + gap.roundToPx() + n.width <= width
+        val height = if (oneLine) maxOf(c.height, n.height) else c.height + n.height
+        layout(width, height) {
+            // Alone, the control is centred; with the chip it is at the start. Eased between as the chip comes or goes.
+            val cx = (((width - c.width) / 2f) * (1f - chipIn.value)).toInt().coerceAtLeast(0)
+            if (oneLine) {
+                c.placeRelative(cx, (height - c.height) / 2)
+                n.placeRelative(width - n.width, (height - n.height) / 2)
+            } else {
+                c.placeRelative(cx, 0)
+                n.placeRelative(width - n.width, c.height)
             }
         }
     }
@@ -269,6 +302,13 @@ fun androidx.compose.foundation.layout.BoxScope.WalletOverlay(
 ) {
     val state by viewModel.state.collectAsState()
     WalletSheets(state, actions, viewModel::onReceive, viewModel::onComing)
+    // The network chip's sheet: Mainnet or Testnet, one tap, and it closes. Offline too (the screens read the phone).
+    CircasoSheet(state.networkSheet, { viewModel.onNetworkSheet(false) }, label = "Network") {
+        NetworkSheetContent(
+            state.network, state.networks, statusOf = { state.networkStatuses[it] },
+            onPick = { viewModel.onNetworkSheet(false); viewModel.onNetwork(it) }, onClose = { viewModel.onNetworkSheet(false) },
+        )
+    }
     // Every group wallet, searchable, for someone in more groups than the Groups menu lists.
     CircasoSheet(state.allGroups, { viewModel.onAllGroups(false) }, label = "Group Wallets") {
         AllGroupWalletsContent(state, onPick = viewModel::onSelectWallet, onClose = { viewModel.onAllGroups(false) }, menu = groupMenu)

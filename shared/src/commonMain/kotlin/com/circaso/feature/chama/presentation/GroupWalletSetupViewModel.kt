@@ -26,6 +26,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import com.circaso.feature.wallet.domain.pinnedTo
 
 /** What the owner chose in New Group (GW1b), carried into the set-up so it is saved once the wallet exists. */
 data class GroupWalletPlan(
@@ -66,6 +67,10 @@ data class GroupWalletSetupState(
     /** The wallet's settings (who approves, the target) didn't save, though the wallet itself is ready. */
     val rulesFailed: Boolean = false,
     val walletId: String? = null,
+    /** The network the wallet is being made on, when the person has both and must know which ("Mainnet wallet"). */
+    val network: com.circaso.feature.wallet.domain.WalletNetwork? = null,
+    /** It is a Testnet wallet (and the server has said so): the screen wears the Testnet mark. */
+    val testnet: Boolean = false,
 ) {
     /** The PIN is set once the set-up has gone past it (GW5's first tick). */
     val pinSet get() = step.ordinal > SetupStep.Pin.ordinal
@@ -93,10 +98,24 @@ class GroupWalletSetupViewModel(
     private val connection: ConnectionState,
     /** "Fingerprint", "Face ID"; null when the phone has none set up. */
     private val biometricLabel: String?,
-    /** The group's wallet is set up on the selected network; its biometric setting is that network's. */
     private val networks: com.circaso.feature.wallet.domain.WalletNetworks = com.circaso.feature.wallet.domain.WalletNetworks.Single,
+    /**
+     * The network this wallet is made on, fixed for the whole set-up (W14, its PIN, W15, biometrics, W13, CH9, CH2):
+     * Mainnet whenever the person may use it, the network of a set-up already started, or Mainnet for an old group's
+     * second wallet (`groupNetwork`, 2026-11-19). Never picked on screen. Null: the selected one, read once (tests).
+     */
+    network: com.circaso.feature.wallet.domain.WalletNetwork? = null,
+    /** Shows the network's name and the Testnet mark; false for someone with one network, who never reads either. */
+    namesNetwork: Boolean = false,
+    /** W16 again on every network once the wallet exists, so every screen knows where this group's money is. */
+    private val refreshGroupNetworks: suspend () -> Unit = {},
 ) : ViewModel() {
-    private val _state = MutableStateFlow(GroupWalletSetupState(biometricLabel = biometricLabel))
+    private val on: com.circaso.feature.wallet.domain.WalletNetwork = network ?: networks.current()
+    private val scope = viewModelScope.pinnedTo(on)
+    private val _state = MutableStateFlow(GroupWalletSetupState(
+        biometricLabel = biometricLabel, network = on.takeIf { namesNetwork },
+        testnet = on == com.circaso.feature.wallet.domain.WalletNetwork.TESTNET && networks.state.value.known,
+    ))
     val state: StateFlow<GroupWalletSetupState> = _state.asStateFlow()
 
     /** CH9 is sent with one key across retries, so a slow first answer can't be applied twice. */
@@ -104,8 +123,8 @@ class GroupWalletSetupViewModel(
     private var started = false
 
     init {
-        viewModelScope.launch { observeChat(chatId).collect { chat -> _state.update { it.copy(groupName = chat?.title ?: it.groupName, avatarUrl = chat?.avatarUrl) } } }
-        viewModelScope.launch { connection.status.collect { s -> _state.update { it.copy(online = s == ConnectionStatus.Online) } } }
+        scope.launch { observeChat(chatId).collect { chat -> _state.update { it.copy(groupName = chat?.title ?: it.groupName, avatarUrl = chat?.avatarUrl) } } }
+        scope.launch { connection.status.collect { s -> _state.update { it.copy(online = s == ConnectionStatus.Online) } } }
     }
 
     /** The screen is on: begin (once). The PIN screen opens over it, so the steps show behind it. */
@@ -126,7 +145,7 @@ class GroupWalletSetupViewModel(
     private fun name(): String = _state.value.groupName.ifEmpty { "the group" }
 
     private fun run() {
-        viewModelScope.launch {
+        scope.launch {
             // The group's name names the wallet on Circle's screens: wait a moment for the chat to be read.
             if (_state.value.groupName.isEmpty()) runCatching { kotlinx.coroutines.withTimeoutOrNull(1_500) { state.first { it.groupName.isNotEmpty() } } }
             while (true) {
@@ -177,9 +196,8 @@ class GroupWalletSetupViewModel(
         if (s.step != SetupStep.Biometrics || s.turningOnBiometrics) return
         if (!s.online) { _state.update { it.copy(problem = SetupProblem.Offline) }; return }
         _state.update { it.copy(turningOnBiometrics = true) }
-        viewModelScope.launch {
-            val on = networks.current()
-            val r = kotlinx.coroutines.withContext(com.circaso.feature.wallet.domain.PinnedNetwork(on)) { enableBiometrics(subject()) }
+        scope.launch {
+            val r = enableBiometrics(subject())
             if (r is AppResult.Success) prefs.setWalletBiometrics(s.walletId, true, on.wire)
             // Not turned on (cancelled, or Circle couldn't): the wallet still works with its PIN; carry on either way.
             _state.update { it.copy(turningOnBiometrics = false, step = SetupStep.Networks) }
@@ -216,6 +234,7 @@ class GroupWalletSetupViewModel(
             if (r is AppResult.Failure) { _state.update { it.copy(rulesFailed = true) }; fail(r.error); return false }
         }
         refreshMoney(chatId)
+        refreshGroupNetworks()
         _state.update { it.copy(step = SetupStep.Done, rulesFailed = false) }
         return false
     }

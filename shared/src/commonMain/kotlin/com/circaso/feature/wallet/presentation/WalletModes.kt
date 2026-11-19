@@ -53,7 +53,8 @@ internal fun WalletUiState.reselected(): WalletUiState {
     // The person's last group wallet went away (the list is known and holds none): back to Personal for good, so a
     // group wallet that arrives later never turns the tab to Groups without a tap (Pasaka, 2026-11-06). The group
     // itself stays remembered for when they choose Groups again.
-    val mode = if (groupsEnabled && wallets.isNotEmpty() && groups.isEmpty()) WalletMode.Personal else mode
+    // Unless there are old groups of theirs that can get a wallet on this network: Groups then lists those.
+    val mode = if (groupsEnabled && wallets.isNotEmpty() && groups.isEmpty() && withoutMainnet.isEmpty()) WalletMode.Personal else mode
     val id = if (mode == WalletMode.Personal || !groupsEnabled) null
     else (groups.firstOrNull { it.walletId == lastGroupWalletId } ?: groups.firstOrNull())?.walletId
     return copy(mode = mode, selectedWalletId = id, switching = switching && id != null, allGroups = allGroups && groupsEnabled && groups.isNotEmpty())
