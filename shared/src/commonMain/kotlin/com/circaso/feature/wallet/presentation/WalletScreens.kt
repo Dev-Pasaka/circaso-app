@@ -38,6 +38,8 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.animation.core.tween
+import androidx.compose.ui.input.pointer.pointerInput
+import kotlinx.coroutines.launch
 import androidx.compose.animation.animateContentSize
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.positionInWindow
@@ -258,16 +260,29 @@ private fun WalletTopRow(showControl: Boolean, showChip: Boolean, control: @Comp
     // Present from the first frame when the tab opens with them known: only a later arrival animates.
     val controlIn = remember { androidx.compose.animation.core.Animatable(if (showControl) 1f else 0f) }
     val chipIn = remember { androidx.compose.animation.core.Animatable(if (showChip) 1f else 0f) }
+    // Where the control sits: 0 centred (alone), 1 at the start (beside the chip). It moves only once a leaving chip
+    // has faded, so it never slides under it; with reduced motion it doesn't slide at all, only the fades run.
+    val beside = remember { androidx.compose.animation.core.Animatable(if (showChip) 1f else 0f) }
+    val still = CircasoTheme.reduceMotion
     LaunchedEffect(showControl) { controlIn.animateTo(if (showControl) 1f else 0f, tween(if (showControl) CircasoMotion.BaseMs else CircasoMotion.QuickMs)) }
-    LaunchedEffect(showChip) { chipIn.animateTo(if (showChip) 1f else 0f, tween(if (showChip) CircasoMotion.BaseMs else CircasoMotion.QuickMs)) }
+    LaunchedEffect(showChip, still) {
+        if (showChip) {
+            if (still) beside.snapTo(1f) else launch { beside.animateTo(1f, tween(CircasoMotion.BaseMs)) }
+            chipIn.animateTo(1f, tween(CircasoMotion.BaseMs))
+        } else {
+            chipIn.animateTo(0f, tween(CircasoMotion.QuickMs))
+            if (still) beside.snapTo(0f) else beside.animateTo(0f, tween(CircasoMotion.BaseMs))
+        }
+    }
     // Each stays composed until it has faded out.
     val controlLeft by remember { androidx.compose.runtime.derivedStateOf { controlIn.value > 0f } }
     val chipLeft by remember { androidx.compose.runtime.derivedStateOf { chipIn.value > 0f } }
     val gap = CircasoSpacing.s3
     androidx.compose.ui.layout.Layout(
         content = {
-            Box(Modifier.graphicsLayer { alpha = controlIn.value }) { if (showControl || controlLeft) control() }
-            Box(Modifier.graphicsLayer { alpha = chipIn.value }) { if (showChip || chipLeft) chip() }
+            // One that is fading out is no longer there to tap.
+            Box(Modifier.graphicsLayer { alpha = controlIn.value }.untouchable(!showControl)) { if (showControl || controlLeft) control() }
+            Box(Modifier.graphicsLayer { alpha = chipIn.value }.untouchable(!showChip)) { if (showChip || chipLeft) chip() }
         },
         // A second line arriving (the chip, at large text) eases the row taller rather than pushing the page at once.
         modifier = Modifier.fillMaxWidth().padding(horizontal = CircasoSpacing.s4).animateContentSize(tween(CircasoMotion.BaseMs)),
@@ -280,7 +295,7 @@ private fun WalletTopRow(showControl: Boolean, showChip: Boolean, control: @Comp
         val height = if (oneLine) maxOf(c.height, n.height) else c.height + n.height
         layout(width, height) {
             // Alone, the control is centred; with the chip it is at the start. Eased between as the chip comes or goes.
-            val cx = (((width - c.width) / 2f) * (1f - chipIn.value)).toInt().coerceAtLeast(0)
+            val cx = (((width - c.width) / 2f) * (1f - beside.value)).toInt().coerceAtLeast(0)
             if (oneLine) {
                 c.placeRelative(cx, (height - c.height) / 2)
                 n.placeRelative(width - n.width, (height - n.height) / 2)
@@ -289,6 +304,13 @@ private fun WalletTopRow(showControl: Boolean, showChip: Boolean, control: @Comp
                 n.placeRelative(width - n.width, c.height)
             }
         }
+    }
+}
+
+/** Takes every touch before what is inside can ([on]): something fading out must not be tapped on its way. */
+private fun Modifier.untouchable(on: Boolean): Modifier = if (!on) this else pointerInput(Unit) {
+    awaitPointerEventScope {
+        while (true) awaitPointerEvent(androidx.compose.ui.input.pointer.PointerEventPass.Initial).changes.forEach { it.consume() }
     }
 }
 
@@ -307,6 +329,8 @@ fun androidx.compose.foundation.layout.BoxScope.WalletOverlay(
         NetworkSheetContent(
             state.network, state.networks, statusOf = { state.networkStatuses[it] },
             onPick = { viewModel.onNetworkSheet(false); viewModel.onNetwork(it) }, onClose = { viewModel.onNetworkSheet(false) },
+            // onNetwork does nothing while a wallet is being made: the sheet says so rather than close on a pick that didn't take.
+            busy = state.creating || state.addingNetworks,
         )
     }
     // Every group wallet, searchable, for someone in more groups than the Groups menu lists.

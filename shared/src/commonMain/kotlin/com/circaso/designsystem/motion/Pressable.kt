@@ -6,6 +6,7 @@ import androidx.compose.animation.core.spring
 import androidx.compose.foundation.LocalIndication
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.indication
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.material3.ripple
@@ -30,10 +31,15 @@ fun Modifier.pressable(
     onLongClick: (() -> Unit)? = null,
     /** What a tap does, for screen readers ("Show Amina big"); null reads the default. */
     onClickLabel: String? = null,
+    /**
+     * The press's own source, for a control whose touch target is larger than what is seen to press (a 32 dp capsule
+     * in a 44 dp row): Android's ripple is then left to [pressIndication] on the smaller shape.
+     */
+    interactionSource: MutableInteractionSource? = null,
     onClick: () -> Unit,
 ): Modifier = composed {
     val style = LocalPlatformStyle.current
-    val source = remember { MutableInteractionSource() }
+    val source = interactionSource ?: remember { MutableInteractionSource() }
     val pressed by source.collectIsPressedAsState()
     val still = com.circaso.designsystem.platform.LocalReduceMotion.current
     if (style == PlatformStyle.Ios) {
@@ -48,8 +54,13 @@ fun Modifier.pressable(
             }
             .combinedClickable(interactionSource = source, indication = null, enabled = enabled, onClickLabel = onClickLabel, role = role, onLongClick = onLongClick, onClick = onClick)
     } else {
-        this.combinedClickable(interactionSource = source, indication = ripple(), enabled = enabled, onClickLabel = onClickLabel, role = role, onLongClick = onLongClick, onClick = onClick)
+        this.combinedClickable(interactionSource = source, indication = if (interactionSource == null) ripple() else null, enabled = enabled, onClickLabel = onClickLabel, role = role, onLongClick = onLongClick, onClick = onClick)
     }
+}
+
+/** Android's ripple for a press handled by a larger [pressable] (its `interactionSource`), drawn on this shape; nothing on iOS. */
+fun Modifier.pressIndication(source: MutableInteractionSource): Modifier = composed {
+    if (LocalPlatformStyle.current == PlatformStyle.Ios) this else this.indication(source, ripple())
 }
 
 /** [pressable] as a value, for rows that are tappable only sometimes. */

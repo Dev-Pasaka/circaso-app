@@ -59,6 +59,8 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.semantics.disabled
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.selectableGroup
@@ -489,11 +491,15 @@ internal fun WithoutMainnetRows(groups: List<NamedWallet>, online: Boolean, modi
         groups.forEachIndexed { i, w ->
             if (i > 0) InsetDivider()
             val chat = w.chatId
-            val sub = if (online) "Add a Mainnet wallet · real money, its own PIN" else "Needs a connection"
+            val sub = if (online) "Add a Mainnet Wallet" else "Needs a connection"
             Row(
                 Modifier.fillMaxWidth().heightIn(min = CircasoSizes.avatarMd + CircasoSpacing.s3 * 2)
                     .then(if (online && chat != null) Modifier.pressable(role = Role.Button, onClick = { onAdd(chat) }) else Modifier)
-                    .semantics(mergeDescendants = true) { contentDescription = if (online) "Add a Mainnet wallet for ${w.name}" else "${w.name}, adding a Mainnet wallet needs a connection" }
+                    .clearAndSetSemantics {
+                        contentDescription = if (online) "Add a Mainnet wallet for ${w.name}" else "${w.name}, adding a Mainnet wallet needs a connection"
+                        role = Role.Button
+                        if (!online) disabled()
+                    }
                     .padding(CircasoSpacing.s3),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(CircasoSpacing.s3),
@@ -530,7 +536,7 @@ internal fun NoMainnetGroupWallets(state: WalletUiState, bottom: androidx.compos
             style = t.title2.copy(color = c.ink, textAlign = TextAlign.Center),
         )
         BasicText(
-            "Your groups have Testnet wallets. Give one a Mainnet wallet to hold real money; its Testnet wallet stays as it is.",
+            "Your groups have Testnet wallets. Give one a Mainnet wallet to hold real money, with its own PIN; its Testnet wallet stays as it is.",
             Modifier.padding(top = CircasoSpacing.s2, start = CircasoSpacing.s4, end = CircasoSpacing.s4),
             style = t.subhead.copy(color = c.inkSecondary, textAlign = TextAlign.Center),
         )

@@ -11,6 +11,10 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.width
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.disabled
+import androidx.compose.ui.semantics.role
+import androidx.compose.runtime.remember
+import com.circaso.designsystem.motion.pressIndication
 import androidx.compose.ui.semantics.selectableGroup
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
@@ -73,13 +77,11 @@ internal const val TestnetSpoken = "Network: Testnet, test money with no real va
 @Composable
 internal fun NetworkDot(network: WalletNetwork, modifier: Modifier = Modifier) {
     val c = CircasoTheme.colors
-    // The theme has no "positive" role (money is ink here), so Mainnet's dot is ink, held back; whole in high
-    // contrast, where a mark must keep 3:1 against its capsule.
-    val color = if (network == WalletNetwork.TESTNET) c.warning else c.ink.copy(alpha = if (c.isHighContrast) 1f else MainnetDotAlpha)
+    // The theme has no "positive" role (money is ink here), so Mainnet's dot is the quiet ink role, which holds 3:1
+    // on its capsule in every theme.
+    val color = if (network == WalletNetwork.TESTNET) c.warning else c.inkTertiary
     Box(modifier.size(TestnetDot).clip(CircasoShapes.circle).background(color))
 }
-
-private const val MainnetDotAlpha = 0.38f
 
 /** The chip's capsule: 32 dp to look at, as the Personal | Groups track is; its touch target is the row's 44 dp. */
 private val ChipHeight = 32.dp
@@ -98,15 +100,20 @@ fun NetworkChip(network: WalletNetwork, onClick: () -> Unit, modifier: Modifier 
     val t = CircasoTheme.typography
     val still = CircasoTheme.reduceMotion
     val scale = androidx.compose.ui.platform.LocalDensity.current.fontScale.coerceIn(1f, 1.6f)
-    val spoken = if (network == WalletNetwork.TESTNET) "Network: Testnet, test money" else "Network: ${network.label}"
-    // The row is the 44 dp target (the press reaches the capsule from anywhere in it: Compose widens a small
-    // clickable to its least touch size); the capsule alone is what is seen to press.
-    Box(modifier.heightIn(min = CircasoSizes.controlMd * scale), contentAlignment = Alignment.Center) {
+    val spoken = if (network == WalletNetwork.TESTNET) TestnetSpoken else "Network: ${network.label}"
+    // The 44 dp box is the control (its touch target, its focus and its spoken bounds); the capsule inside is what
+    // is seen, and what Android's ripple is drawn on.
+    val source = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }
+    Box(
+        modifier.heightIn(min = CircasoSizes.controlMd * scale)
+            .pressable(role = Role.Button, onClickLabel = "change", interactionSource = source, onClick = onClick)
+            .clearAndSetSemantics { contentDescription = spoken },
+        contentAlignment = Alignment.Center,
+    ) {
         Row(
             Modifier.heightIn(min = ChipHeight * scale).clip(CircasoShapes.circle).background(c.fill)
                 .then(if (c.isHighContrast) Modifier.border(1.dp, c.ink, CircasoShapes.circle) else Modifier)
-                .pressable(role = Role.Button, onClickLabel = "change", onClick = onClick)
-                .clearAndSetSemantics { contentDescription = spoken }
+                .pressIndication(source)
                 .padding(start = CircasoSpacing.s3, end = CircasoSpacing.s2 + CircasoSpacing.s1 / 2),
             horizontalArrangement = Arrangement.spacedBy(CircasoSpacing.s1 + CircasoSpacing.s1 / 2), verticalAlignment = Alignment.CenterVertically,
         ) {
@@ -149,6 +156,8 @@ fun ColumnScope.NetworkSheetContent(
     statusOf: (WalletNetwork) -> WalletStatus?,
     onPick: (WalletNetwork) -> Unit,
     onClose: () -> Unit,
+    /** A wallet is being made or put on its networks right now: the choice waits for it, and the sheet says so. */
+    busy: Boolean = false,
 ) {
     val c = CircasoTheme.colors
     val t = CircasoTheme.typography
@@ -162,8 +171,8 @@ fun ColumnScope.NetworkSheetContent(
             val sub = networkLine(network, statusOf(network))
             Row(
                 Modifier.fillMaxWidth().heightIn(min = CircasoSizes.avatarMd + CircasoSpacing.s3 * 2)
-                    .pressable(role = Role.RadioButton, onClick = { onPick(network) })
-                    .semantics(mergeDescendants = true) { this.selected = on; contentDescription = "${network.label}, $sub" }
+                    .pressable(enabled = !busy || on, role = Role.RadioButton, onClick = { onPick(network) })
+                    .clearAndSetSemantics { this.selected = on; role = Role.RadioButton; contentDescription = "${network.label}, $sub"; if (busy && !on) disabled() }
                     .padding(CircasoSpacing.s3),
                 verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(CircasoSpacing.s3),
             ) {
@@ -179,7 +188,8 @@ fun ColumnScope.NetworkSheetContent(
         }
     }
     BasicText(
-        "Each network is a separate wallet with its own PIN. Nothing moves between them.",
+        if (busy) "Your wallet is being set up. You can switch once that’s done."
+        else "Each network is a separate wallet with its own PIN. Nothing moves between them.",
         Modifier.fillMaxWidth().padding(horizontal = CircasoSpacing.s1), style = t.footnote.copy(color = c.inkSecondary),
     )
 }

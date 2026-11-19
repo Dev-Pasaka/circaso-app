@@ -246,11 +246,13 @@ class GroupMoneyActions(
 
 /** A group's wallet on one network, in group info's list of two: its balance, and the Testnet mark on test money. */
 @Composable
-private fun NetworkWalletRow(w: GroupNetworkWallet, onClick: () -> Unit) {
+private fun NetworkWalletRow(w: GroupNetworkWallet, line: String?, locked: Boolean, onClick: () -> Unit) {
+    val c = CircasoTheme.colors
     val balance = w.balance?.usdc?.let { amountText(it.amountMinor, w.balance.fiat) }
     ListRow(
-        "${w.network.label} wallet", sub = balance ?: if (w.network == WalletNetwork.MAINNET) "Real money" else "Test money, no real value",
-        leading = { RowIcon(CircasoIcon.Wallet) },
+        // The wallet the rows below are for says who can send (or that it is locked), as a group's one wallet does.
+        "${w.network.label} Wallet", sub = line ?: balance ?: "Balance not read yet",
+        leading = { RowIcon(if (locked) CircasoIcon.Lock else CircasoIcon.Wallet, if (locked) c.warning else c.ink) },
         trailing = { WalletRowEnd(w.testnet) }, onClick = onClick,
     )
 }
@@ -315,7 +317,8 @@ fun ColumnScope.GroupMoneyRows(info: GroupInfoMoney, chat: Chat?, myUserId: Stri
             val here = info.network?.label
             if (both) info.wallets.forEachIndexed { i, w ->
                 if (i > 0) RowDivider(Modifier.padding(start = 64.dp))
-                NetworkWalletRow(w) { actions.onOpenWalletOn(w.network) }
+                val mine = w.network == info.network
+                NetworkWalletRow(w, line = walletSub.takeIf { mine }, locked = locked && mine) { actions.onOpenWalletOn(w.network) }
             }
             else ListRow("Group Wallet", sub = walletSub, leading = { RowIcon(if (locked) CircasoIcon.Lock else CircasoIcon.Wallet, if (locked) c.warning else c.ink) }, trailing = { WalletRowEnd(info.testnet) }, onClick = actions.onOpenWallet)
             // An old group's owner can give it a Mainnet wallet too (2026-11-19); members see nothing until it exists.

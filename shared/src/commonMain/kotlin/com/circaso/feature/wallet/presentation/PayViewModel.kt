@@ -412,7 +412,7 @@ data class PayUiState(
         }
     val overBalance: Boolean get() = totalMinor?.let { MinorUnits.lessThan(balanceMinor, it) } ?: false
     val onHold: Boolean get() = wallet?.holdUntil != null
-    val canPay: Boolean get() = online && !onHold && payee != null && payChain != null && problem == null && !checking && !assetMissing && amountMinor?.let { !MinorUnits.isZero(it) } == true && !overBalance && step == PayStep.Amount && (feeSettled || requestPayout) && !blocked &&
+    val canPay: Boolean get() = online && !onHold && !myWalletMissing && payee != null && payChain != null && problem == null && !checking && !assetMissing && amountMinor?.let { !MinorUnits.isZero(it) } == true && !overBalance && step == PayStep.Amount && (feeSettled || requestPayout) && !blocked &&
         // A request needs the group's own chat to post in; a payout needs the request it pays.
         (!requestPayout || payingFrom.chatId != null) && !(toSelf && !fromGroupWallet)
     val filteredContacts get() = contacts.filter { query.isBlank() || it.displayName.contains(query, true) || it.profileName.contains(query, true) || it.handle?.contains(query.trimStart('@'), true) == true }
