@@ -270,7 +270,11 @@ fun AppNavigation(forceUpdate: Boolean, home: @Composable () -> Unit) {
     LaunchedEffect(Unit) {
         announcements.sentAfterOffline.collect { n -> toast.show("Back online · $n ${if (n == 1) "change" else "changes"} sent", com.circaso.designsystem.chrome.ToastKind.Done) }
     }
+    // Which incoming payments were M-Pesa top-ups, so their rows say "Added from M-Pesa" wherever payments are listed.
+    val observeTopUps: com.circaso.feature.ramp.domain.ObserveTopUpsUseCase = koinInject()
+    val topUps by remember(observeTopUps) { observeTopUps() }.collectAsState(emptyMap())
     CompositionLocalProvider(
+        com.circaso.feature.wallet.presentation.LocalMpesaTopUps provides (if (state == AuthState.Active) topUps else emptyMap()),
         LocalAshaLauncher provides asha,
         com.circaso.designsystem.components.LocalSecretsOnScreen provides secretsOnScreen,
         com.circaso.feature.share.presentation.LocalShareLinks provides (if (state == AuthState.Active) shareLauncher else null),
@@ -380,7 +384,7 @@ fun AppNavigation(forceUpdate: Boolean, home: @Composable () -> Unit) {
                             groupMenu = groupMenu,
                         )
                     },
-                    walletActions = { WalletTitleActions(walletViewModel) },
+                    walletActions = { WalletTitleActions(walletViewModel, onAddMoney = { backStack.add(AddMoneyRoute()) }) },
                     chatsOverlay = { ChatsOverlay(chatsViewModel, onAsha = { backStack.add(AshaRoute) }, onVoice = { backStack.add(AshaRoute); backStack.add(VoiceRoute) }) },
                     walletOverlay = {
                         WalletOverlay(walletViewModel, walletActions(null, backStack::add), biometrics = koinViewModel(), groupMenu = groupMenuActions())
@@ -696,6 +700,13 @@ fun AppNavigation(forceUpdate: Boolean, home: @Composable () -> Unit) {
                 SendToWalletScreen(
                     koinViewModel<SendToWalletViewModel>(key = "send-to-wallet-${route.fromWalletId}", parameters = { parametersOf(route.fromWalletId) }),
                     onBack = ::pop, onOpenTransfer = { id -> pop(); backStack.add(TransferRoute(id)) },
+                )
+            }
+            // E2: full screen like the other money flows; Back from an order leaves it running (re-entering resumes it).
+            entry<AddMoneyRoute>(metadata = Panes.FullScreen) { route ->
+                com.circaso.feature.ramp.presentation.AddMoneyScreen(
+                    koinViewModel<com.circaso.feature.ramp.presentation.AddMoneyViewModel>(key = "add-money-${route.orderId}", parameters = { parametersOf(route.orderId) }),
+                    onBack = ::pop, onSupport = { backStack.add(HelpRoute) },
                 )
             }
             entry<TransferRoute> { route -> TransferScreen(koinViewModel<TransferViewModel>(key = route.transferId, parameters = { parametersOf(route.transferId) }), onBack = ::pop) }
@@ -1030,6 +1041,7 @@ internal fun walletActions(walletId: String?, open: (Route) -> Unit) = WalletAct
     onTransfer = { id -> open(TransferRoute(id)) },
     onActivity = { open(ActivityRoute(walletId)) },
     onNetworks = { open(NetworksRoute) },
+    onAddMoney = { open(AddMoneyRoute()) },
     onAsset = { chain, symbol -> open(AssetActivityRoute(chain, symbol, walletId)) },
     onAssets = { chain -> open(NetworkAssetsRoute(chain, walletId)) },
     onNetworkActivity = { chain -> open(NetworkActivityRoute(chain, walletId)) },

@@ -53,6 +53,8 @@ val realtimeModule = module {
                 get<com.circaso.feature.status.domain.MomentsRepository>().onFrame(type, field("momentId"), field("posterId"), field("requesterId"))
             },
             onSupportFrame = { type, data -> get<com.circaso.feature.support.SupportTickets>().onFrame(type, data) },
+            onRampFrame = { type, data -> get<com.circaso.feature.ramp.domain.RampRepository>().onFrame(type, data) },
+            reloadRamp = { get<com.circaso.feature.ramp.domain.RampRepository>().reload() },
             onAshaBack = { get<com.circaso.feature.assistant.domain.AshaAvailability>().reportBack() },
             onPeerProfile = { userId ->
                 val profile = get<com.circaso.feature.profile.domain.ProfileRepository>().publicProfile(userId)

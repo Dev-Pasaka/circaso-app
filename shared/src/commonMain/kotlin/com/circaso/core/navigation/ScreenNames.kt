@@ -25,6 +25,7 @@ fun screenName(route: NavKey?, homeTab: Int): String? = when (route) {
         else -> "Wallet › Send"
     }
     is SendToWalletRoute -> "Wallet › Send to a wallet address"
+    is AddMoneyRoute -> "Wallet › Add money from M-Pesa"
     is TransferRoute -> "Wallet › Payment details"
     is ActivityRoute -> "Wallet › Activity"
     NetworksRoute -> "Wallet › Networks"

@@ -156,6 +156,13 @@ data class TargetRoute(val chatId: String, val walletReady: Boolean = false, val
 @Serializable
 data class SendToWalletRoute(val fromWalletId: String? = null) : Route
 
+/**
+ * Add money: buy USDC with M-Pesa (design E2/E3, guide R1–R6). [orderId] opens on that order's status (a `ramp.order`
+ * push); without it the flow starts at the amount, or resumes the person's open order.
+ */
+@Serializable
+data class AddMoneyRoute(val orderId: String? = null) : Route
+
 /** One payment (design C7). */
 @Serializable
 data class TransferRoute(val transferId: String) : Route
@@ -271,6 +278,7 @@ val routeSerializers = SerializersModule {
         subclass(ChatInfoRoute::class)
         subclass(PayRoute::class)
         subclass(SendToWalletRoute::class)
+        subclass(AddMoneyRoute::class)
         subclass(TransferRoute::class)
         subclass(NetworksRoute::class)
         subclass(ActivityRoute::class)

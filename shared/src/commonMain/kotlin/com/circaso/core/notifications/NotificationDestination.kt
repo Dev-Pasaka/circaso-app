@@ -20,6 +20,9 @@ sealed interface NotificationDestination {
     /** A person's moment; [posterId] null is my own (a reaction to my moment). */
     data class Moment(val posterId: String? = null, val momentId: String? = null) : NotificationDestination
 
+    /** A top-up from M-Pesa (push `ramp.order`, 2026-11-22): the order's status; with no [orderId], the wallet. */
+    data class RampOrder(val orderId: String? = null) : NotificationDestination
+
     /** A support ticket (push `support.ticket`, 2026-11-08); with no [ticketId], the person's tickets. */
     data class Ticket(val ticketId: String? = null) : NotificationDestination
 
@@ -49,6 +52,7 @@ sealed interface NotificationDestination {
                 is MissedCall -> { put("to", "missedCall"); put("chatId", d.chatId); put("callId", d.callId) }
                 is Moment -> { put("to", "moment"); put("posterId", d.posterId); put("momentId", d.momentId) }
                 is Ticket -> { put("to", "ticket"); put("ticketId", d.ticketId) }
+                is RampOrder -> { put("to", "rampOrder"); put("orderId", d.orderId) }
                 Asha -> put("to", "asha")
                 Security -> put("to", "security")
                 Contacts -> put("to", "contacts")
@@ -73,6 +77,7 @@ sealed interface NotificationDestination {
                 "missedCall" -> MissedCall(get("chatId"), get("callId"))
                 "moment" -> Moment(get("posterId"), get("momentId"))
                 "ticket" -> Ticket(get("ticketId"))
+                "rampOrder" -> RampOrder(get("orderId"))
                 "asha" -> Asha
                 "security" -> Security
                 "contacts" -> Contacts
@@ -98,6 +103,8 @@ sealed interface NotificationDestination {
                 kind == "chat.invite" -> Invites
                 kind == "payment.received" || kind == "transfer.updated" -> Payment(chatId, get("transferId"), get("transactionId"))
                 kind == "call.missed" || kind == "call.ended" -> MissedCall(chatId, get("callId"))
+                // "Your USDC has arrived" / "Your top-up didn't go through": the order itself (R4).
+                kind == "ramp.order" -> RampOrder(get("orderId"))
                 kind?.startsWith("chama.") == true -> chatId?.let { Chat(it) } ?: Wallet
                 kind == "moment.loved" -> Moment(null, get("momentId"))
                 kind?.startsWith("moment.") == true -> Moment(get("userId"), get("momentId"))

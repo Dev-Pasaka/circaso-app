@@ -27,7 +27,8 @@ enum Wording {
         case "moment.loved": return (appName, "Someone reacted to your moment")
         case "wallet.setup": return (appName, "Someone wants to send you money")
         // Words with nothing personal in them stay as the server wrote them.
-        case "session.revoked", "asha.back", "support.ticket", "transfer.updated": return nil
+        // "ramp.order" (2026-11-22): "Your USDC has arrived" / "Your top-up didn't go through", never an amount.
+        case "session.revoked", "asha.back", "support.ticket", "transfer.updated", "ramp.order": return nil
         default: return (appName, "New notification")
         }
     }
