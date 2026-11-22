@@ -47,7 +47,7 @@ feature/<name>/
     repository/             Repository implementations (the only place remote + local meet)
 ```
 
-Features, in build order: `auth` (sign-in, phone, device), `profile`, `contacts` (+connections, invites, blocks), `assistant` (Asha), `account` (security, recovery). Later: chats, wallet, calls (flagged off until the backend exists).
+Features, in build order: `auth` (sign-in, phone, device), `profile`, `contacts` (+connections, invites, blocks), `assistant` (Asha), `account` (security, recovery). Later: chats, wallet, calls (flagged off until the backend exists). Since then: `messaging`, `wallet`, `chama`, `calls`, `status` (Moments), `support`, `share`, `vault`, `ramp` (Add money, 2026-11-22).
 
 `androidMain` / `iosMain` mirror `core/platform` for the actuals only. `iosApp` and `androidApp` stay thin shells.
 
@@ -248,6 +248,81 @@ A Circle user-controlled wallet: the server makes challenges, the person signs t
 - **Previews**: `wallet`, `wallet-create`, `wallet-offline`, `transfer`.
 - **Tests** (`commonTest/feature/wallet/WalletTest.kt`): the money maths, and the repository with fakes: refresh with currency, create (challenge → SDK → active), a cancelled PIN sends nothing, pay keeps note and name on the phone only, frames update the copy.
 - **Not done**: QR code show/scan (library decision), W6 history beyond what this phone saw, W8 PIN change/restore (Circle challenges exist; no backend route yet), cash in/out. Chamas: see the next section. The Circle SDK code paths (`src/circle`, the Swift `canImport` branch) compile only with the SDK present and are untested until the credentials and pod are in.
+
+## Add money: the ramp (2026-11-22, guide "Ramp" R1–R6; designs E2, E3 and the "Added from M-Pesa" row of E1/E7)
+
+Buying USDC with M-Pesa from a partner merchant the server picks (the app never lists merchants). Built on backend
+`origin/main` `73914b85` (PR #128). **Class: Money** (offline-first.md): online-only, never queued, never optimistic.
+
+- **Layers** (`feature/ramp`): `RampDtos`/`KtorRampRemote` (R1–R6 through `walletCall`, so every call carries
+  `X-Wallet-Network` from the wallet's own gate), `RampRepositoryImpl`, one use case per action, `AddMoneyViewModel` +
+  `AddMoneyScreen` (`AddMoneyContent` is stateless). No Room table: an order is whatever the server last said. Kept on
+  the phone: the person's own number (`SecureRampPhoneStore`, secure storage under `ramp.phone.<userId>`) and, per
+  network, which transaction hashes were top-ups (`text.wallet.ramp.topups.<NETWORK>`, wiped at sign-out with the
+  other `text.wallet.*` settings). DI: `di/RampModule.kt`.
+- **The network** is pinned when the screen opens (`PinnedNetwork`, like Send to a wallet): the quote, the prompt and
+  the order are all that network's whatever the Wallet tab shows later; an order read back says its own network and
+  the flow follows it. The Testnet strip shows from the pin.
+- **Flow:** `AddMoneyRoute(orderId?)` from the Wallet tab's **Add** button and the title bar's **+** (personal wallet
+  only; with a group wallet on screen the old sheet still answers). R1 → a gate, the open order (resume), or the
+  amount → R2 (whole shillings; the fee is inside what is paid) → review with a 60 s countdown taken from `expiresAt`
+  but never more than a minute (a wrong phone clock) → R3 → the order's status.
+- **Idempotency:** one key per action, the same on a retry that got no definite answer (network, timeout, any `5xx`
+  such as `service.unavailable`, an unreadable answer, `409 request.in_progress`), a new one only after a definite
+  refusal (another `4xx`: the server keeps the first answer for a day, so a refused attempt retried under its old key
+  would only repeat the refusal). R3 with the same quote returns the same order and no second prompt.
+- **Following the order:** `ramp` is in `KnownModules` (its `seq` is kept and sent in `last`, so frames are replayed
+  after a reconnect; `resync` makes the screen read its order again). `order.updated` moves the state at once and the
+  order is then read (R4), because the frame has no fee or hash. Beside it R4 is read every 4 s while the order is
+  not settled and the phone is online. The frames keep being heard after an order ends, because a payment that lands
+  after the request timed out moves it again (`EXPIRED` → `PAID`), and it is then followed anew. `COMPLETED`
+  refreshes the wallet (W1) once per order, on the order's network.
+- **Ending words** key on the state, plus `failureReason` only to decide whether "nothing was taken" may be said
+  (`payment_failed`, `cancelled`, `expired`, or none, and the order never showed as paid); any other reason gets the
+  careful wording with the order id as the reference, and its buttons are **Contact Support** and Done, never Try
+  Again (which would invite paying twice). `REVIEW` is the same. An order that can't be read (opened from a push, or
+  the open order) never says "nothing was sent": it exists and may be paid.
+- **Design review (2026-11-22, `design-reviewer`):** fixed the same day: the amount field's caret with grouped digits
+  (now a `VisualTransformation`), "nothing was sent" over an order that failed to load, Try Again where money may have
+  gone, keys rotating on `5xx`, the chips wrapping, digits capped to the largest amount allowed, E3's footnote, the
+  group wallet's "+" sheet. **Still open from that review:** the main button and its footnote are the last items of
+  the scroll, not pinned to the bottom as E2/E3 show (so the keyboard can cover Continue; iOS's number pad has no
+  Done key); E3 shows Back, the frame has Close with no title; the first paint is a spinner, not a skeleton or the
+  last R1; steps change with a cut, no `AnimatedContent`; "KES" sits on a padded bottom edge, not the baseline (as
+  PayScreen does); the countdown has no tabular figures; the payment detail (C7) of a top-up still reads as a plain
+  received payment (only the row says "Added from M-Pesa"); the reference isn't tap-to-copy; E3's ID-card and
+  face-scan glyphs are stood in for by Person and Camera, and its "about 3 minutes" and "verification partner" lines
+  describe a provider that isn't chosen yet.
+- **The person's number.** R3 wants the account's verified number in E.164 and the server only returns it masked. The
+  review shows the masked number; a phone that doesn't hold the full one asks for it once ("Your M-Pesa number"),
+  checks its last three digits against the mask before anything is sent, and keeps it after the server accepts it.
+  `ramp.phone_not_yours` forgets it and asks again. It is never logged (`StartOnRampRequest.toString()` hides it).
+- **Push:** `kind: "ramp.order"` → `NotificationDestination.RampOrder(orderId)` → the Wallet tab with the order's
+  status on top (`NotificationRoutes`, both platforms; the alert is the server's own words, so the iPhone extension's
+  `Wording.swift` leaves it as it is, privacy on or off).
+- **"Added from M-Pesa":** `LocalMpesaTopUps` (hash → masked number, provided in `AppNavigation`) lets `TransferRow`
+  title an incoming payment whose hash is a completed order's. It is filled when an order completes on this phone
+  and from R5 after each R1.
+- **Error copy:** every `ramp.*` code the app can receive is in `ErrorMessages` (test: `RampWireTest`).
+- **Previews:** `add-money`, `-empty`, `-loading`, `-offline`, `-error`, `-error-offline`, `-low`, `-quote-failed`,
+  `-review`, `-review-phone`, `-review-phone-error`, `-review-expired`, `-review-repriced`, `-review-sending`,
+  `-review-failed`, `-unavailable`, `-verify`, `-restricted`, `-busy`, `-prompt`, `-prompt-offline`, `-prompt-cancel`,
+  `-paid`, `-sending`, `-done`, `-failed`, `-expired`, `-cancelled`, `-review-order` (`gallery/AddMoneyPreviews.kt`).
+- **Tests:** `commonTest/feature/ramp/RampTest.kt` (repository with a scripted server, the wire shapes, the header and
+  keys through a mock engine, the error copy, the push destination) and
+  `androidHostTest/feature/ramp/AddMoneyViewModelTest.kt` (happy path, each gate, the amount rules, the price running
+  out, keys on retries, the number, every ending, resume, cancel, offline).
+- **States with no frame (for a design review):** the loading and load-failed pages; the four gates other than E3
+  (not open to you, account paused, no partner online) and E3's disabled "Verification Is Coming Soon"; the amount
+  page without E2's live rate (limits line, "Receive on" when there are several chains, fee as a percentage, daily
+  limit, amount errors); the whole review page (E2's Rate / Fee / You pay rows moved here with "Continue to M-Pesa",
+  plus You get, To, the countdown, "price has run out", "price was updated", the number field, the failure banner);
+  every order state (sending the request, Check your phone, M-Pesa confirmed, Sending your USDC, added, didn't go
+  through, timed out, cancelled, in review, an unknown state) with its three-step progress list, the offline and
+  "couldn't check" notes and the cancel note. E2's **Card** row is left out (no backend). E2's design is one page;
+  it is two here because a price is a server call that lasts a minute.
+- **Not done:** not run against a server or on a device; KYC (no route); cash out; the number could be saved at
+  phone verification so nobody is asked for it; an orders history screen (R5 is only read for the wallet labels).
 
 ## Chamas: group goals and the shared wallet (2026-10-29, guide CH1–CH6; designs D2–D6)
 
