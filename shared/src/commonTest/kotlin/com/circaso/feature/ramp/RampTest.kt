@@ -131,7 +131,9 @@ internal class FakeRampRemote : RampRemote {
     var kycGate: kotlinx.coroutines.CompletableDeferred<Unit>? = null
 
     override suspend fun startKyc(idempotencyKey: String): AppResult<KycResponse> { kycStarts += idempotencyKey; networks += pinnedNetwork(); kycGate?.await(); return kycStart }
-    override suspend fun kyc(): AppResult<VerificationDto> { kycReads++; networks += pinnedNetwork(); return kyc }
+    /** When set, a read waits on it and then answers what was scripted when it was asked: a slow, older answer. */
+    var kycHold: kotlinx.coroutines.CompletableDeferred<Unit>? = null
+    override suspend fun kyc(): AppResult<VerificationDto> { kycReads++; networks += pinnedNetwork(); val then = kyc; kycHold?.await(); return then }
 
     override suspend fun status(): AppResult<RampStatusResponse> { statusAsks++; networks += pinnedNetwork(); return status }
     /** When set, a quote waits on it: a price still on its way. */

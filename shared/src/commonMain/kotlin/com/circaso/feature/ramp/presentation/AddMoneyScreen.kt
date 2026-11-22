@@ -161,6 +161,8 @@ fun AddMoneyContent(
     BackHandler(enabled = page == AddMoneyPage.Review && !state.placing, onBack = onBackToAmount)
     CircasoScaffold(
         grouped = !plain,
+        // E3 sits on the plain ground and every other page on the grouped one: the ground fades with the pages.
+        easeGround = true,
         topBar = {
             CircasoNavBar(
                 title = when (page) {

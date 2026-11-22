@@ -29,6 +29,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
@@ -230,7 +231,7 @@ internal fun verifyLook(verify: VerifyUi, now: Long = nowMillis()): VerifyLook {
         verify.checking -> VerifyLook(
             VerifyKind.Checking, null, SheetTone.Neutral, "Checking your details",
             // The promise is only made while it is likely to hold.
-            if (verify.slow) "This is taking longer than usual. You can leave; we'll notify you when it's done." else "This usually takes less than a minute. You don't need to do anything.",
+            if (verify.slow) "This is taking longer than usual. Nothing more is needed from you." else "This usually takes less than a minute. You don't need to do anything.",
             VerifyAction.Close, "Close", stages = story("Result on its way"), waiting = true, note = "You can leave this screen. We'll tell you when it's done.",
         )
         // Back from the hosted page: nothing is said to be sent, because it isn't known.
@@ -436,11 +437,13 @@ internal fun VerifyStatePage(
             }
             // Announced as it changes: the result may arrive while the person is looking elsewhere.
             AnimatedContent(
-                look.kind to look, contentKey = { it.first to it.second.title }, transitionSpec = { easeWords(still) }, label = "verify state",
-                modifier = Modifier.fillMaxWidth().padding(top = CircasoSpacing.s4),
-            ) { (kind, l) ->
-                // Only the words that are current speak: the ones on their way out stay silent.
-                Column(Modifier.fillMaxWidth().padding(horizontal = CircasoSpacing.s2).semantics { if (kind == look.kind) liveRegion = LiveRegionMode.Polite }, horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(VerifyTitleGap)) {
+                look.kind to look, contentKey = { Triple(it.first, it.second.title, it.second.message) }, transitionSpec = { easeWords(still) }, label = "verify state",
+                // One region that lasts, so a screen reader hears the words change inside it.
+                modifier = Modifier.fillMaxWidth().padding(top = CircasoSpacing.s4).semantics { liveRegion = LiveRegionMode.Polite },
+            ) { (_, l) ->
+                // Only the current words speak: the ones on their way out are silent, so nothing is read twice.
+                val leaving = l.title != look.title || l.message != look.message
+                Column(Modifier.fillMaxWidth().padding(horizontal = CircasoSpacing.s2).then(if (leaving) Modifier.clearAndSetSemantics { } else Modifier), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(VerifyTitleGap)) {
                     BasicText(l.title, Modifier.semantics { heading() }, style = t.title2.copy(color = c.ink, textAlign = TextAlign.Center))
                     BasicText(l.message, style = t.body.copy(color = c.inkSecondary, textAlign = TextAlign.Center))
                 }

@@ -51,6 +51,8 @@ import com.circaso.designsystem.theme.CircasoTheme
 fun CircasoScaffold(
     modifier: Modifier = Modifier,
     grouped: Boolean = false,
+    /** The ground eases between plain and grouped when [grouped] changes, for a screen whose own pages cross-fade between the two. */
+    easeGround: Boolean = false,
     /** Across the top; down the left side when the phone is on its side, with everything in it stacked. */
     topBar: (@Composable () -> Unit)? = null,
     /** Floats over the content under the top bar; appearing never pushes the screen down. */
@@ -102,17 +104,15 @@ fun CircasoScaffold(
     // Inside another scaffold (a tab inside Home) the outer one paints the page and the backdrop, edge to edge;
     // painting here too would box the backdrop in.
     // A screen whose pages sit on different grounds (Add Money: E3 on the plain one, the rest on the grouped one)
-    // eases between them with its pages instead of snapping under them. A change of theme is not eased (everything
-    // changes at once then), nor is anything under Reduce Motion.
-    var groundTheme by remember { mutableStateOf(c) }
-    val themeChanged = groundTheme !== c
-    androidx.compose.runtime.SideEffect { groundTheme = c }
-    val ground by androidx.compose.animation.animateColorAsState(
-        if (grouped) c.bgGrouped else c.bg,
-        if (themeChanged || com.circaso.designsystem.theme.CircasoTheme.reduceMotion) androidx.compose.animation.core.snap() else androidx.compose.animation.core.tween(com.circaso.designsystem.theme.CircasoMotion.BaseMs),
-        label = "scaffold ground",
-    )
-    Box(modifier.fillMaxSize().onPlaced { frame = it }.let { if (outer == null) it.drawBehind { drawRect(ground) } else it }) {
+    // may ask for the ground to ease between them with its pages ([easeGround]); everywhere else it changes at once,
+    // as it always has. A change of theme starts afresh at the new colour, and Reduce Motion never eases.
+    val groundTarget = if (grouped) c.bgGrouped else c.bg
+    val ground = if (easeGround && !com.circaso.designsystem.theme.CircasoTheme.reduceMotion) {
+        androidx.compose.runtime.key(c) {
+            androidx.compose.animation.animateColorAsState(groundTarget, androidx.compose.animation.core.tween(com.circaso.designsystem.theme.CircasoMotion.BaseMs), label = "scaffold ground")
+        }
+    } else androidx.compose.runtime.rememberUpdatedState(groundTarget)
+    Box(modifier.fillMaxSize().onPlaced { frame = it }.let { if (outer == null) it.drawBehind { drawRect(ground.value) } else it }) {
         if (outer == null) {
             backdrop?.invoke(this)
             host.content?.invoke(this)

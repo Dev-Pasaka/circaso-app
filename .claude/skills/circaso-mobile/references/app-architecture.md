@@ -425,12 +425,18 @@ the phone; the state shown is whatever R1, R0, `GET /v1/ramp/kyc` or a `kyc.upda
 - **Design review (2026-11-23, `design-reviewer`), fixed the same day:** the hosted page claiming "sent"; "you won't
   be asked again" and "for good" (an ID can expire; each network has its own check); a busy stale page after closing
   the SDK; a Close-only dead end after `retryAt`; "less than a minute" that never changed; the ground colour snapping
-  between E3 and the other states (`CircasoScaffold` now eases its ground, except on a theme change and under Reduce
-  Motion); titles repeated in their messages; "Continue Verification" too long for large text (now "Continue", the
+  between E3 and the other states (`CircasoScaffold(easeGround = true)`, opt-in, used only by Add Money; never on
+  a theme change or under Reduce Motion); titles repeated in their messages; "Continue Verification" too long for large text (now "Continue", the
   guide's word); E3's footer stepping; the haptic missed when verified is the first state; a red banner for a calm
-  note; the live region speaking twice. **Open:** the first paint is still the amount page's skeleton before E3;
+  note; the live region speaking twice. **Second pass, fixed:** the ground easing leaking into Home and New Group
+  (now opt-in); the live region back on the lasting wrapper with the leaving words silenced; the slow message
+  repeating its footnote; a wake-up read the server doesn't yet agree with is tried again after 15, 30 and 60 s;
+  overlapping reads (only the newest answer is shown); an SDK that ended itself offers nothing until the server has
+  answered; after the hosted page's 20 s the open check is still read every 20 s for three minutes; a cap with no
+  time given is left alone on resume. **Open:** the first paint is still the amount page's skeleton before E3;
   `CircasoButton`'s label shifts when its spinner appears (a design-system matter); iOS has no watchdog if Didit's
-  screens were never presented (they do present on the simulator: checked with the probe).
+  screens were never presented (they do present on the simulator: checked with the probe); the live region needs
+  one TalkBack and one VoiceOver pass on a phone.
 - **Errors → states:** `ramp.kyc_required` on R2/R3 → R1 is read and its state shown (if R1 disagrees, the refusal's
   words on the amount page, never a loop); `ramp.blocked` anywhere → the barred page; `ramp.kyc_attempts_exceeded` →
   "You've tried a few times today"; `ramp.kyc_unavailable` → on our side, Try Again, with the request reference;
@@ -451,7 +457,7 @@ the phone; the state shown is whatever R1, R0, `GET /v1/ramp/kyc` or a `kyc.upda
   - Step asked again: "We need one more thing" / "A reviewer asked for one step again to finish verifying you. The
     rest is already done." / Continue.
   - Checking: "Checking your details" / "This usually takes less than a minute. You don't need to do anything."
-    (after a minute: "This is taking longer than usual. You can leave; we'll notify you when it's done.") / Close
+    (after a minute: "This is taking longer than usual. Nothing more is needed from you.") / Close
     ("You can leave this screen. We'll tell you when it's done.").
   - Back from the hosted page (not known whether they finished, so nothing is said to be sent): "Checking where
     your verification stands" / "If you finished, the result shows here in a moment." / Close.
@@ -492,7 +498,7 @@ the phone; the state shown is whatever R1, R0, `GET /v1/ramp/kyc` or a `kyc.upda
   `-tries-open`, `-down`, `-down-starting`, `-setup`, `-camera`; `add-money-barred`. Debug probes that need no server:
   `add-money-verify-probe` (runs the installed SDK with a token no server made) and `-probe-page` (the system
   browser).
-- **Tests:** `androidHostTest/feature/ramp/AddMoneyVerifyTest.kt` (62: whether it is asked, starting, each SDK outcome
+- **Tests:** `androidHostTest/feature/ramp/AddMoneyVerifyTest.kt` (68: whether it is asked, starting, each SDK outcome
   against each server answer, R0 with nothing to do, every error code and the keys on retries, R2/R3 routing, frames,
   leaving and coming back, every state's words, the cap, offline, the push) and `commonTest/feature/ramp/RampTest.kt`
   (the guide's JSON for R0, the read, R1 and the frame; an older server; the routes and their keys on the wire; that

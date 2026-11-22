@@ -43,6 +43,9 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.drop
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
@@ -268,6 +271,10 @@ class AddMoneyViewModel(
     private var sdkUp = false
     /** The newest word on the check while Didit's screens cover the page: R0's answer, then any frame since. */
     private var held: RampVerification? = null
+    /** How many reads of the check have been asked for: the answer to the newest is the only one shown. */
+    private var readsAsked = 0
+    /** After the hosted page's short wait: the open check is still read now and then until here (epoch ms). */
+    private var lingerUntil = 0L
     /** The SDK stopped for a reason of its own (or isn't in this build): the hosted page is used from then on. */
     private var useHostedPage = false
     /** The person was sent to Settings for the camera: coming back, the camera note has done its job. */
@@ -310,10 +317,7 @@ class AddMoneyViewModel(
         viewModelScope.launch { observeKyc().collect { moved -> if (moved.network == null || moved.network == pinned) onVerification(moved.verification) } }
         viewModelScope.launch { savedPhone = ownNumber(); local.update { it.copy(needsPhone = savedPhone == null) } }
         // The connection is back: a check that was waiting on it is read at once, not at the next tick.
-        viewModelScope.launch {
-            var was = true
-            state.collect { s -> if (s.online && !was) readIfItMayHaveMoved(); was = s.online }
-        }
+        viewModelScope.launch { state.map { it.online }.distinctUntilChanged().drop(1).collect { back -> if (back) readIfItMayHaveMoved() } }
         load()
     }
 
@@ -509,10 +513,17 @@ class AddMoneyViewModel(
             // Closed before the end, or cut short. R0 already said a check is open, so the page to continue from is
             // there the instant Didit's screens are gone; the server's own word follows behind it and replaces it
             // only if it differs.
-            VerifierOutcome.Cancelled, VerifierOutcome.Ended, VerifierOutcome.Offline -> {
+            VerifierOutcome.Cancelled, VerifierOutcome.Offline -> {
                 local.update { it.copy(verify = it.verify.copy(starting = false, checking = false, returned = false, trouble = null, retryAt = null, reference = null, failure = null)) }
                 showHeard()
                 viewModelScope.launch { readKyc() }
+            }
+            // The SDK ended it itself (the session ran out, its tries are used up): "continue" is almost never what
+            // the server will say, so nothing is offered until it has answered; the page says it is finding out.
+            VerifierOutcome.Ended -> {
+                local.update { it.copy(verify = it.verify.copy(verification = heard ?: it.verify.verification, starting = false, checking = false, returned = true, trouble = null, retryAt = null, reference = null, failure = null)) }
+                readKyc()
+                local.update { it.copy(verify = it.verify.copy(returned = false, stale = false)) }
             }
             is VerifierOutcome.Failed -> {
                 useHostedPage = true
@@ -531,7 +542,16 @@ class AddMoneyViewModel(
     }
 
     /** `GET /v1/ramp/kyc`. True when the server answered. No answer leaves what is shown, marked as not just checked. */
-    private suspend fun readKyc(): Boolean = when (val result = onPin { getKyc() }) {
+    private suspend fun readKyc(): Boolean {
+        // Reads can overlap (the app coming to the front, the connection returning, the tick): only the answer to the
+        // newest one is shown, so a slower, older answer never walks a newer one back.
+        val mine = ++readsAsked
+        val result = onPin { getKyc() }
+        if (mine != readsAsked) return true
+        return shown(result)
+    }
+
+    private fun shown(result: AppResult<RampVerification>): Boolean = when (result) {
         is AppResult.Success -> { onVerification(result.value, keepTrouble = local.value.verify.trouble == VerifyTrouble.CameraDenied); true }
         is AppResult.Failure -> {
             val block = blockFor(result.error)
@@ -553,7 +573,10 @@ class AddMoneyViewModel(
      */
     private fun watchKyc() {
         if (kycWatch?.isActive == true) return
-        fun waiting() = onVerifyPage() && local.value.verify.let { !it.verified && (it.checking || it.returned || it.verification?.status == KycStatus.InReview) }
+        // After the hosted page, the open check is still read for a few minutes: someone who did finish in the browser
+        // isn't left on "Continue" until a frame happens to arrive.
+        fun lingering() = now() < lingerUntil && local.value.verify.verification.let { it?.status == KycStatus.Pending && it.reason == null }
+        fun waiting() = onVerifyPage() && local.value.verify.let { !it.verified && !it.starting && (it.checking || it.returned || it.verification?.status == KycStatus.InReview || lingering()) }
         if (!waiting()) return
         kycWatch = viewModelScope.launch {
             var waited = 0L
@@ -567,8 +590,9 @@ class AddMoneyViewModel(
                 val until = checkingUntil
                 if (until != null && local.value.verify.returned && now() >= until) {
                     checkingUntil = null
+                    lingerUntil = now() + HostedLingerMillis
                     local.update { it.copy(verify = it.verify.copy(returned = false, stale = false)) }
-                    break
+                    continue
                 }
                 // "Less than a minute" has passed: the words stop promising it, and the reads slow down.
                 if (waited >= FastWatchMillis && local.value.verify.checking && !local.value.verify.slow) local.update { it.copy(verify = it.verify.copy(slow = true)) }
@@ -579,20 +603,32 @@ class AddMoneyViewModel(
 
     /** Today's tries come back at a known moment: the page reads its state again then, so the button returns by itself. */
     private fun wakeWhenTriesAreBack() {
-        retryTimer?.cancel()
-        val v = local.value.verify
-        val at = (v.retryAt.takeIf { v.trouble == VerifyTrouble.TriesUsedUp } ?: v.verification?.retryAt?.takeIf { v.verification.canStart.not() }) ?: return
-        val wait = at - now()
+        val wait = (triesBackAt() ?: return) - now()
+        // A time already past is the running wake-up's to deal with (it tries a few times): it is left to it.
         if (wait <= 0 || wait > LongestWakeMillis) return
+        retryTimer?.cancel()
         retryTimer = viewModelScope.launch {
             delay(wait + 1_000)
             readIfItMayHaveMoved()
+            // The server may not agree that the time has come (this phone's clock is ahead), or the read may get no
+            // answer: a few more tries, further apart, so the page is never left on "in a moment" with only Close.
+            for (pause in WakeBackoffMillis) {
+                delay(pause)
+                val at = triesBackAt()
+                if (!onVerifyPage() || at == null || at > now()) break
+                readIfItMayHaveMoved()
+            }
         }
+    }
+
+    /** When the tries on screen are due back (epoch ms): the 429's time, or the server's `retryAt` while it can't start. */
+    private fun triesBackAt(): Long? = local.value.verify.let { v ->
+        if (v.trouble == VerifyTrouble.TriesUsedUp) v.retryAt else v.verification?.takeIf { !it.canStart }?.retryAt
     }
 
     /**
      * Reads the check again if it may have moved without this phone hearing: a result being waited on, an open check,
-     * or tries whose time to come back has passed (or was never given). Called when the app comes to the front, when
+     * or tries whose time to come back has passed. Called when the app comes to the front, when
      * the connection returns, and when the wake-up above fires; so nobody is left looking at "try again later" with
      * no button once later has come. Nothing is asked offline (the connection returning calls this again).
      */
@@ -602,12 +638,13 @@ class AddMoneyViewModel(
         val v = s.verify
         val check = v.verification
         val capped = v.trouble == VerifyTrouble.TriesUsedUp
-        val triesDue = (capped || check?.canStart == false) && (if (capped) v.retryAt else check?.retryAt).let { it == null || it <= now() }
+        // A cap with no time given is left as it is (lifting it would only offer a button that is refused again).
+        val triesDue = if (capped) v.retryAt.let { it != null && it <= now() } else check?.canStart == false && check.retryAt.let { it == null || it <= now() }
         val unsettled = v.checking || v.returned || check?.status == KycStatus.Pending || check?.status == KycStatus.InReview
         // A decline another try can't fix has nothing to come back: it is left alone.
         val final = check?.status == KycStatus.Declined && check.canStart.not() && check.retryAt == null && !capped
         if (final || !(triesDue || unsettled)) return
-        // The cap has lifted (or its time was never known): the note goes, and the server says what is offered now.
+        // The cap has lifted: the note goes, and the server says what is offered now.
         if (capped && triesDue) local.update { it.copy(verify = it.verify.copy(trouble = null, retryAt = null)) }
         viewModelScope.launch { readKyc(); watchKyc() }
     }
@@ -917,6 +954,10 @@ class AddMoneyViewModel(
         private const val FastWatchMillis = 60_000L
         /** Back from the hosted page, how long a result is waited for before the check is taken as still open. */
         const val HostedGraceMillis = 20_000L
+        /** After that, how long the open check is still read now and then while the page is up. */
+        const val HostedLingerMillis = 3 * 60_000L
+        /** After the tries' time has come, the pauses between further reads if the server doesn't yet agree. */
+        internal val WakeBackoffMillis = listOf(15_000L, 30_000L, 60_000L)
         /** "You're verified" stays this long: time to read it and feel it, never a wait. */
         const val VerifiedHoldMillis = 1_800L
         /** A wake-up further off than this isn't kept (the page is read again whenever it is opened or resumed). */

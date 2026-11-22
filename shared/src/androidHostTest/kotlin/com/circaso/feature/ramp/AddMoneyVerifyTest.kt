@@ -265,7 +265,7 @@ class AddMoneyVerifyTest {
         assertEquals(VerifyKind.Checking, vm.kind)
         // The promise is only made while it is likely to hold.
         assertTrue(vm.verify.slow)
-        assertEquals("This is taking longer than usual. You can leave; we'll notify you when it's done.", vm.look.message)
+        assertEquals("This is taking longer than usual. Nothing more is needed from you.", vm.look.message)
     }
 
     @Test fun finishedAndSentToAReviewerSaysSoAndLetsThemLeave() = with { vm, f ->
@@ -367,6 +367,16 @@ class AddMoneyVerifyTest {
         assertFalse(vm.verify.starting)
     }
 
+    @Test fun anSdkThatEndedItselfOffersNothingUntilTheServerHasAnswered() = with { vm, f ->
+        sdk.outcome = VerifierOutcome.Ended
+        f.remote.kyc = AppResult.Failure(AppError.Network)
+        vm.onVerify()
+        // No answer: what R0 said stands, and the check can be continued.
+        assertEquals(VerifyKind.Continue, vm.kind)
+        assertFalse(vm.verify.returned)
+        assertFalse(vm.verify.starting)
+    }
+
     @Test fun aSessionThatRanOutShowsWhatTheServerSaysNext() = with { vm, f ->
         sdk.outcome = VerifierOutcome.Ended
         f.says("EXPIRED", canStart = true, reason = KycReasons.SessionExpired)
@@ -434,9 +444,21 @@ class AddMoneyVerifyTest {
         assertEquals(VerifyAction.Close, vm.look.action)
         advanceTimeBy(AddMoneyViewModel.HostedGraceMillis + AddMoneyViewModel.CheckMillis)
         assertEquals(VerifyKind.Continue, vm.kind)
+        // Someone who did finish in the browser isn't left on "Continue": the check is still read for a few minutes.
+        f.says("IN_REVIEW")
+        advanceTimeBy(AddMoneyViewModel.ReviewMillis + 1)
+        assertEquals(VerifyKind.InReview, vm.kind)
+    }
+
+    @Test fun afterTheHostedPageAnOpenCheckIsNotReadForever() = with { vm, f ->
+        sdk.outcome = VerifierOutcome.Unavailable
+        f.says("PENDING")
+        vm.onVerify()
+        advanceTimeBy(AddMoneyViewModel.HostedGraceMillis + AddMoneyViewModel.HostedLingerMillis + 60_000)
+        assertEquals(VerifyKind.Continue, vm.kind)
         val reads = f.remote.kycReads
-        advanceTimeBy(120_000)
-        assertEquals(reads, f.remote.kycReads, "an open check isn't polled")
+        advanceTimeBy(300_000)
+        assertEquals(reads, f.remote.kycReads, "an open check isn't polled for good")
     }
 
     @Test fun theHostedPageResolvesLikeTheSdkWhenTheResultIsIn() = with { vm, f ->
@@ -570,6 +592,51 @@ class AddMoneyVerifyTest {
         assertNull(vm.verify.trouble)
         assertEquals(VerifyKind.Intro, vm.kind)
         assertTrue(vm.state.value.canVerify)
+    }
+
+    @Test fun aServerThatDoesNotYetAgreeTheTimeHasComeIsAskedAgain() = with(status = "DECLINED", canStart = false, reason = KycReasons.Liveness, retryAt = "1970-01-01T01:00:00Z") { vm, f ->
+        // This phone's clock is ahead: at the wake-up the server still says "not yet", with the same time.
+        advanceTimeBy(3_602_000)
+        assertEquals(VerifyKind.Waiting, vm.kind)
+        val reads = f.remote.kycReads
+        assertEquals(1, reads)
+        // It is asked again shortly after, and the button is back without the person doing anything.
+        f.says("DECLINED", canStart = true, reason = KycReasons.Liveness)
+        advanceTimeBy(15_001)
+        assertEquals(VerifyKind.Declined, vm.kind)
+        val after = f.remote.kycReads
+        advanceTimeBy(600_000)
+        assertEquals(after, f.remote.kycReads, "and no more once it is settled")
+    }
+
+    @Test fun aWakeUpReadThatGetsNoAnswerIsTriedAgain() = with(status = "DECLINED", canStart = false, reason = KycReasons.Liveness, retryAt = "1970-01-01T01:00:00Z") { vm, f ->
+        f.remote.kyc = AppResult.Failure(AppError.Network)
+        advanceTimeBy(3_602_000)
+        assertEquals(VerifyKind.Waiting, vm.kind)
+        f.says("DECLINED", canStart = true, reason = KycReasons.Liveness)
+        advanceTimeBy(15_001)
+        assertEquals(VerifyKind.Declined, vm.kind)
+    }
+
+    @Test fun aCapWithNoTimeGivenIsLeftAloneOnResume() = with { vm, f ->
+        f.remote.kycStart = refusal("ramp.kyc_attempts_exceeded", http = 429)
+        vm.onVerify()
+        vm.onResumed()
+        assertEquals(VerifyTrouble.TriesUsedUp, vm.verify.trouble)
+        assertEquals("You can try again tomorrow.", vm.look.message)
+    }
+
+    @Test fun anOlderAnswerNeverReplacesANewerOne() = with(status = "IN_REVIEW", canStart = false) { vm, f ->
+        // Two reads overlap; the first one asked answers last, with what was true before.
+        val slow = CompletableDeferred<Unit>()
+        f.remote.kycHold = slow
+        vm.onResumed()
+        f.remote.kycHold = null
+        f.says("DECLINED", canStart = true, reason = KycReasons.Document)
+        vm.onResumed()
+        assertEquals(VerifyKind.Declined, vm.kind)
+        slow.complete(Unit)
+        assertEquals(VerifyKind.Declined, vm.kind, "the held, older answer is dropped")
     }
 
     @Test fun aDeclineForGoodIsNeverReadAgainOnResume() = with(status = "DECLINED", canStart = false, reason = KycReasons.NotApproved) { vm, f ->
