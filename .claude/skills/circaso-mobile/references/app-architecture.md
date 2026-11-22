@@ -285,14 +285,50 @@ Buying USDC with M-Pesa from a partner merchant the server picks (the app never 
 - **Design review (2026-11-22, `design-reviewer`):** fixed the same day: the amount field's caret with grouped digits
   (now a `VisualTransformation`), "nothing was sent" over an order that failed to load, Try Again where money may have
   gone, keys rotating on `5xx`, the chips wrapping, digits capped to the largest amount allowed, E3's footnote, the
-  group wallet's "+" sheet. **Still open from that review:** the main button and its footnote are the last items of
-  the scroll, not pinned to the bottom as E2/E3 show (so the keyboard can cover Continue; iOS's number pad has no
-  Done key); E3 shows Back, the frame has Close with no title; the first paint is a spinner, not a skeleton or the
-  last R1; steps change with a cut, no `AnimatedContent`; "KES" sits on a padded bottom edge, not the baseline (as
-  PayScreen does); the countdown has no tabular figures; the payment detail (C7) of a top-up still reads as a plain
-  received payment (only the row says "Added from M-Pesa"); the reference isn't tap-to-copy; E3's ID-card and
-  face-scan glyphs are stood in for by Person and Camera, and its "about 3 minutes" and "verification partner" lines
-  describe a provider that isn't chosen yet.
+  group wallet's "+" sheet.
+- **Polish pass (2026-11-22, branch `feat/add-money-polish`), closing that review's open list:**
+  - **Files:** `AddMoneyScreen.kt` (scaffold, pages, gates, E3, skeletons, the reference), `AddMoneyAmount.kt` (amount,
+    review, the price's clock), `AddMoneyOrder.kt` (the order's status, `orderLook`, `orderStages`, `figureLabels`).
+  - **Page frame** (`AddMoneyPageFrame`): what there is to read scrolls and the main button with its footnote is pinned
+    under it (E2/E3). The scaffold already pads for the keyboard and the home indicator, so the button sits on top of
+    the keyboard. What scrolls fades out as it nears the buttons.
+  - **Pages and motion:** `pageOf(state)` names the page; one `AnimatedContent` keyed on it. Amount ↔ Review ↔ Order
+    come in from their side over an eighth of the width while the old page fades (`BaseMs` in, `QuickMs` out);
+    everything else fades; Reduce Motion is a fade. The leaving page keeps the last state it drew. System back does
+    what the bar's does (Review → Amount; nothing while a request is being sent).
+  - **Bar:** `CircasoNavBar(close = true)` (a cross, "Close") on E3 and on an order's status; E3 has no title.
+  - **First paint:** a skeleton in the arriving page's shape (the amount page, or an order when `loadingOrder`).
+  - **Amount:** "KES" on the number's baseline (`alignByBaseline`, also in `AmountDisplay` now); the number steps
+    down a size when it wouldn't fit (long amount, large text, narrow phone) inside a line of fixed height; one line
+    under it (the error, else "About 15.31 USDC", else the limits). The estimate is from the last price had in this
+    visit (`lastQuote`, scaled in proportion): R1 has no rate, so there is none before a first price. An empty amount
+    takes focus like Send; a quick amount ticks (haptic) and puts the keyboard away. While a price is being asked the
+    amount and chain can't change, and going back drops the ask (`pricing` job).
+  - **Review:** "You pay" and the amount; You get (strong) / Rate / Fee; To / From. The price's minute is in the
+    footer: a thin line draining with "Price held for 0:42" in tabular digits, amber for the last ten seconds; run
+    out, the same line says so and the same button becomes "Get a New Price", so nothing moves.
+  - **Order:** the badge keeps its place while the title and paragraph cross-fade (the page eases to the new height);
+    four steps (`orderStages`: request sent → M-Pesa confirms → USDC sent → in the wallet), each worded for where it
+    stands, marks turning over in place. Landing while watched: a `Confirm` haptic, the four ticks held `MomentMs`,
+    then the `MoneyCard` ("Added from M-Pesa"). Figures are labelled for the state (`figureLabels`: You paid / You
+    got; Amount / Would have added; M-Pesa request / USDC due). The order id is a row in the figures (first where
+    Support will ask for it), tap to copy; error references are tap to copy too ("Reference copied").
+  - **Copy:** `ramp.merchant_unavailable` (409) → "We couldn't start this payment right now. Nothing was taken. Please
+    try again in a moment." A code with no words of its own never falls back to "Something went wrong on our side":
+    opening and pricing say no M-Pesa request was sent; a refused request says nothing was taken; a `5xx` or
+    unreadable answer to R3 says "Nothing is taken unless you approve an M-Pesa request on your phone" (it isn't
+    certain nothing went out).
+  - **E3:** the canvas's ID-card and face-scan glyphs (`CircasoIcon.IdCard`, `FaceScan`); "Check your phone" uses
+    `Handset` (a phone, not the call glyph). Its "about 3 minutes" and "verification partner" lines are reworded to
+    what is true today ("A few minutes, once"; "Your documents are encrypted…"), and the disabled button is "Coming Soon".
+  - **Wallet:** a top-up's payment detail (C7) reads "Added from M-Pesa", From "M-Pesa +254 7•• ••• 678", with the M
+    disc; the row's fallback sub line is "To your wallet"; the Add button reads "Add money from M-Pesa" to screen readers.
+  - **Second review, fixed:** busy buttons keeping their colours, a price ask that could be overtaken, the order
+    footer cutting, the story never finishing, present-tense figures on ended orders, the skeleton's shape, the hero
+    paragraph changing size. **Still open:** the success haptic has no counterpart on Send's Done; Android 13+ shows its
+    own "copied" beside the toast (as on the payment detail); the top-up's payment detail has no shillings paid or
+    order reference (the transfer doesn't carry them); E3's sections are 20 dp apart (the frame: 28); the toast path
+    for `state.error` is unused; high-contrast themes, Android and a small phone were not looked at on a device.
 - **The person's number.** R3 wants the account's verified number in E.164 and the server only returns it masked. The
   review shows the masked number; a phone that doesn't hold the full one asks for it once ("Your M-Pesa number"),
   checks its last three digits against the mask before anything is sent, and keeps it after the server accepts it.
@@ -307,7 +343,8 @@ Buying USDC with M-Pesa from a partner merchant the server picks (the app never 
 - **Previews:** `add-money`, `-empty`, `-loading`, `-offline`, `-error`, `-error-offline`, `-low`, `-quote-failed`,
   `-review`, `-review-phone`, `-review-phone-error`, `-review-expired`, `-review-repriced`, `-review-sending`,
   `-review-failed`, `-unavailable`, `-verify`, `-restricted`, `-busy`, `-prompt`, `-prompt-offline`, `-prompt-cancel`,
-  `-paid`, `-sending`, `-done`, `-failed`, `-expired`, `-cancelled`, `-review-order` (`gallery/AddMoneyPreviews.kt`).
+  `-paid`, `-sending`, `-done`, `-failed`, `-expired`, `-cancelled`, `-review-order`, `-loading-order`, `-estimate`,
+  `-max`, `-review-merchant`, `-review-low` (`gallery/AddMoneyPreviews.kt`).
 - **Tests:** `commonTest/feature/ramp/RampTest.kt` (repository with a scripted server, the wire shapes, the header and
   keys through a mock engine, the error copy, the push destination) and
   `androidHostTest/feature/ramp/AddMoneyViewModelTest.kt` (happy path, each gate, the amount rules, the price running
@@ -321,7 +358,7 @@ Buying USDC with M-Pesa from a partner merchant the server picks (the app never 
   through, timed out, cancelled, in review, an unknown state) with its three-step progress list, the offline and
   "couldn't check" notes and the cancel note. E2's **Card** row is left out (no backend). E2's design is one page;
   it is two here because a price is a server call that lasts a minute.
-- **Not done:** not run against a server or on a device; KYC (no route); cash out; the number could be saved at
+- **Not done:** KYC (no route); cash out; the number could be saved at
   phone verification so nobody is asked for it; an orders history screen (R5 is only read for the wallet labels).
 
 ## Chamas: group goals and the shared wallet (2026-10-29, guide CH1–CH6; designs D2–D6)
