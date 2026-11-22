@@ -31,6 +31,10 @@ class RealtimeDispatcher(
     private val onPeerProfile: suspend (userId: String) -> Unit = {},
     /** Support tickets (`ticket.replied`, `ticket.updated`, 2026-11-08); also called on its `resync` with type `resync`. */
     private val onSupportFrame: suspend (type: String, data: kotlinx.serialization.json.JsonObject?) -> Unit = { _, _ -> },
+    /** The ramp (`order.updated`, 2026-11-22): a top-up from M-Pesa moved. Replayed 7 days like `wallet`. */
+    private val onRampFrame: suspend (type: String, data: kotlinx.serialization.json.JsonObject?) -> Unit = { _, _ -> },
+    /** The ramp's `resync`: an order on screen reads itself again over HTTP (R4). */
+    private val reloadRamp: suspend () -> Unit = {},
 ) {
     fun start() {
         scope.launch { frames.collect { handle(it) } }
@@ -46,6 +50,7 @@ class RealtimeDispatcher(
                 // The phone's chama number can't be trusted (2026-11-09): the screens showing a group's money reload it.
                 "chama" -> onChamaFrame("resync", null)
                 "support" -> onSupportFrame("resync", null) // reload the tickets (SU2)
+                "ramp" -> reloadRamp()
                 "spaces" -> Unit // Spaces is archived (2026-11-05): an old server's frames are ignored
                 else -> { refreshContacts(); refreshBlocks(); refreshOwnProfile() }
             }
@@ -55,6 +60,7 @@ class RealtimeDispatcher(
             frame.module == "calls" -> onCallsFrame(frame.type, frame.data)
             frame.module == "status" -> onStatusFrame(frame.type, frame.data)
             frame.module == "support" -> onSupportFrame(frame.type, frame.data)
+            frame.module == "ramp" -> onRampFrame(frame.type, frame.data)
             frame.module == "assistant" && frame.type == "status" ->
                 if (frame.data?.get("available")?.jsonPrimitive?.content == "true") onAshaBack()
             frame.module == "users" && frame.type in setOf("contact.joined", "connection.added") -> refreshContacts()

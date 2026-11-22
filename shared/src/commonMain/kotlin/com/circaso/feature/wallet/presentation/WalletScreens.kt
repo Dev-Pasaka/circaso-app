@@ -51,6 +51,7 @@ import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import com.circaso.core.common.maskedForDisplay
 import com.circaso.core.platform.LocalTimeStyle
 import androidx.compose.animation.togetherWith
 import com.circaso.feature.chama.presentation.GroupReceiveContent
@@ -104,14 +105,23 @@ class WalletActions(
     val onNetworkActivity: (blockchain: String) -> Unit = {},
     /** Every asset on one network, searchable (the card shows two). */
     val onAssets: (blockchain: String) -> Unit = {},
+    /** Add money from M-Pesa (design E2, the ramp); null where it can't open (previews), which shows the old sheet. */
+    val onAddMoney: (() -> Unit)? = null,
 )
+
+/**
+ * The incoming payments that were M-Pesa top-ups (the ramp's completed orders): transaction hash, lower case, to the
+ * masked M-Pesa number. A row for one reads "Added from M-Pesa" (designs E1 and E7).
+ */
+val LocalMpesaTopUps = androidx.compose.runtime.compositionLocalOf<Map<String, String>> { emptyMap() }
 
 /** The title bar's actions on the Wallet tab (design E1): hide balances, add money. */
 @Composable
-fun RowScope.WalletTitleActions(viewModel: WalletViewModel) {
+fun RowScope.WalletTitleActions(viewModel: WalletViewModel, onAddMoney: (() -> Unit)? = null) {
     val state by viewModel.state.collectAsState()
     CircasoIconButton(if (state.hidden) CircasoIcon.EyeOff else CircasoIcon.Eye, if (state.hidden) "Show balances" else "Hide balances", viewModel::onToggleHidden)
-    CircasoIconButton(CircasoIcon.Plus, "Add money", { viewModel.onComing(ComingFlow.AddMoney) })
+    // The personal wallet's top-up from M-Pesa; with a group's wallet on screen the sheet still answers (a group is added to with # in its chat).
+    CircasoIconButton(CircasoIcon.Plus, "Add money", { if (onAddMoney != null && state.selectedGroupChat == null) onAddMoney() else viewModel.onComing(ComingFlow.AddMoney) })
 }
 
 /**
@@ -652,7 +662,7 @@ private fun ActiveWallet(
                     ChainCards(byValue(wallet.chains, fiat), fiat, hidden, onToggleHidden, onAsset = actions.onAsset, onAssets = actions.onAssets, onGlow = { glow = it }) {
                         if (g != null && group != null) GroupActionsRow(g, group.actions, onReceive = { onReceive(true) })
                         else Row(Modifier.fillMaxWidth().padding(horizontal = CircasoSpacing.s2), horizontalArrangement = Arrangement.SpaceBetween) {
-                            ActionButton(CircasoIcon.Plus, "Add", { onComing(ComingFlow.AddMoney) })
+                            ActionButton(CircasoIcon.Plus, "Add", { actions.onAddMoney?.invoke() ?: onComing(ComingFlow.AddMoney) })
                             ActionButton(CircasoIcon.ArrowUp, "Send", actions.onPay, enabled = state.canSend)
                             ActionButton(CircasoIcon.ArrowDown, "Receive", { onReceive(true) })
                             ActionButton(CircasoIcon.Bank, "Cash Out", { onComing(ComingFlow.CashOut) })
@@ -854,6 +864,18 @@ fun TransferRow(
     kind: String? = null,
 ) {
     val incoming = transfer.direction == TransferDirection.In
+    // Money bought with M-Pesa (the ramp): the design's own row, "Added from M-Pesa" over the number it was paid from.
+    val topUp = if (incoming) transfer.txHash?.lowercase()?.let { LocalMpesaTopUps.current[it] } else null
+    if (topUp != null) {
+        ListRow(
+            title = "Added from M-Pesa",
+            sub = listOfNotNull(topUp.takeIf { it.isNotBlank() }?.maskedForDisplay(), "on its way".takeIf { transfer.state == TransferState.Submitted }).joinToString(" · ").ifEmpty { "Received" },
+            leading = { LetterDisc("M") },
+            trailing = { RowAmount(if (hidden) "••••" else amountLine(transfer, fiat), meta, incoming = transfer.state == TransferState.Confirmed) },
+            onClick = onClick,
+        )
+        return
+    }
     val name = transfer.counterpartName ?: if (transfer.toUserId == null && transfer.toAddress.isNotEmpty()) shortAddress(transfer.toAddress) else if (incoming) "Received" else "Sent"
     val sub = buildString {
         append(kind ?: if (incoming) "Received" else "Sent")
@@ -934,10 +956,11 @@ private fun ComingSheetContent(flow: ComingFlow, onSendToWallet: () -> Unit, onC
     // E2/E6 as a sheet: the canvas's round icon (the bank for cash out, money arriving for add money), the honest
     // "coming" line, and a clear way out, so it reads as a considered answer rather than a dead end.
     when (flow) {
+        // Reached only with a group's wallet on screen (the personal wallet opens Add Money, 2026-11-22).
         ComingFlow.AddMoney -> {
             com.circaso.designsystem.chrome.SheetMessage(
-                "Adding money is coming",
-                "Topping up from M-Pesa or a card needs a licensed partner, and we'd rather do it properly than quickly. Until then, send USDC to your address from any wallet or exchange.",
+                "Add to a group from its chat",
+                "Members add to a group's wallet with # in the group chat. Topping up from M-Pesa goes to your own wallet: switch to it and tap Add. You can also send USDC to this wallet's address.",
                 CircasoIcon.ArrowDown,
             )
             com.circaso.designsystem.chrome.SheetActions("Show My Address", onShowAddress, "Not Now", onClose)

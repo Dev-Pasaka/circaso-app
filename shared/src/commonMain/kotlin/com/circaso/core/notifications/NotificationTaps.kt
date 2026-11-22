@@ -1,6 +1,7 @@
 package com.circaso.core.notifications
 
 import com.circaso.core.navigation.ActivityRoute
+import com.circaso.core.navigation.AddMoneyRoute
 import com.circaso.core.navigation.AshaRoute
 import com.circaso.core.navigation.ChatRoute
 import com.circaso.core.navigation.ContactsRoute
@@ -82,6 +83,8 @@ object NotificationRoutes {
         is NotificationDestination.Moment -> NotificationOpening(listOf(MomentViewerRoute(destination.posterId, destination.momentId)), HomeTabName.Chats)
         // Under the person's tickets, so Back from the ticket shows the rest of them.
         is NotificationDestination.Ticket -> NotificationOpening(listOfNotNull(TicketsRoute, destination.ticketId?.let { TicketRoute(it) }), HomeTabName.You)
+        // Under the Wallet tab, so Back from the order shows the balance it changed.
+        is NotificationDestination.RampOrder -> NotificationOpening(listOfNotNull(destination.orderId?.let { AddMoneyRoute(it) }), HomeTabName.Wallet)
         NotificationDestination.Asha -> NotificationOpening(listOf(AshaRoute), HomeTabName.Chats)
         NotificationDestination.Security -> NotificationOpening(listOf(SecurityRoute), HomeTabName.You)
         NotificationDestination.Contacts -> NotificationOpening(listOf(ContactsRoute), HomeTabName.You)
