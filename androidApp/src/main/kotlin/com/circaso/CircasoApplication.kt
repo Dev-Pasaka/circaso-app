@@ -12,6 +12,9 @@ class CircasoApplication : Application() {
         initKoinAndroid(this)
         // The Circle SDK lives in its own module; the shared wallet only ever asks it to run a challenge.
         com.circaso.circlewallet.CircleWallet.install(this, com.circaso.di.currentActivityProvider())
+        // Didit's identity verification (before a first top-up) behind the shared seam; the SDK itself starts only when
+        // someone verifies, so launch pays nothing for it.
+        com.circaso.diditkyc.DiditKyc.install(this, com.circaso.di.currentActivityProvider())
         hideCircleScreensFromCapture()
     }
 

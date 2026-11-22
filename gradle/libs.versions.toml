@@ -3,6 +3,9 @@
 play-app-update = "2.1.0"
 # Circle user-controlled wallets SDK (GitHub Packages, needs pwsdk.maven.* in local.properties); 1.0.1192 of 2026-10-28.
 circle-wallet-sdk = "1.0.1192"
+# Didit's identity verification SDK (KYC before a first top-up, 2026-11-22), from Didit's own Maven repository
+# (settings.gradle.kts). 4.15.4 is the version its docs name; `didit-sdk-core` is the build without NFC chip reading.
+didit-sdk = "4.15.4"
 agp = "9.1.1"
 android-compileSdk = "37"
 android-minSdk = "24"

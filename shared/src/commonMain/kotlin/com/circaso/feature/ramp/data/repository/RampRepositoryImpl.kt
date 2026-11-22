@@ -9,7 +9,11 @@ import com.circaso.feature.ramp.data.remote.OrderUpdatedFrame
 import com.circaso.feature.ramp.data.remote.QuoteRequest
 import com.circaso.feature.ramp.data.remote.RampRemote
 import com.circaso.feature.ramp.data.remote.StartOnRampRequest
+import com.circaso.feature.ramp.data.remote.VerificationDto
 import com.circaso.feature.ramp.data.remote.toDomain
+import com.circaso.feature.ramp.domain.KycStart
+import com.circaso.feature.ramp.domain.KycUpdate
+import com.circaso.feature.ramp.domain.RampVerification
 import com.circaso.feature.ramp.domain.RampCodes
 import com.circaso.feature.ramp.domain.RampMoney
 import com.circaso.feature.ramp.domain.RampOrder
@@ -60,6 +64,15 @@ class RampRepositoryImpl(
 ) : RampRepository {
     private val _updates = MutableSharedFlow<RampOrderUpdate>(extraBufferCapacity = 16)
     override val updates: Flow<RampOrderUpdate> = _updates
+
+    private val _kycUpdates = MutableSharedFlow<KycUpdate>(extraBufferCapacity = 16)
+    override val kycUpdates: Flow<KycUpdate> = _kycUpdates
+
+    // Identity verification is never kept on the phone: the state is whatever R0, the read or a frame last said, and
+    // the session's token and link live only as long as the launch they are for.
+    override suspend fun startKyc(idempotencyKey: String): AppResult<KycStart> = remote.startKyc(idempotencyKey).map { it.toDomain() }
+
+    override suspend fun kyc(): AppResult<RampVerification> = remote.kyc().map { it.toDomain() }
 
     private val mapSerializer = MapSerializer(String.serializer(), String.serializer())
     private val topUpsLock = Mutex()
@@ -136,7 +149,13 @@ class RampRepositoryImpl(
     }
 
     override suspend fun onFrame(type: String, data: JsonObject?) {
-        if (type != OrderUpdated || data == null) return // a newer server's frame types are ignored
+        if (data == null) return
+        if (type == KycUpdated) {
+            val moved = runCatching { json.decodeFromJsonElement(VerificationDto.serializer(), data) }.getOrNull() ?: return
+            _kycUpdates.emit(KycUpdate(WalletNetwork.of(moved.network), moved.toDomain()))
+            return
+        }
+        if (type != OrderUpdated) return // a newer server's frame types are ignored
         val frame = runCatching { json.decodeFromJsonElement(OrderUpdatedFrame.serializer(), data) }.getOrNull() ?: return
         val state = RampOrderState.of(frame.state)
         _updates.emit(RampOrderUpdate(frame.orderId, state, frame.failureReason))
@@ -156,6 +175,7 @@ class RampRepositoryImpl(
 
     companion object {
         const val OrderUpdated = "order.updated"
+        const val KycUpdated = "kyc.updated"
         const val OnRamp = "ON_RAMP"
         /** The setting that holds one network's top-up labels (under `text.wallet.`, wiped at sign-out). */
         fun topUpsKey(network: WalletNetwork): String = "wallet.ramp.topups." + network.wire

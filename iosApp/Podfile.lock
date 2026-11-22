@@ -24,6 +24,7 @@ PODS:
     - SDWebImage (= 5.18.10)
     - SnapKit (= 5.7.1)
   - DeviceKit (5.2.0)
+  - DiditSDK/Core (4.15.4)
   - FBAEMKit (18.1.1):
     - FBSDKCoreKit_Basics (= 18.1.1)
   - FBSDKCoreKit (18.1.1):
@@ -144,6 +145,7 @@ PODS:
 
 DEPENDENCIES:
   - CircleProgrammableWalletSDK (= 1.4.5)
+  - DiditSDK/Core (from `https://raw.githubusercontent.com/didit-protocol/sdk-ios/4.15.4/DiditSDK.podspec`)
   - FirebaseCrashlytics (= 12.19.0)
   - FirebaseMessaging (= 12.19.0)
   - GoogleMaps (= 9.4.0)
@@ -190,6 +192,8 @@ SPEC REPOS:
     - SnapKit
 
 EXTERNAL SOURCES:
+  DiditSDK:
+    :podspec: https://raw.githubusercontent.com/didit-protocol/sdk-ios/4.15.4/DiditSDK.podspec
   GoogleSignIn:
     :podspec: LocalPods/GoogleSignIn/GoogleSignIn.podspec.json
 
@@ -200,6 +204,7 @@ SPEC CHECKSUMS:
   BigInt: f668a80089607f521586bbe29513d708491ef2f7
   CircleProgrammableWalletSDK: 5b28fd005ebaca934bae47a3d6d4ef3011386e9d
   DeviceKit: 4167e8ffbfaff06e346f113e0142ac18fc1b16ff
+  DiditSDK: dee7cb0a8d600be6ff09189d30be1ae18dd3c7c9
   FBAEMKit: fbb0a50e13109400d0615e7630a0db26ec6b8206
   FBSDKCoreKit: 0063014b3b1f7e975e70b60232b0cf8003839746
   FBSDKCoreKit_Basics: f4a1e0f38769eb71abaf6395b85e015318fcda49
@@ -231,6 +236,6 @@ SPEC CHECKSUMS:
   SDWebImage: fc8f2d48bbfd72ef39d70e981bd24a3f3be53fec
   SnapKit: d612e99e678a2d3b95bf60b0705ed0a35c03484a
 
-PODFILE CHECKSUM: 18b88ff34f5d9210b3c65b7062bbdb706e7a7ee3
+PODFILE CHECKSUM: 6629f4572e1858c6781805657eda962c2da39118
 
 COCOAPODS: 1.17.0

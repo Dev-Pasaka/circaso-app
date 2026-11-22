@@ -18,6 +18,7 @@ kotlin {
 dependencies {
     implementation(project(":shared"))
     implementation(project(":circlewallet")) // the Circle SDK, behind the wallet signer seam
+    implementation(project(":diditkyc")) // Didit's identity verification SDK, behind the identity verifier seam
 
     implementation(libs.androidx.activity.compose)
     implementation(libs.androidx.core.splashscreen)
@@ -69,6 +70,8 @@ android {
     packaging {
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
+            // Didit's SDK and its dependencies each ship this multi-release manifest; Didit's setup says to leave it out.
+            excludes += "META-INF/versions/9/OSGI-INF/MANIFEST.MF"
             // libsignal-client ships desktop natives for the JVM tests; they have no place in the APK.
             excludes += setOf("libsignal_jni*.dylib", "signal_jni*.dll", "libsignal_jni*.so")
         }

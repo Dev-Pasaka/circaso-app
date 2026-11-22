@@ -12,23 +12,32 @@ import com.circaso.feature.ramp.data.repository.RampRepositoryImpl
 import com.circaso.feature.ramp.data.repository.SecureRampPhoneStore
 import com.circaso.feature.ramp.domain.BuyWithMpesaUseCase
 import com.circaso.feature.ramp.domain.CancelRampOrderUseCase
+import com.circaso.feature.ramp.domain.GetKycUseCase
 import com.circaso.feature.ramp.domain.GetOwnMpesaNumberUseCase
 import com.circaso.feature.ramp.domain.GetRampOrderUseCase
 import com.circaso.feature.ramp.domain.GetRampStatusUseCase
+import com.circaso.feature.ramp.domain.IdentityVerifierBridge
+import com.circaso.feature.ramp.domain.NoIdentityVerifier
+import com.circaso.feature.ramp.domain.ObserveKycUpdatesUseCase
 import com.circaso.feature.ramp.domain.ObserveRampUpdatesUseCase
 import com.circaso.feature.ramp.domain.ObserveTopUpsUseCase
 import com.circaso.feature.ramp.domain.QuoteTopUpUseCase
 import com.circaso.feature.ramp.domain.RampPhoneStore
 import com.circaso.feature.ramp.domain.RampRepository
+import com.circaso.feature.ramp.domain.RunIdentityCheckUseCase
+import com.circaso.feature.ramp.domain.StartKycUseCase
 import com.circaso.feature.ramp.presentation.AddMoneyViewModel
+import com.circaso.feature.wallet.domain.WalletNetwork
 import com.circaso.feature.wallet.domain.WalletRepository
 import kotlinx.coroutines.flow.map
 import org.koin.core.module.dsl.viewModel
 import org.koin.dsl.module
 
 /**
- * The ramp: buying USDC with M-Pesa (guide R1–R6, design E2/E3). Money: online-only, never queued. Its calls carry
- * `X-Wallet-Network` from the wallet's own gate.
+ * The ramp: buying USDC with M-Pesa (guide R0–R6, design E2/E3). Money: online-only, never queued. Its calls carry
+ * `X-Wallet-Network` from the wallet's own gate. Identity verification (R0) runs in Didit's SDK, which each platform
+ * installs behind [IdentityVerifierBridge] at launch; a build without it opens Didit's hosted page in the system's
+ * in-app browser instead.
  */
 val rampModule = module {
     single<RampRemote> { KtorRampRemote(get(), get()) }
@@ -52,12 +61,17 @@ val rampModule = module {
     factory { ObserveRampUpdatesUseCase(get()) }
     factory { ObserveTopUpsUseCase(get()) }
     factory { GetOwnMpesaNumberUseCase(get()) }
-    viewModel { (orderId: String?) ->
+    factory { StartKycUseCase(get()) }
+    factory { GetKycUseCase(get()) }
+    factory { ObserveKycUpdatesUseCase(get()) }
+    factory { RunIdentityCheckUseCase(verifier = { IdentityVerifierBridge.verifier ?: NoIdentityVerifier }, openPage = { url -> com.circaso.core.platform.openInSystemBrowserAndWait(url) }) }
+    viewModel { (orderId: String?, network: String?) ->
         AddMoneyViewModel(
-            orderId, get(), get(), get(), get(), get(), get(), get(),
+            orderId, get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(),
             maskedPhone = get<AccountRepository>().overview.map { it?.maskedPhone },
             online = get<ConnectionState>().status.map { it == ConnectionStatus.Online },
             networks = get(),
+            network = WalletNetwork.of(network),
         )
     }
 }

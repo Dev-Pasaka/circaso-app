@@ -52,6 +52,8 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.LifecycleResumeEffect
+import com.circaso.core.platform.openAppSettings
 import com.circaso.designsystem.chrome.Banner
 import com.circaso.designsystem.chrome.BannerTone
 import com.circaso.designsystem.chrome.CircasoNavBar
@@ -78,12 +80,18 @@ import com.circaso.designsystem.theme.CircasoTheme
 import com.circaso.feature.wallet.presentation.TestnetStrip
 import kotlinx.coroutines.launch
 
-/** Design E2 (Add money) and E3 (verify), on the ramp: amount, price, the M-Pesa prompt, then the order until it lands. */
+/**
+ * Design E2 (Add money) and E3 (verify), on the ramp: identity verification once where the server asks for it, then
+ * amount, price, the M-Pesa prompt, and the order until it lands.
+ */
 @Composable
 fun AddMoneyScreen(viewModel: AddMoneyViewModel, onBack: () -> Unit, onSupport: () -> Unit) {
     val state by viewModel.state.collectAsState()
+    // Back in front (from Settings, from Didit's hosted page, from anywhere): a check that may have moved is read again.
+    LifecycleResumeEffect(viewModel) { viewModel.onResumed(); onPauseOrDispose { } }
     AddMoneyContent(
         state, onBack, onSupport,
+        onVerify = viewModel::onVerify, onSettings = { viewModel.onSettingsOpened(); openAppSettings() },
         onRetry = viewModel::load, onAmount = viewModel::onAmount, onChain = viewModel::onChain, onContinue = viewModel::onContinue,
         onBackToAmount = viewModel::onBackToAmount, onPhone = viewModel::onPhone, onNewPrice = viewModel::onNewPrice, onConfirm = viewModel::onConfirm,
         onCancel = viewModel::onCancel, onAgain = viewModel::onAgain, onErrorShown = viewModel::onErrorShown,
@@ -91,12 +99,23 @@ fun AddMoneyScreen(viewModel: AddMoneyViewModel, onBack: () -> Unit, onSupport: 
 }
 
 /** The flow's pages. The four in the middle are its own steps and move sideways; the rest fade. */
-internal enum class AddMoneyPage(val step: Boolean = false) { Loading, LoadFailed, Verify, Gate, Amount(true), Review(true), Order(true) }
+internal enum class AddMoneyPage(val step: Boolean = false) {
+    Loading, LoadFailed,
+    /** E3 itself: identity verification, never started. */
+    Verify,
+    /** Every state of the check after E3 (continue, checking, in review, verified, declined, …). */
+    VerifyState,
+    Gate, Amount(true), Review(true), Order(true),
+}
 
 internal fun pageOf(state: AddMoneyUiState): AddMoneyPage = when (state.step) {
     AddMoneyStep.Loading -> AddMoneyPage.Loading
     AddMoneyStep.LoadFailed -> AddMoneyPage.LoadFailed
-    AddMoneyStep.Blocked -> if (state.block == RampBlock.Verify) AddMoneyPage.Verify else AddMoneyPage.Gate
+    AddMoneyStep.Blocked -> when {
+        state.block != RampBlock.Verify -> AddMoneyPage.Gate
+        verifyLook(state.verify).kind == VerifyKind.Intro -> AddMoneyPage.Verify
+        else -> AddMoneyPage.VerifyState
+    }
     AddMoneyStep.Amount -> AddMoneyPage.Amount
     // A review with no price, or an order step with no order, has nothing to draw yet.
     AddMoneyStep.Review -> if (state.quote != null) AddMoneyPage.Review else AddMoneyPage.Loading
@@ -110,6 +129,8 @@ fun AddMoneyContent(
     state: AddMoneyUiState,
     onBack: () -> Unit,
     onSupport: () -> Unit = {},
+    onVerify: () -> Unit = {},
+    onSettings: () -> Unit = {},
     onRetry: () -> Unit = {},
     onAmount: (String) -> Unit = {},
     onChain: (String) -> Unit = {},
@@ -131,17 +152,19 @@ fun AddMoneyContent(
         scope.launch { toast.show("Reference copied", ToastKind.Done) }
     }
     val page = pageOf(state)
-    // E3 is a page of its own with Close and no title; everything else carries E2's bar.
-    val verify = page == AddMoneyPage.Verify
+    // E3 and the states of the check after it are their own pages with Close and no title; everything else carries
+    // E2's bar. E3 alone is drawn on the plain ground, as its frame has it.
+    val verify = page == AddMoneyPage.Verify || page == AddMoneyPage.VerifyState
+    val plain = page == AddMoneyPage.Verify
     // The system's back does what the bar's does: from the review to the amount, and nowhere while a request is being sent.
     BackHandler(enabled = state.placing) {}
     BackHandler(enabled = page == AddMoneyPage.Review && !state.placing, onBack = onBackToAmount)
     CircasoScaffold(
-        grouped = !verify,
+        grouped = !plain,
         topBar = {
             CircasoNavBar(
                 title = when (page) {
-                    AddMoneyPage.Verify -> ""
+                    AddMoneyPage.Verify, AddMoneyPage.VerifyState -> ""
                     AddMoneyPage.Review -> "Review"
                     else -> "Add Money"
                 },
@@ -156,7 +179,7 @@ fun AddMoneyContent(
             )
         },
         // From the network this top-up is pinned to, not from whatever is selected on the Wallet tab.
-        strip = { TestnetStrip(show = state.testnet, onGrouped = !verify) },
+        strip = { TestnetStrip(show = state.testnet, onGrouped = !plain) },
         toast = { ToastHost(toast) },
     ) { padding ->
         val reduce = CircasoTheme.reduceMotion
@@ -172,7 +195,8 @@ fun AddMoneyContent(
             when (pageOf(s)) {
                 AddMoneyPage.Loading -> LoadingPage(s, bottom)
                 AddMoneyPage.LoadFailed -> LoadFailedPage(s, bottom, onRetry, onBack, onCopy)
-                AddMoneyPage.Verify -> VerifyPage(bottom, onBack)
+                AddMoneyPage.Verify -> VerifyIntroPage(s, bottom, onVerify, onBack, onCopy)
+                AddMoneyPage.VerifyState -> VerifyStatePage(s, bottom, onVerify, onSettings, onSupport, onBack, onCopy)
                 AddMoneyPage.Gate -> GatePage(s, bottom, onRetry, onBack, onSupport)
                 AddMoneyPage.Amount -> AmountPage(s, bottom, onAmount, onChain, onContinue, onCopy)
                 AddMoneyPage.Review -> ReviewPage(s, bottom, onPhone, onNewPrice, onConfirm, onCopy)
@@ -347,10 +371,15 @@ private fun LoadFailedPage(state: AddMoneyUiState, bottomInset: Dp, onRetry: () 
     )
 }
 
-/** R1's gates other than E3: the account is paused, nobody is selling right now, or the ramp isn't open to this person. */
+/**
+ * R1's gates other than E3: the account or its identity is barred, the account is paused, nobody is selling right now,
+ * or the ramp isn't open to this person.
+ */
 @Composable
 private fun GatePage(state: AddMoneyUiState, bottomInset: Dp, onRetry: () -> Unit, onBack: () -> Unit, onSupport: () -> Unit) {
     when (state.block) {
+        // R1's `blocked`, or `ramp.blocked` from any route: said as it is, and verifying is never offered behind it.
+        RampBlock.Barred -> MessagePage(bottomInset, CircasoIcon.Lock, BarredTitle, BarredMessage, "Contact Support", onSupport, "Close", onBack, tone = SheetTone.Warning)
         RampBlock.Restricted -> MessagePage(
             bottomInset, CircasoIcon.Lock, "Adding money is paused on this account",
             "This account can't add money right now. Write to Support and we'll look into it. Sending and receiving aren't affected by this.",
@@ -368,62 +397,6 @@ private fun GatePage(state: AddMoneyUiState, bottomInset: Dp, onRetry: () -> Uni
                 ". Until then, send USDC to your address from any wallet or exchange.",
             "Close", onBack, null, {},
         )
-    }
-}
-
-/**
- * Design E3, "Verify once, add money any time". Identity verification has no route yet, so the page explains what it
- * will ask and its button says so instead of starting anything. Who checks the documents and how long it takes isn't
- * decided, so the frame's "about 3 minutes" and "verification partner" lines say only what is already true.
- */
-@Composable
-private fun VerifyPage(bottomInset: Dp, onBack: () -> Unit) {
-    val c = CircasoTheme.colors
-    val t = CircasoTheme.typography
-    AddMoneyPageFrame(
-        bottomInset, grouped = false, side = CircasoSpacing.s6,
-        footer = {
-            CircasoButton("Coming Soon", {}, size = ButtonSize.Large, block = true, enabled = false)
-            FooterNote("Verification isn't open yet. Nothing is needed from you.")
-            CircasoButton("Not Now", onBack, style = ButtonStyle.Plain, size = ButtonSize.Medium, block = true)
-        },
-    ) {
-        Column(verticalArrangement = Arrangement.spacedBy(CircasoSpacing.s2)) {
-            BasicText("Verify once, add money any time", Modifier.semantics { heading() }, style = t.title1.copy(color = c.ink))
-            BasicText("Sending and receiving on Circaso never needs this. Moving money in or out of Circaso does, by law.", style = t.body.copy(color = c.inkSecondary))
-        }
-        Column(verticalArrangement = Arrangement.spacedBy(CircasoSpacing.s5)) {
-            VerifyRow(CircasoIcon.IdCard, "Your national ID or passport", "A photo of the front and back")
-            VerifyRow(CircasoIcon.FaceScan, "A quick selfie", "To check it is really you holding it")
-            VerifyRow(CircasoIcon.Clock, "A few minutes, once", "You won't be asked again after it's done")
-        }
-        Row(Modifier.fillMaxWidth().clip(CircasoShapes.md).background(c.fill).padding(horizontal = CircasoSpacing.s4, vertical = VerifyNoteInset), horizontalArrangement = Arrangement.spacedBy(VerifyNoteGap)) {
-            CircasoIconImage(CircasoIcon.Lock, c.inkSecondary, Modifier.padding(top = 1.dp).size(VerifyNoteGlyph), strokeWidth = 1.8f)
-            BasicText("Your documents are encrypted and are never shown to other people.", style = t.subhead.copy(color = c.inkSecondary))
-        }
-    }
-}
-
-// E3's own measures where the scale has no step: the row's 14 px gap, the note's 14 px inset, 10 px gap and 18 px lock.
-// Its sections are 28 px apart; the scale has 24 and 32, and the flow's pages share one 20 dp rhythm, which E3 keeps.
-private val VerifyRowGap = 14.dp
-private val VerifyNoteInset = 14.dp
-private val VerifyNoteGap = 10.dp
-private val VerifyNoteGlyph = 18.dp
-private val VerifyRowGlyph = 20.dp
-
-@Composable
-private fun VerifyRow(icon: CircasoIcon, title: String, sub: String) {
-    val c = CircasoTheme.colors
-    val t = CircasoTheme.typography
-    Row(Modifier.semantics(mergeDescendants = true) {}, horizontalArrangement = Arrangement.spacedBy(VerifyRowGap)) {
-        Box(Modifier.size(CircasoSizes.avatarMd).clip(CircasoShapes.circle).background(c.fill), contentAlignment = Alignment.Center) {
-            CircasoIconImage(icon, c.ink, Modifier.size(VerifyRowGlyph), strokeWidth = 1.8f)
-        }
-        Column {
-            BasicText(title, style = t.headline.copy(color = c.ink))
-            BasicText(sub, style = t.subhead.copy(color = c.inkSecondary))
-        }
     }
 }
 

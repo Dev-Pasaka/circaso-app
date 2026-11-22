@@ -301,7 +301,7 @@ private val TitleGap = 6.dp
  * on it (a slow ring breathes around it), a spinner while Circaso is working. Still under Reduce Motion.
  */
 @Composable
-private fun WaitingBadge(icon: CircasoIcon?) {
+internal fun WaitingBadge(icon: CircasoIcon?) {
     val c = CircasoTheme.colors
     val still = CircasoTheme.reduceMotion
     Box(Modifier.size(CircasoSizes.sheetBadge), contentAlignment = Alignment.Center) {
@@ -330,7 +330,7 @@ private val MarkDot = 8.dp
 private val StageLine = 2.dp
 
 @Composable
-private fun Stages(stages: List<OrderStage>, modifier: Modifier = Modifier) {
+internal fun Stages(stages: List<OrderStage>, modifier: Modifier = Modifier) {
     ListGroup(modifier) {
         Column(Modifier.padding(horizontal = CircasoSpacing.s4, vertical = CircasoSpacing.s3)) {
             stages.forEachIndexed { i, stage ->

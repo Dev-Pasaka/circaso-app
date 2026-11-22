@@ -13,9 +13,11 @@ import io.ktor.http.ContentType
 import io.ktor.http.HttpMethod
 import io.ktor.http.contentType
 
-/** The ramp's routes for the app (guide R1–R6). */
+/** The ramp's routes for the app (guide R0–R6). */
 interface RampRemote {
     suspend fun status(): AppResult<RampStatusResponse>
+    suspend fun startKyc(idempotencyKey: String): AppResult<KycResponse>
+    suspend fun kyc(): AppResult<VerificationDto>
     suspend fun quote(request: QuoteRequest, idempotencyKey: String): AppResult<QuoteResponse>
     suspend fun buy(request: StartOnRampRequest, idempotencyKey: String): AppResult<OrderResponse>
     suspend fun order(orderId: String): AppResult<OrderResponse>
@@ -34,6 +36,15 @@ class KtorRampRemote(
     private suspend inline fun <reified T> call(noinline block: HttpRequestBuilder.() -> Unit): AppResult<T> = api.walletCall(network, block)
 
     override suspend fun status() = call<RampStatusResponse> { method = HttpMethod.Get; url("/v1/ramp") }
+
+    // R0. No body: the server knows who is asking and, from the header, on which network.
+    override suspend fun startKyc(idempotencyKey: String) = call<KycResponse> {
+        method = HttpMethod.Post
+        url("/v1/ramp/kyc")
+        idempotencyKey(idempotencyKey)
+    }
+
+    override suspend fun kyc() = call<VerificationDto> { method = HttpMethod.Get; url("/v1/ramp/kyc") }
 
     override suspend fun quote(request: QuoteRequest, idempotencyKey: String) = call<QuoteResponse> {
         method = HttpMethod.Post
