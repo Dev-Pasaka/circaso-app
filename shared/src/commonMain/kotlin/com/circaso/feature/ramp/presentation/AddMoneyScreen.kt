@@ -292,7 +292,8 @@ internal fun FailureNote(failure: AddMoneyFailure?, onCopy: (String) -> Unit) {
     val shown = lastOf(failure)
     Reveal(failure != null) {
         if (shown != null) Column(Modifier.padding(top = CircasoSpacing.s4), verticalArrangement = Arrangement.spacedBy(CircasoSpacing.s1)) {
-            Banner(shown.message, CircasoIcon.Warning, tone = BannerTone.Critical)
+            // Something that failed is red; something that only changes how the person carries on is said calmly.
+            if (shown.calm) Banner(shown.message, CircasoIcon.Info, tone = BannerTone.Neutral) else Banner(shown.message, CircasoIcon.Warning, tone = BannerTone.Critical)
             shown.reference?.let { Reference(it, onCopy) }
         }
     }

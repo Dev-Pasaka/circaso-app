@@ -59,7 +59,7 @@ private fun order(state: RampOrderState, reason: String? = null) =
  *
  * Identity verification (E3 and every state after it), all under `add-money-verify`: `-starting`, `-offline`,
  * `-failed`, `-continue`, `-continue-offline`, `-sdk-stopped`, `-more`, `-checking`, `-checking-offline`,
- * `-checking-stale`, `-review`, `-done`, `-declined` (and `-document`, `-unreadable`, `-liveness`, `-face`,
+ * `-checking-stale`, `-checking-slow`, `-returned`, `-review`, `-done`, `-declined` (and `-document`, `-unreadable`, `-liveness`, `-face`,
  * `-unknown`), `-declined-wait`, `-final`, `-in-use`, `-blocked`, `-expired`, `-id-expired`, `-expired-wait`, `-tries`,
  * `-tries-open`, `-down`, `-setup`, `-camera`, `-mainnet`; and `add-money-barred` (R1's `blocked`).
  */
@@ -127,12 +127,15 @@ internal fun AddMoneyPreview(name: String): Boolean {
         "add-money-verify-continue" -> verify(KycStatus.Pending)
         "add-money-verify-continue-starting" -> verify(KycStatus.Pending) { copy(starting = true) }
         "add-money-verify-continue-offline" -> verify(KycStatus.Pending).copy(online = false)
-        "add-money-verify-sdk-stopped" -> verify(KycStatus.Pending) { copy(failure = AddMoneyFailure("The verification closed before it could finish. Nothing is lost: continue, and it opens in your browser instead.", null)) }
+        "add-money-verify-sdk-stopped" -> verify(KycStatus.Pending) { copy(failure = AddMoneyFailure("The verification closed before it could finish. Continue, and it opens in your browser instead.", null, calm = true)) }
         "add-money-verify-more" -> verify(KycStatus.Pending, reason = KycReasons.ResubmissionRequested)
         // Everything sent: waiting for the result, which arrives by itself.
         "add-money-verify-checking" -> verify(KycStatus.Pending) { copy(checking = true) }
         "add-money-verify-checking-offline" -> verify(KycStatus.Pending) { copy(checking = true) }.copy(online = false)
         "add-money-verify-checking-stale" -> verify(KycStatus.Pending) { copy(checking = true, stale = true) }
+        "add-money-verify-checking-slow" -> verify(KycStatus.Pending) { copy(checking = true, slow = true) }
+        // Back from Didit's hosted page: nothing is said to be sent, because it isn't known.
+        "add-money-verify-returned" -> verify(KycStatus.Pending) { copy(returned = true) }
         "add-money-verify-review" -> verify(KycStatus.InReview, canStart = false)
         "add-money-verify-done" -> verify(KycStatus.Verified, canStart = false) { copy(verified = true) }
         // Declined for something another try can fix, by reason.

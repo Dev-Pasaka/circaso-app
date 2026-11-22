@@ -67,7 +67,11 @@ enum class RampBlock {
 }
 
 /** Something that went wrong and stays on screen until dealt with: the words, and what to quote to support. */
-data class AddMoneyFailure(val message: String, val reference: String?)
+data class AddMoneyFailure(
+    val message: String, val reference: String?,
+    /** Nothing failed for the person: a note about how to carry on, said without alarm. */
+    val calm: Boolean = false,
+)
 
 /** What stopped a check from starting or running, other than what the server's verification itself says. */
 enum class VerifyTrouble {
@@ -91,6 +95,13 @@ data class VerifyUi(
     val starting: Boolean = false,
     /** Everything was sent and the result isn't in yet: the waiting state, which resolves by itself. */
     val checking: Boolean = false,
+    /** The wait for a result has outlasted "less than a minute": the words stop promising it. */
+    val slow: Boolean = false,
+    /**
+     * Back from Didit's hosted page, where "finished" can't be known: the result is read for a short while, and
+     * nothing is said to have been sent.
+     */
+    val returned: Boolean = false,
     /** The last read of the result got no answer: it is still being read, and the screen says so. */
     val stale: Boolean = false,
     val trouble: VerifyTrouble? = null,
@@ -298,6 +309,11 @@ class AddMoneyViewModel(
         // The identity check moved (`kyc.updated`, live or replayed): only this flow's network is taken.
         viewModelScope.launch { observeKyc().collect { moved -> if (moved.network == null || moved.network == pinned) onVerification(moved.verification) } }
         viewModelScope.launch { savedPhone = ownNumber(); local.update { it.copy(needsPhone = savedPhone == null) } }
+        // The connection is back: a check that was waiting on it is read at once, not at the next tick.
+        viewModelScope.launch {
+            var was = true
+            state.collect { s -> if (s.online && !was) readIfItMayHaveMoved(); was = s.online }
+        }
         load()
     }
 
@@ -383,10 +399,13 @@ class AddMoneyViewModel(
                 local.update {
                     val before = it.verify
                     val moved = before.verification != now
+                    // Still unfinished at the server: a wait for a result goes on.
+                    val unfinished = now.status == KycStatus.Pending && now.reason == null
                     it.copy(verify = before.copy(
                         verification = now,
-                        // Still unfinished at the server after everything was sent: the wait goes on.
-                        checking = before.checking && now.status == KycStatus.Pending && now.reason == null,
+                        checking = before.checking && unfinished,
+                        slow = before.slow && before.checking && unfinished,
+                        returned = before.returned && unfinished,
                         stale = false,
                         trouble = before.trouble.takeIf { keepTrouble || !moved },
                         retryAt = before.retryAt.takeIf { keepTrouble || !moved },
@@ -470,34 +489,43 @@ class AddMoneyViewModel(
         fun showHeard() { if (heard != null && local.value.verify.verification?.let { it.status == heard.status && it.reason == heard.reason } != true) onVerification(heard) }
         when (outcome) {
             // Everything was sent: the waiting state, at once, while the result is read.
-            VerifierOutcome.Finished, VerifierOutcome.Left -> {
-                checkingUntil = if (outcome == VerifierOutcome.Left) now() + HostedGraceMillis else null
-                local.update { it.copy(verify = it.verify.copy(verification = heard ?: it.verify.verification, starting = false, checking = true, trouble = null, retryAt = null, reference = null, failure = null)) }
+            VerifierOutcome.Finished -> {
+                checkingUntil = null
+                local.update { it.copy(verify = it.verify.copy(verification = heard ?: it.verify.verification, starting = false, checking = true, slow = false, returned = false, trouble = null, retryAt = null, reference = null, failure = null)) }
+                readKyc()
+                watchKyc()
+            }
+            // Back from the hosted page: whether they finished isn't known, so nothing is claimed. The result is read
+            // for a short while; with none, the check is simply still open.
+            VerifierOutcome.Left -> {
+                checkingUntil = now() + HostedGraceMillis
+                local.update { it.copy(verify = it.verify.copy(verification = heard ?: it.verify.verification, starting = false, checking = false, returned = true, trouble = null, retryAt = null, reference = null, failure = null)) }
                 readKyc()
                 watchKyc()
             }
             VerifierOutcome.CameraDenied -> local.update {
-                it.copy(verify = it.verify.copy(verification = heard ?: it.verify.verification, starting = false, checking = false, trouble = VerifyTrouble.CameraDenied, retryAt = null, reference = null, failure = null))
+                it.copy(verify = it.verify.copy(verification = heard ?: it.verify.verification, starting = false, checking = false, returned = false, trouble = VerifyTrouble.CameraDenied, retryAt = null, reference = null, failure = null))
             }
-            // Closed before the end, or cut short: the server says where that leaves the check (it can be continued).
+            // Closed before the end, or cut short. R0 already said a check is open, so the page to continue from is
+            // there the instant Didit's screens are gone; the server's own word follows behind it and replaces it
+            // only if it differs.
             VerifierOutcome.Cancelled, VerifierOutcome.Ended, VerifierOutcome.Offline -> {
-                local.update { it.copy(verify = it.verify.copy(trouble = null, retryAt = null, reference = null, failure = null)) }
-                if (!readKyc()) showHeard()
-                local.update { it.copy(verify = it.verify.copy(starting = false)) }
+                local.update { it.copy(verify = it.verify.copy(starting = false, checking = false, returned = false, trouble = null, retryAt = null, reference = null, failure = null)) }
+                showHeard()
+                viewModelScope.launch { readKyc() }
             }
             is VerifierOutcome.Failed -> {
                 useHostedPage = true
-                local.update { it.copy(verify = it.verify.copy(trouble = null, retryAt = null, reference = null, failure = null)) }
-                if (!readKyc()) showHeard()
-                local.update { v ->
-                    // Only said if the check is still there to continue: the next tap opens it in the browser.
-                    val open = v.verify.verification?.canStart == true && !v.verify.verified
-                    v.copy(verify = v.verify.copy(starting = false, failure = if (open) AddMoneyFailure(SdkStopped, null) else v.verify.failure))
-                }
+                local.update { it.copy(verify = it.verify.copy(starting = false, checking = false, returned = false, trouble = null, retryAt = null, reference = null, failure = null)) }
+                showHeard()
+                // Only said while the check is there to continue: the next tap opens it in the browser.
+                local.update { v -> if (v.verify.verification?.canStart == true) v.copy(verify = v.verify.copy(failure = AddMoneyFailure(SdkStopped, null, calm = true))) else v }
+                viewModelScope.launch { readKyc() }
             }
             VerifierOutcome.Unavailable -> {
+                local.update { it.copy(verify = it.verify.copy(starting = false, checking = false, returned = false)) }
                 showHeard()
-                local.update { it.copy(verify = it.verify.copy(starting = false, failure = AddMoneyFailure(CouldNotShowCheck, null))) }
+                local.update { it.copy(verify = it.verify.copy(failure = AddMoneyFailure(CouldNotShowCheck, null))) }
             }
         }
     }
@@ -511,7 +539,7 @@ class AddMoneyViewModel(
                 when {
                     !(it.step == AddMoneyStep.Blocked && it.block == RampBlock.Verify) -> it
                     block != null -> it.copy(block = block, verify = VerifyUi())
-                    else -> it.copy(verify = it.verify.copy(stale = it.verify.checking || it.verify.verification?.status == KycStatus.InReview))
+                    else -> it.copy(verify = it.verify.copy(stale = it.verify.checking || it.verify.returned || it.verify.verification?.status == KycStatus.InReview))
                 }
             }
             false
@@ -525,22 +553,25 @@ class AddMoneyViewModel(
      */
     private fun watchKyc() {
         if (kycWatch?.isActive == true) return
-        fun waiting() = onVerifyPage() && local.value.verify.let { !it.verified && (it.checking || it.verification?.status == KycStatus.InReview) }
+        fun waiting() = onVerifyPage() && local.value.verify.let { !it.verified && (it.checking || it.returned || it.verification?.status == KycStatus.InReview) }
         if (!waiting()) return
         kycWatch = viewModelScope.launch {
             var waited = 0L
             while (true) {
-                val pace = if (local.value.verify.checking && waited < FastWatchMillis) CheckMillis else ReviewMillis
+                val soon = local.value.verify.let { it.checking || it.returned }
+                val pace = if (soon && waited < FastWatchMillis) CheckMillis else ReviewMillis
                 delay(pace)
                 waited += pace
                 if (!waiting() || sdkUp) break
                 // Back from the hosted page with nothing to show for it after a fair wait: the check is simply still open.
                 val until = checkingUntil
-                if (until != null && local.value.verify.checking && now() >= until) {
+                if (until != null && local.value.verify.returned && now() >= until) {
                     checkingUntil = null
-                    local.update { it.copy(verify = it.verify.copy(checking = false, stale = false)) }
-                    continue
+                    local.update { it.copy(verify = it.verify.copy(returned = false, stale = false)) }
+                    break
                 }
+                // "Less than a minute" has passed: the words stop promising it, and the reads slow down.
+                if (waited >= FastWatchMillis && local.value.verify.checking && !local.value.verify.slow) local.update { it.copy(verify = it.verify.copy(slow = true)) }
                 if (state.value.online) readKyc()
             }
         }
@@ -555,10 +586,30 @@ class AddMoneyViewModel(
         if (wait <= 0 || wait > LongestWakeMillis) return
         retryTimer = viewModelScope.launch {
             delay(wait + 1_000)
-            if (!onVerifyPage() || sdkUp) return@launch
-            local.update { it.copy(verify = it.verify.copy(trouble = it.verify.trouble.takeIf { t -> t != VerifyTrouble.TriesUsedUp }, retryAt = null)) }
-            if (state.value.online) readKyc()
+            readIfItMayHaveMoved()
         }
+    }
+
+    /**
+     * Reads the check again if it may have moved without this phone hearing: a result being waited on, an open check,
+     * or tries whose time to come back has passed (or was never given). Called when the app comes to the front, when
+     * the connection returns, and when the wake-up above fires; so nobody is left looking at "try again later" with
+     * no button once later has come. Nothing is asked offline (the connection returning calls this again).
+     */
+    private fun readIfItMayHaveMoved() {
+        val s = local.value
+        if (!onVerifyPage() || sdkUp || s.verify.starting || s.verify.verified || !state.value.online) return
+        val v = s.verify
+        val check = v.verification
+        val capped = v.trouble == VerifyTrouble.TriesUsedUp
+        val triesDue = (capped || check?.canStart == false) && (if (capped) v.retryAt else check?.retryAt).let { it == null || it <= now() }
+        val unsettled = v.checking || v.returned || check?.status == KycStatus.Pending || check?.status == KycStatus.InReview
+        // A decline another try can't fix has nothing to come back: it is left alone.
+        val final = check?.status == KycStatus.Declined && check.canStart.not() && check.retryAt == null && !capped
+        if (final || !(triesDue || unsettled)) return
+        // The cap has lifted (or its time was never known): the note goes, and the server says what is offered now.
+        if (capped && triesDue) local.update { it.copy(verify = it.verify.copy(trouble = null, retryAt = null)) }
+        viewModelScope.launch { readKyc(); watchKyc() }
     }
 
     private fun onStartRefused(error: AppError) {
@@ -600,9 +651,7 @@ class AddMoneyViewModel(
             // Whether the camera is on now is the SDK's to find out: the page goes back to its button.
             local.update { it.copy(verify = it.verify.copy(trouble = it.verify.trouble.takeIf { t -> t != VerifyTrouble.CameraDenied })) }
         }
-        val status = s.verify.verification?.status
-        val mayHaveMoved = s.verify.checking || status == KycStatus.Pending || status == KycStatus.InReview
-        if (mayHaveMoved && state.value.online) viewModelScope.launch { readKyc(); watchKyc() }
+        readIfItMayHaveMoved()
     }
 
     private suspend fun open(id: String) {
@@ -874,7 +923,7 @@ class AddMoneyViewModel(
         private const val LongestWakeMillis = 36L * 60 * 60 * 1000
         internal const val VerifyNeedsConnection = "Verifying your identity needs a connection. Nothing was started."
         internal const val CouldNotStartCheck = "We couldn't start your verification right now. Nothing is lost. Please try again in a moment."
-        internal const val SdkStopped = "The verification closed before it could finish. Nothing is lost: continue, and it opens in your browser instead."
+        internal const val SdkStopped = "The verification closed before it could finish. Continue, and it opens in your browser instead."
         internal const val CouldNotShowCheck = "We couldn't open the verification on this phone. Nothing is lost. Please try again in a moment."
 
         internal fun waitText(seconds: Int): String = if (seconds < 90) "a minute" else "${(seconds + 59) / 60} minutes"

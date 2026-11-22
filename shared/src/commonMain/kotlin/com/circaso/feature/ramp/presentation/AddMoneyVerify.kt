@@ -68,6 +68,8 @@ internal enum class VerifyKind {
     OneMoreThing,
     /** Everything was sent; the result isn't in yet. Resolves by itself. */
     Checking,
+    /** Back from Didit's hosted page: it isn't known whether they finished, so nothing is claimed while it is read. */
+    Returned,
     /** Didit's reviewers are looking. */
     InReview,
     Verified,
@@ -133,8 +135,15 @@ internal fun retryWhen(retryAt: Long?, now: Long): String? {
     }
 }
 
-/** "You can try again tomorrow, after 09:05." With no time to go by, tomorrow: tries are counted by the day. */
-private fun tryAgain(retryAt: Long?, now: Long) = "You can try again ${retryWhen(retryAt, now) ?: "tomorrow"}."
+/**
+ * "You can try again tomorrow, after 09:05." With no time to go by, tomorrow: tries are counted by the day. A time
+ * that has just passed is "in a moment": the page is reading its state again, and the button comes back with it.
+ */
+private fun tryAgain(retryAt: Long?, now: Long) = when {
+    retryAt == null -> "You can try again tomorrow."
+    retryAt <= now -> "You can try again in a moment."
+    else -> "You can try again ${retryWhen(retryAt, now)}."
+}
 
 /**
  * A decline by the server's reason code (guide: "Reason codes"): what went wrong, in a title; what to do about it
@@ -154,10 +163,10 @@ private fun declineWords(reason: String?): DeclineWords = when (reason) {
     )
     KycReasons.Liveness -> DeclineWords("The selfie check didn't pass", "Try again in good light, with your face uncovered.", "Next time, be in good light, with your face uncovered.")
     KycReasons.FaceMatch -> DeclineWords(
-        "Your selfie didn't match your ID", "The face in the selfie didn't match the photo on the ID. Try again with your own ID.",
-        "The face in the selfie didn't match the photo on the ID. Next time, use your own ID.",
+        "Your selfie didn't match your ID", "Try again in good light, facing the camera, with your own ID.",
+        "Next time, be in good light, facing the camera, with your own ID.",
     )
-    KycReasons.SessionExpired -> DeclineWords("Your verification ran out of time", "It wasn't finished in time, so it closed. Start again when you're ready.", "It wasn't finished in time, so it closed.")
+    KycReasons.SessionExpired -> DeclineWords("Your verification ran out of time", "Start again when you're ready. It takes a few minutes.", "It closed before it was finished.")
     // `declined`, and any reason a newer server sends while another try is still offered.
     else -> DeclineWords("We couldn't verify you this time", "Something in the check didn't pass. Please try again.", "Something in the check didn't pass.")
 }
@@ -174,13 +183,14 @@ private fun finalWords(reason: String?): Pair<String, String> = when (reason) {
 internal const val BarredTitle = "You can't add money on Circaso"
 internal const val BarredMessage = "Contact Support if you think this is a mistake."
 
-private const val Sent = "ID and selfie sent"
-private const val Ready = "Ready to add money"
-
+/**
+ * The check's short story once everything was sent: sent, being decided ([active] says by whom), ready. Only the
+ * marks move as it lands; the last step keeps its words.
+ */
 private fun story(active: String?) = listOf(
-    OrderStage(Sent, StageMark.Done),
+    OrderStage("ID and selfie sent", StageMark.Done),
     OrderStage(active ?: "Details checked", if (active == null) StageMark.Done else StageMark.Active),
-    OrderStage(if (active == null) Ready else "You can add money", if (active == null) StageMark.Done else StageMark.Waiting),
+    OrderStage("Ready to add money", if (active == null) StageMark.Done else StageMark.Waiting),
 )
 
 /**
@@ -195,7 +205,7 @@ internal fun verifyLook(verify: VerifyUi, now: Long = nowMillis()): VerifyLook {
     )
     return when {
         verify.verified || (v.status == KycStatus.Verified && v.required) -> VerifyLook(
-            VerifyKind.Verified, CircasoIcon.Check, SheetTone.Neutral, "You're verified", "That's it, for good. You can add money any time now.",
+            VerifyKind.Verified, CircasoIcon.Check, SheetTone.Neutral, "You're verified", "That's it. You can add money any time now.",
             VerifyAction.None, "", stages = story(null), note = "Taking you to Add Money.",
         )
         verify.trouble == VerifyTrouble.CameraDenied -> VerifyLook(
@@ -218,8 +228,15 @@ internal fun verifyLook(verify: VerifyUi, now: Long = nowMillis()): VerifyLook {
             VerifyAction.Close, "Close", note = "Nothing is needed from you until then.",
         )
         verify.checking -> VerifyLook(
-            VerifyKind.Checking, null, SheetTone.Neutral, "Checking your details", "This usually takes less than a minute. You don't need to do anything.",
-            VerifyAction.Close, "Close", stages = story("Checking your details"), waiting = true, note = "You can leave this screen. We'll tell you when it's done.",
+            VerifyKind.Checking, null, SheetTone.Neutral, "Checking your details",
+            // The promise is only made while it is likely to hold.
+            if (verify.slow) "This is taking longer than usual. You can leave; we'll notify you when it's done." else "This usually takes less than a minute. You don't need to do anything.",
+            VerifyAction.Close, "Close", stages = story("Result on its way"), waiting = true, note = "You can leave this screen. We'll tell you when it's done.",
+        )
+        // Back from the hosted page: nothing is said to be sent, because it isn't known.
+        verify.returned -> VerifyLook(
+            VerifyKind.Returned, null, SheetTone.Neutral, "Checking where your verification stands", "If you finished, the result shows here in a moment.",
+            VerifyAction.Close, "Close", waiting = true, note = "You can leave this screen.",
         )
         else -> when (v.status) {
             KycStatus.None -> when {
@@ -237,7 +254,7 @@ internal fun verifyLook(verify: VerifyUi, now: Long = nowMillis()): VerifyLook {
             KycStatus.InReview -> VerifyLook(
                 VerifyKind.InReview, CircasoIcon.IdCard, SheetTone.Neutral, "We're taking a closer look",
                 "A reviewer is going over your details. This usually takes a few minutes, and we'll notify you as soon as it's done.",
-                VerifyAction.Close, "Close", stages = story("A closer look at your details"), waiting = true, note = "You can leave this screen. Nothing more is needed from you.",
+                VerifyAction.Close, "Close", stages = story("With a reviewer"), waiting = true, note = "You can leave this screen. Nothing more is needed from you.",
             )
             KycStatus.Declined -> when {
                 v.canStart -> declineWords(v.reason).let { VerifyLook(VerifyKind.Declined, CircasoIcon.Warning, SheetTone.Warning, it.title, it.now, VerifyAction.Start, "Try Again") }
@@ -250,7 +267,8 @@ internal fun verifyLook(verify: VerifyUi, now: Long = nowMillis()): VerifyLook {
                 when {
                     v.canStart -> VerifyLook(VerifyKind.Expired, CircasoIcon.Clock, SheetTone.Warning, words.title, words.now, VerifyAction.Start, "Verify Again")
                     v.retryAt != null -> waiting(words.title, "${words.later} $TriesUsed", v.retryAt)
-                    else -> finalWords(v.reason).let { (t, m) -> VerifyLook(VerifyKind.DeclinedFinal, CircasoIcon.Lock, SheetTone.Warning, t, m, VerifyAction.Support, "Contact Support") }
+                    // Out of time with no way to start again and no time given: its own title, and Support.
+                    else -> VerifyLook(VerifyKind.DeclinedFinal, CircasoIcon.Lock, SheetTone.Warning, words.title, "Contact Support and we'll help you start again.", VerifyAction.Support, "Contact Support")
                 }
             }
             // An open check, or a status a newer server sends: `canStart` alone says whether there is something to do.
@@ -262,11 +280,11 @@ internal fun verifyLook(verify: VerifyUi, now: Long = nowMillis()): VerifyLook {
                 !v.canStart -> waiting("Today's tries are used up", "Your verification isn't finished yet, and it can't be continued today.", v.retryAt)
                 v.reason == KycReasons.ResubmissionRequested -> VerifyLook(
                     VerifyKind.OneMoreThing, CircasoIcon.IdCard, SheetTone.Neutral, "We need one more thing", "A reviewer asked for one step again to finish verifying you. The rest is already done.",
-                    VerifyAction.Start, "Continue Verification",
+                    VerifyAction.Start, "Continue",
                 )
                 else -> VerifyLook(
                     VerifyKind.Continue, CircasoIcon.IdCard, SheetTone.Neutral, "Finish verifying your identity", "You've already started. Pick up where you left off: it takes a few minutes.",
-                    VerifyAction.Start, "Continue Verification",
+                    VerifyAction.Start, "Continue",
                 )
             }
         }
@@ -279,7 +297,8 @@ internal const val VerifyOfflineNote = "You're offline. Verifying your identity 
  * Design E3, "Verify once, add money any time": what is needed (an ID and a selfie), how long it takes, who runs the
  * check, and one button. The button asks the server for the check (R0) and opens Didit's screens; it is busy from the
  * tap until they are up. The frame's "About 3 minutes / Most checks finish in under 10 minutes" says only what Circaso
- * can stand behind ("A few minutes, once"), and its "verification partner" is named, as the guide's consent note asks.
+ * can stand behind ("A few minutes, once"; never "you won't be asked again": an ID can expire, and each network has
+ * its own check), and its "verification partner" is named, as the guide's consent note asks.
  */
 @Composable
 internal fun VerifyIntroPage(state: AddMoneyUiState, bottomInset: Dp, onVerify: () -> Unit, onBack: () -> Unit, onCopy: (String) -> Unit) {
@@ -290,11 +309,14 @@ internal fun VerifyIntroPage(state: AddMoneyUiState, bottomInset: Dp, onVerify: 
     AddMoneyPageFrame(
         bottomInset, grouped = false, side = CircasoSpacing.s6,
         footer = {
-            // Busy keeps its colours and its place; offline it waits, and says why before anyone taps it.
-            CircasoButton(look.button, onVerify, size = ButtonSize.Large, block = true, enabled = state.canVerify || busy, busy = busy)
-            Reveal(!state.online) { FooterNote(VerifyOfflineNote) }
-            Reveal(state.online && state.testnet) { FooterNote("On Testnet this is a practice run with sample documents. It doesn't count on Mainnet.") }
-            CircasoButton("Not Now", onBack, style = ButtonStyle.Plain, size = ButtonSize.Medium, block = true, enabled = !busy)
+            Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
+                // Busy keeps its colours and its place; offline it waits, and says why before anyone taps it.
+                CircasoButton(look.button, onVerify, size = ButtonSize.Large, block = true, enabled = state.canVerify || busy, busy = busy)
+                // Each note opens the room it needs, gap included, so the buttons never step.
+                Reveal(!state.online) { FooterNote(VerifyOfflineNote, Modifier.padding(top = CircasoSpacing.s2)) }
+                Reveal(state.online && state.testnet) { FooterNote("On Testnet this is a practice run with sample documents. It doesn't count on Mainnet.", Modifier.padding(top = CircasoSpacing.s2)) }
+                CircasoButton("Not Now", onBack, Modifier.padding(top = CircasoSpacing.s2), style = ButtonStyle.Plain, size = ButtonSize.Medium, block = true, enabled = !busy)
+            }
         },
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(CircasoSpacing.s2)) {
@@ -304,7 +326,7 @@ internal fun VerifyIntroPage(state: AddMoneyUiState, bottomInset: Dp, onVerify: 
         Column(verticalArrangement = Arrangement.spacedBy(CircasoSpacing.s5)) {
             VerifyRow(CircasoIcon.IdCard, "Your national ID or passport", "A photo of the front and back")
             VerifyRow(CircasoIcon.FaceScan, "A quick selfie", "To check it is really you holding it")
-            VerifyRow(CircasoIcon.Clock, "A few minutes, once", "You won't be asked again after it's done")
+            VerifyRow(CircasoIcon.Clock, "A few minutes, once", "Then you can add money any time")
         }
         Column {
             Row(Modifier.fillMaxWidth().clip(CircasoShapes.md).background(c.fill).padding(horizontal = CircasoSpacing.s4, vertical = VerifyNoteInset), horizontalArrangement = Arrangement.spacedBy(VerifyNoteGap)) {
@@ -361,10 +383,9 @@ internal fun VerifyStatePage(
     val busy = verify.starting
     // Verified in front of the person: felt once, as it happens.
     val haptics = LocalHapticFeedback.current
-    var seen by remember { mutableStateOf(look.kind) }
-    LaunchedEffect(look.kind) {
-        if (look.kind == VerifyKind.Verified && seen != VerifyKind.Verified) haptics.performHapticFeedback(HapticFeedbackType.Confirm)
-        seen = look.kind
+    var felt by remember { mutableStateOf(false) }
+    LaunchedEffect(verify.verified) {
+        if (verify.verified && !felt) { felt = true; haptics.performHapticFeedback(HapticFeedbackType.Confirm) }
     }
     AddMoneyPageFrame(
         bottomInset,
@@ -416,9 +437,10 @@ internal fun VerifyStatePage(
             // Announced as it changes: the result may arrive while the person is looking elsewhere.
             AnimatedContent(
                 look.kind to look, contentKey = { it.first to it.second.title }, transitionSpec = { easeWords(still) }, label = "verify state",
-                modifier = Modifier.fillMaxWidth().padding(top = CircasoSpacing.s4).semantics { liveRegion = LiveRegionMode.Polite },
-            ) { (_, l) ->
-                Column(Modifier.fillMaxWidth().padding(horizontal = CircasoSpacing.s2), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(VerifyTitleGap)) {
+                modifier = Modifier.fillMaxWidth().padding(top = CircasoSpacing.s4),
+            ) { (kind, l) ->
+                // Only the words that are current speak: the ones on their way out stay silent.
+                Column(Modifier.fillMaxWidth().padding(horizontal = CircasoSpacing.s2).semantics { if (kind == look.kind) liveRegion = LiveRegionMode.Polite }, horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(VerifyTitleGap)) {
                     BasicText(l.title, Modifier.semantics { heading() }, style = t.title2.copy(color = c.ink, textAlign = TextAlign.Center))
                     BasicText(l.message, style = t.body.copy(color = c.inkSecondary, textAlign = TextAlign.Center))
                 }

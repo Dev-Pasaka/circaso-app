@@ -257,11 +257,15 @@ class AddMoneyVerifyTest {
     @Test fun aWaitThatDragsOnIsReadMoreSlowly() = with { vm, f ->
         f.says("PENDING")
         vm.onVerify()
+        assertEquals("This usually takes less than a minute. You don't need to do anything.", vm.look.message)
         advanceTimeBy(60_001)
         val reads = f.remote.kycReads
         advanceTimeBy(AddMoneyViewModel.ReviewMillis + 1)
         assertEquals(reads + 1, f.remote.kycReads)
         assertEquals(VerifyKind.Checking, vm.kind)
+        // The promise is only made while it is likely to hold.
+        assertTrue(vm.verify.slow)
+        assertEquals("This is taking longer than usual. You can leave; we'll notify you when it's done.", vm.look.message)
     }
 
     @Test fun finishedAndSentToAReviewerSaysSoAndLetsThemLeave() = with { vm, f ->
@@ -289,7 +293,7 @@ class AddMoneyVerifyTest {
             KycReasons.DocumentExpired to ("Your ID has expired" to "Verify again with an ID that is still valid."),
             KycReasons.DocumentUnreadable to ("We couldn't read your ID" to "Its details didn't come through clearly. Try again with your national ID or passport."),
             KycReasons.Liveness to ("The selfie check didn't pass" to "Try again in good light, with your face uncovered."),
-            KycReasons.FaceMatch to ("Your selfie didn't match your ID" to "The face in the selfie didn't match the photo on the ID. Try again with your own ID."),
+            KycReasons.FaceMatch to ("Your selfie didn't match your ID" to "Try again in good light, facing the camera, with your own ID."),
             KycReasons.Declined to ("We couldn't verify you this time" to "Something in the check didn't pass. Please try again."),
             "a_reason_from_a_newer_server" to ("We couldn't verify you this time" to "Something in the check didn't pass. Please try again."),
         )
@@ -345,7 +349,7 @@ class AddMoneyVerifyTest {
         assertEquals(1, f.remote.kycReads)
         assertEquals(VerifyKind.Continue, vm.kind)
         assertEquals("Finish verifying your identity", vm.look.title)
-        assertEquals(VerifyAction.Start to "Continue Verification", vm.look.action to vm.look.button)
+        assertEquals(VerifyAction.Start to "Continue", vm.look.action to vm.look.button)
         assertEquals(AddMoneyPage.VerifyState, pageOf(vm.state.value))
         assertFalse(vm.verify.starting)
         assertFalse(vm.verify.checking, "nothing was sent: there is no result to wait for")
@@ -369,7 +373,7 @@ class AddMoneyVerifyTest {
         vm.onVerify()
         assertEquals(VerifyKind.Expired, vm.kind)
         assertEquals("Your verification ran out of time", vm.look.title)
-        assertEquals("It wasn't finished in time, so it closed. Start again when you're ready.", vm.look.message)
+        assertEquals("Start again when you're ready. It takes a few minutes.", vm.look.message)
         assertEquals("Verify Again", vm.look.button)
     }
 
@@ -421,8 +425,13 @@ class AddMoneyVerifyTest {
         f.says("PENDING")
         vm.onVerify()
         assertEquals(listOf(SessionUrl), pages)
-        // Back from a browser there is no saying whether they finished: a fair wait for a result, then "Continue".
-        assertEquals(VerifyKind.Checking, vm.kind)
+        // Back from a browser there is no saying whether they finished: nothing is claimed to have been sent while
+        // the result is read for a fair while, then "Continue".
+        assertEquals(VerifyKind.Returned, vm.kind)
+        assertEquals("Checking where your verification stands", vm.look.title)
+        assertTrue(vm.look.stages.isEmpty(), "\"ID and selfie sent\" is never said of a page the person may have closed at once")
+        assertFalse(vm.verify.checking)
+        assertEquals(VerifyAction.Close, vm.look.action)
         advanceTimeBy(AddMoneyViewModel.HostedGraceMillis + AddMoneyViewModel.CheckMillis)
         assertEquals(VerifyKind.Continue, vm.kind)
         val reads = f.remote.kycReads
@@ -533,6 +542,49 @@ class AddMoneyVerifyTest {
         assertEquals(VerifyKind.Continue, vm.kind)
     }
 
+    @Test fun comingBackAfterTheTriesReturnedNeverLeavesOnlyClose() = with(status = "DECLINED", canStart = false, reason = KycReasons.Liveness, retryAt = "1970-01-01T01:00:00Z") { vm, f ->
+        // The phone slept through the wake-up, and was offline when the time came.
+        online.value = false
+        advanceTimeBy(3_700_000)
+        assertEquals(VerifyKind.Waiting, vm.kind)
+        assertEquals("Next time, be in good light, with your face uncovered. Today's tries are used up. You can try again in a moment.", verifyLook(vm.verify, now = 3_700_000).message, "a time already past is never \"tomorrow\"")
+        f.says("DECLINED", canStart = true, reason = KycReasons.Liveness)
+        // The connection returning is enough: the button is back.
+        online.value = true
+        assertEquals(VerifyKind.Declined, vm.kind)
+        assertTrue(vm.state.value.canVerify)
+    }
+
+    @Test fun theAppComingToTheFrontAfterTheCapLiftedBringsTheButtonBack() = with { vm, f ->
+        f.remote.kycStart = refusal("ramp.kyc_attempts_exceeded", retryAfter = 3_600, http = 429)
+        vm.onVerify()
+        // Before the hour is up, coming back changes nothing and asks nothing.
+        val reads = f.remote.kycReads
+        vm.onResumed()
+        assertEquals(VerifyTrouble.TriesUsedUp, vm.verify.trouble)
+        assertEquals(reads, f.remote.kycReads)
+        // The wake-up never ran (the app was suspended); the clock has moved on by the time it is opened again.
+        online.value = false
+        advanceTimeBy(4_000_000)
+        online.value = true
+        assertNull(vm.verify.trouble)
+        assertEquals(VerifyKind.Intro, vm.kind)
+        assertTrue(vm.state.value.canVerify)
+    }
+
+    @Test fun aDeclineForGoodIsNeverReadAgainOnResume() = with(status = "DECLINED", canStart = false, reason = KycReasons.NotApproved) { vm, f ->
+        val reads = f.remote.kycReads
+        vm.onResumed()
+        assertEquals(reads, f.remote.kycReads)
+        assertEquals(VerifyKind.DeclinedFinal, vm.kind)
+    }
+
+    @Test fun outOfTimeWithNoWayBackKeepsItsOwnTitleAndPointsToSupport() {
+        val look = verifyLook(VerifyUi(RampVerification(KycStatus.Expired, required = true, canStart = false, reason = KycReasons.SessionExpired)), now = 0)
+        assertEquals("Your verification ran out of time" to "Contact Support and we'll help you start again.", look.title to look.message)
+        assertEquals(VerifyAction.Support, look.action)
+    }
+
     @Test fun triesUsedUpWithNoTimeSaysTomorrow() {
         val look = verifyLook(VerifyUi(RampVerification(KycStatus.None, required = true, canStart = true), trouble = VerifyTrouble.TriesUsedUp), now = 0)
         assertEquals("You can try again tomorrow.", look.message)
@@ -632,7 +684,7 @@ class AddMoneyVerifyTest {
         f.frame("PENDING", canStart = true, reason = KycReasons.ResubmissionRequested)
         assertEquals(VerifyKind.OneMoreThing, vm.kind)
         assertEquals("We need one more thing", vm.look.title)
-        assertEquals("Continue Verification", vm.look.button)
+        assertEquals("Continue", vm.look.button)
     }
 
     @Test fun aFrameForTheOtherNetworkIsNotThisFlows() = with(status = "IN_REVIEW", canStart = false) { vm, f ->
@@ -739,8 +791,8 @@ class AddMoneyVerifyTest {
         val tomorrow = 30L * 60 * 60 * 1000
         // The guide's table, row by row.
         assertEquals(VerifyKind.Intro to "Start Verification", look(KycStatus.None, true).let { it.kind to it.button })
-        assertEquals(VerifyKind.Continue to "Continue Verification", look(KycStatus.Pending, true).let { it.kind to it.button })
-        assertEquals(VerifyKind.OneMoreThing to "Continue Verification", look(KycStatus.Pending, true, KycReasons.ResubmissionRequested).let { it.kind to it.button })
+        assertEquals(VerifyKind.Continue to "Continue", look(KycStatus.Pending, true).let { it.kind to it.button })
+        assertEquals(VerifyKind.OneMoreThing to "Continue", look(KycStatus.Pending, true, KycReasons.ResubmissionRequested).let { it.kind to it.button })
         look(KycStatus.Pending, false, retryAt = tomorrow).let {
             assertEquals(VerifyKind.Waiting to VerifyAction.Close, it.kind to it.action)
             assertEquals("Today's tries are used up", it.title)

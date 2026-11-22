@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -100,7 +101,18 @@ fun CircasoScaffold(
     if (outer != null && backdrop != null) HostedBackdrop(backdrop)
     // Inside another scaffold (a tab inside Home) the outer one paints the page and the backdrop, edge to edge;
     // painting here too would box the backdrop in.
-    Box(modifier.fillMaxSize().onPlaced { frame = it }.let { if (outer == null) it.background(if (grouped) c.bgGrouped else c.bg) else it }) {
+    // A screen whose pages sit on different grounds (Add Money: E3 on the plain one, the rest on the grouped one)
+    // eases between them with its pages instead of snapping under them. A change of theme is not eased (everything
+    // changes at once then), nor is anything under Reduce Motion.
+    var groundTheme by remember { mutableStateOf(c) }
+    val themeChanged = groundTheme !== c
+    androidx.compose.runtime.SideEffect { groundTheme = c }
+    val ground by androidx.compose.animation.animateColorAsState(
+        if (grouped) c.bgGrouped else c.bg,
+        if (themeChanged || com.circaso.designsystem.theme.CircasoTheme.reduceMotion) androidx.compose.animation.core.snap() else androidx.compose.animation.core.tween(com.circaso.designsystem.theme.CircasoMotion.BaseMs),
+        label = "scaffold ground",
+    )
+    Box(modifier.fillMaxSize().onPlaced { frame = it }.let { if (outer == null) it.drawBehind { drawRect(ground) } else it }) {
         if (outer == null) {
             backdrop?.invoke(this)
             host.content?.invoke(this)

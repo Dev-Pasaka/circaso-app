@@ -506,7 +506,8 @@ Media3 1.4.1, multiplatform-markdown-renderer 0.46.0.
 | Media | Photos, gallery, voice notes, video, location, live location with background updates. |
 | Calls | Voice, video, group grid, incoming call screen, Android call notification from the data push, minimised call pill. |
 | Wallet | Create (Circle PIN), balance per network with fiat, Send / Receive (QR show and scan), pay from chat, send to an address, payment detail, history, networks, money cards in chat, quick replies, currency setting, coin icons, money sound. |
-| Add money (2026-11-22) | Buy USDC with M-Pesa (design E2, backend ramp R1–R6): gates from R1 (not open to you, verify identity = E3 with "coming soon", account paused, no partner online), amount in whole shillings with limits, a price held 60 s (rate, fee, you pay, you get), the M-Pesa prompt to the account's own number, the order followed live (`ramp` / `order.updated` + a read every 4 s) to "USDC added" or a clear ending, resume of an open order, cancel before paying, `ramp.order` push opens the order, "Added from M-Pesa" rows in the wallet. Branch `feat/add-money`; unit-tested, **not yet run against a server or on a device**. See `app-architecture.md` → "Add money: the ramp". |
+| Add money (2026-11-22) | Buy USDC with M-Pesa (design E2, backend ramp R1–R6): gates from R1 (not open to you, barred, verify identity = E3, account paused, no partner online), amount in whole shillings with limits, a price held 60 s (rate, fee, you pay, you get), the M-Pesa prompt to the account's own number, the order followed live (`ramp` / `order.updated` + a read every 4 s) to "USDC added" or a clear ending, resume of an open order, cancel before paying, `ramp.order` push opens the order, "Added from M-Pesa" rows in the wallet. Branch `feat/add-money`; unit-tested, **not yet run against a server or on a device**. See `app-architecture.md` → "Add money: the ramp". |
+| Identity verification (2026-11-23) | Asked once, when someone first adds money, only where the server requires it (design E3, backend R0 on `feat/ramp-kyc`). Didit's native SDK behind `IdentityVerifier` (Android `:diditkyc` with `me.didit:didit-sdk-core` 4.15.4; iOS pod `DiditSDK/Core` 4.15.4), started with R0's session token; Didit's hosted page in the system's in-app browser where the SDK can't run. Every state from the guide's table with its own words and one action (continue, checking, in review, verified then straight on to the amount, declined by reason, declined for good, out of time, tries used up, Didit out of reach, not set up, camera refused, offline, barred); the `kyc.updated` frame; the `ramp.kyc` push opens Add Money on its network. Branch `feat/ramp-kyc`; unit-tested and previewed on the iOS simulator, **not yet run against a server, nor the SDK on a phone**. See `app-architecture.md` → "Add money: identity verification". |
 | Chamas | Goal strip, contributions, payout requests and approvals, group wallet screen, intro card (treasurer model, flag off). |
 | Groups with wallets (flag) | New Group with the wallet switch (GW1), group wallet set-up with its own PIN and biometrics (GW2–GW5c), group info money rows (GW6–GW8b, locked, leaving blocked), target (GW7b), one wallet design for every wallet with the corner switcher (GW16 as redrawn 2026-11-04, D-M9), contribute (GW9a2/GW9d), Pay Payout (GW9, GW11, GW19), Paying from and Request Payout (GW9b, GW9c, GW10). Not yet on a device. |
 | Moments | Composer (text, camera, gallery, voice), viewer, replies in chat, reactions, privacy, contact-saved rule, push; shown in Chats under the Moments chip with rings on chat avatars (2026-11-05). |
@@ -528,6 +529,20 @@ Media3 1.4.1, multiplatform-markdown-renderer 0.46.0.
 7. Answer open design questions in §7.
 
 ### Next work (suggested order)
+- **Identity verification (2026-11-23, branch `feat/ramp-kyc`): what only a real phone and the sandbox can show.** The
+  SDK can't run in previews, so until a phone runs a sandbox session on the backend's `feat/ramp-kyc` these are
+  unproven: (1) Didit's screens opening over Circaso on Android (`launchVerificationUI` straight after
+  `startVerification`) and on iPhone (the `.diditVerification` modifier on the Compose host), and closing back onto
+  "Checking your details"; (2) `closeOnComplete` really closing the SDK at the last step on both; (3) each result
+  mapping (`Completed`, `Cancelled`, camera refused, session expired, retry blocked, network) against the real SDK;
+  (4) the camera prompt, its refusal and the way back from Settings; (5) Didit's white-label colours and the SDK in
+  dark mode and large text; (6) the frame and the push arriving, and the push tap landing on the right state on the
+  right network; (7) the hosted page in a Custom Tab / `SFSafariViewController` using the camera, and coming back;
+  (8) Android process death while Didit's Activity is up; (9) a release build (R8 full mode is on; Didit's docs say it
+  may need `android.enableR8.fullMode=false`, which was **not** changed) and the real size cost (the debug APK grew
+  88 → 111 MB, mostly Didit's 50 languages in `resources.arsc`, which Play's language splits drop). Also open: the
+  consent note names Didit but links no privacy notice (the app has no privacy URL yet); Android was not looked at
+  on a device or emulator (none set up on this Mac); high-contrast themes were not looked at.
 - **Add money (2026-11-22, branch `feat/add-money`, asked for by Pasaka that day; the "no new features" focus below did not block it):** needs a design review of the states that have no frame (listed in `app-architecture.md` → "Add money: the ramp" → "States with no frame"), a run against the sandbox with a preview-listed account (real shillings: a small amount), a device run on Android and iPhone (the amount field, Dynamic Type, the four themes, the push tap), then the usual release steps.
 0. **Focus (2026-11-05): polish, premium feel and optimisation of chats, groups, chamas and wallets; no new features.**
    First: run the Moments-in-Chats change and the Room v20 upgrade (an install with Spaces data) on a device.
@@ -787,7 +802,7 @@ override `-spaces=on|off|default`, Android `--es spaces off`). Architecture: `ap
 
 ### Backend gaps (design exists, no API yet)
 - W7/W8: statements on the server, PIN change and restore.
-- Server notification inbox (F4 is built locally), KYC (the ramp has `ramp.kyc_required` but no verification route; E3's button says it is coming), cash out (the ramp sells nothing yet: `offRampAvailable` is false), business groups (D7). Add money shipped 2026-11-22 (the ramp).
+- Server notification inbox (F4 is built locally), cash out (the ramp sells nothing yet: `offRampAvailable` is false), business groups (D7). Add money shipped 2026-11-22 (the ramp).
 - The ramp (2026-11-22): R3 needs the account's number in full but no route returns it (only masked), so the phone asks for it once and keeps it in secure storage; a route or field that lets R3 take "my verified number" without sending it would remove that step. R1 has no reason for `ramp.unavailable` (off for everyone, or a preview the person isn't in), so the screen says the same for both.
 - Device attestation (Play Integrity / App Attest): **production can't register devices until it exists**.
 - `identity.code_invalid` tries left only in the English message: ask for `details.triesLeft`.
