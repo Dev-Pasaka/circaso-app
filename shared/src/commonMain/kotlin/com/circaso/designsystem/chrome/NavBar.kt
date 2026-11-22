@@ -55,15 +55,22 @@ fun CircasoNavBar(
     onBack: (() -> Unit)?,
     modifier: Modifier = Modifier,
     subtitle: String? = null,
+    /**
+     * The way out is Close (a cross), not Back: a page that ends a flow or stands apart from it (design E3, an order's
+     * status), where there is nothing to go back to. [onBack] is still what it does.
+     */
+    close: Boolean = false,
     trailing: @Composable RowScope.() -> Unit = {},
 ) {
     val c = CircasoTheme.colors
     val t = CircasoTheme.typography
     val centered = CircasoTheme.platform == PlatformStyle.Ios
+    val leaveIcon = if (close) CircasoIcon.Close else CircasoIcon.Back
+    val leaveLabel = if (close) "Close" else "Back"
     if (com.circaso.designsystem.adaptive.LocalTopBarOnSide.current) {
         // Down the left side on a phone on its side: Back, the title, then the actions, all within thumb reach.
         Column(modifier.fillMaxWidth().padding(start = 16.dp, end = 8.dp, top = 8.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            if (onBack != null && !com.circaso.core.navigation.LocalIsDetailRoot.current) CircasoIconButton(CircasoIcon.Back, "Back", onBack)
+            if (onBack != null && !com.circaso.core.navigation.LocalIsDetailRoot.current) CircasoIconButton(leaveIcon, leaveLabel, onBack)
             Column(Modifier.semantics { heading() }) {
                 BasicText(title, style = t.headline.copy(color = c.ink), maxLines = 3, overflow = TextOverflow.Ellipsis)
                 if (subtitle != null) BasicText(subtitle, style = t.caption1.copy(color = c.inkSecondary), maxLines = 2)
@@ -78,10 +85,11 @@ fun CircasoNavBar(
         verticalAlignment = Alignment.CenterVertically,
     ) {
         // The first screen beside a list has nothing to go back to (iPad): no Back there.
-        if (onBack != null && !com.circaso.core.navigation.LocalIsDetailRoot.current) CircasoIconButton(CircasoIcon.Back, "Back", onBack)
+        if (onBack != null && !com.circaso.core.navigation.LocalIsDetailRoot.current) CircasoIconButton(leaveIcon, leaveLabel, onBack)
         else if (centered) Spacer(Modifier.width(CircasoSizes.iconButton))
         Column(
-            Modifier.weight(1f).semantics { heading() },
+            // A bar with no title (design E3) has no heading to announce.
+            Modifier.weight(1f).then(if (title.isNotBlank()) Modifier.semantics { heading() } else Modifier),
             horizontalAlignment = if (centered) Alignment.CenterHorizontally else Alignment.Start,
         ) {
             BasicText(

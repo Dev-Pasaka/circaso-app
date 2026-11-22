@@ -59,9 +59,10 @@ fun AmountDisplay(currency: String, number: String, modifier: Modifier = Modifie
     }
     val ink = when (tone) { AmountTone.Ink -> c.ink; AmountTone.Money -> c.money }
     Column(modifier, horizontalAlignment = if (centred) Alignment.CenterHorizontally else Alignment.Start, verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.Bottom) {
-            BasicText(currency, style = curStyle.copy(fontWeight = FontWeight.SemiBold, color = if (tone == AmountTone.Money) c.money else c.inkSecondary), modifier = Modifier.padding(bottom = 6.dp))
-            BasicText(number, style = numStyle.copy(color = ink))
+        // The currency sits on the number's own baseline at every text size, not on a padded bottom edge.
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            BasicText(currency, style = curStyle.copy(fontWeight = FontWeight.SemiBold, color = if (tone == AmountTone.Money) c.money else c.inkSecondary), modifier = Modifier.alignByBaseline())
+            BasicText(number, style = numStyle.copy(color = ink), modifier = Modifier.alignByBaseline())
         }
         if (sub != null) BasicText(sub, style = t.footnote.copy(color = c.inkSecondary, textAlign = if (centred) TextAlign.Center else TextAlign.Start))
     }
@@ -74,11 +75,15 @@ val ActionButtonSize = 58.dp
 
 /** `.act`: the wallet's four round actions, a 58 dp surface disc with a 13 pt label under it. */
 @Composable
-fun ActionButton(icon: CircasoIcon, label: String, onClick: () -> Unit, modifier: Modifier = Modifier, enabled: Boolean = true) {
+fun ActionButton(
+    icon: CircasoIcon, label: String, onClick: () -> Unit, modifier: Modifier = Modifier, enabled: Boolean = true,
+    /** What a screen reader says when the short label alone doesn't ("Add" → "Add money from M-Pesa"). */
+    description: String = label,
+) {
     val c = CircasoTheme.colors
     val t = CircasoTheme.typography
     Column(
-        modifier.alpha(if (enabled) 1f else 0.45f).pressable(enabled = enabled, role = Role.Button, onClick = onClick).semantics { contentDescription = label },
+        modifier.alpha(if (enabled) 1f else 0.45f).pressable(enabled = enabled, role = Role.Button, onClick = onClick).semantics { contentDescription = description },
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {

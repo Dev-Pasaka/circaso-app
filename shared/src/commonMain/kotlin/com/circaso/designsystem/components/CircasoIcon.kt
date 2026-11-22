@@ -27,10 +27,17 @@ enum class CircasoIcon { Back, Close, Check, Delete, Backspace, Offline, Clock, 
     // Calls (2026-11-09): sharing the screen, a display with an arrow rising out of it.
     ScreenShare,
     // Sheets polish (2026-11-13): signing out, a door with an arrow leaving it.
-    SignOut }
+    SignOut,
+    // Add money (2026-11-22), design E3's own glyphs: an identity card and a face inside a scanner's corners.
+    IdCard, FaceScan,
+    // The phone itself (where the M-Pesa request shows), not the call handset [Phone] is.
+    Handset }
 
 /** Icons kept as the canvas's own SVG path data (24 grid, stroked), parsed once per draw. */
 private val SvgIcons = mapOf(
+    CircasoIcon.Handset to "M8 3.5h8a1.5 1.5 0 0 1 1.5 1.5v14a1.5 1.5 0 0 1-1.5 1.5H8A1.5 1.5 0 0 1 6.5 19V5A1.5 1.5 0 0 1 8 3.5zM10.5 17.5h3",
+    CircasoIcon.IdCard to "M3.5 6.5a2 2 0 0 1 2-2h13a2 2 0 0 1 2 2v11a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2zM9 9a2 2 0 1 0 0 4a2 2 0 0 0 0-4zM5.8 16.5c.5-1.5 1.7-2.3 3.2-2.3s2.7.8 3.2 2.3M14.5 10h3.5M14.5 13.5h3.5",
+    CircasoIcon.FaceScan to "M4 8V6a2 2 0 0 1 2-2h2M16 4h2a2 2 0 0 1 2 2v2M20 16v2a2 2 0 0 1-2 2h-2M8 20H6a2 2 0 0 1-2-2v-2M9 9.5v1.5M15 9.5v1.5M9 15.5c.8.8 1.8 1.2 3 1.2s2.2-.4 3-1.2",
     CircasoIcon.Globe to "M12 3.5a8.5 8.5 0 1 0 0 17a8.5 8.5 0 0 0 0-17zM3.5 12h17M12 3.5c2.4 2.5 3.5 5.4 3.5 8.5s-1.1 6-3.5 8.5c-2.4-2.5-3.5-5.4-3.5-8.5s1.1-6 3.5-8.5z",
     CircasoIcon.Ticket to "M4 7h16v3a2 2 0 0 0 0 4v3H4v-3a2 2 0 0 0 0-4zM14 7v10",
     CircasoIcon.Flag to "M5.5 20.5v-16M5.5 4.5h11l-2 4l2 4h-11",

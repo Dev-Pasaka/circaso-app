@@ -149,6 +149,8 @@ object RampCodes {
     const val PhoneNotYours = "ramp.phone_not_yours"
     const val OrderInProgress = "ramp.order_in_progress"
     const val NoMerchant = "ramp.no_merchant_available"
+    /** The seller the server picked can't take this payment right now (409): nothing was sent to M-Pesa. */
+    const val MerchantUnavailable = "ramp.merchant_unavailable"
     const val TooManyPrompts = "ramp.too_many_prompts"
     const val OrderNotFound = "ramp.order_not_found"
     const val NotCancellable = "ramp.order_not_cancellable"

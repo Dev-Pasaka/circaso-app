@@ -1,5 +1,6 @@
 package com.circaso.feature.wallet.presentation
 
+import com.circaso.core.common.maskedForDisplay
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -120,8 +121,11 @@ fun TransferContent(state: TransferUiState, onBack: () -> Unit) {
             return@CircasoScaffold
         }
         val incoming = transfer.direction == TransferDirection.In
+        // Money bought with M-Pesa (the ramp): the receipt says so, as its row in the wallet does, instead of reading
+        // as a payment from an unnamed outside wallet. The value is the number it was paid from, masked ("" if unknown).
+        val topUp = if (incoming) transfer.txHash?.lowercase()?.let { LocalMpesaTopUps.current[it] } else null
         // A person by name; anyone else by their address, never "Someone".
-        val name = transfer.counterpartName
+        val name = if (topUp != null) "M-Pesa" else transfer.counterpartName
             ?: (if (incoming) transfer.from else transfer.toAddress).takeIf { it.isNotEmpty() }?.let(::shortAddress)
             ?: if (incoming) "An outside wallet" else "An outside wallet"
         val fiat = state.fiat?.takeIf { MinorUnits.isDollar(transfer.amount.asset) }?.let { f -> usdcToFiat(transfer.amount.amountMinor, f.rate)?.let { formatFiat(f.currency, it) } }
@@ -133,13 +137,14 @@ fun TransferContent(state: TransferUiState, onBack: () -> Unit) {
         val when_ = formatLocalTime(transfer.createdAt, LocalTimeStyle.ShortDate) + ", " + formatLocalTime(transfer.createdAt, LocalTimeStyle.Clock)
         Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = CircasoSpacing.s4).padding(bottom = padding.calculateBottomPadding() + CircasoSpacing.s4), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(CircasoSpacing.s4)) {
             Spacer(Modifier.height(CircasoSpacing.s2))
-            if (transfer.counterpartName != null) Avatar(transfer.counterpartName, size = CircasoSizes.avatarLg, imageUrl = transfer.counterpartAvatar) else CoinIcon(transfer.amount.asset, size = CircasoSizes.avatarLg)
+            if (topUp != null) com.circaso.designsystem.components.LetterDisc("M", size = CircasoSizes.avatarLg)
+            else if (transfer.counterpartName != null) Avatar(transfer.counterpartName, size = CircasoSizes.avatarLg, imageUrl = transfer.counterpartAvatar) else CoinIcon(transfer.amount.asset, size = CircasoSizes.avatarLg)
             // "KES 2,000" when it has a rate, else the coin itself ("ETH 0.01"): never split the coin text.
             val cur = if (fiat != null) fiat.substringBefore(' ') else transfer.amount.asset
             val num = if (fiat != null) fiat.substringAfter(' ') else coinNumber
-            AmountDisplay(cur, num, sub = "${if (incoming) "Received from" else "Sent to"} $name · $when_", size = AmountSize.Medium, tone = if (incoming && transfer.settled) AmountTone.Money else AmountTone.Ink)
+            AmountDisplay(cur, num, sub = if (topUp != null) "Added from M-Pesa · $when_" else "${if (incoming) "Received from" else "Sent to"} $name · $when_", size = AmountSize.Medium, tone = if (incoming && transfer.settled) AmountTone.Money else AmountTone.Ink)
             Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                DetailRow(if (incoming) "From" else "To", name)
+                DetailRow(if (incoming) "From" else "To", if (topUp != null) listOfNotNull("M-Pesa", topUp.takeIf { it.isNotBlank() }?.maskedForDisplay()).joinToString(" ") else name)
                 // A name I saved for them: who it really is, beside it (money never goes by a nickname alone).
                 transfer.counterpartOwnName?.let { DetailRow("Their name", it) }
                 handleOf(transfer)?.let { DetailRow("Username", it) }

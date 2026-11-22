@@ -662,7 +662,7 @@ private fun ActiveWallet(
                     ChainCards(byValue(wallet.chains, fiat), fiat, hidden, onToggleHidden, onAsset = actions.onAsset, onAssets = actions.onAssets, onGlow = { glow = it }) {
                         if (g != null && group != null) GroupActionsRow(g, group.actions, onReceive = { onReceive(true) })
                         else Row(Modifier.fillMaxWidth().padding(horizontal = CircasoSpacing.s2), horizontalArrangement = Arrangement.SpaceBetween) {
-                            ActionButton(CircasoIcon.Plus, "Add", { actions.onAddMoney?.invoke() ?: onComing(ComingFlow.AddMoney) })
+                            ActionButton(CircasoIcon.Plus, "Add", { actions.onAddMoney?.invoke() ?: onComing(ComingFlow.AddMoney) }, description = if (actions.onAddMoney != null) "Add money from M-Pesa" else "Add money")
                             ActionButton(CircasoIcon.ArrowUp, "Send", actions.onPay, enabled = state.canSend)
                             ActionButton(CircasoIcon.ArrowDown, "Receive", { onReceive(true) })
                             ActionButton(CircasoIcon.Bank, "Cash Out", { onComing(ComingFlow.CashOut) })
@@ -869,7 +869,7 @@ fun TransferRow(
     if (topUp != null) {
         ListRow(
             title = "Added from M-Pesa",
-            sub = listOfNotNull(topUp.takeIf { it.isNotBlank() }?.maskedForDisplay(), "on its way".takeIf { transfer.state == TransferState.Submitted }).joinToString(" · ").ifEmpty { "Received" },
+            sub = listOfNotNull(topUp.takeIf { it.isNotBlank() }?.maskedForDisplay(), "on its way".takeIf { transfer.state == TransferState.Submitted }).joinToString(" · ").ifEmpty { "To your wallet" },
             leading = { LetterDisc("M") },
             trailing = { RowAmount(if (hidden) "••••" else amountLine(transfer, fiat), meta, incoming = transfer.state == TransferState.Confirmed) },
             onClick = onClick,

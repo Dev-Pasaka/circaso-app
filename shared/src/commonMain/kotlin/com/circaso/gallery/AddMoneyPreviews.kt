@@ -42,8 +42,12 @@ internal fun AddMoneyPreview(name: String): Boolean {
         "add-money" -> amount
         "add-money-empty" -> amount.copy(amountText = "")
         "add-money-loading" -> AddMoneyUiState(testnet = true)
+        "add-money-loading-order" -> AddMoneyUiState(testnet = true, loadingOrder = true)
+        // Back from a review: the last price says roughly what another amount buys.
+        "add-money-estimate" -> amount.copy(amountText = "5000", lastQuote = quote)
+        "add-money-max" -> amount.copy(amountText = "150000")
         "add-money-offline" -> amount.copy(online = false)
-        "add-money-error" -> AddMoneyUiState(step = AddMoneyStep.LoadFailed, failure = AddMoneyFailure("Something went wrong. Please try again.", "req_8f2a1c · ramp.settings_missing"))
+        "add-money-error" -> AddMoneyUiState(step = AddMoneyStep.LoadFailed, failure = AddMoneyFailure("We couldn't open Add Money right now. No M-Pesa request was sent. Please try again in a moment.", "req_8f2a1c · ramp.settings_missing"))
         "add-money-error-offline" -> AddMoneyUiState(step = AddMoneyStep.LoadFailed, online = false, failure = AddMoneyFailure("Adding money needs a connection. Nothing was sent.", null))
         "add-money-low" -> amount.copy(amountText = "50")
         "add-money-quote-failed" -> amount.copy(failure = AddMoneyFailure("Nobody can fill that amount right now. Try a smaller amount, or try again soon. Nothing was taken.", "req_8f2a1c"))
@@ -54,6 +58,9 @@ internal fun AddMoneyPreview(name: String): Boolean {
         "add-money-review-repriced" -> review.copy(repriced = true, secondsLeft = 58)
         "add-money-review-sending" -> review.copy(placing = true)
         "add-money-review-failed" -> review.copy(failure = AddMoneyFailure("We couldn't reach M-Pesa. Nothing was taken. Try again in a moment.", "req_8f2a1c"))
+        // `ramp.merchant_unavailable` (409): the seller can't take the payment right now.
+        "add-money-review-merchant" -> review.copy(failure = AddMoneyFailure("We couldn't start this payment right now. Nothing was taken. Please try again in a moment.", "req_8f2a1c"))
+        "add-money-review-low" -> review.copy(secondsLeft = 8)
         "add-money-unavailable" -> AddMoneyUiState(step = AddMoneyStep.Blocked, block = RampBlock.Unavailable)
         "add-money-verify" -> AddMoneyUiState(step = AddMoneyStep.Blocked, block = RampBlock.Verify)
         "add-money-restricted" -> AddMoneyUiState(step = AddMoneyStep.Blocked, block = RampBlock.Restricted)
