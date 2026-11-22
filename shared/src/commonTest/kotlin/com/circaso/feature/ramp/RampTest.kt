@@ -96,7 +96,9 @@ internal class FakeRampRemote : RampRemote {
     var statusAsks = 0
 
     override suspend fun status(): AppResult<RampStatusResponse> { statusAsks++; networks += pinnedNetwork(); return status }
-    override suspend fun quote(request: QuoteRequest, idempotencyKey: String): AppResult<QuoteResponse> { quotes += request to idempotencyKey; networks += pinnedNetwork(); return quote }
+    /** When set, a quote waits on it: a price still on its way. */
+    var quoteGate: kotlinx.coroutines.CompletableDeferred<Unit>? = null
+    override suspend fun quote(request: QuoteRequest, idempotencyKey: String): AppResult<QuoteResponse> { quotes += request to idempotencyKey; networks += pinnedNetwork(); quoteGate?.await(); return quote }
     override suspend fun buy(request: StartOnRampRequest, idempotencyKey: String): AppResult<OrderResponse> { buys += request to idempotencyKey; networks += pinnedNetwork(); return buy }
     override suspend fun order(orderId: String): AppResult<OrderResponse> { reads += orderId; return order }
     override suspend fun orders(limit: Int, cursor: String?): AppResult<OrdersResponse> = orders
@@ -310,10 +312,15 @@ class RampWireTest {
             "ramp.unavailable", "ramp.kyc_required", "ramp.account_restricted", "ramp.wallet_required", "ramp.chain_unsupported", "ramp.offramp_unavailable",
             "ramp.amount_invalid", "ramp.limit_exceeded", "ramp.quote_not_found", "ramp.quote_expired", "ramp.phone_not_yours", "ramp.order_in_progress",
             "ramp.no_merchant_available", "ramp.too_many_prompts", "ramp.order_not_found", "ramp.order_not_cancellable", "ramp.collections_unavailable",
-            "ramp.custody_unavailable", "ramp.pricing_unavailable",
+            "ramp.custody_unavailable", "ramp.pricing_unavailable", "ramp.merchant_unavailable",
         )
         codes.forEach { assertTrue(ErrorMessages.isKnown(it), "no words for $it") }
         assertFalse(codes.any { ErrorMessages.forError(AppError.Api(it, 400, null, null, emptyMap())).contains("CoinX") })
+        // The seller can't take the payment right now: what didn't happen and what to do, never "on our side".
+        assertEquals(
+            "We couldn't start this payment right now. Nothing was taken. Please try again in a moment.",
+            ErrorMessages.forError(AppError.Api("ramp.merchant_unavailable", 409, null, null, emptyMap())),
+        )
     }
 
     @Test fun theRampPushOpensItsOrder() {

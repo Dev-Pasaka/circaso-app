@@ -15,6 +15,7 @@ import com.circaso.feature.ramp.domain.GetRampOrderUseCase
 import com.circaso.feature.ramp.domain.GetRampStatusUseCase
 import com.circaso.feature.ramp.domain.ObserveRampUpdatesUseCase
 import com.circaso.feature.ramp.domain.QuoteTopUpUseCase
+import com.circaso.feature.ramp.domain.RampAmount
 import com.circaso.feature.ramp.domain.RampCodes
 import com.circaso.feature.ramp.domain.RampKyc
 import com.circaso.feature.ramp.domain.RampMoney
@@ -73,6 +74,8 @@ data class AddMoneyUiState(
     val wholeOnlyHint: Boolean = false,
     val quoting: Boolean = false,
     val quote: RampQuote? = null,
+    /** The last price had in this visit, kept after going back to the amount: what [estimate] is worked out from. */
+    val lastQuote: RampQuote? = null,
     /** Seconds the price still holds; 0 means it has run out and a new one must be asked for. */
     val secondsLeft: Int = 0,
     /** The price changed under a confirm (the old one ran out): said on the review until it is confirmed. */
@@ -95,6 +98,8 @@ data class AddMoneyUiState(
     /** A one-off line for the toast. */
     val error: String? = null,
     val failure: AddMoneyFailure? = null,
+    /** What is loading is an order (a push, or the open one), so the first paint is an order's shape, not the amount's. */
+    val loadingOrder: Boolean = false,
     /** The load that failed was of an order that exists (a push, or the open order): the words never say nothing was sent. */
     val orderUnread: Boolean = false,
 ) {
@@ -111,6 +116,20 @@ data class AddMoneyUiState(
                 MinorUnits.lessThan(l.maxOrder.amountMinor, minor) -> "The most you can add at once is ${l.maxOrder.text}."
                 else -> null
             }
+        }
+    /**
+     * Roughly what the typed amount buys, from the last price had here ([lastQuote]); null until there has been one,
+     * because R1 carries no rate. The fee is a share of what is paid, so the amount scales in proportion. Only ever
+     * shown with "About": the exact figure is the review's.
+     */
+    val estimate: RampAmount?
+        get() {
+            val last = lastQuote?.takeIf { it.blockchain == blockchain } ?: return null
+            val typed = amountMinor?.takeIf { amountError == null }?.toLongOrNull() ?: return null
+            val paid = last.pay.amountMinor.toLongOrNull()?.takeIf { it > 0 } ?: return null
+            val got = last.receive.amountMinor.toLongOrNull()?.takeIf { it > 0 } ?: return null
+            if (got > Long.MAX_VALUE / typed) return null
+            return RampAmount(last.receive.unit, (got * typed / paid).toString(), "")
         }
     val canQuote get() = online && amountMinor != null && amountError == null && blockchain != null && !quoting && step == AddMoneyStep.Amount
     val quoteExpired get() = quote != null && secondsLeft <= 0
@@ -168,6 +187,8 @@ class AddMoneyViewModel(
     private var savedPhone: String? = null
     private var quoteDeadline = 0L
     private var countdown: Job? = null
+    /** The price being asked for; dropped when the person goes back, so its answer can't carry them forward again. */
+    private var pricing: Job? = null
     private var polling: Job? = null
     /** The order this screen was opened on has been read once; "Try Again" after it starts a new top-up. */
     private var opened = false
@@ -197,13 +218,14 @@ class AddMoneyViewModel(
 
     /** R1 (or the order, when opened on one). Also "Try Again" on the load-failed and blocked states. */
     fun load() {
-        local.update { it.copy(step = AddMoneyStep.Loading, block = null, failure = null, orderUnread = false) }
+        val openingOrder = orderId != null && !opened
+        local.update { it.copy(step = AddMoneyStep.Loading, block = null, failure = null, orderUnread = false, loadingOrder = openingOrder) }
         viewModelScope.launch {
             if (orderId != null && !opened) { opened = true; open(orderId); return@launch }
             when (val result = onPin { getStatus() }) {
                 is AppResult.Success -> onStatus(result.value)
                 is AppResult.Failure -> blockFor(result.error)?.let { b -> local.update { it.copy(step = AddMoneyStep.Blocked, block = b) } }
-                    ?: local.update { it.copy(step = AddMoneyStep.LoadFailed, failure = failureOf(result.error)) }
+                    ?: local.update { it.copy(step = AddMoneyStep.LoadFailed, failure = failureOf(result.error, CouldNotOpen)) }
             }
         }
     }
@@ -212,7 +234,7 @@ class AddMoneyViewModel(
         val open = status.openOrderId
         when {
             // One order at a time: an open one is where the flow resumes.
-            open != null -> { local.update { it.copy(status = status) }; open(open) }
+            open != null -> { local.update { it.copy(status = status, loadingOrder = true) }; open(open) }
             status.kyc == RampKyc.None -> local.update { it.copy(status = status, step = AddMoneyStep.Blocked, block = RampBlock.Verify) }
             !status.accountActive -> local.update { it.copy(status = status, step = AddMoneyStep.Blocked, block = RampBlock.Restricted) }
             !status.merchantOnline || status.blockchains.isEmpty() -> local.update { it.copy(status = status, step = AddMoneyStep.Blocked, block = RampBlock.NoMerchant) }
@@ -239,6 +261,8 @@ class AddMoneyViewModel(
     }
 
     fun onAmount(text: String) {
+        // A price is being asked for this amount: it stays as it is until the answer is in (a quick amount can't overtake it).
+        if (local.value.quoting) return
         // Never more digits than the largest amount allowed has, so the number always fits its line.
         val most = local.value.limits?.maxOrder?.amountMinor?.trimStart('0')?.length?.minus(RampMoney.FiatDecimals)?.coerceIn(1, MaxDigits) ?: MaxDigits
         val digits = text.filter { it.isDigit() }.trimStart('0').take(most)
@@ -247,6 +271,7 @@ class AddMoneyViewModel(
     }
 
     fun onChain(blockchain: String) {
+        if (local.value.quoting) return
         if (blockchain != local.value.blockchain) quoteKey = newIdempotencyKey()
         local.update { it.copy(blockchain = blockchain, failure = null) }
     }
@@ -265,13 +290,14 @@ class AddMoneyViewModel(
         val minor = s.amountMinor ?: return
         val chain = s.blockchain ?: return
         local.update { it.copy(quoting = true, failure = null) }
-        viewModelScope.launch {
+        pricing?.cancel()
+        pricing = viewModelScope.launch {
             when (val result = onPin { quoteTopUp(chain, minor, quoteKey) }) {
                 is AppResult.Success -> {
                     quoteKey = newIdempotencyKey()
                     buyKey = newIdempotencyKey() // a new quote is a new purchase
                     hold(result.value)
-                    local.update { it.copy(step = AddMoneyStep.Review, quoting = false, quote = result.value, secondsLeft = secondsLeft(), repriced = repriced, phoneError = null) }
+                    local.update { it.copy(step = AddMoneyStep.Review, quoting = false, quote = result.value, lastQuote = result.value, secondsLeft = secondsLeft(), repriced = repriced, phoneError = null) }
                 }
                 is AppResult.Failure -> {
                     if (refused(result.error)) quoteKey = newIdempotencyKey()
@@ -279,7 +305,7 @@ class AddMoneyViewModel(
                     local.update {
                         if (block != null) it.copy(step = AddMoneyStep.Blocked, block = block, quoting = false, quote = null)
                         // Back on the amount with the reason: a price that couldn't be had is never left looking live.
-                        else it.copy(step = AddMoneyStep.Amount, quoting = false, quote = null, failure = failureOf(result.error))
+                        else it.copy(step = AddMoneyStep.Amount, quoting = false, quote = null, failure = failureOf(result.error, NoPrice))
                     }
                 }
             }
@@ -305,7 +331,9 @@ class AddMoneyViewModel(
 
     fun onBackToAmount() {
         countdown?.cancel()
-        local.update { it.copy(step = AddMoneyStep.Amount, quote = null, failure = null, repriced = false) }
+        // A new price still on its way is let go (its key is kept: the same ask, if it is made again).
+        pricing?.cancel()
+        local.update { it.copy(step = AddMoneyStep.Amount, quote = null, quoting = false, failure = null, repriced = false) }
     }
 
     fun onPhone(text: String) = local.update { it.copy(phoneText = text.filter { c -> c.isDigit() || c == '+' || c == ' ' }.take(20), phoneError = null) }
@@ -360,12 +388,15 @@ class AddMoneyViewModel(
             // No answer: it isn't known whether the request went. Said as it is; the retry can't prompt twice.
             !refused(error) -> local.update {
                 it.copy(placing = false, failure = AddMoneyFailure(
-                    if (error == AppError.Network || error is AppError.Api) "We couldn't reach Circaso, so no M-Pesa request was confirmed. Nothing is taken unless you approve a request on your phone. Try again: it never sends a second request for this price."
-                    else ErrorMessages.SomethingWrong + " Nothing is taken unless you approve a request on your phone.",
+                    if (error == AppError.Network) "We couldn't reach Circaso, so no M-Pesa request was confirmed. Nothing is taken unless you approve a request on your phone. Try again: it never sends a second request for this price."
+                    // The server (or the seller behind it) couldn't take it just now. It isn't known for certain that
+                    // nothing went out, so the words stop short of "nothing was taken"; never "something went wrong on our side".
+                    else "We couldn't start this payment right now. Nothing is taken unless you approve an M-Pesa request on your phone. Please try again in a moment.",
                     ErrorMessages.reference(error),
                 ))
             }
-            else -> local.update { it.copy(placing = false, failure = failureOf(error)) }
+            // A definite no, `ramp.merchant_unavailable` among them: its own words, and nothing was asked of M-Pesa.
+            else -> local.update { it.copy(placing = false, failure = failureOf(error, CouldNotStart)) }
         }
     }
 
@@ -445,11 +476,15 @@ class AddMoneyViewModel(
         ErrorMessages.reference(error),
     )
 
-    private fun failureOf(error: AppError) = AddMoneyFailure(
+    /**
+     * The words for a failure. A code with no words of its own (an upstream error, a newer server's) gets [unknown],
+     * which says what didn't happen and what to do next: this flow never says "something went wrong on our side".
+     */
+    private fun failureOf(error: AppError, unknown: String) = AddMoneyFailure(
         when {
             error == AppError.Network -> "Adding money needs a connection. No M-Pesa request was sent."
             (error as? AppError.Api)?.code == RampCodes.LimitExceeded -> local.value.limits?.let { "That would take you over your limit of ${it.daily.text} a day." } ?: ErrorMessages.forError(error)
-            else -> ErrorMessages.forError(error)
+            else -> ErrorMessages.forError(error).takeIf { it != ErrorMessages.SomethingWrong } ?: unknown
         },
         ErrorMessages.reference(error),
     )
@@ -457,6 +492,11 @@ class AddMoneyViewModel(
     companion object {
         const val PollMillis = 4_000L
         private const val MaxDigits = 9
+
+        // What didn't happen, and what to do next, when the server's answer has no words of its own.
+        internal const val CouldNotOpen = "We couldn't open Add Money right now. No M-Pesa request was sent. Please try again in a moment."
+        internal const val NoPrice = "We couldn't get a price right now. No M-Pesa request was sent. Please try again in a moment."
+        internal const val CouldNotStart = "We couldn't start this payment right now. Nothing was taken. Please try again in a moment."
 
         internal fun waitText(seconds: Int): String = if (seconds < 90) "a minute" else "${(seconds + 59) / 60} minutes"
     }

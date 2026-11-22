@@ -121,6 +121,8 @@ object ErrorMessages {
         "ramp.phone_not_yours" to "Pay from the number your account is verified with.",
         "ramp.order_in_progress" to "You have a top-up under way. Finish it first.",
         "ramp.no_merchant_available" to "Nobody can fill that amount right now. Try a smaller amount, or try again soon. Nothing was taken.",
+        // The seller picked for this payment can't take it at the moment (409): nothing was asked of M-Pesa.
+        "ramp.merchant_unavailable" to "We couldn't start this payment right now. Nothing was taken. Please try again in a moment.",
         "ramp.too_many_prompts" to "Too many M-Pesa requests in a short time. Try again later.",
         "ramp.order_not_found" to "We couldn't find that top-up.",
         "ramp.order_not_cancellable" to "This top-up can't be cancelled now.",
