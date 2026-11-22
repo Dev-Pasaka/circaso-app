@@ -66,11 +66,12 @@ class VaultViewModelTest {
     /** A passkey whose PRF secret depends on the salt, like a real one; [cancel] backs out of the sheet. */
     private inner class Passkey : PasskeyPrf {
         var cancel = false
+        var missing = false
         override suspend fun isSupported() = true
         override suspend fun create(userId: String, userName: String, displayName: String, prfSalt: ByteArray) =
             if (cancel) PrfResult.Cancelled else PrfResult.Success(byteArrayOf(1, 2, 3), crypto.sha256(prfSalt + 7))
         override suspend fun secret(credentialId: ByteArray, prfSalt: ByteArray) =
-            if (cancel) PrfResult.Cancelled else PrfResult.Success(credentialId, crypto.sha256(prfSalt + 7))
+            if (missing) PrfResult.NoPasskey else if (cancel) PrfResult.Cancelled else PrfResult.Success(credentialId, crypto.sha256(prfSalt + 7))
     }
 
     private class Profiles : ProfileRepository {
@@ -142,6 +143,22 @@ class VaultViewModelTest {
         assertEquals(0, remote.opens)
         assertEquals(VaultStep.Saved, vm.state.value.step)
         assertNull(vm.state.value.error, "a cancel is a choice, not an error")
+    }
+
+    @Test
+    fun `a phone without the passkey is told where it may be, and the server is never reached`() = runTest(dispatcher) {
+        val vm = viewModel(); advanceUntilIdle()
+        vm.onStart(); vm.onPin("482915"); vm.onConfirmPin("482915"); vm.onSave(); advanceUntilIdle()
+
+        passkey.missing = true
+        vm.onOpen(); advanceUntilIdle()
+
+        assertEquals(0, remote.opens)
+        assertEquals(
+            "This phone doesn't have your Circaso passkey. It may be on another phone, or in another Google or Apple account. " +
+                "Try again and choose another device, or sign in to that account on this phone.",
+            vm.state.value.error,
+        )
     }
 
     @Test
