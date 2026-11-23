@@ -213,13 +213,13 @@ class AddMoneyChimeTest {
 
         val paying = orderDto("PAYMENT_REQUESTED").toDomain()
         val words = cardWords(paying, orderLook(paying, false))
-        assertEquals("You pay" to "KES 2,000", words.payLabel to words.pay)
-        assertEquals("You get" to "15.31 USDC", words.getLabel to words.get)
+        assertEquals("You pay" to "KES 2,000", words.mpesaLabel to words.mpesa)
+        assertEquals("You get" to "15.31 USDC", words.usdcLabel to words.usdc)
         assertTrue(words.mpesaDescription.startsWith("M-Pesa, You pay KES 2,000"), words.mpesaDescription)
         val landed = orderDto("COMPLETED").toDomain()
         val got = cardWords(landed, orderLook(landed, true))
-        assertEquals("Added from M-Pesa", got.getLabel)
-        assertEquals("You paid", got.payLabel)
+        assertEquals("Added from M-Pesa", got.usdcLabel)
+        assertEquals("You paid", got.mpesaLabel)
         assertTrue(got.usdcDescription.contains("15.31 USDC"), got.usdcDescription)
     }
 }

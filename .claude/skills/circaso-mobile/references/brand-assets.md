@@ -44,9 +44,9 @@ Pasaka: "use the real M-Pesa logo, not just M-Pesa wording; the branding is impo
   green `#3CB554` letters, grey `#AEB7AA` phone, red `#E24F50` flag; CMYK to sRGB through the PDF's own output intent,
   SWOP v2, relative colorimetric) and `mpesa_logo_reversed` (white letters and phone, flag `#CE383B`/`#834E44` as
   Safaricom's reversed PNG has them). Compose resources draw on both Android and iOS, like the Circaso mark.
-- **Use** (`AddMoneyCards.kt`): `MpesaLogo(height, reversed)`, aspect 3.848; the reversed one on M-Pesa's green card,
+- **Use** (`designsystem/components/MpesaMarks.kt`): `MpesaLogo(height, reversed)`, aspect 3.848; the reversed one on M-Pesa's green card,
   method card and chip; the published one only on white: `MpesaTag` (a white tag with clear space: a third of the height
-  across, a quarter above and below) in detail rows, `MpesaDisc` (white disc, 80 % wide) in wallet rows and the
+  across, a quarter above and below) in detail rows, `MpesaDisc` (white disc, 86 % wide) in wallet rows and the
   transfer page. Never recoloured, stretched, cropped or redrawn.
 - **Not used:** Wikimedia Commons `File:M-PESA LOGO-01.svg` (PD-textlogo, trademarked) is a community trace of the
   older uppercase logo with its source unknown.

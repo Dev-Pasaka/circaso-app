@@ -68,6 +68,7 @@ import com.circaso.core.common.maskedForDisplay
 import com.circaso.designsystem.chrome.Banner
 import com.circaso.designsystem.chrome.BannerTone
 import com.circaso.designsystem.components.AmountDisplay
+import com.circaso.designsystem.components.MpesaDetailRow
 import com.circaso.designsystem.components.AmountSize
 import com.circaso.designsystem.components.ButtonSize
 import com.circaso.designsystem.components.CircasoButton
@@ -342,7 +343,7 @@ private fun QuoteDetails(quote: RampQuote, maskedPhone: String?) {
         }
         ListGroup {
             DetailRow("To", "Your wallet on " + chainName(quote.blockchain))
-            maskedPhone?.let { RowDivider(); FigureRow("From", "M-Pesa " + it.maskedForDisplay()) }
+            maskedPhone?.let { RowDivider(); MpesaDetailRow("From", it) }
         }
     }
 }

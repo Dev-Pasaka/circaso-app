@@ -906,7 +906,7 @@ fun TransferRow(
         ListRow(
             title = if (sale != null) saleRowTitle(sale) else "Returned from a sale",
             sub = if (sale != null) saleRowSub(sale) else "Not paid out to M-Pesa",
-            leading = { LetterDisc("M") },
+            leading = { com.circaso.designsystem.components.MpesaDisc() },
             trailing = { RowAmount(if (hidden) "••••" else amountLine(transfer, fiat), meta, incoming = incoming && transfer.state == TransferState.Confirmed) },
             onClick = onClick,
         )
@@ -916,7 +916,7 @@ fun TransferRow(
         ListRow(
             title = "Added from M-Pesa",
             sub = listOfNotNull(topUp.takeIf { it.isNotBlank() }?.maskedForDisplay(), "on its way".takeIf { transfer.state == TransferState.Submitted }).joinToString(" · ").ifEmpty { "To your wallet" },
-            leading = { LetterDisc("M") },
+            leading = { com.circaso.designsystem.components.MpesaDisc() },
             trailing = { RowAmount(if (hidden) "••••" else amountLine(transfer, fiat), meta, incoming = transfer.state == TransferState.Confirmed) },
             onClick = onClick,
         )

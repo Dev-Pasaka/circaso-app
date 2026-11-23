@@ -29,6 +29,8 @@ object NoPaymentChime : PaymentChime {
  * Both follow the one setting, **You → Money sound** ([soundOn], on unless turned off), and the phone's own silent
  * mode (the players' part).
  *
+ * - **Top-ups and sales.** The same chime rings when a top-up's USDC lands (Add Money) and when a sale's shillings
+ *   land on M-Pesa (Cash Out); order ids are unique, so one remembered list serves both.
  * - **Once per order.** The chime rings the first time a top-up's success is shown on this phone, watched as it
  *   lands or opened later (a push, the open order); the order ids it has rung for are kept ([rung]/[saveRung], the
  *   newest [Remembered]), so opening it again stays quiet. With the setting off the order still counts as heard.
@@ -84,10 +86,14 @@ class MoneySounds(
         return true
     }
 
-    /** The card has settled on [orderId]'s USDC: the chime now, if it was armed with the sound on. Returns whether it rang. */
-    fun ringLanding(orderId: String): Boolean {
+    /**
+     * The card has settled on [orderId]'s money: the chime now, if it was armed with the sound on. Returns whether it
+     * rang. [quietCoins]: the same money is about to arrive in the wallet as an incoming payment (a top-up's USDC), so
+     * the coins keep quiet for a while; a sale's shillings land on M-Pesa, not in the wallet, so they don't.
+     */
+    fun ringLanding(orderId: String, quietCoins: Boolean = true): Boolean {
         val on = armed.remove(orderId) ?: return false
-        quietUntil = now() + QuietMillis
+        if (quietCoins) quietUntil = now() + QuietMillis
         if (on) chime.play()
         return on
     }
