@@ -111,6 +111,7 @@ val rampModule = module {
             online = get<ConnectionState>().status.map { it == ConnectionStatus.Online },
             networks = get(),
             network = WalletNetwork.of(network),
+            sounds = getOrNull(),
         )
     }
     // You › Verification: the same check, from the profile. [network] is the one a `ramp.kyc` push was about.

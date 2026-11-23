@@ -155,6 +155,13 @@ data class CashOutUiState(
     val verify: VerifyUi = VerifyUi(),
     /** The order this opened on is a purchase: Add Money shows it, and this screen hands over at once. */
     val handOff: String? = null,
+    /**
+     * This sale's payout hasn't been celebrated on this phone yet: when its card settles on the M-Pesa card the page
+     * calls [CashOutViewModel.onLanded] on that frame, which rings the chime. Null once rung, and for every other sale.
+     */
+    val celebrate: String? = null,
+    /** This completed sale's landing was heard on this phone before: its M-Pesa card is simply there, no chime. */
+    val quietLanding: String? = null,
 ) {
     val limits: RampLimits? get() = status?.offRamp?.limits
 
@@ -268,6 +275,8 @@ class CashOutViewModel(
     private val verifiedHoldMillis: Long = AddMoneyViewModel.VerifiedHoldMillis,
     /** How long the amount rests before its live price is asked. */
     private val estimateDelayMillis: Long = EstimateDelayMillis,
+    /** The money sounds: the chime when a sale's shillings land on M-Pesa, once per sale, if You → Money sound is on. */
+    private val sounds: com.circaso.core.platform.MoneySounds? = null,
 ) : ViewModel() {
     private var pinned: WalletNetwork = network ?: networks.current()
     private suspend fun <T> onPin(block: suspend () -> T): T = withContext(PinnedNetwork(pinned)) { block() }
@@ -304,6 +313,8 @@ class CashOutViewModel(
     private var opened = false
     /** The person picked the chain: the one with the most USDC is no longer chosen for them. */
     private var chainPicked = false
+    /** The completed sales whose chime has been decided on (to ring or not): asked once each. */
+    private val landingsDecided = mutableSetOf<String>()
 
     val state: StateFlow<CashOutUiState> = combine(
         local, online, maskedPhone,
@@ -333,6 +344,8 @@ class CashOutViewModel(
                 read(current.orderId)
             }
         }
+        // The chime is loaded while the person is still choosing an amount: a payout landing never waits on it.
+        sounds?.prepare()
         viewModelScope.launch { observeKyc().collect { moved -> if (moved.network == null || moved.network == pinned) check.show(moved.verification) } }
         viewModelScope.launch { savedPhone = ownNumber(); local.update { it.copy(needsPhone = savedPhone == null) } }
         viewModelScope.launch { state.map { it.online }.distinctUntilChanged().drop(1).collect { back -> if (back) { check.readIfItMayHaveMoved(); local.value.order?.let { if (!it.state.settled) read(it.orderId) } } } }
@@ -749,10 +762,45 @@ class CashOutViewModel(
                 sent = it.sent || order.state in Arrived,
                 sendHold = it.sendHold.takeIf { order.state == RampOrderState.AwaitingTransfer },
                 sendFailure = it.sendFailure.takeIf { order.state == RampOrderState.AwaitingTransfer },
+                celebrate = it.celebrate?.takeIf { id -> id == order.orderId && order.state == RampOrderState.Completed },
+                quietLanding = it.quietLanding?.takeIf { id -> id == order.orderId },
             )
         }
         tickDeposit(order)
         if (!order.state.settled && polling?.isActive != true) follow()
+        decideLanding(order)
+    }
+
+    /**
+     * A sale paid out: whether its landing is still to be heard on this phone ([CashOutUiState.celebrate]), decided
+     * (and the sound readied) as soon as it shows, so the chime can ring on the very frame the M-Pesa card settles.
+     * A storage read that fails never leaves the card waiting: it lands as new. Any other ending never rings.
+     */
+    private fun decideLanding(order: RampOrder) {
+        val id = order.orderId
+        if (order.state != RampOrderState.Completed || !landingsDecided.add(id)) return
+        viewModelScope.launch {
+            val fresh = runCatching { sounds?.armLanding(id) }.getOrNull() ?: true
+            local.update {
+                if (it.order?.orderId != id || it.order.state != RampOrderState.Completed) it
+                else if (fresh) it.copy(celebrate = id) else it.copy(quietLanding = id)
+            }
+        }
+    }
+
+    /**
+     * The page's card has settled on the M-Pesa card ([CashOutUiState.celebrate]): the chime, in time with it and the
+     * haptic, once per sale, if the money sound is on. The shillings arrive on M-Pesa, not in the wallet, so nothing
+     * incoming in the wallet is this sale's: the coins for other money are never held back for it.
+     */
+    fun onLanded() {
+        val s = local.value
+        val order = s.order ?: return
+        if (order.state != RampOrderState.Completed || s.celebrate != order.orderId) return
+        local.update { it.copy(celebrate = null) }
+        val sounds = sounds ?: return
+        sounds.ringLanding(order.orderId, quietCoins = false)
+        viewModelScope.launch { sounds.markHeard(order.orderId) }
     }
 
     /** Counts down to the deadline for the USDC while the sale waits for it; when it passes, the sale is read. */
@@ -823,7 +871,7 @@ class CashOutViewModel(
     fun onAgain() {
         polling?.cancel()
         depositClock?.cancel()
-        local.update { it.copy(order = null, quote = null, cancelNote = null, stale = false, sent = false, maybeSent = false, sendFee = null, sendHold = null, sendFailure = null, depositLeft = null) }
+        local.update { it.copy(order = null, quote = null, cancelNote = null, stale = false, sent = false, maybeSent = false, sendFee = null, sendHold = null, sendFailure = null, depositLeft = null, celebrate = null, quietLanding = null) }
         load()
     }
 

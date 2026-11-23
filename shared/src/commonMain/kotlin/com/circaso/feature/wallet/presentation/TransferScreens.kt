@@ -141,7 +141,7 @@ fun TransferContent(state: TransferUiState, onBack: () -> Unit) {
         val when_ = formatLocalTime(transfer.createdAt, LocalTimeStyle.ShortDate) + ", " + formatLocalTime(transfer.createdAt, LocalTimeStyle.Clock)
         Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = CircasoSpacing.s4).padding(bottom = padding.calculateBottomPadding() + CircasoSpacing.s4), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(CircasoSpacing.s4)) {
             Spacer(Modifier.height(CircasoSpacing.s2))
-            if (topUp != null || sale != null || refund != null) com.circaso.designsystem.components.LetterDisc("M", size = CircasoSizes.avatarLg)
+            if (topUp != null || sale != null || refund != null) com.circaso.designsystem.components.MpesaDisc(size = CircasoSizes.avatarLg)
             else if (transfer.counterpartName != null) Avatar(transfer.counterpartName, size = CircasoSizes.avatarLg, imageUrl = transfer.counterpartAvatar) else CoinIcon(transfer.amount.asset, size = CircasoSizes.avatarLg)
             // "KES 2,000" when it has a rate, else the coin itself ("ETH 0.01"): never split the coin text.
             val cur = if (fiat != null) fiat.substringBefore(' ') else transfer.amount.asset

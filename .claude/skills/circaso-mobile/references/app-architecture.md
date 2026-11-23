@@ -376,9 +376,10 @@ in the canvas; these are deliberate departures from E2's plain "Pay with" row an
   never the app's accent: green only as M-Pesa's own card/chip, blue only as USDC's disc and glow. White on the green
   is ≥ 4.5:1 at its lightest corner; ink on silver ≥ 10:1. The surroundings use tokens; edges are a hairline (1.5 dp
   `ink` in high contrast).
-- **M-Pesa's mark:** Safaricom's logo isn't bundled (it needs their artwork and permission) and an imitation looked
-  counterfeit beside the real green, so `MpesaWordmark` sets "M-PESA" in green on a white tag. Swap in the real logo
-  if Pasaka gets it.
+- **M-Pesa's mark (replaced 2026-11-23, branch `feat/cash-out-motion`):** Safaricom's own logo from its Brand Toolkit
+  (`designsystem/components/MpesaMarks.kt`: `MpesaLogo`, the reversed variant on the green card, method card and chip;
+  `MpesaTag`, `MpesaDisc` and `MpesaDetailRow` on white elsewhere, shared by Add Money, Cash Out and the wallet).
+  Source, licence and how the files are made: `brand-assets.md` → "M-Pesa's logo". The typed "M-PESA" wordmark is gone.
 - **Amount and review:** `MpesaMethodCard` (the green card with the wordmark, the masked number, "The M-Pesa request
   goes here", a tick; `selected` semantics) replaces the "Pay with" row; `MpesaChip` sits under "You pay" on the
   review.
@@ -442,6 +443,49 @@ in the canvas; these are deliberate departures from E2's plain "Pay with" row an
   card's words).
 - **Not verified:** real-device audio (both platforms), Android at all beyond the build, the silent switch/ringer
   behaviour on hardware, frame timing on a low-end Android.
+
+### The conversion, both ways: one engine (2026-11-23, branch `feat/cash-out-motion`)
+
+Pasaka: "could we have the same animation from card to M-Pesa in reverse when cashing out?" The drawing above now lives
+in `CardConversion.kt` as `CardConversion(direction, stage, words, heldOnSecond, celebrate, quiet, onLanded, landingKey,
+frozenAt)`; it knows only "the first card" and "the second card". `ConversionDirection.MpesaToUsdc` (Add Money's
+`ConversionCard`, unchanged in behaviour) and `UsdcToMpesa` (Cash Out's `SaleCard`) pick which face is which, the dust's
+colour (green flecks / silver `#AEB4BC`) and each face's light (`FaceLight`: green band 0.22, loops at 0.45 of it, so the
+breath is the old 0.10; silver 0.42, loops 0.55). `CardWords` is now side-neutral (`mpesaLabel/mpesa/phone`,
+`usdcLabel/usdc/chain`, both descriptions); both faces' labels cross-fade. New stage `Returned`: back to the first card,
+whole and undimmed (a conversion caught mid-way cross-fades back), for money coming home. Faces are copied only once a
+changed label has finished cross-fading (`LabelSettleMs`, Base + 2 frames): the simulator showed a sale's next round
+breaking up with last round's "You sold". Each face is recorded into its `GraphicsLayer` by its own modifier behind
+its own layer (`recorder`), which reads no animation: the breath, the sending sheen and the conversion only redraw the
+recording, never record the face again (before, a new display list a frame for as long as an order waited; checked on
+iOS that later label changes still show).
+A card about to turn with its copies ready keeps the words they were made with (`aboutToTurn`), so a sale whose poll
+missed PAYING_OUT (FUNDED straight to COMPLETED) turns on the next frame, then cross-fades to "Received on M-Pesa"
+(preview `cash-out-live-fast`). Dimmed cards take a stronger veil on dark ground (0.24, `DimVeilDark`), or a silver
+card hardly dims; a landing already heard opens whole, with no settle nudge.
+
+- **Cash Out's stages** (`saleCardStageOf(state, sent || maybeSent)`): AwaitingTransfer, Funded → Waiting (silver,
+  "You sell 10.00 USDC", breathing) · PayingOut → Converting (silver breaks up into the green M-Pesa card, "You receive
+  KES 1,269" and the masked number; slow sheen while M-Pesa confirms) · Completed → Landed (settle, sheen pass, `Confirm`
+  haptic and the chime on one frame; label "Received on M-Pesa") · Refunding/Refunded, and Expired/Cancelled/Failed
+  after sending → Returned (silver stays) · the same when W4 got no answer (`maybeSent`) → Held (never promised back) ·
+  the same before sending → Ended (silver dims) · Review and unknown → Held. A FAILED sale's figures say "Amount" /
+  "Would have received", as the other endings do.
+  Opened on a completed sale, the green card shows at once.
+- **The page** (`SaleOrderPage`): the card is the hero in place of the badge; a badge under it only for warnings and
+  endings (`saleBadge`: not for a plain "send your USDC" wait, never for the payout); the four steps as the compact
+  caption, kept until the card has landed; "Cashed out to M-Pesa" `MoneyCard` removed (the green card is the moment;
+  the receipt stays in the figures); "To" rows show the logo (`MpesaDetailRow`). The page no longer fires its own haptic.
+- **The chime:** `CashOutViewModel(sounds = MoneySounds)` decides as Add Money does (`decideLanding` → `celebrate` /
+  `quietLanding`, `onLanded` rings and marks heard; one remembered list for top-ups and sales). `ringLanding(id,
+  quietCoins = false)` for a sale: its shillings land on M-Pesa, so no incoming USDC is the sale's and the coins are
+  never held back (a refund's USDC plays the coins as any money received).
+- **Previews:** `cash-out-live` (a sale on a loop with the real chime), `cash-out-live-fast` (PAYING_OUT missed), `-converting-early/-converting/-converting-late`,
+  `-landing`; any Cash Out preview takes `-dark`, `-hc`, `-dark-hc`, `-still`.
+- **Tests:** `androidHostTest/feature/ramp/CashOutChimeTest.kt` (rings once on settle, first-seen-completed, re-open quiet,
+  sound off, never for refund/expiry/cancel/review/failure, coins not silenced, no player, stage mapping, words, badge).
+- **Verified:** Android `assembleDebug`, ramp/wallet/core host tests, iOS simulator build and run (iPhone 18 Pro, iOS
+  27.2): conversion recorded twice at ~59–64 fps around the break-up, longest frame gap 47 ms (one dropped frame); frames checked (pieces carry the right words, the label then turns to "Received on M-Pesa"). **Not verified:** on a phone, audio, Android motion.
 
 ## Cash out: selling USDC for M-Pesa (2026-11-23, guide "Selling USDC for M-Pesa" R1/R2/R7/W4; design E6's place)
 

@@ -77,7 +77,8 @@ import com.circaso.designsystem.components.CircasoIcon
 import com.circaso.designsystem.components.CircasoIconImage
 import com.circaso.designsystem.components.CircasoTextField
 import com.circaso.designsystem.components.DetailRow
-import com.circaso.designsystem.components.LetterDisc
+import com.circaso.designsystem.components.MpesaDetailRow
+import com.circaso.designsystem.components.MpesaDisc
 import com.circaso.designsystem.components.ListGroup
 import com.circaso.designsystem.components.ListRow
 import com.circaso.designsystem.components.RowDivider
@@ -114,7 +115,7 @@ fun CashOutScreen(viewModel: CashOutViewModel, onBack: () -> Unit, onSupport: ()
         onRetry = viewModel::load, onAmount = viewModel::onAmount, onUnit = viewModel::onUnit, onMax = viewModel::onMax, onChain = viewModel::onChain,
         onContinue = viewModel::onContinue, onBackToAmount = viewModel::onBackToAmount, onPhone = viewModel::onPhone, onNewPrice = viewModel::onNewPrice,
         onSell = viewModel::onSell, onSend = viewModel::onSend, onCancel = viewModel::onCancel, onAgain = viewModel::onAgain,
-        onSellLess = viewModel::onSellLess, onNetworks = onNetworks,
+        onSellLess = viewModel::onSellLess, onNetworks = onNetworks, onLanded = viewModel::onLanded,
     )
 }
 
@@ -162,6 +163,10 @@ fun CashOutContent(
     onAgain: () -> Unit = {},
     onSellLess: () -> Unit = {},
     onNetworks: () -> Unit = {},
+    /** The sale's card settled on the M-Pesa card that landed ([CashOutUiState.celebrate]): the chime. */
+    onLanded: () -> Unit = {},
+    /** The gallery's: holds the sale's conversion at this point (0..1). */
+    frozenAt: Float? = null,
 ) {
     val toast = rememberToastState()
     val scope = rememberCoroutineScope()
@@ -215,7 +220,7 @@ fun CashOutContent(
                 CashOutPage.Gate -> CashOutGatePage(s, bottom, onRetry, onBack, onSupport, onSendToExchange, onNetworks)
                 CashOutPage.Amount -> SaleAmountPage(s, bottom, onAmount, onUnit, onMax, onChain, onContinue, onCopy)
                 CashOutPage.Review -> SaleReviewPage(s, bottom, onPhone, onNewPrice, onSell, onCopy)
-                CashOutPage.Order -> s.order?.let { SaleOrderPage(s, it, bottom, onBack, onSupport, onSend, onCancel, onAgain, onCopy, onSellLess) }
+                CashOutPage.Order -> s.order?.let { SaleOrderPage(s, it, bottom, onBack, onSupport, onSend, onCancel, onAgain, onCopy, onSellLess, onLanded, frozenAt) }
             }
         }
     }
@@ -389,7 +394,7 @@ private fun SaleAmountPage(
             ListGroup {
                 ListRow(
                     "M-Pesa", sub = state.maskedPhone?.maskedForDisplay() ?: "Your verified number",
-                    leading = { LetterDisc("M") },
+                    leading = { MpesaDisc() },
                     trailing = { CircasoIconImage(CircasoIcon.Check, c.ink, Modifier.size(SelectedGlyph).semantics { contentDescription = "Selected" }, strokeWidth = 2.4f) },
                 )
             }
@@ -550,7 +555,7 @@ private fun SaleQuoteDetails(quote: RampQuote, maskedPhone: String?) {
             FigureRow("You receive", quote.receive.text, strong = true)
         }
         ListGroup {
-            DetailRow("To", "M-Pesa " + (maskedPhone?.maskedForDisplay() ?: "your verified number"))
+            MpesaDetailRow("To", maskedPhone)
             RowDivider()
             DetailRow("From", "Your wallet on " + chainName(quote.blockchain))
         }

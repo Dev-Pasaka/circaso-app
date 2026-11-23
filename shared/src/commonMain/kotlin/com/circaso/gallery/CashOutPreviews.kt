@@ -1,6 +1,14 @@
 package com.circaso.gallery
 
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import com.circaso.designsystem.theme.CircasoTheme
+import kotlinx.coroutines.delay
 import com.circaso.core.sync.nowMillis
 import com.circaso.feature.ramp.domain.KycReasons
 import com.circaso.feature.ramp.domain.KycStatus
@@ -60,12 +68,56 @@ private val saleQuote = RampQuote(
  * `-funded`, `-paying-out`, `-paying-out-stale`, `-paying-out-offline`, `-done`, `-done-no-receipt`, `-refunding`,
  * `-refunding-late`, `-refunded`, `-refunded-mismatch`, `-expired`, `-expired-sent`, `-cancelled`, `-review-sale`,
  * `-unknown`). Also `-verify-declined`; `-sell-less` (cancel and sell what fits); `-maybe-sent` and `-maybe-sent-expired`
- * (W4 got no answer). In the wallet: `activity-cash-out`, `activity-cash-out-states`, `transfer-cash-out`,
+ * (W4 got no answer). The conversion (2026-11-23): `-live` (a sale on a loop: the silver USDC card, then M-Pesa's green
+ * card forming as the payout is sent, landing with the haptic and the real chime), `-live-fast` (the same with PAYING_OUT missed), `-converting-early`, `-converting`
+ * and `-converting-late` (one frame held), `-landing` (opened on a payout not yet heard: it settles and chimes). Any of
+ * them takes `-dark`, `-hc`, `-dark-hc` and `-still` (Reduce Motion), in that order: `cash-out-live-dark-still`. In the wallet: `activity-cash-out`, `activity-cash-out-states`, `transfer-cash-out`,
  * `transfer-cash-out-refunded` (PreviewScreens.kt).
  */
 @Composable
 internal fun CashOutPreview(name: String): Boolean {
     if (!name.startsWith("cash-out")) return false
+    var base = name
+    val still = base.endsWith("-still").also { if (it) base = base.removeSuffix("-still") }
+    val hc = base.endsWith("-hc").also { if (it) base = base.removeSuffix("-hc") }
+    val dark = base.endsWith("-dark").also { if (it) base = base.removeSuffix("-dark") }
+    if (!still && !hc && !dark) return CashOutPreviewScreen(name)
+    var shown = true
+    CircasoTheme(darkTheme = dark || (!hc && CircasoTheme.colors.isDark), highContrast = hc) {
+        CompositionLocalProvider(com.circaso.designsystem.platform.LocalReduceMotion provides (still || CircasoTheme.reduceMotion)) {
+            shown = CashOutPreviewScreen(base)
+        }
+    }
+    return shown
+}
+
+private const val SaleId = "0193a7c2-5d1e-4b8f-9e2a-6c4f1d8b2e11"
+
+/** A sale from the USDC sent to the shillings landing on M-Pesa, on a loop, so the conversion can be watched and recorded. */
+@Composable
+private fun LiveSale(skipPayingOut: Boolean = false, onSale: (RampOrderState, String?) -> CashOutUiState) {
+    var state by remember { mutableStateOf(onSale(RampOrderState.AwaitingTransfer, null).copy(sent = true)) }
+    LaunchedEffect(Unit) {
+        while (true) {
+            state = onSale(RampOrderState.AwaitingTransfer, null).copy(sent = true)
+            delay(2_400)
+            state = onSale(RampOrderState.Funded, null)
+            delay(2_400)
+            // A poll can miss PAYING_OUT altogether: the card then turns on COMPLETED, at once.
+            if (!skipPayingOut) { state = onSale(RampOrderState.PayingOut, null); delay(2_600) }
+            state = onSale(RampOrderState.Completed, "TKN3H2X1QP").copy(celebrate = SaleId)
+            delay(6_000)
+        }
+    }
+    CashOutContent(state, onBack = {}, onLanded = {
+        state = state.copy(celebrate = null)
+        // The real chime, as the app plays it (silent switch and all).
+        org.koin.mp.KoinPlatform.getKoinOrNull()?.getOrNull<com.circaso.core.platform.PaymentChime>()?.play()
+    })
+}
+
+@Composable
+private fun CashOutPreviewScreen(name: String): Boolean {
     val wallet = walletWith("25500000", "25.5")
     val amount = CashOutUiState(
         step = CashOutStep.Amount, status = saleStatus, wallet = wallet, blockchain = "BASE-SEPOLIA", amountText = "10", maskedPhone = SaleMasked, testnet = true,
@@ -74,7 +126,7 @@ internal fun CashOutPreview(name: String): Boolean {
     val review = amount.copy(step = CashOutStep.Review, quote = saleQuote, secondsLeft = 42)
     val deadline = nowMillis() + 14 * 60 * 1000L + 32_000L
     fun sale(state: RampOrderState, reason: String? = null, receipt: String? = null, txHash: String? = null) = RampOrder(
-        "0193a7c2-5d1e-4b8f-9e2a-6c4f1d8b2e11", state, WalletNetwork.TESTNET, "BASE-SEPOLIA", saleQuote.pay, saleQuote.receive, "130", shillings("26"), SaleMasked, txHash, reason,
+        SaleId, state, WalletNetwork.TESTNET, "BASE-SEPOLIA", saleQuote.pay, saleQuote.receive, "130", shillings("26"), SaleMasked, txHash, reason,
         deadline, null, direction = RampDirection.OffRamp, providerFee = shillings("5"),
         deposit = if (state == RampOrderState.AwaitingTransfer) SaleDeposit("0x5a3c0000000000000000000000000000000beef", "BASE-SEPOLIA", "USDC", "10000000", "10", deadline) else null,
         receipt = receipt,
@@ -148,6 +200,13 @@ internal fun CashOutPreview(name: String): Boolean {
         "cash-out-cancelled" -> onSale(RampOrderState.Cancelled, sent = false)
         "cash-out-review-sale" -> onSale(RampOrderState.Review, "payout_unconfirmed")
         "cash-out-unknown" -> onSale(RampOrderState.Unknown)
+        // The conversion (2026-11-23): played whole, held at one frame, and landing.
+        "cash-out-live" -> { LiveSale { st, receipt -> onSale(st, receipt = receipt) }; return true }
+        "cash-out-live-fast" -> { LiveSale(skipPayingOut = true) { st, receipt -> onSale(st, receipt = receipt) }; return true }
+        "cash-out-converting-early" -> { CashOutContent(onSale(RampOrderState.PayingOut), onBack = {}, frozenAt = 0.22f); return true }
+        "cash-out-converting" -> { CashOutContent(onSale(RampOrderState.PayingOut), onBack = {}, frozenAt = 0.5f); return true }
+        "cash-out-converting-late" -> { CashOutContent(onSale(RampOrderState.PayingOut), onBack = {}, frozenAt = 0.8f); return true }
+        "cash-out-landing" -> onSale(RampOrderState.Completed, receipt = "TKN3H2X1QP").copy(celebrate = SaleId)
         else -> return false
     }
     CashOutContent(state, onBack = {})

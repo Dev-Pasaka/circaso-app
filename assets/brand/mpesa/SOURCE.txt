@@ -1,0 +1,29 @@
+M-PESA logo: where these files come from
+=========================================
+
+Source (downloaded 2026-11-23):
+  Safaricom PLC, Brand Toolkit, Logos page: https://www.safaricom.co.ke/about/brand-toolkit/logos
+  - "M-PESA Logo", vector PDF: https://www.safaricom.co.ke/images/lifeimages/M-PESA-logo-pdf.pdf
+    Kept here unchanged as M-PESA-logo-safaricom.pdf (440,185 bytes; Adobe Illustrator CC 22, PDF/X-4,
+    created 2020-09-23, modified 2021-07-29; title "M-PESA Logo").
+  - The reversed logo (white on green), PNG: https://www.safaricom.co.ke/images/lifeimages/M-PESA-logo-2.png
+    (12500 x 6537; not kept here: only its colours are used, see below).
+
+Made from it by scripts/make_mpesa_logo.py (rerun it if Safaricom's file changes):
+  - mpesa-logo.svg, and the app's Compose resource shared/src/commonMain/composeResources/drawable/mpesa_logo.xml:
+    the PDF's five shapes with every path and curve as drawn, only moved so the logo starts at 0,0 (not scaled,
+    stretched or cropped). Colours: the PDF's CMYK turned into sRGB through the PDF's own output intent
+    (U.S. Web Coated (SWOP) v2, relative colorimetric): letters #3CB554, phone #AEB7AA, flag #E24F50, flag shade #9E564F.
+    For white or light ground only.
+  - mpesa-logo-reversed.svg and mpesa_logo_reversed.xml: the same shapes in the colours of Safaricom's reversed logo
+    (M-PESA-logo-2.png): letters and phone #FFFFFF, flag #CE383B, flag shade #834E44. For green ground (M-Pesa's card
+    and chip in the app).
+
+Not used: Wikimedia Commons "File:M-PESA LOGO-01.svg" (public domain as a text logo, trademarked) is a community
+trace of an older uppercase logo with its source marked unknown, so it is not Safaricom's file.
+
+Licence and trademark: M-PESA and its logo are registered trademarks of Safaricom PLC. Safaricom publishes these files
+for download in its Brand Toolkit; it states no licence on the page, so the logo is used only nominatively, to show
+that money moves through M-Pesa (paying with it, cashing out to it), never altered, never as Circaso's own mark, and
+never implying Safaricom endorses Circaso. Before the app ships to the public, confirm with Safaricom (or the M-Pesa
+partner Circaso settles through) that this use is permitted under their brand guidelines.

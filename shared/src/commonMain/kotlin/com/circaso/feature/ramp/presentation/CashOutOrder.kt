@@ -21,8 +21,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.hapticfeedback.HapticFeedbackType
-import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
@@ -45,7 +43,7 @@ import com.circaso.designsystem.components.CircasoIcon
 import com.circaso.designsystem.components.CircasoIconImage
 import com.circaso.designsystem.components.DetailRow
 import com.circaso.designsystem.components.ListGroup
-import com.circaso.designsystem.components.MoneyCard
+import com.circaso.designsystem.components.MpesaDetailRow
 import com.circaso.designsystem.components.RowDivider
 import com.circaso.designsystem.motion.pressable
 import com.circaso.designsystem.theme.CircasoMotion
@@ -213,7 +211,7 @@ internal fun saleFigureLabels(state: RampOrderState, look: SaleLook): Pair<Strin
     RampOrderState.Completed -> "You sold" to "You received"
     // Still being decided: what it is for, never that it failed.
     RampOrderState.Review -> "You sell" to "To receive"
-    RampOrderState.Refunding, RampOrderState.Refunded, RampOrderState.Expired, RampOrderState.Cancelled -> "Amount" to "Would have received"
+    RampOrderState.Refunding, RampOrderState.Refunded, RampOrderState.Expired, RampOrderState.Cancelled, RampOrderState.Failed -> "Amount" to "Would have received"
     else -> "You sell" to "You receive"
 }
 
@@ -225,28 +223,85 @@ internal fun saleFee(amount: RampAmount?): String = when {
 }
 
 /**
+ * Where a sale's card is (Pasaka, 2026-11-23: "the same animation from card to M-Pesa in reverse when cashing out"):
+ * the silver USDC card while the USDC is being sent and received by Circaso's partner; turning into M-Pesa's green card
+ * as the payout is sent; settled on it when it lands. USDC coming back keeps (or goes back to) the silver card; an
+ * ending before anything was sent dims it; a review holds.
+ */
+internal fun saleCardStageOf(state: RampOrderState, sent: Boolean, maybeSent: Boolean = false): CardStage = when (state) {
+    RampOrderState.AwaitingTransfer, RampOrderState.Funded -> CardStage.Waiting
+    RampOrderState.PayingOut -> CardStage.Converting
+    RampOrderState.Completed -> CardStage.Landed
+    RampOrderState.Refunding, RampOrderState.Refunded -> CardStage.Returned
+    // Sent and then ended: the USDC comes back by itself. Perhaps sent (W4 got no answer): nobody knows yet, so the card
+    // holds rather than promise it is coming home. Nothing sent: nothing moved, and the card dims.
+    RampOrderState.Cancelled, RampOrderState.Expired, RampOrderState.Failed -> when {
+        sent -> CardStage.Returned
+        maybeSent -> CardStage.Held
+        else -> CardStage.Ended
+    }
+    // In review, or a state this version doesn't know: whatever shows holds, and nothing celebrates.
+    else -> CardStage.Held
+}
+
+/** What a sale's two cards say: the USDC sold on the silver, the shillings and the number on the green. */
+internal fun saleCardWords(order: RampOrder, look: SaleLook): CardWords {
+    val (selling, getting) = saleFigureLabels(order.state, look)
+    val phone = order.maskedPhone.takeIf { it.isNotBlank() }?.maskedForDisplay()
+    val chain = chainName(order.blockchain)
+    val receiveLabel = if (order.state == RampOrderState.Completed) "Received on M-Pesa" else getting
+    return CardWords(
+        mpesaLabel = receiveLabel, mpesa = order.receive.text, phone = phone,
+        usdcLabel = selling, usdc = order.pay.text, chain = chain,
+        mpesaDescription = listOfNotNull("M-Pesa", "$receiveLabel ${order.receive.text}", phone?.let { "to $it" }).joinToString(", "),
+        usdcDescription = listOf("USDC on $chain", "$selling ${order.pay.text}").joinToString(", "),
+    )
+}
+
+/** The badge under a sale's card: something to see to (a warning), or an ending other than the payout. */
+internal fun saleBadge(order: RampOrder, look: SaleLook): Pair<CircasoIcon, SheetTone>? {
+    val icon = look.icon ?: return null
+    if (!look.settled || order.state == RampOrderState.Completed) return null
+    // While the sale simply waits for the USDC, the card and the button say it all.
+    if (order.state == RampOrderState.AwaitingTransfer && look.tone != SheetTone.Warning) return null
+    return icon to look.tone
+}
+
+/**
+ * A sale's hero: [CardConversion] the other way round from Add Money's, the silver USDC card coming apart into
+ * M-Pesa's green card as the shillings are paid out, settling with the haptic and the chime ([onLanded]) once.
+ */
+@Composable
+internal fun SaleCard(order: RampOrder, state: CashOutUiState, look: SaleLook, onLanded: () -> Unit, modifier: Modifier = Modifier, frozenAt: Float? = null) =
+    CardConversion(
+        ConversionDirection.UsdcToMpesa, saleCardStageOf(order.state, state.sent, state.maybeSent), saleCardWords(order, look), heldOnSecond = false,
+        celebrate = state.celebrate == order.orderId, quiet = state.quietLanding == order.orderId, onLanded = onLanded, landingKey = order.orderId,
+        modifier = modifier, frozenAt = frozenAt,
+    )
+
+/**
  * A sale from the moment it is made until the shillings are on the person's phone, or until it ends another way: the
- * badge and one sentence on where the money is, the story so far, then every figure (every fee named). Every change
- * eases in, and a payout that lands while the person watches is felt as well as seen.
+ * money itself as the hero ([SaleCard]), one sentence on where it is, the story so far, then every figure (every fee
+ * named). Every change eases in, and a payout that lands is felt and heard as well as seen (the haptic and the chime,
+ * on the frame the M-Pesa card settles).
  */
 @Composable
 internal fun SaleOrderPage(
     state: CashOutUiState, order: RampOrder, bottomInset: Dp,
     onBack: () -> Unit, onSupport: () -> Unit, onSend: () -> Unit, onCancel: () -> Unit, onAgain: () -> Unit, onCopy: (String) -> Unit,
-    onSellLess: () -> Unit = {},
+    onSellLess: () -> Unit = {}, onLanded: () -> Unit = {}, frozenAt: Float? = null,
 ) {
     val c = CircasoTheme.colors
     val t = CircasoTheme.typography
     val look = saleLook(order, state)
     val still = CircasoTheme.reduceMotion
     val done = order.state == RampOrderState.Completed
-    val haptics = LocalHapticFeedback.current
+    // Watched as it is paid out, the four steps stay a moment, all ticked, while the card turns and settles (the card
+    // itself gives the haptic, on the frame it settles); a sale opened after it had ended shows none.
     var seen by remember { mutableStateOf(order.state) }
     LaunchedEffect(order.state) {
-        if (done && seen != RampOrderState.Completed) {
-            haptics.performHapticFeedback(HapticFeedbackType.Confirm)
-            if (!still) delay(CircasoMotion.MomentMs.toLong())
-        }
+        // Converted while M-Pesa confirmed: only the settle's light is left to wait for.
+        if (done && seen != RampOrderState.Completed && !still) delay(if (seen == RampOrderState.PayingOut) SheenMs.toLong() else (ConvertMs + SheenMs).toLong())
         seen = order.state
     }
     val landing = done && seen != RampOrderState.Completed
@@ -326,25 +381,20 @@ internal fun SaleOrderPage(
             }
         },
     ) {
-        Column(Modifier.fillMaxWidth().padding(top = CircasoSpacing.s4), horizontalAlignment = Alignment.CenterHorizontally) {
-            AnimatedContent(
-                Pair(look.icon, look.tone) to look.settled,
-                transitionSpec = { fadeIn(tween(if (still) 0 else CircasoMotion.BaseMs)) togetherWith fadeOut(tween(if (still) 0 else CircasoMotion.QuickMs)) },
-                contentAlignment = Alignment.Center, label = "sale badge",
-            ) { (sign, settled) -> if (settled && sign.first != null) SheetBadge(sign.first!!, sign.second) else WaitingBadge(sign.first) }
+        Column(Modifier.fillMaxWidth().padding(top = CircasoSpacing.s2), horizontalAlignment = Alignment.CenterHorizontally) {
+            // The money, as the hero: the silver USDC card while the USDC travels, turning into M-Pesa's green card as
+            // the shillings are paid out. It keeps its place while everything under it changes.
+            SaleCard(order, state, look, onLanded, frozenAt = frozenAt)
+            // Something to see to, or an ending other than the payout, says what it is at a glance, as the sheets do.
+            val badge = lastOf(saleBadge(order, look))
+            Reveal(saleBadge(order, look) != null) { badge?.let { (icon, tone) -> SheetBadge(icon, tone, Modifier.padding(top = CircasoSpacing.s5)) } }
             AnimatedContent(
                 look.title to look.message, transitionSpec = { easeOver(still) }, label = "sale state",
-                modifier = Modifier.fillMaxWidth().padding(top = CircasoSpacing.s4).semantics { liveRegion = LiveRegionMode.Polite },
+                modifier = Modifier.fillMaxWidth().padding(top = CircasoSpacing.s5).semantics { liveRegion = LiveRegionMode.Polite },
             ) { (title, message) ->
                 Column(Modifier.fillMaxWidth().padding(horizontal = CircasoSpacing.s2), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(TitleGap)) {
                     BasicText(title, Modifier.semantics { heading() }, style = t.title2.copy(color = c.ink, textAlign = TextAlign.Center))
                     BasicText(message, style = t.body.copy(color = c.inkSecondary, textAlign = TextAlign.Center))
-                }
-            }
-            // The app's own money moment, for shillings that have arrived: the M-Pesa code is what the person will match.
-            Reveal(done && !landing) {
-                Box(Modifier.fillMaxWidth().padding(top = CircasoSpacing.s5), contentAlignment = Alignment.Center) {
-                    MoneyCard(head = "Cashed out to M-Pesa", amount = order.receive.text, foot = order.receipt?.let { "M-Pesa receipt $it" } ?: "Sold ${order.pay.text}", outgoing = true, symbol = order.receive.unit)
                 }
             }
         }
@@ -353,7 +403,8 @@ internal fun SaleOrderPage(
             val held = state.sendHold != null && state.sendHold != SendHold.Cancelled
             val stages = if (held) emptyList() else saleStages(order, state.sent, state.sending)
             val shown = lastOf(stages.takeIf { it.isNotEmpty() })
-            Reveal(stages.isNotEmpty() && (!done || landing)) { if (shown != null) Stages(shown, Modifier.padding(bottom = CircasoSpacing.s5)) }
+            // Under the card the steps are a quiet caption, as on Add Money: the card tells the story, the words keep it exact.
+            Reveal(stages.isNotEmpty() && (!done || landing)) { if (shown != null) Stages(shown, Modifier.padding(bottom = CircasoSpacing.s5), compact = true) }
             val (selling, getting) = saleFigureLabels(order.state, look)
             ListGroup {
                 if (look.needsReference) { ReferenceRow(order.orderId, onCopy); RowDivider() }
@@ -371,7 +422,7 @@ internal fun SaleOrderPage(
                 RowDivider()
                 FigureRow(getting, order.receive.text, strong = true)
                 RowDivider()
-                DetailRow("To", "M-Pesa " + order.maskedPhone.maskedForDisplay())
+                MpesaDetailRow("To", order.maskedPhone)
                 order.receipt?.let { RowDivider(); ReceiptRow(it, onCopy) }
                 RowDivider()
                 DetailRow("Network", chainName(order.blockchain))
