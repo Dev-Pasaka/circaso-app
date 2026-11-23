@@ -66,7 +66,12 @@ enum class VerifyEntry {
     AddMoney,
     /** The profile's Verification screen: verified stays, and the system's Back leaves. */
     Profile,
+    /** Before a first sale in Cash Out: as Add Money, with its own words (verified goes on to the amount). */
+    CashOut,
 }
+
+/** What being verified opens, in the entry's own words: "add money" (Add Money and the profile) or "cash out". */
+internal fun VerifyEntry.goal(): String = if (this == VerifyEntry.CashOut) "cash out" else "add money"
 
 /** What a verify page draws from, whichever screen holds it. */
 internal data class VerifyPageState(
@@ -79,7 +84,7 @@ internal data class VerifyPageState(
     val entry: VerifyEntry = VerifyEntry.AddMoney,
 ) {
     /** The plain way out under the main button ("Not Now"); the profile's screen has Back for that. */
-    val wayOut: Boolean get() = entry == VerifyEntry.AddMoney
+    val wayOut: Boolean get() = entry != VerifyEntry.Profile
 }
 
 internal fun AddMoneyUiState.verifyPage() = VerifyPageState(verify, online, testnet, canVerify, VerifyEntry.AddMoney)
@@ -200,23 +205,24 @@ private fun declineWords(reason: String?): DeclineWords = when (reason) {
 private const val TriesUsed = "Today's tries are used up."
 
 /** A decline another try can't fix (guide: `not_approved`, `identity_in_use`, `blocked`; an unknown reason reads as the first). */
-private fun finalWords(reason: String?): Pair<String, String> = when (reason) {
+private fun finalWords(reason: String?, entry: VerifyEntry): Pair<String, String> = when (reason) {
     KycReasons.IdentityInUse -> "This ID is already in use" to "It is verified on another Circaso account. Sign in to that account, or contact Support."
-    KycReasons.Blocked -> BarredTitle to BarredMessage
+    KycReasons.Blocked -> (if (entry == VerifyEntry.CashOut) CashOutBarredTitle else BarredTitle) to BarredMessage
     else -> "We couldn't verify your identity" to "Trying again won't change this. Contact Support and we'll help you from here."
 }
 
 internal const val BarredTitle = "You can't add money on Circaso"
 internal const val BarredMessage = "Contact Support if you think this is a mistake."
+internal const val CashOutBarredTitle = "You can't cash out on Circaso"
 
 /**
  * The check's short story once everything was sent: sent, being decided ([active] says by whom), ready. Only the
  * marks move as it lands; the last step keeps its words.
  */
-private fun story(active: String?) = listOf(
+private fun story(active: String?, entry: VerifyEntry) = listOf(
     OrderStage("ID and selfie sent", StageMark.Done),
     OrderStage(active ?: "Details checked", if (active == null) StageMark.Done else StageMark.Active),
-    OrderStage("Ready to add money", if (active == null) StageMark.Done else StageMark.Waiting),
+    OrderStage("Ready to ${entry.goal()}", if (active == null) StageMark.Done else StageMark.Waiting),
 )
 
 /**
@@ -239,15 +245,15 @@ private fun stateLook(verify: VerifyUi, now: Long, entry: VerifyEntry): VerifyLo
     fun checking() = VerifyLook(
         VerifyKind.Checking, null, SheetTone.Neutral, "We're checking your details",
         if (verify.slow) "This is taking longer than usual. Nothing more is needed from you." else "This usually takes less than a minute. You don't need to do anything.",
-        VerifyAction.Close, "Close", stages = story("Result on its way"), waiting = true, note = "You can leave this screen. We'll tell you when it's done.",
+        VerifyAction.Close, "Close", stages = story("Result on its way", entry), waiting = true, note = "You can leave this screen. We'll tell you when it's done.",
     )
     return when {
         verify.verified || (v.status == KycStatus.Verified && (v.required || entry == VerifyEntry.Profile)) -> if (entry == VerifyEntry.Profile) VerifyLook(
             // From the profile it stays: nothing follows by itself, and the screen says what being verified means.
-            VerifyKind.Verified, CircasoIcon.Check, SheetTone.Neutral, "You're verified", "Your identity is confirmed.", VerifyAction.None, "", stages = story(null),
+            VerifyKind.Verified, CircasoIcon.Check, SheetTone.Neutral, "You're verified", "Your identity is confirmed.", VerifyAction.None, "", stages = story(null, entry),
         ) else VerifyLook(
-            VerifyKind.Verified, CircasoIcon.Check, SheetTone.Neutral, "You're verified", "That's it. You can add money any time now.",
-            VerifyAction.None, "", stages = story(null), note = "Taking you to Add Money.",
+            VerifyKind.Verified, CircasoIcon.Check, SheetTone.Neutral, "You're verified", "That's it. You can ${entry.goal()} any time now.",
+            VerifyAction.None, "", stages = story(null, entry), note = if (entry == VerifyEntry.CashOut) "Taking you to Cash Out." else "Taking you to Add Money.",
         )
         // `submitted`, read before `canStart` and before anything this phone was told when it last tried: the person
         // has finished and the server is waiting on the decision. Nothing is offered, whatever else is set.
@@ -281,10 +287,10 @@ private fun stateLook(verify: VerifyUi, now: Long, entry: VerifyEntry): VerifyLo
         else -> when (v.status) {
             KycStatus.None -> when {
                 v.canStart -> VerifyLook(
-                    VerifyKind.Intro, null, SheetTone.Neutral, "Verify once, add money any time",
+                    VerifyKind.Intro, null, SheetTone.Neutral, "Verify once, ${entry.goal()} any time",
                     // Where the server doesn't ask for it yet (offered from the profile), never said to be the law.
                     if (v.required) "Sending and receiving on Circaso never needs this. Moving money in or out of Circaso does, by law."
-                    else "Sending and receiving on Circaso never needs this. Adding money doesn't need it yet either: verify now and it's done when it does.",
+                    else "Sending and receiving on Circaso never needs this. ${if (entry == VerifyEntry.CashOut) "Cashing out" else "Adding money"} doesn't need it yet either: verify now and it's done when it does.",
                     VerifyAction.Start, "Start Verification",
                 )
                 // Required, never started, and the server won't start one now: said as it is, never a dead button.
@@ -297,12 +303,12 @@ private fun stateLook(verify: VerifyUi, now: Long, entry: VerifyEntry): VerifyLo
             KycStatus.InReview -> VerifyLook(
                 VerifyKind.InReview, CircasoIcon.IdCard, SheetTone.Neutral, "We're taking a closer look",
                 "A reviewer is going over your details. This usually takes a few minutes, and we'll notify you as soon as it's done.",
-                VerifyAction.Close, "Close", stages = story("With a reviewer"), waiting = true, note = "You can leave this screen. Nothing more is needed from you.",
+                VerifyAction.Close, "Close", stages = story("With a reviewer", entry), waiting = true, note = "You can leave this screen. Nothing more is needed from you.",
             )
             KycStatus.Declined -> when {
                 v.canStart -> declineWords(v.reason).let { VerifyLook(VerifyKind.Declined, CircasoIcon.Warning, SheetTone.Warning, it.title, it.now, VerifyAction.Start, "Try Again") }
                 v.retryAt != null -> declineWords(v.reason).let { waiting(it.title, "${it.later} $TriesUsed", v.retryAt) }
-                else -> finalWords(v.reason).let { (title, message) -> VerifyLook(VerifyKind.DeclinedFinal, CircasoIcon.Lock, SheetTone.Warning, title, message, VerifyAction.Support, "Contact Support") }
+                else -> finalWords(v.reason, entry).let { (title, message) -> VerifyLook(VerifyKind.DeclinedFinal, CircasoIcon.Lock, SheetTone.Warning, title, message, VerifyAction.Support, "Contact Support") }
             }
             KycStatus.Expired -> {
                 val words = if (v.reason == KycReasons.DocumentExpired) DeclineWords("Your ID has expired", "The ID you verified with is no longer valid. Verify again with one that is.", "The ID you verified with is no longer valid.")
@@ -370,7 +376,7 @@ internal fun VerifyIntroPage(state: VerifyPageState, bottomInset: Dp, onVerify: 
         Column(verticalArrangement = Arrangement.spacedBy(CircasoSpacing.s5)) {
             VerifyRow(CircasoIcon.IdCard, "Your national ID or passport", "A photo of the front and back")
             VerifyRow(CircasoIcon.FaceScan, "A quick selfie", "To check it is really you holding it")
-            VerifyRow(CircasoIcon.Clock, "A few minutes, once", "Then you can add money any time")
+            VerifyRow(CircasoIcon.Clock, "A few minutes, once", "Then you can ${state.entry.goal()} any time")
         }
         Column {
             Row(Modifier.fillMaxWidth().clip(CircasoShapes.md).background(c.fill).padding(horizontal = CircasoSpacing.s4, vertical = VerifyNoteInset), horizontalArrangement = Arrangement.spacedBy(VerifyNoteGap)) {

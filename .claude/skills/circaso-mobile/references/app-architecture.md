@@ -365,6 +365,79 @@ Buying USDC with M-Pesa from a partner merchant the server picks (the app never 
 - **Not done:** cash out; the number could be saved at
   phone verification so nobody is asked for it; an orders history screen (R5 is only read for the wallet labels).
 
+## Cash out: selling USDC for M-Pesa (2026-11-23, guide "Selling USDC for M-Pesa" R1/R2/R7/W4; design E6's place)
+
+A person sells USDC from their own wallet and the shillings go to **their own verified M-Pesa number**; Circaso's engine
+picks the buyer. Built on the backend's `feat/offramp` guide (`bab4ed7c`). **Class: Money**: online-only, never queued,
+never optimistic.
+
+- **Layers** (`feature/ramp`): `OffRampDto`, `DepositDto`, `StartOffRampRequest`, `QuoteResponse.providerFee/worth`,
+  `OrderResponse.providerFee/deposit/receipt` (`RampDtos`); `KtorRampRemote.sell` (R7); `RampRepository.sellQuote/sell/
+  saleSent/saleTransfer/sales`; use cases `QuoteSaleUseCase`, `SellForMpesaUseCase`, `ObserveSalesUseCase`; `SaleWallet`
+  (the wallet as a sale needs it: balance on the pinned network, W17, W4; adapted from `WalletRepository` in
+  `RampModule`); `CashOutViewModel` + `CashOutScreen.kt` (scaffold, gates, amount, review) + `CashOutOrder.kt`
+  (`saleLook`, `saleStages`, `saleFigureLabels`, `refundWords`, the status page). Domain: `RampOrderState` gains
+  `AwaitingTransfer`, `Funded`, `PayingOut`, `Refunding`, `Refunded` (Refunded settles; Refunding is followed);
+  `RampDirection`; `SaleDeposit`; `OffRampStatus`; `SaleLabel` / `MpesaSales`. `PaymentRequest.rampOrderId` and
+  `PrepareTransferRequest.rampOrderId` (W4 and W17; left out of every other payment).
+- **Entry:** the Wallet tab's **Cash Out** (`WalletActions.onCashOut` → `CashOutRoute`), personal wallet only (a group
+  wallet keeps the old sheet). Always shown, like Add; the flow shows R1's gate. A server from before selling (no
+  `offRamp`) or `offRamp.open` false is the closed page ("Cash out isn't open to you yet" with E6's "Send to an
+  Exchange"; E6's "Notify Me" has no route and is left out).
+- **Flow:** R1 → open order (resume; a purchase is handed to Add Money, and Add Money hands a sale here) → closed →
+  barred → paused → identity (the shared `IdentityCheck`, `VerifyEntry.CashOut`: "Verify once, cash out any time",
+  "Taking you to Cash Out.") → nobody buying (`offRamp.merchantOnline`) → the amount.
+- **Amount:** a USDC/KES switch (the amount is carried across with the live price), the balance on the chain with Max,
+  the chain with the most USDC picked first ("Sell from" when R1 lists several), a live price under the number (R2 asked
+  450 ms after the amount rests, a fresh key per ask: R2 reserves nothing), limits from `offRamp.limits` (on what is
+  received), errors: over the balance, below/above the limits, "nothing would reach M-Pesa after the fees"
+  (`ramp.amount_invalid`).
+- **Review:** "You sell 10 USDC"; Rate, Worth at this rate, Circaso fee (taken out), M-Pesa payout fee (taken out),
+  You receive (strong); To M-Pesa (masked verified number), From your wallet on the chain; the price's clock as Add
+  Money's; one button, **Sell**. The number is the account's own (R7 refuses any other): a phone without it asks once,
+  checked against the mask, as Add Money does.
+- **Sending the USDC:** after R7, W17 for the transfer to `deposit.address` (exactly `deposit.amountMinor`); no fee →
+  the approval comes up at once; a fee → the page shows it ("costs a network fee of 0.05 USDC, so 10.05 USDC leaves
+  your wallet") and waits for **Send USDC**; W17 unreachable → nothing is sent unseen. W4 always with **the order id as
+  the Idempotency-Key**, so every retry is the same transfer. A cancelled approval: "You didn't approve the transfer, so
+  nothing left your wallet. KES 1,269 is held for you until 18:15." with Send USDC and Cancel Sale (R6) until the
+  deadline (a countdown in the footer). `wallet.ramp_order_funded` → never send again, read the order;
+  `wallet.insufficient_funds` / W17 `INSUFFICIENT_FUNDS` → "Not enough USDC for this sale" with **Sell X Instead**
+  (R6, then the amount page with balance − fee); `wallet.fee_changed` → the new fee shown first;
+  `wallet.network_changed` → "Switch to Testnet to finish" (Send waits until the app comes back to the front); no answer
+  → "We couldn't confirm the transfer" (`maybeSent`: nothing on the page may then say "nothing left your wallet", and
+  Cancel isn't offered).
+- **Following:** frames (`ramp` / `order.updated`, `direction`) and R4 every 4 s while not settled; the four steps
+  "USDC sent → Received by Circaso's partner → M-Pesa payout sent → KES 1,269 on your phone"; COMPLETED: "KES 1,269
+  sent to your M-Pesa", the receipt (tap to copy), the `MoneyCard` "Cashed out to M-Pesa" and a `Confirm` haptic;
+  REFUNDING/REFUNDED worded from `failureReason`; EXPIRED (nothing sent: "Nothing left your wallet"; sent: "It's sent
+  back to you by itself"); CANCELLED "Nothing left your wallet."; REVIEW "Your money is safe…", Contact Support, never
+  send again.
+- **The wallet's history:** `RampRepositoryImpl` keeps, per network under `text.wallet.ramp.sales.<NETWORK>`, each
+  sale this phone paid (order, W4 transfer id, masked number, shillings, receipt, state, refund hash); every sale frame
+  moves its state, COMPLETED/REFUNDED read the order for the receipt/refund hash. `LocalMpesaSales` makes the W4 row
+  read "Cashing out to M-Pesa" / "Cashed out to M-Pesa" / "Cash out not paid" / "Cash out being checked" with
+  "KES 1,269 · Receipt TKN3H2X1QP", and the refund's incoming row "Returned from a sale"; the payment detail adds
+  "Received on M-Pesa", "M-Pesa receipt" and "Sale".
+- **Push:** the same `ramp.order` kind opens `AddMoneyRoute(orderId)`, which hands a sale to `CashOutRoute(orderId)`.
+- **Copy for codes:** `ramp.payout_fee_unavailable` "We can't price a sale right now. Nothing left your wallet. Try
+  again later."; `ramp.pricing_unavailable`, `ramp.no_merchant_available`, `ramp.limit_exceeded` (the sale limits),
+  `ramp.offramp_unavailable` (the closed page), `ramp.wallet_required` (no-wallet gate with Manage Networks),
+  `ramp.quote_expired`/`not_found` (a new price, shown), `ramp.order_in_progress` (opened), `ramp.phone_not_yours`
+  (asked again), `ramp.order_not_cancellable` (a note, the order read).
+- **Previews:** `cash-out` and every state (the list is in `gallery/CashOutPreviews.kt`'s KDoc), `activity-cash-out`,
+  `activity-cash-out-states`, `transfer-cash-out`, `transfer-cash-out-refunded`.
+- **Tests:** `androidHostTest/feature/ramp/CashOutViewModelTest.kt` (45), `commonTest/feature/ramp/CashOutTest.kt`
+  (`CashOutWireTest` 12 against the guide's JSON, `CashOutRepositoryTest` 10, `CashOutRemoteTest` 1).
+- **Contract gaps (for Pasaka):** (1) W17 needs the deposit address, so the wallet's network fee can only be known after
+  R7: the review says one may follow, and Max can overshoot (handled by "Sell X Instead"); a W17 by chain and amount
+  alone would let the review show it. (2) R7 only takes the account's own number, so the person can't send to another
+  Kenyan number (the task asked for "changeable"). (3) Sales made on another phone aren't labelled in this phone's
+  history (R5/R4 carry no transfer id or deposit address after funding). (4) Whether Circaso's and the payout fees are
+  charged on a refunded or expired sale isn't said; the page shows them under "Amount / Would have received".
+  (5) The push for a sale has the same `kind` as a top-up, so it routes through Add Money first.
+- **Not done:** run against a server; a device run.
+
 ## Add money: identity verification (2026-11-23, guide "Identity verification (KYC)" R0; design E3)
 
 A person verifies their identity **once, when they first add money**, and only where the server says it is required

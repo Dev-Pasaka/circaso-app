@@ -68,7 +68,7 @@ object NotificationRoutes {
      * The tap changes nothing because the screen on top ([top]) already shows what it is about: a `ramp.kyc` push
      * while the person is in Add Money, whose verify pages hear the same news and go on to the amount by themselves.
      */
-    fun staysOn(destination: NotificationDestination, top: Any?): Boolean = destination is NotificationDestination.RampKyc && top is AddMoneyRoute
+    fun staysOn(destination: NotificationDestination, top: Any?): Boolean = destination is NotificationDestination.RampKyc && (top is AddMoneyRoute || top is com.circaso.core.navigation.CashOutRoute)
 
     suspend fun resolve(destination: NotificationDestination, lookups: NotificationLookups): NotificationOpening = when (destination) {
         is NotificationDestination.Chat -> NotificationOpening(

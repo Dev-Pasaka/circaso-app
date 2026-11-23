@@ -276,8 +276,12 @@ fun AppNavigation(forceUpdate: Boolean, home: @Composable () -> Unit) {
     // Which incoming payments were M-Pesa top-ups, so their rows say "Added from M-Pesa" wherever payments are listed.
     val observeTopUps: com.circaso.feature.ramp.domain.ObserveTopUpsUseCase = koinInject()
     val topUps by remember(observeTopUps) { observeTopUps() }.collectAsState(emptyMap())
+    // Which payments paid a sale to M-Pesa (and which came back from one), so they read "Cashed out to M-Pesa".
+    val observeSales: com.circaso.feature.ramp.domain.ObserveSalesUseCase = koinInject()
+    val sales by remember(observeSales) { observeSales() }.collectAsState(com.circaso.feature.ramp.domain.MpesaSales())
     CompositionLocalProvider(
         com.circaso.feature.wallet.presentation.LocalMpesaTopUps provides (if (state == AuthState.Active) topUps else emptyMap()),
+        com.circaso.feature.wallet.presentation.LocalMpesaSales provides (if (state == AuthState.Active) sales else com.circaso.feature.ramp.domain.MpesaSales()),
         LocalAshaLauncher provides asha,
         com.circaso.designsystem.components.LocalSecretsOnScreen provides secretsOnScreen,
         com.circaso.feature.share.presentation.LocalShareLinks provides (if (state == AuthState.Active) shareLauncher else null),
@@ -711,6 +715,18 @@ fun AppNavigation(forceUpdate: Boolean, home: @Composable () -> Unit) {
                 com.circaso.feature.ramp.presentation.AddMoneyScreen(
                     koinViewModel<com.circaso.feature.ramp.presentation.AddMoneyViewModel>(key = "add-money-${route.orderId}-${route.network}", parameters = { parametersOf(route.orderId, route.network) }),
                     onBack = ::pop, onSupport = { backStack.add(HelpRoute) },
+                    // The order is a sale (a push, or the open order): Cash Out shows it in its place.
+                    onSale = { id -> pop(); backStack.add(CashOutRoute(id)) },
+                )
+            }
+            // E6: full screen like Add Money; Back from a sale leaves it running (re-entering resumes it).
+            entry<CashOutRoute>(metadata = Panes.FullScreen) { route ->
+                com.circaso.feature.ramp.presentation.CashOutScreen(
+                    koinViewModel<com.circaso.feature.ramp.presentation.CashOutViewModel>(key = "cash-out-${route.orderId}-${route.network}", parameters = { parametersOf(route.orderId, route.network) }),
+                    onBack = ::pop, onSupport = { backStack.add(HelpRoute) },
+                    onSendToExchange = { pop(); backStack.add(SendToWalletRoute()) },
+                    onPurchase = { id -> pop(); backStack.add(AddMoneyRoute(id)) },
+                    onNetworks = { backStack.add(NetworksRoute) },
                 )
             }
             // You › Verification: full screen like Add Money's verify pages, which it shares (Didit's screens rise over it).
@@ -1053,6 +1069,7 @@ internal fun walletActions(walletId: String?, open: (Route) -> Unit) = WalletAct
     onActivity = { open(ActivityRoute(walletId)) },
     onNetworks = { open(NetworksRoute) },
     onAddMoney = { open(AddMoneyRoute()) },
+    onCashOut = { open(CashOutRoute()) },
     onAsset = { chain, symbol -> open(AssetActivityRoute(chain, symbol, walletId)) },
     onAssets = { chain -> open(NetworkAssetsRoute(chain, walletId)) },
     onNetworkActivity = { chain -> open(NetworkActivityRoute(chain, walletId)) },

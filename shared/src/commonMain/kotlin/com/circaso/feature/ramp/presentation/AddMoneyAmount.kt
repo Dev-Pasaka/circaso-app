@@ -92,11 +92,11 @@ import com.circaso.feature.wallet.domain.chainBaseName
 import com.circaso.feature.wallet.domain.chainName
 
 /** The gap between a currency and its number, as `.cx-amount` has it. */
-private val AmountGap = 6.dp
+internal val AmountGap = 6.dp
 /** Room for the caret beside the last digit, so a number that only just fits doesn't clip it. */
-private val CaretRoom = 4.dp
+internal val CaretRoom = 4.dp
 /** The tick that says M-Pesa is the way to pay (E2: 22 px). */
-private val SelectedGlyph = 22.dp
+internal val SelectedGlyph = 22.dp
 /** The price's time line: thin enough to be read as a detail, not a progress bar. */
 private val ClockTrack = 3.dp
 
@@ -181,7 +181,7 @@ internal fun AmountPage(state: AddMoneyUiState, bottomInset: Dp, onAmount: (Stri
 
 /** A footnote label over what it names ("Pay with", "Receive on"), as E2 sets them. */
 @Composable
-private fun Labelled(label: String, content: @Composable () -> Unit) {
+internal fun Labelled(label: String, content: @Composable () -> Unit) {
     Column(verticalArrangement = Arrangement.spacedBy(AmountGap)) {
         BasicText(label, style = CircasoTheme.typography.footnote.copy(color = CircasoTheme.colors.inkSecondary), modifier = Modifier.padding(horizontal = CircasoSpacing.s1))
         content()
@@ -291,7 +291,7 @@ internal fun ReviewPage(state: AddMoneyUiState, bottomInset: Dp, onPhone: (Strin
     AddMoneyPageFrame(
         bottomInset,
         footer = {
-            PriceClock(state)
+            PriceClock(state.secondsLeft, state.quoteExpired)
             CircasoButton(
                 when {
                     state.placing -> "Sending…"
@@ -356,14 +356,13 @@ private fun QuoteDetails(quote: RampQuote, maskedPhone: String?) {
  * height, and the button under it becomes "Get a New Price": nothing on the page moves.
  */
 @Composable
-private fun PriceClock(state: AddMoneyUiState) {
+internal fun PriceClock(secondsLeft: Int, expired: Boolean) {
     val c = CircasoTheme.colors
     val t = CircasoTheme.typography
     val still = CircasoTheme.reduceMotion
-    val expired = state.quoteExpired
-    val low = !expired && state.secondsLeft <= LowSeconds
+    val low = !expired && secondsLeft <= LowSeconds
     val ink by animateColorAsState(if (low) c.warning else c.inkSecondary, tween(if (still) 0 else CircasoMotion.BaseMs), label = "clock ink")
-    val target = (state.secondsLeft.toFloat() / RampQuote.QuoteSeconds).coerceIn(0f, 1f)
+    val target = (secondsLeft.toFloat() / RampQuote.QuoteSeconds).coerceIn(0f, 1f)
     // Drains a second at a time in one even glide; a new price fills it back quickly; run out, it is empty at once
     // (the words and the line agree).
     val before = remember { floatArrayOf(target) }
@@ -375,7 +374,7 @@ private fun PriceClock(state: AddMoneyUiState) {
     val rtl = LocalLayoutDirection.current == LayoutDirection.Rtl
     Column(
         Modifier.fillMaxWidth().semantics(mergeDescendants = true) {
-            contentDescription = if (expired) "This price has run out. Get a new one to carry on." else "This price is held for ${state.secondsLeft} more seconds"
+            contentDescription = if (expired) "This price has run out. Get a new one to carry on." else "This price is held for $secondsLeft more seconds"
             // Only running out is announced; the seconds are read when asked for, not every second.
             if (expired) liveRegion = LiveRegionMode.Polite
         },
@@ -391,7 +390,7 @@ private fun PriceClock(state: AddMoneyUiState) {
             expired, transitionSpec = { fadeIn(tween(if (still) 0 else CircasoMotion.QuickMs)) togetherWith fadeOut(tween(if (still) 0 else CircasoMotion.ExitMs)) }, label = "clock line",
         ) { out ->
             BasicText(
-                if (out) "This price has run out" else "Price held for ${clock(state.secondsLeft)}",
+                if (out) "This price has run out" else "Price held for ${clock(secondsLeft)}",
                 style = t.footnote.copy(color = if (out) c.inkSecondary else ink, textAlign = TextAlign.Center, fontFeatureSettings = "tnum"), maxLines = 1,
             )
         }

@@ -166,6 +166,14 @@ data class SendToWalletRoute(val fromWalletId: String? = null) : Route
 data class AddMoneyRoute(val orderId: String? = null, val network: String? = null) : Route
 
 /**
+ * Cash out: sell USDC for M-Pesa (design E6's place, guide "Selling USDC for M-Pesa", R1/R2/R7 then W4). [orderId]
+ * opens on that sale (a `ramp.order` push handed over from Add Money, or the open order); without it the flow starts
+ * at the amount, at identity verification where the server asks for it, or resumes the person's open order.
+ */
+@Serializable
+data class CashOutRoute(val orderId: String? = null, val network: String? = null) : Route
+
+/**
  * You › Verification: where my identity check stands on a wallet network, and the check itself (design F2's row, E3
  * and its states). [network] is the one a `ramp.kyc` push was about (`MAINNET`, `TESTNET`); without it, the network
  * the Wallet tab shows.
@@ -289,6 +297,7 @@ val routeSerializers = SerializersModule {
         subclass(PayRoute::class)
         subclass(SendToWalletRoute::class)
         subclass(AddMoneyRoute::class)
+        subclass(CashOutRoute::class)
         subclass(TransferRoute::class)
         subclass(NetworksRoute::class)
         subclass(ActivityRoute::class)

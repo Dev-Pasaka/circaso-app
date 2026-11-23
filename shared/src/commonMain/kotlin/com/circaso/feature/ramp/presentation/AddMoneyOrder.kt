@@ -96,7 +96,9 @@ internal fun orderLook(order: RampOrder, everPaid: Boolean): OrderLook {
         RampOrderState.PaymentRequested -> OrderLook(CircasoIcon.Handset, SheetTone.Neutral, "Check your phone", "We sent an M-Pesa request for $pay to $phone. Enter your M-Pesa PIN there to approve it. If you don't, it closes by itself and nothing is taken.", ended = false)
         RampOrderState.Paid -> OrderLook(null, SheetTone.Neutral, "M-Pesa confirmed your payment", "$pay received. Your $get is being sent to your wallet now.", ended = false)
         RampOrderState.Releasing -> OrderLook(null, SheetTone.Neutral, "Sending your USDC", "$get is on its way to your wallet on $chain. This takes a few seconds.", ended = false)
-        RampOrderState.Unknown -> OrderLook(null, SheetTone.Neutral, "Working on your top-up", "This is taking a moment. You don't need to do anything.", ended = false)
+        // A sale's states never reach a top-up's page (the flow hands a sale to Cash Out); a newer server's are this.
+        RampOrderState.Unknown, RampOrderState.AwaitingTransfer, RampOrderState.Funded, RampOrderState.PayingOut, RampOrderState.Refunding, RampOrderState.Refunded ->
+            OrderLook(null, SheetTone.Neutral, "Working on your top-up", "This is taking a moment. You don't need to do anything.", ended = false)
         RampOrderState.Completed -> OrderLook(CircasoIcon.Check, SheetTone.Neutral, "$get added", "It's in your wallet on $chain.", ended = true)
         RampOrderState.Cancelled -> OrderLook(
             CircasoIcon.Close, SheetTone.Neutral, "Top-up cancelled",
@@ -290,11 +292,11 @@ internal fun OrderPage(state: AddMoneyUiState, order: RampOrder, bottomInset: Dp
 }
 
 /** Words giving way to other words: a cross-fade, while what holds them eases to the new height (nothing under them jumps). */
-private fun AnimatedContentTransitionScope<*>.easeOver(still: Boolean): ContentTransform =
+internal fun AnimatedContentTransitionScope<*>.easeOver(still: Boolean): ContentTransform =
     (fadeIn(tween(if (still) 0 else CircasoMotion.BaseMs)) togetherWith fadeOut(tween(if (still) 0 else CircasoMotion.QuickMs))) using SizeTransform(clip = false)
 
 /** Between a title and its paragraph, as the sheets have it (the canvas's 6 px). */
-private val TitleGap = 6.dp
+internal val TitleGap = 6.dp
 
 /**
  * The top of an order that is still under way, in the badge's own place and size: the phone while the request waits
@@ -397,7 +399,7 @@ private const val MarkFrom = 0.6f
  * be quoted before anything has gone wrong as well as after.
  */
 @Composable
-private fun ReferenceRow(orderId: String, onCopy: (String) -> Unit) {
+internal fun ReferenceRow(orderId: String, onCopy: (String) -> Unit) {
     val c = CircasoTheme.colors
     val t = CircasoTheme.typography
     DetailRow(

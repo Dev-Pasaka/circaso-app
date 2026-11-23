@@ -125,7 +125,7 @@ object ErrorMessages {
         "ramp.quote_not_found" to "That price is no longer available. Get a new one.",
         "ramp.quote_expired" to "That price has run out. Get a new one.",
         "ramp.phone_not_yours" to "Pay from the number your account is verified with.",
-        "ramp.order_in_progress" to "You have a top-up under way. Finish it first.",
+        "ramp.order_in_progress" to "You have an M-Pesa order under way. Finish it first.",
         "ramp.no_merchant_available" to "Nobody can fill that amount right now. Try a smaller amount, or try again soon. Nothing was taken.",
         // The seller picked for this payment can't take it at the moment (409): nothing was asked of M-Pesa.
         "ramp.merchant_unavailable" to "We couldn't start this payment right now. Nothing was taken. Please try again in a moment.",
@@ -135,6 +135,9 @@ object ErrorMessages {
         "ramp.collections_unavailable" to "We couldn't reach M-Pesa. Nothing was taken. Try again in a moment.",
         "ramp.custody_unavailable" to "Wallets are busy right now. Nothing was taken. Try again in a moment.",
         "ramp.pricing_unavailable" to "We can't get a price right now. Try again in a moment.",
+        // selling USDC for M-Pesa (R7, 2026-11-23); the Cash Out screens word these more fully for themselves
+        "ramp.payout_fee_unavailable" to "We can't price a sale right now. Try again later.",
+        "wallet.ramp_order_funded" to "This sale is already paid. Nothing more was sent.",
         // chamas
         "chama.not_a_member" to "You're not in this group.",
         "support.log_rate_limited" to "You've sent a few logs already. Try again in an hour, or write to us.",

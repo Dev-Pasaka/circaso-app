@@ -11,6 +11,24 @@ class ObserveRampUpdatesUseCase(private val ramp: RampRepository) { operator fun
 class ObserveTopUpsUseCase(private val ramp: RampRepository) { operator fun invoke() = ramp.topUps }
 class GetOwnMpesaNumberUseCase(private val ramp: RampRepository) { suspend operator fun invoke() = ramp.ownPhone() }
 
+// Selling USDC for M-Pesa (R2 `OFF_RAMP`, R7, then W4 naming the sale). **Money**: online-only, never queued, never optimistic.
+class QuoteSaleUseCase(private val ramp: RampRepository) { suspend operator fun invoke(blockchain: String, usdcMinor: String?, shillingsMinor: String?, idempotencyKey: String) = ramp.sellQuote(blockchain, usdcMinor, shillingsMinor, idempotencyKey) }
+class SellForMpesaUseCase(private val ramp: RampRepository) { suspend operator fun invoke(quoteId: String, phone: String, idempotencyKey: String) = ramp.sell(quoteId, phone, idempotencyKey) }
+class ObserveSalesUseCase(private val ramp: RampRepository) { operator fun invoke() = ramp.sales }
+
+/**
+ * The wallet as a sale needs it: the balance on the network the sale is pinned to, W17's fee for sending the USDC,
+ * and W4 with the PIN or biometrics (the app's usual approval). Kept apart from the wallet's own repository so the
+ * sale's screen can be tested with a scripted wallet.
+ */
+interface SaleWallet {
+    fun wallet(network: com.circaso.feature.wallet.domain.WalletNetwork): kotlinx.coroutines.flow.Flow<com.circaso.feature.wallet.domain.Wallet?>
+    /** W17 for the transfer that pays the sale; null when the server takes no fee (an older server). */
+    suspend fun fee(request: com.circaso.feature.wallet.domain.PaymentRequest): com.circaso.core.common.AppResult<com.circaso.feature.wallet.domain.PaymentQuote?>
+    /** W4 then the Circle SDK. The sale's order id is the key, always: a retry returns the same transfer, never a second. */
+    suspend fun send(request: com.circaso.feature.wallet.domain.PaymentRequest, idempotencyKey: String): com.circaso.core.common.AppResult<com.circaso.feature.wallet.domain.Transfer>
+}
+
 // Identity verification (R0). **Online-only**: a check can only be started, continued or read with a live answer.
 class StartKycUseCase(private val ramp: RampRepository) { suspend operator fun invoke(idempotencyKey: String) = ramp.startKyc(idempotencyKey) }
 class GetKycUseCase(private val ramp: RampRepository) { suspend operator fun invoke() = ramp.kyc() }

@@ -107,6 +107,8 @@ class WalletActions(
     val onAssets: (blockchain: String) -> Unit = {},
     /** Add money from M-Pesa (design E2, the ramp); null where it can't open (previews), which shows the old sheet. */
     val onAddMoney: (() -> Unit)? = null,
+    /** Cash out to M-Pesa (design E6, the ramp's selling side); null where it can't open (previews), which shows the old sheet. */
+    val onCashOut: (() -> Unit)? = null,
 )
 
 /**
@@ -114,6 +116,36 @@ class WalletActions(
  * masked M-Pesa number. A row for one reads "Added from M-Pesa" (designs E1 and E7).
  */
 val LocalMpesaTopUps = androidx.compose.runtime.compositionLocalOf<Map<String, String>> { emptyMap() }
+
+/**
+ * The sales to M-Pesa this phone paid (the ramp's selling side): the W4 transfer that paid each one reads "Cashed out to
+ * M-Pesa" with the shillings and the receipt, and a refund's transaction reads as the USDC coming back.
+ */
+val LocalMpesaSales = androidx.compose.runtime.compositionLocalOf { com.circaso.feature.ramp.domain.MpesaSales() }
+
+/** A sale's title in the wallet, by where it stands: only a paid-out one says it was cashed out. */
+internal fun saleRowTitle(sale: com.circaso.feature.ramp.domain.SaleLabel): String = when (sale.state) {
+    com.circaso.feature.ramp.domain.RampOrderState.Completed -> "Cashed out to M-Pesa"
+    com.circaso.feature.ramp.domain.RampOrderState.Review -> "Cash out being checked"
+    com.circaso.feature.ramp.domain.RampOrderState.Refunding, com.circaso.feature.ramp.domain.RampOrderState.Refunded,
+    com.circaso.feature.ramp.domain.RampOrderState.Expired, com.circaso.feature.ramp.domain.RampOrderState.Cancelled -> "Cash out not paid"
+    else -> "Cashing out to M-Pesa"
+}
+
+/** The second line of a sale's row: the shillings, then the M-Pesa receipt once paid out, else where the sale stands. */
+internal fun saleRowSub(sale: com.circaso.feature.ramp.domain.SaleLabel): String {
+    val kes = sale.receive.text
+    // It is the USDC that comes back, never shillings: an unpaid sale's line has no shillings in it.
+    return when (sale.state) {
+        com.circaso.feature.ramp.domain.RampOrderState.Completed -> listOfNotNull(kes, sale.receipt?.let { "Receipt $it" }).joinToString(" · ")
+        com.circaso.feature.ramp.domain.RampOrderState.Refunding -> "Not paid out · USDC on its way back"
+        com.circaso.feature.ramp.domain.RampOrderState.Refunded -> "Not paid out · USDC back in your wallet"
+        com.circaso.feature.ramp.domain.RampOrderState.Expired -> "Not paid out · USDC coming back"
+        com.circaso.feature.ramp.domain.RampOrderState.Cancelled -> "Not paid out"
+        com.circaso.feature.ramp.domain.RampOrderState.Review -> "$kes · being checked"
+        else -> "$kes · on its way"
+    }
+}
 
 /** The title bar's actions on the Wallet tab (design E1): hide balances, add money. */
 @Composable
@@ -665,7 +697,7 @@ private fun ActiveWallet(
                             ActionButton(CircasoIcon.Plus, "Add", { actions.onAddMoney?.invoke() ?: onComing(ComingFlow.AddMoney) }, description = if (actions.onAddMoney != null) "Add money from M-Pesa" else "Add money")
                             ActionButton(CircasoIcon.ArrowUp, "Send", actions.onPay, enabled = state.canSend)
                             ActionButton(CircasoIcon.ArrowDown, "Receive", { onReceive(true) })
-                            ActionButton(CircasoIcon.Bank, "Cash Out", { onComing(ComingFlow.CashOut) })
+                            ActionButton(CircasoIcon.Bank, "Cash Out", { actions.onCashOut?.invoke() ?: onComing(ComingFlow.CashOut) }, description = if (actions.onCashOut != null) "Cash out to M-Pesa" else "Cash out")
                         }
                     }
                 }
@@ -866,6 +898,20 @@ fun TransferRow(
     val incoming = transfer.direction == TransferDirection.In
     // Money bought with M-Pesa (the ramp): the design's own row, "Added from M-Pesa" over the number it was paid from.
     val topUp = if (incoming) transfer.txHash?.lowercase()?.let { LocalMpesaTopUps.current[it] } else null
+    // USDC sold for M-Pesa from this phone: the row says where the money went, in shillings, with the M-Pesa receipt.
+    val sales = LocalMpesaSales.current
+    val sale = if (!incoming) sales.paidBy(transfer.transferId) else null
+    val refund = if (incoming) sales.refundedBy(transfer.txHash) else null
+    if (sale != null || refund != null) {
+        ListRow(
+            title = if (sale != null) saleRowTitle(sale) else "Returned from a sale",
+            sub = if (sale != null) saleRowSub(sale) else "Not paid out to M-Pesa",
+            leading = { LetterDisc("M") },
+            trailing = { RowAmount(if (hidden) "••••" else amountLine(transfer, fiat), meta, incoming = incoming && transfer.state == TransferState.Confirmed) },
+            onClick = onClick,
+        )
+        return
+    }
     if (topUp != null) {
         ListRow(
             title = "Added from M-Pesa",

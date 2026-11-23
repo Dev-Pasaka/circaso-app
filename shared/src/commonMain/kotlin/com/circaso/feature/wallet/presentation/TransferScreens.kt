@@ -124,8 +124,12 @@ fun TransferContent(state: TransferUiState, onBack: () -> Unit) {
         // Money bought with M-Pesa (the ramp): the receipt says so, as its row in the wallet does, instead of reading
         // as a payment from an unnamed outside wallet. The value is the number it was paid from, masked ("" if unknown).
         val topUp = if (incoming) transfer.txHash?.lowercase()?.let { LocalMpesaTopUps.current[it] } else null
+        // A sale to M-Pesa paid from this phone, or the USDC coming back from one: said as what it is.
+        val sales = LocalMpesaSales.current
+        val sale = if (!incoming) sales.paidBy(transfer.transferId) else null
+        val refund = if (incoming) sales.refundedBy(transfer.txHash) else null
         // A person by name; anyone else by their address, never "Someone".
-        val name = if (topUp != null) "M-Pesa" else transfer.counterpartName
+        val name = if (topUp != null || sale != null) "M-Pesa" else if (refund != null) "Cash out refund" else transfer.counterpartName
             ?: (if (incoming) transfer.from else transfer.toAddress).takeIf { it.isNotEmpty() }?.let(::shortAddress)
             ?: if (incoming) "An outside wallet" else "An outside wallet"
         val fiat = state.fiat?.takeIf { MinorUnits.isDollar(transfer.amount.asset) }?.let { f -> usdcToFiat(transfer.amount.amountMinor, f.rate)?.let { formatFiat(f.currency, it) } }
@@ -137,14 +141,38 @@ fun TransferContent(state: TransferUiState, onBack: () -> Unit) {
         val when_ = formatLocalTime(transfer.createdAt, LocalTimeStyle.ShortDate) + ", " + formatLocalTime(transfer.createdAt, LocalTimeStyle.Clock)
         Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = CircasoSpacing.s4).padding(bottom = padding.calculateBottomPadding() + CircasoSpacing.s4), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(CircasoSpacing.s4)) {
             Spacer(Modifier.height(CircasoSpacing.s2))
-            if (topUp != null) com.circaso.designsystem.components.LetterDisc("M", size = CircasoSizes.avatarLg)
+            if (topUp != null || sale != null || refund != null) com.circaso.designsystem.components.LetterDisc("M", size = CircasoSizes.avatarLg)
             else if (transfer.counterpartName != null) Avatar(transfer.counterpartName, size = CircasoSizes.avatarLg, imageUrl = transfer.counterpartAvatar) else CoinIcon(transfer.amount.asset, size = CircasoSizes.avatarLg)
             // "KES 2,000" when it has a rate, else the coin itself ("ETH 0.01"): never split the coin text.
             val cur = if (fiat != null) fiat.substringBefore(' ') else transfer.amount.asset
             val num = if (fiat != null) fiat.substringAfter(' ') else coinNumber
-            AmountDisplay(cur, num, sub = if (topUp != null) "Added from M-Pesa · $when_" else "${if (incoming) "Received from" else "Sent to"} $name · $when_", size = AmountSize.Medium, tone = if (incoming && transfer.settled) AmountTone.Money else AmountTone.Ink)
+            AmountDisplay(cur, num, sub = when {
+                topUp != null -> "Added from M-Pesa · $when_"
+                sale != null -> "${saleRowTitle(sale)} · $when_"
+                refund != null -> "Returned from a sale · $when_"
+                else -> "${if (incoming) "Received from" else "Sent to"} $name · $when_"
+            }, size = AmountSize.Medium, tone = if (incoming && transfer.settled) AmountTone.Money else AmountTone.Ink)
             Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                DetailRow(if (incoming) "From" else "To", if (topUp != null) listOfNotNull("M-Pesa", topUp.takeIf { it.isNotBlank() }?.maskedForDisplay()).joinToString(" ") else name)
+                DetailRow(if (incoming) "From" else "To", when {
+                    topUp != null -> listOfNotNull("M-Pesa", topUp.takeIf { it.isNotBlank() }?.maskedForDisplay()).joinToString(" ")
+                    sale != null -> listOfNotNull("M-Pesa", sale.maskedPhone.takeIf { it.isNotBlank() }?.maskedForDisplay()).joinToString(" ")
+                    else -> name
+                })
+                // What the sale paid out, and the M-Pesa code to match with the M-Pesa message.
+                sale?.let { s ->
+                    DetailRow(
+                        when (s.state) {
+                            com.circaso.feature.ramp.domain.RampOrderState.Completed -> "Received on M-Pesa"
+                            com.circaso.feature.ramp.domain.RampOrderState.Refunding, com.circaso.feature.ramp.domain.RampOrderState.Refunded,
+                            com.circaso.feature.ramp.domain.RampOrderState.Expired, com.circaso.feature.ramp.domain.RampOrderState.Cancelled -> "Not paid out"
+                            else -> "To receive on M-Pesa"
+                        },
+                        s.receive.text,
+                    )
+                    s.receipt?.let { DetailRow("M-Pesa receipt", it) }
+                    DetailRow("Sale", com.circaso.feature.ramp.presentation.shortReference(s.orderId))
+                }
+                refund?.let { DetailRow("Sale", com.circaso.feature.ramp.presentation.shortReference(it.orderId)) }
                 // A name I saved for them: who it really is, beside it (money never goes by a nickname alone).
                 transfer.counterpartOwnName?.let { DetailRow("Their name", it) }
                 handleOf(transfer)?.let { DetailRow("Username", it) }

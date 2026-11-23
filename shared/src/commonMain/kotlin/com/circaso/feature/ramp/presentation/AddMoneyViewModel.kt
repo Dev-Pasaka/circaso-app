@@ -65,8 +65,10 @@ enum class RampBlock {
     Barred,
     /** The account can't trade. */
     Restricted,
-    /** No partner is online to sell right now. */
+    /** No partner is online to sell right now (or, cashing out, to buy). */
     NoMerchant,
+    /** Cashing out: the wallet isn't on the sale's chain (`ramp.wallet_required`). */
+    NoWallet,
 }
 
 /** Something that went wrong and stays on screen until dealt with: the words, and what to quote to support. */
@@ -121,6 +123,11 @@ data class AddMoneyUiState(
     val orderUnread: Boolean = false,
     /** Identity verification: only shown while [block] is [RampBlock.Verify]. */
     val verify: VerifyUi = VerifyUi(),
+    /**
+     * The order this flow opened on is a sale (a `ramp.order` push, or R1's open order): Cash Out shows it, and this
+     * screen hands over to it at once.
+     */
+    val handOff: String? = null,
 ) {
     val limits get() = status?.limits
     val amountMinor: String? get() = RampMoney.wholeToMinor(amountText)
@@ -375,6 +382,8 @@ class AddMoneyViewModel(
     }
 
     private fun show(order: RampOrder) {
+        // A sale is Cash Out's to show, with its own words: handed over, never drawn as a top-up.
+        if (order.sale) { polling?.cancel(); local.update { it.copy(handOff = order.orderId, loadingOrder = true, step = AddMoneyStep.Loading) }; return }
         // An order says which network it is on: everything after is for that one.
         order.network?.let { pinned = it; pin.value = it }
         local.update { it.copy(step = AddMoneyStep.Order, order = order, everPaid = it.everPaid || order.state.paid, placing = false, failure = null, stale = false) }

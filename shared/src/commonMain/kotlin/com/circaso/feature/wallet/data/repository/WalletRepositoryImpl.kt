@@ -387,6 +387,7 @@ class WalletRepositoryImpl(
             payoutRequestId = request.payoutRequestId,
             quoteId = request.quoteId,
             spacePaymentId = request.spacePaymentId,
+            rampOrderId = request.rampOrderId,
         )
         val prepared = when (val r = remote.prepare(body, idempotencyKey)) { is AppResult.Failure -> return r; is AppResult.Success -> r.value }
         val now = nowMillis()
@@ -435,6 +436,7 @@ class WalletRepositoryImpl(
             chatId = request.chatId,
             walletId = request.fromWalletId,
             spacePaymentId = request.spacePaymentId,
+            rampOrderId = request.rampOrderId,
         )
         // Nothing is created, so every quote takes a fresh key (a repeated one would be answered from the replay cache).
         return remote.quote(body, newIdempotencyKey()).map { it?.toDomain() }

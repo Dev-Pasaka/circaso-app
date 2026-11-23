@@ -623,7 +623,7 @@ class AddMoneyViewModelTest {
     // ---- words ----------------------------------------------------------------------------------------------------
 
     @Test fun everyStateHasItsOwnWords() {
-        val titles = RampOrderState.entries.associateWith { state ->
+        val titles = BuyingStates.associateWith { state ->
             val order = orderDto(state.name).toDomain().copy(state = state)
             orderLook(order, everPaid = state.paid).also { look ->
                 assertTrue(look.title.isNotBlank() && look.message.isNotBlank())
@@ -631,7 +631,7 @@ class AddMoneyViewModelTest {
                 assertFalse((look.title + look.message).contains("CoinX"))
             }.title
         }
-        assertEquals(RampOrderState.entries.size, titles.values.toSet().size, "no two states share a title")
+        assertEquals(BuyingStates.size, titles.values.toSet().size, "no two states share a title")
         assertNotNull(titles[RampOrderState.Unknown])
     }
 
@@ -651,9 +651,12 @@ class AddMoneyViewModelTest {
         // version doesn't know can't say which step it is.
         assertEquals(listOf(d, d, d, d), marks(RampOrderState.Completed))
         assertEquals("Added to your wallet", orderStages(RampOrderState.Completed).last().text)
-        RampOrderState.entries.filter { (it.settled && it != RampOrderState.Completed) || it == RampOrderState.Unknown }.forEach { assertTrue(orderStages(it).isEmpty(), "$it") }
-        RampOrderState.entries.filter { !it.settled && it != RampOrderState.Unknown }.forEach { assertEquals(1, marks(it).count { m -> m == a }, "$it has one step under way") }
+        BuyingStates.filter { (it.settled && it != RampOrderState.Completed) || it == RampOrderState.Unknown }.forEach { assertTrue(orderStages(it).isEmpty(), "$it") }
+        BuyingStates.filter { !it.settled && it != RampOrderState.Unknown }.forEach { assertEquals(1, marks(it).count { m -> m == a }, "$it has one step under way") }
     }
+
+    /** A top-up's states: a sale's own (AWAITING_TRANSFER and after) are Cash Out's, and never shown on a top-up's page. */
+    private val BuyingStates = RampOrderState.entries - setOf(RampOrderState.AwaitingTransfer, RampOrderState.Funded, RampOrderState.PayingOut, RampOrderState.Refunding, RampOrderState.Refunded)
 
     @Test fun theFiguresNeverClaimMoneyMovedWhenItDidNot() {
         fun labels(state: String, reason: String? = null, paid: Boolean = false) = orderDto(state, reason = reason).toDomain().let { figureLabels(it.state, orderLook(it, paid)) }

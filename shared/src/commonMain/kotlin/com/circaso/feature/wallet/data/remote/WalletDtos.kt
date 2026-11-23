@@ -52,6 +52,8 @@ import kotlinx.serialization.Serializable
     val quoteId: String? = null,
     /** A members-only space's membership quote (SP13): personal wallet, exactly its amount. */
     val spacePaymentId: String? = null,
+    /** The sale this pays (R7, 2026-11-23), sent with the order id as the `Idempotency-Key`. */
+    val rampOrderId: String? = null,
 )
 @Serializable data class PrepareTransferResponse(
     val transferId: String, val state: String, val blockchain: String, val amount: AmountDto, val challengeId: String? = null, val sdk: SdkDto? = null,
