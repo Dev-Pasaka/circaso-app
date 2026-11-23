@@ -96,7 +96,7 @@ fun AddMoneyScreen(viewModel: AddMoneyViewModel, onBack: () -> Unit, onSupport: 
         onVerify = viewModel::onVerify, onSettings = { viewModel.onSettingsOpened(); openAppSettings() },
         onRetry = viewModel::load, onAmount = viewModel::onAmount, onChain = viewModel::onChain, onContinue = viewModel::onContinue,
         onBackToAmount = viewModel::onBackToAmount, onPhone = viewModel::onPhone, onNewPrice = viewModel::onNewPrice, onConfirm = viewModel::onConfirm,
-        onCancel = viewModel::onCancel, onAgain = viewModel::onAgain, onErrorShown = viewModel::onErrorShown,
+        onCancel = viewModel::onCancel, onAgain = viewModel::onAgain, onErrorShown = viewModel::onErrorShown, onLanded = viewModel::onLanded,
     )
 }
 
@@ -144,6 +144,10 @@ fun AddMoneyContent(
     onCancel: () -> Unit = {},
     onAgain: () -> Unit = {},
     onErrorShown: () -> Unit = {},
+    /** The order's card settled on USDC that landed ([AddMoneyUiState.celebrate]): the chime. */
+    onLanded: () -> Unit = {},
+    /** Gallery only: hold the order's card at this point of its conversion (0..1). */
+    frozenAt: Float? = null,
 ) {
     val toast = rememberToastState()
     val scope = rememberCoroutineScope()
@@ -204,7 +208,7 @@ fun AddMoneyContent(
                 AddMoneyPage.Gate -> GatePage(s, bottom, onRetry, onBack, onSupport)
                 AddMoneyPage.Amount -> AmountPage(s, bottom, onAmount, onChain, onContinue, onCopy)
                 AddMoneyPage.Review -> ReviewPage(s, bottom, onPhone, onNewPrice, onConfirm, onCopy)
-                AddMoneyPage.Order -> s.order?.let { OrderPage(s, it, bottom, onBack, onSupport, onCancel, onAgain, onCopy) }
+                AddMoneyPage.Order -> s.order?.let { OrderPage(s, it, bottom, onBack, onSupport, onCancel, onAgain, onCopy, onLanded, frozenAt) }
             }
         }
     }

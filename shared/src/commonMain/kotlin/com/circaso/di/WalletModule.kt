@@ -56,12 +56,22 @@ val walletModule = module {
             override suspend fun refused(sent: String?) = networks.onRefused(sent)
         }
     }
+    // The money sounds (the coins, a top-up's chime): one setting, You → Money sound; each top-up's chime once.
+    single {
+        val prefs = get<com.circaso.core.datastore.AppPreferences>()
+        com.circaso.core.platform.MoneySounds(
+            chime = getOrNull<com.circaso.core.platform.PaymentChime>() ?: com.circaso.core.platform.NoPaymentChime,
+            coins = { com.circaso.core.platform.playMoneySound() },
+            soundOn = { !prefs.flag(com.circaso.core.datastore.AppPreferences.MoneySoundOff).first() },
+            rung = { prefs.text(com.circaso.core.datastore.AppPreferences.RampChimedText).first() },
+            saveRung = { prefs.setText(com.circaso.core.datastore.AppPreferences.RampChimedText, it) },
+        )
+    }
     single<WalletRemote> { KtorWalletRemote(get(), get(), get()) }
     single { WalletRepositoryImpl(get(), get(), signer = { WalletSignerBridge.signer ?: NoWalletSigner }, currency = { get<com.circaso.core.datastore.AppPreferences>().currency.first() ?: localCurrencyCode() }, json = get(),
         scope = get(),
-        onMoneyReceived = {
-            if (!get<com.circaso.core.datastore.AppPreferences>().flag(com.circaso.core.datastore.AppPreferences.MoneySoundOff).first()) com.circaso.core.platform.playMoneySound()
-        },
+        // The coins, unless a top-up's chime has this money (MoneySounds).
+        onMoneyReceived = { get<com.circaso.core.platform.MoneySounds>().moneyReceived() },
         onBiometricsLostOn = { walletId, network ->
             val prefs = get<com.circaso.core.datastore.AppPreferences>()
             prefs.setWalletBiometrics(walletId, false, network.wire)

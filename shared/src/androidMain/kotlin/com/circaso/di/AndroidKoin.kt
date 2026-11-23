@@ -72,6 +72,7 @@ fun initKoinAndroid(context: Context) {
             single<com.circaso.core.platform.PasskeyPrf> { com.circaso.core.platform.AndroidPasskeyPrf(get()) } // the PIN Vault
             single<AudioRecorder> { AndroidAudioRecorder(app) }
             single<AudioPlayer> { AndroidAudioPlayer(app) }
+            single<com.circaso.core.platform.PaymentChime> { com.circaso.core.platform.AndroidPaymentChime(app) } // a top-up landing
             single<LiveMicrophone> { AndroidLiveMicrophone(app) }
             single<com.circaso.feature.assistant.voice.VadEngine> { com.circaso.core.platform.AndroidVadEngine() } // Silero VAD for barge-in
             single<com.circaso.core.qr.QrScanner> { com.circaso.core.qr.AndroidQrScanner(currentActivityProvider()) }

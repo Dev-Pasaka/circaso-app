@@ -48,7 +48,7 @@ private val status = RampStatus(
 )
 private val quote = RampQuote("q1", "BASE-SEPOLIA", kes("2000"), usdc, "128.7", kes("30"), null)
 private fun order(state: RampOrderState, reason: String? = null) =
-    RampOrder("0c9f6a52-7a1e-4d1b-9d55-1f3a6f0f2b11", state, WalletNetwork.TESTNET, "BASE-SEPOLIA", kes("2000"), usdc, "128.7", kes("30"), Masked, null, reason, null, null)
+    RampOrder(OrderId, state, WalletNetwork.TESTNET, "BASE-SEPOLIA", kes("2000"), usdc, "128.7", kes("30"), Masked, null, reason, null, null)
 
 /**
  * Add money (design E2/E3, the ramp), `-preview=`: every step and every state the backend has, from sample data.
@@ -82,8 +82,58 @@ private fun KycProbe(page: Boolean) {
     }
 }
 
+/**
+ * The conversion on the order page (2026-11-23), `-preview=`: `add-money-live` plays a whole top-up on a loop (the
+ * M-Pesa card waiting, coming apart into the USDC card, landing with the haptic and the chime); `-converting-early`,
+ * `-converting` (mid-disintegration) and `-converting-late` hold one frame of it; `-landing` opens on a completed
+ * order whose landing hasn't been heard (it settles, chimes once). Any Add Money preview takes the endings `-dark`,
+ * `-hc`, `-dark-hc` (the theme) and `-still` (Reduce Motion), in that order: `add-money-live-dark-still`.
+ */
 @Composable
 internal fun AddMoneyPreview(name: String): Boolean {
+    if (!name.startsWith("add-money")) return false
+    var base = name
+    val still = base.endsWith("-still").also { if (it) base = base.removeSuffix("-still") }
+    val hc = base.endsWith("-hc").also { if (it) base = base.removeSuffix("-hc") }
+    val dark = base.endsWith("-dark").also { if (it) base = base.removeSuffix("-dark") }
+    if (!still && !hc && !dark) return AddMoneyPreviewScreen(name)
+    var shown = true
+    CircasoTheme(darkTheme = dark || (!hc && CircasoTheme.colors.isDark), highContrast = hc) {
+        androidx.compose.runtime.CompositionLocalProvider(com.circaso.designsystem.platform.LocalReduceMotion provides (still || CircasoTheme.reduceMotion)) {
+            shown = AddMoneyPreviewScreen(base)
+        }
+    }
+    return shown
+}
+
+private const val OrderId = "0c9f6a52-7a1e-4d1b-9d55-1f3a6f0f2b11"
+
+/** A top-up from the M-Pesa prompt to the USDC landing, on a loop, so the conversion can be watched and recorded. */
+@Composable
+private fun LiveTopUp(amount: AddMoneyUiState) {
+    val waiting = amount.copy(step = AddMoneyStep.Order, order = order(RampOrderState.PaymentRequested))
+    var state by remember { mutableStateOf(waiting) }
+    LaunchedEffect(Unit) {
+        while (true) {
+            state = waiting
+            delay(3_000)
+            state = state.copy(order = order(RampOrderState.Paid), everPaid = true)
+            delay(2_400)
+            state = state.copy(order = order(RampOrderState.Releasing))
+            delay(1_200)
+            state = state.copy(order = order(RampOrderState.Completed), celebrate = OrderId)
+            delay(6_000)
+        }
+    }
+    AddMoneyContent(state, onBack = {}, onLanded = {
+        state = state.copy(celebrate = null)
+        // The real chime, as the app plays it (silent switch and all).
+        org.koin.mp.KoinPlatform.getKoinOrNull()?.getOrNull<com.circaso.core.platform.PaymentChime>()?.play()
+    })
+}
+
+@Composable
+private fun AddMoneyPreviewScreen(name: String): Boolean {
     if (name == "add-money-verify-probe" || name == "add-money-verify-probe-page") { KycProbe(page = name.endsWith("-page")); return true }
     val amount = AddMoneyUiState(step = AddMoneyStep.Amount, status = status, blockchain = "BASE-SEPOLIA", amountText = "2000", maskedPhone = Masked, testnet = true)
     val review = amount.copy(step = AddMoneyStep.Review, quote = quote, secondsLeft = 42)
@@ -186,6 +236,12 @@ internal fun AddMoneyPreview(name: String): Boolean {
         "add-money-chains" -> amount.copy(status = status.copy(blockchains = listOf("BASE-SEPOLIA", "SOL-DEVNET")))
         "add-money-order-unread" -> AddMoneyUiState(step = AddMoneyStep.LoadFailed, orderUnread = true, failure = AddMoneyFailure("We couldn't load this top-up just now. It isn't affected: if you approved the M-Pesa request, your USDC still arrives.", "req_8f2a1c"))
         "add-money-review-order" -> onOrder(RampOrderState.Review, "payment_mismatch", paid = true)
+        // The conversion (2026-11-23): played whole, held at one frame, and landing.
+        "add-money-live" -> { LiveTopUp(amount); return true }
+        "add-money-converting-early" -> { AddMoneyContent(onOrder(RampOrderState.Paid, paid = true), onBack = {}, frozenAt = 0.22f); return true }
+        "add-money-converting" -> { AddMoneyContent(onOrder(RampOrderState.Paid, paid = true), onBack = {}, frozenAt = 0.5f); return true }
+        "add-money-converting-late" -> { AddMoneyContent(onOrder(RampOrderState.Releasing, paid = true), onBack = {}, frozenAt = 0.8f); return true }
+        "add-money-landing" -> onOrder(RampOrderState.Completed, paid = true).copy(celebrate = OrderId)
         else -> return false
     }
     AddMoneyContent(state, onBack = {})

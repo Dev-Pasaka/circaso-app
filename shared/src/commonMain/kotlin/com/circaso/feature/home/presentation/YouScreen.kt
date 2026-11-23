@@ -270,7 +270,7 @@ fun YouContent(
                     }
                     ListRow("Currency", sub = "How amounts are shown in your wallet and chats", trailing = { RowChevron() }, onClick = actions.onCurrency)
                     RowDivider(Modifier.padding(start = CircasoSpacing.s4))
-                    SwitchRow("Money sound", state.moneySound, actions.onMoneySound, sub = "Coins dropping into your wallet when money arrives")
+                    SwitchRow("Money sound", state.moneySound, actions.onMoneySound, sub = "Coins when money arrives, and a chime when money from M-Pesa lands")
                 }
                 // Asha's settings live in her own menu, inside her chat (Pasaka, 2026-11-07); the You tab keeps Help.
                 Section(null) {

@@ -99,6 +99,7 @@ val rampModule = module {
             online = get<ConnectionState>().status.map { it == ConnectionStatus.Online },
             networks = get(),
             network = WalletNetwork.of(network),
+            sounds = getOrNull(),
         )
     }
     // Cash out (E6): selling USDC for M-Pesa. [orderId] opens on a sale (a push, or the open order).

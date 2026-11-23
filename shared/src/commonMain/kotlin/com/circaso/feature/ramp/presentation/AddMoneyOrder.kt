@@ -171,27 +171,27 @@ internal fun figureLabels(state: RampOrderState, look: OrderLook): Pair<String, 
 private enum class OrderActions { Following, Done, Support, Again }
 
 /**
- * An order from the moment the request leaves until the USDC is in the wallet, or until it ends another way. The top
- * says where it stands in one sentence; under it the story so far, step by step; then the figures. Every change of
- * state eases in (the words cross-fade and the page makes room, a step's mark turns from a spinner to a tick), and a
- * top-up that lands while the person is watching is felt as well as seen.
+ * An order from the moment the request leaves until the USDC is in the wallet, or until it ends another way. The hero
+ * is the money itself ([ConversionCard]): the M-Pesa card waiting for the PIN, coming apart into the silver USDC card
+ * once M-Pesa has the money, settling as it lands. Under it one sentence says where it stands, then the story so far
+ * in small steps (for clarity and for screen readers), then the figures. Every change of state eases in, and a top-up
+ * that lands is felt and heard as well as seen (the haptic and the chime, on the frame the card settles).
  */
 @Composable
-internal fun OrderPage(state: AddMoneyUiState, order: RampOrder, bottomInset: Dp, onBack: () -> Unit, onSupport: () -> Unit, onCancel: () -> Unit, onAgain: () -> Unit, onCopy: (String) -> Unit) {
+internal fun OrderPage(
+    state: AddMoneyUiState, order: RampOrder, bottomInset: Dp, onBack: () -> Unit, onSupport: () -> Unit, onCancel: () -> Unit, onAgain: () -> Unit, onCopy: (String) -> Unit,
+    onLanded: () -> Unit = {}, frozenAt: Float? = null,
+) {
     val c = CircasoTheme.colors
     val t = CircasoTheme.typography
     val look = orderLook(order, state.everPaid)
     val still = CircasoTheme.reduceMotion
     val done = order.state == RampOrderState.Completed
-    // The money arriving, felt and seen: only when it happens in front of the person, not on opening a top-up that
-    // had already ended. The four steps stay a moment, all ticked, before they give way to what was added.
-    val haptics = LocalHapticFeedback.current
+    // Watched as it lands, the four steps stay a moment, all ticked, before they give way to what was added; a top-up
+    // opened after it had ended shows none.
     var seen by remember { mutableStateOf(order.state) }
     LaunchedEffect(order.state) {
-        if (done && seen != RampOrderState.Completed) {
-            haptics.performHapticFeedback(HapticFeedbackType.Confirm)
-            if (!still) delay(CircasoMotion.MomentMs.toLong())
-        }
+        if (done && seen != RampOrderState.Completed && !still) delay((ConvertMs + SheenMs).toLong())
         seen = order.state
     }
     val landing = done && seen != RampOrderState.Completed
@@ -238,20 +238,13 @@ internal fun OrderPage(state: AddMoneyUiState, order: RampOrder, bottomInset: Dp
             }
         },
     ) {
-        Column(Modifier.fillMaxWidth().padding(top = CircasoSpacing.s4), horizontalAlignment = Alignment.CenterHorizontally) {
-            // The badge keeps its place while the words under it change: a spinner that is still a spinner in the next
-            // state doesn't start again, and only a different sign (the phone, a tick, a warning) settles in anew.
-            AnimatedContent(
-                Triple(look.icon, look.tone, look.ended),
-                transitionSpec = { fadeIn(tween(if (still) 0 else CircasoMotion.BaseMs)) togetherWith fadeOut(tween(if (still) 0 else CircasoMotion.QuickMs)) },
-                contentAlignment = Alignment.Center, label = "order badge",
-            ) { (icon, tone, ended) ->
-                if (ended && icon != null) SheetBadge(icon, tone) else WaitingBadge(icon)
-            }
+        Column(Modifier.fillMaxWidth().padding(top = CircasoSpacing.s2), horizontalAlignment = Alignment.CenterHorizontally) {
+            // The money, as the hero: the card keeps its place while everything under it changes.
+            ConversionCard(order, look, celebrate = state.celebrate == order.orderId, onLanded = onLanded, frozenAt = frozenAt)
             // The state is announced as it changes: the person may be looking at the M-Pesa prompt, not at this screen.
             AnimatedContent(
                 order.state to look, contentKey = { it.first }, transitionSpec = { easeOver(still) }, label = "order state",
-                modifier = Modifier.fillMaxWidth().padding(top = CircasoSpacing.s4).semantics { liveRegion = LiveRegionMode.Polite },
+                modifier = Modifier.fillMaxWidth().padding(top = CircasoSpacing.s5).semantics { liveRegion = LiveRegionMode.Polite },
             ) { (_, l) ->
                 // The sheets' own title and paragraph (title-2 over body, 6 dp apart), the same size in every state.
                 Column(Modifier.fillMaxWidth().padding(horizontal = CircasoSpacing.s2), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(TitleGap)) {
@@ -259,17 +252,12 @@ internal fun OrderPage(state: AddMoneyUiState, order: RampOrder, bottomInset: Dp
                     BasicText(l.message, style = t.body.copy(color = c.inkSecondary, textAlign = TextAlign.Center))
                 }
             }
-            // The app's own money moment (the card Send ends on), for money that has arrived.
-            Reveal(done && !landing) {
-                Box(Modifier.fillMaxWidth().padding(top = CircasoSpacing.s5), contentAlignment = Alignment.Center) {
-                    MoneyCard(head = "Added from M-Pesa", amount = order.receive.text, foot = "Paid ${order.pay.text}", outgoing = false, symbol = order.receive.unit)
-                }
-            }
         }
         Column {
             val stages = orderStages(order.state)
             val shown = lastOf(stages.takeIf { it.isNotEmpty() })
-            Reveal(stages.isNotEmpty() && (!done || landing)) { if (shown != null) Stages(shown, Modifier.padding(bottom = CircasoSpacing.s5)) }
+            // Under the card the steps are a quiet caption: the card tells the story, the words keep it exact.
+            Reveal(stages.isNotEmpty() && (!done || landing)) { if (shown != null) Stages(shown, Modifier.padding(bottom = CircasoSpacing.s5), compact = true) }
             val (paying, getting) = figureLabels(order.state, look)
             ListGroup {
                 // Where Support will ask for it, the reference comes first.
@@ -330,14 +318,18 @@ private val MarkBox = 24.dp
 private val MarkGlyph = 20.dp
 private val MarkDot = 8.dp
 private val StageLine = 2.dp
+private val MarkBoxCompact = 20.dp
+private val MarkGlyphCompact = 16.dp
+private val MarkDotCompact = 6.dp
 
+/** [compact]: the smaller caption under Add Money's card (subhead words, a smaller mark column). */
 @Composable
-internal fun Stages(stages: List<OrderStage>, modifier: Modifier = Modifier) {
+internal fun Stages(stages: List<OrderStage>, modifier: Modifier = Modifier, compact: Boolean = false) {
     ListGroup(modifier) {
-        Column(Modifier.padding(horizontal = CircasoSpacing.s4, vertical = CircasoSpacing.s3)) {
+        Column(Modifier.padding(horizontal = CircasoSpacing.s4, vertical = if (compact) CircasoSpacing.s2 else CircasoSpacing.s3)) {
             stages.forEachIndexed { i, stage ->
-                if (i > 0) StageJoin(reached = stage.mark != StageMark.Waiting)
-                StageRow(stage)
+                if (i > 0) StageJoin(reached = stage.mark != StageMark.Waiting, compact)
+                StageRow(stage, compact)
             }
         }
     }
@@ -345,21 +337,22 @@ internal fun Stages(stages: List<OrderStage>, modifier: Modifier = Modifier) {
 
 /** The line from one step's mark to the next: it darkens as the order reaches the step below it. */
 @Composable
-private fun StageJoin(reached: Boolean) {
+private fun StageJoin(reached: Boolean, compact: Boolean) {
     val c = CircasoTheme.colors
     val ink by animateColorAsState(if (reached) c.ink else c.separator, tween(if (CircasoTheme.reduceMotion) 0 else CircasoMotion.BaseMs), label = "stage join")
-    Box(Modifier.padding(start = (MarkBox - StageLine) / 2).width(StageLine).height(CircasoSpacing.s3).clip(CircasoShapes.pill).background(ink))
+    val box = if (compact) MarkBoxCompact else MarkBox
+    Box(Modifier.padding(start = (box - StageLine) / 2).width(StageLine).height(if (compact) CircasoSpacing.s2 else CircasoSpacing.s3).clip(CircasoShapes.pill).background(ink))
 }
 
 /** One step of the order's story: a tick when done, a spinner while it is the one under way, a dot while it waits. */
 @Composable
-private fun StageRow(stage: OrderStage) {
+private fun StageRow(stage: OrderStage, compact: Boolean) {
     val c = CircasoTheme.colors
     val t = CircasoTheme.typography
     val still = CircasoTheme.reduceMotion
     val ink by animateColorAsState(if (stage.mark == StageMark.Waiting) c.inkSecondary else c.ink, tween(if (still) 0 else CircasoMotion.BaseMs), label = "stage ink")
     Row(
-        Modifier.fillMaxWidth().padding(vertical = CircasoSpacing.s1).clearAndSetSemantics {
+        Modifier.fillMaxWidth().padding(vertical = if (compact) 2.dp else CircasoSpacing.s1).clearAndSetSemantics {
             contentDescription = stage.text + when (stage.mark) { StageMark.Done -> ", done"; StageMark.Active -> ", in progress"; StageMark.Waiting -> ", waiting" }
         },
         verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(CircasoSpacing.s3),
@@ -373,11 +366,11 @@ private fun StageRow(stage: OrderStage) {
             },
             contentAlignment = Alignment.Center, label = "stage mark",
         ) { mark ->
-            Box(Modifier.size(MarkBox), contentAlignment = Alignment.Center) {
+            Box(Modifier.size(if (compact) MarkBoxCompact else MarkBox), contentAlignment = Alignment.Center) {
                 when (mark) {
-                    StageMark.Done -> CircasoIconImage(CircasoIcon.Check, c.ink, Modifier.size(MarkGlyph), strokeWidth = 2.4f)
-                    StageMark.Active -> Spinner(c.ink)
-                    StageMark.Waiting -> Box(Modifier.size(MarkDot).clip(CircasoShapes.circle).background(c.inkTertiary))
+                    StageMark.Done -> CircasoIconImage(CircasoIcon.Check, c.ink, Modifier.size(if (compact) MarkGlyphCompact else MarkGlyph), strokeWidth = 2.4f)
+                    StageMark.Active -> Spinner(c.ink, if (compact) Modifier.graphicsLayer { scaleX = 0.85f; scaleY = 0.85f } else Modifier)
+                    StageMark.Waiting -> Box(Modifier.size(if (compact) MarkDotCompact else MarkDot).clip(CircasoShapes.circle).background(c.inkTertiary))
                 }
             }
         }
@@ -386,7 +379,8 @@ private fun StageRow(stage: OrderStage) {
             stage.text to (stage.mark == StageMark.Active), transitionSpec = { fadeIn(tween(if (still) 0 else CircasoMotion.BaseMs)) togetherWith fadeOut(tween(if (still) 0 else CircasoMotion.QuickMs)) },
             label = "stage text", modifier = Modifier.weight(1f),
         ) { (text, active) ->
-            BasicText(text, style = (if (active) t.headline else t.body).copy(color = ink))
+            val style = if (compact) (if (active) t.subhead.copy(fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold) else t.subhead) else if (active) t.headline else t.body
+            BasicText(text, style = style.copy(color = ink))
         }
     }
 }

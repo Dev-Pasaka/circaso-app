@@ -73,6 +73,7 @@ fun initKoinIos() {
         single<SocialSignIn> { IosSocialSignIn() }
         single<com.circaso.core.platform.PasskeyPrf> { com.circaso.core.platform.IosPasskeyPrf() } // the PIN Vault; see PasskeyBridge
         single<ContactsReader> { IosContactsReader() }
+        single<com.circaso.core.platform.PaymentChime> { com.circaso.core.platform.IosPaymentChime() } // a top-up landing
         single<DeviceKeyStore> { IosDeviceKeyStore() }
         single<SignalCrypto> { IosSignalCrypto() } // libsignal lives on the Swift side; see SignalBridge
         single<LocalSealer> { IosLocalSealer(get(), get()) }
