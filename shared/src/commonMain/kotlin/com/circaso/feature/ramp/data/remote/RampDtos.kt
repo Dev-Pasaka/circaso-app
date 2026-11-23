@@ -257,7 +257,7 @@ data class SavedSale(
     )
 
     companion object {
-        private fun wire(state: RampOrderState): String = when (state) {
+        fun wire(state: RampOrderState): String = when (state) {
             RampOrderState.AwaitingTransfer -> "AWAITING_TRANSFER"
             RampOrderState.PayingOut -> "PAYING_OUT"
             RampOrderState.PaymentRequested -> "PAYMENT_REQUESTED"

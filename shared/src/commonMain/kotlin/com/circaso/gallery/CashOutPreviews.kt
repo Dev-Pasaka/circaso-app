@@ -59,7 +59,9 @@ private val saleQuote = RampQuote(
  * `-short`, `-other-network`, `-send-failed`, `-send-unknown`, `-send-offline`, `-time-up`, `-cancel-note`, `-sent`,
  * `-funded`, `-paying-out`, `-paying-out-stale`, `-paying-out-offline`, `-done`, `-done-no-receipt`, `-refunding`,
  * `-refunding-late`, `-refunded`, `-refunded-mismatch`, `-expired`, `-expired-sent`, `-cancelled`, `-review-sale`,
- * `-unknown`).
+ * `-unknown`). Also `-verify-declined`; `-sell-less` (cancel and sell what fits); `-maybe-sent` and `-maybe-sent-expired`
+ * (W4 got no answer). In the wallet: `activity-cash-out`, `activity-cash-out-states`, `transfer-cash-out`,
+ * `transfer-cash-out-refunded` (PreviewScreens.kt).
  */
 @Composable
 internal fun CashOutPreview(name: String): Boolean {
@@ -121,8 +123,10 @@ internal fun CashOutPreview(name: String): Boolean {
         "cash-out-send-pricing" -> awaiting.copy(sendFee = null, pricingSend = true)
         "cash-out-approving" -> awaiting.copy(sending = true)
         "cash-out-approval-cancelled" -> awaiting.copy(sendHold = SendHold.Cancelled)
-        "cash-out-short" -> awaiting.copy(sendFee = SendFee.Quoted("50000", "wq1"), sendHold = SendHold.Short, wallet = walletWith("10000000", "10"))
+        "cash-out-short", "cash-out-sell-less" -> awaiting.copy(sendFee = SendFee.Quoted("50000", "wq1"), sendHold = SendHold.Short, wallet = walletWith("10000000", "10"))
         "cash-out-other-network" -> awaiting.copy(sendHold = SendHold.OtherNetwork)
+        "cash-out-maybe-sent" -> awaiting.copy(sendHold = SendHold.Unknown, maybeSent = true, depositLeft = 0, sendFailure = AddMoneyFailure("We couldn't confirm the transfer.", "req_8f2a1c"))
+        "cash-out-maybe-sent-expired" -> onSale(RampOrderState.Expired, "never_funded", sent = false).copy(maybeSent = true)
         "cash-out-send-failed" -> awaiting.copy(sendHold = SendHold.Failed, sendFailure = AddMoneyFailure("Too many wrong PIN tries. Try again in 30 minutes.", "req_8f2a1c"))
         "cash-out-send-unknown" -> awaiting.copy(sendHold = SendHold.Unknown, sendFailure = AddMoneyFailure("We couldn't confirm the transfer.", "req_8f2a1c"))
         "cash-out-send-offline" -> awaiting.copy(online = false)

@@ -587,13 +587,14 @@ private fun PreviewScreensC(name: String) {
         "lost-access-sent" -> com.circaso.feature.support.presentation.LostAccessContent(com.circaso.feature.support.presentation.LostAccessUiState(phone = "+254 712 345 678", email = "amina@example.com", caseNumber = "CX-48213"), {}, {}, {}, {}, {})
         "transfer" -> TransferContent(TransferUiState(transfer = sampleTransfers().first(), fiat = sampleWallet().fiat), {})
         // A sale to M-Pesa paid from this phone, in the wallet's history and as its payment detail (E1/E7, C7).
-        "transfer-cash-out", "activity-cash-out" -> androidx.compose.runtime.CompositionLocalProvider(com.circaso.feature.wallet.presentation.LocalMpesaSales provides sampleSales()) {
+        "transfer-cash-out", "transfer-cash-out-refunded", "activity-cash-out", "activity-cash-out-states" -> androidx.compose.runtime.CompositionLocalProvider(com.circaso.feature.wallet.presentation.LocalMpesaSales provides sampleSales(name.endsWith("-states") || name.endsWith("-refunded"))) {
             val sold = sampleTransfers()[2].copy(state = TransferState.Confirmed, counterpartName = "M-Pesa")
             val back = Transfer("t4", TransferDirection.In, TransferState.Confirmed, "BASE-SEPOLIA", "0xbeef", null, "0x7a3f", Amount("USDC", "10000000", "10"), null, null, "0xrefund", null, null, null, nowMillis() - 250_000_000, nowMillis() - 250_000_000)
-            if (name == "transfer-cash-out") TransferContent(TransferUiState(transfer = sold, fiat = sampleWallet().fiat), {})
+            if (name.startsWith("transfer-")) TransferContent(TransferUiState(transfer = sold, fiat = sampleWallet().fiat), {})
             else com.circaso.feature.wallet.presentation.ActivityContent(
                 com.circaso.feature.wallet.presentation.ActivityUiState(
-                    transfers = sampleTransfers().take(2) + sold + back, fiat = sampleWallet().fiat, loaded = true,
+                    transfers = sampleTransfers().take(2) + sold + back + (if (name.endsWith("-states")) listOf("t5", "t6", "t7").map { id -> sold.copy(transferId = id) } else emptyList()),
+                    fiat = sampleWallet().fiat, loaded = true,
                     today = com.circaso.core.platform.localDayIndex(com.circaso.core.sync.nowMillis()),
                 ),
                 {}, {}, {}, {},
@@ -659,9 +660,15 @@ internal fun sampleWallet() = Wallet(
     fetchedAt = nowMillis() - 60_000,
 )
 
-/** A sale paid out (t3, with its M-Pesa receipt) and one that came back (its refund's hash). */
-private fun sampleSales() = com.circaso.feature.ramp.domain.MpesaSales.of(listOf(
-    com.circaso.feature.ramp.domain.SaleLabel("0193a7c2-5d1e-4b8f-9e2a-6c4f1d8b2e11", "t3", "+254 7•• ••• 678", com.circaso.feature.ramp.domain.RampAmount("KES", "634500", ""), "TKN3H2X1QP", com.circaso.feature.ramp.domain.RampOrderState.Completed, null),
+/**
+ * A sale paid out (t3, with its M-Pesa receipt) and one that came back (its refund's hash); with [states], t3 refunded
+ * and t5–t7 paying out, in review and timed out, so every title the wallet gives a sale can be seen.
+ */
+private fun sampleSales(states: Boolean = false) = com.circaso.feature.ramp.domain.MpesaSales.of(listOf(
+    com.circaso.feature.ramp.domain.SaleLabel("0193a7c2-5d1e-4b8f-9e2a-6c4f1d8b2e11", "t3", "+254 7•• ••• 678", com.circaso.feature.ramp.domain.RampAmount("KES", "634500", ""), if (states) null else "TKN3H2X1QP", if (states) com.circaso.feature.ramp.domain.RampOrderState.Refunded else com.circaso.feature.ramp.domain.RampOrderState.Completed, null),
+    com.circaso.feature.ramp.domain.SaleLabel("o5", "t5", "+254 7•• ••• 678", com.circaso.feature.ramp.domain.RampAmount("KES", "126900", ""), null, com.circaso.feature.ramp.domain.RampOrderState.PayingOut, null),
+    com.circaso.feature.ramp.domain.SaleLabel("o6", "t6", "+254 7•• ••• 678", com.circaso.feature.ramp.domain.RampAmount("KES", "126900", ""), null, com.circaso.feature.ramp.domain.RampOrderState.Review, null),
+    com.circaso.feature.ramp.domain.SaleLabel("o7", "t7", "+254 7•• ••• 678", com.circaso.feature.ramp.domain.RampAmount("KES", "126900", ""), null, com.circaso.feature.ramp.domain.RampOrderState.Expired, null),
     com.circaso.feature.ramp.domain.SaleLabel("0193a7c2-0000-4b8f-9e2a-6c4f1d8b0000", "t9", "+254 7•• ••• 678", com.circaso.feature.ramp.domain.RampAmount("KES", "126900", ""), null, com.circaso.feature.ramp.domain.RampOrderState.Refunded, "0xrefund"),
 ))
 

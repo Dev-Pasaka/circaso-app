@@ -289,6 +289,9 @@ class RampRepositoryImpl(
         val direction = RampDirection.of(frame.direction)
         _updates.emit(RampOrderUpdate(frame.orderId, state, frame.failureReason, direction))
         if (direction == RampDirection.OffRamp) {
+            // The wallet's label follows every move, whether or not the sale's screen is open.
+            val labelled = WalletNetwork.of(frame.network) ?: WalletNetwork.ofChainOrNull(frame.blockchain) ?: networks.effective()
+            if (state != RampOrderState.Unknown) editSales(labelled) { list -> list.map { if (it.orderId == frame.orderId) it.copy(state = SavedSale.wire(state)) else it } }
             // A sale paid out or refunded: read once, so its wallet label gets the receipt or the refund (and a refund
             // refreshes the balance), whether or not its screen is open.
             if (state == RampOrderState.Completed || state == RampOrderState.Refunded) {

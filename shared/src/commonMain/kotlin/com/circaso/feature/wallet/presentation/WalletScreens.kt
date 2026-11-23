@@ -123,6 +123,15 @@ val LocalMpesaTopUps = androidx.compose.runtime.compositionLocalOf<Map<String, S
  */
 val LocalMpesaSales = androidx.compose.runtime.compositionLocalOf { com.circaso.feature.ramp.domain.MpesaSales() }
 
+/** A sale's title in the wallet, by where it stands: only a paid-out one says it was cashed out. */
+internal fun saleRowTitle(sale: com.circaso.feature.ramp.domain.SaleLabel): String = when (sale.state) {
+    com.circaso.feature.ramp.domain.RampOrderState.Completed -> "Cashed out to M-Pesa"
+    com.circaso.feature.ramp.domain.RampOrderState.Review -> "Cash out being checked"
+    com.circaso.feature.ramp.domain.RampOrderState.Refunding, com.circaso.feature.ramp.domain.RampOrderState.Refunded,
+    com.circaso.feature.ramp.domain.RampOrderState.Expired, com.circaso.feature.ramp.domain.RampOrderState.Cancelled -> "Cash out not paid"
+    else -> "Cashing out to M-Pesa"
+}
+
 /** The second line of a sale's row: the shillings, then the M-Pesa receipt once paid out, else where the sale stands. */
 internal fun saleRowSub(sale: com.circaso.feature.ramp.domain.SaleLabel): String {
     val kes = sale.receive.text
@@ -894,7 +903,7 @@ fun TransferRow(
     val refund = if (incoming) sales.refundedBy(transfer.txHash) else null
     if (sale != null || refund != null) {
         ListRow(
-            title = if (sale != null) "Cashed out to M-Pesa" else "Returned from a sale",
+            title = if (sale != null) saleRowTitle(sale) else "Returned from a sale",
             sub = if (sale != null) saleRowSub(sale) else "Not paid out to M-Pesa",
             leading = { LetterDisc("M") },
             trailing = { RowAmount(if (hidden) "••••" else amountLine(transfer, fiat), meta, incoming = incoming && transfer.state == TransferState.Confirmed) },

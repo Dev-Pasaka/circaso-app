@@ -148,7 +148,7 @@ fun TransferContent(state: TransferUiState, onBack: () -> Unit) {
             val num = if (fiat != null) fiat.substringAfter(' ') else coinNumber
             AmountDisplay(cur, num, sub = when {
                 topUp != null -> "Added from M-Pesa · $when_"
-                sale != null -> "Cashed out to M-Pesa · $when_"
+                sale != null -> "${saleRowTitle(sale)} · $when_"
                 refund != null -> "Returned from a sale · $when_"
                 else -> "${if (incoming) "Received from" else "Sent to"} $name · $when_"
             }, size = AmountSize.Medium, tone = if (incoming && transfer.settled) AmountTone.Money else AmountTone.Ink)
@@ -160,7 +160,15 @@ fun TransferContent(state: TransferUiState, onBack: () -> Unit) {
                 })
                 // What the sale paid out, and the M-Pesa code to match with the M-Pesa message.
                 sale?.let { s ->
-                    DetailRow(if (s.state == com.circaso.feature.ramp.domain.RampOrderState.Completed) "Received on M-Pesa" else "To receive on M-Pesa", s.receive.text)
+                    DetailRow(
+                        when (s.state) {
+                            com.circaso.feature.ramp.domain.RampOrderState.Completed -> "Received on M-Pesa"
+                            com.circaso.feature.ramp.domain.RampOrderState.Refunding, com.circaso.feature.ramp.domain.RampOrderState.Refunded,
+                            com.circaso.feature.ramp.domain.RampOrderState.Expired, com.circaso.feature.ramp.domain.RampOrderState.Cancelled -> "Not paid out"
+                            else -> "To receive on M-Pesa"
+                        },
+                        s.receive.text,
+                    )
                     s.receipt?.let { DetailRow("M-Pesa receipt", it) }
                     DetailRow("Sale", com.circaso.feature.ramp.presentation.shortReference(s.orderId))
                 }

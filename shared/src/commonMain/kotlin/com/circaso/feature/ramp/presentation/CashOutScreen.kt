@@ -103,7 +103,7 @@ import kotlinx.coroutines.launch
  * sale followed until the shillings are on their phone.
  */
 @Composable
-fun CashOutScreen(viewModel: CashOutViewModel, onBack: () -> Unit, onSupport: () -> Unit, onSendToExchange: () -> Unit = {}, onPurchase: (String) -> Unit = {}) {
+fun CashOutScreen(viewModel: CashOutViewModel, onBack: () -> Unit, onSupport: () -> Unit, onSendToExchange: () -> Unit = {}, onPurchase: (String) -> Unit = {}, onNetworks: () -> Unit = {}) {
     val state by viewModel.state.collectAsState()
     LifecycleResumeEffect(viewModel) { viewModel.onResumed(); onPauseOrDispose { viewModel.onPaused() } }
     // The order this opened on is a purchase (a push, or the open order): Add Money takes it from here.
@@ -114,6 +114,7 @@ fun CashOutScreen(viewModel: CashOutViewModel, onBack: () -> Unit, onSupport: ()
         onRetry = viewModel::load, onAmount = viewModel::onAmount, onUnit = viewModel::onUnit, onMax = viewModel::onMax, onChain = viewModel::onChain,
         onContinue = viewModel::onContinue, onBackToAmount = viewModel::onBackToAmount, onPhone = viewModel::onPhone, onNewPrice = viewModel::onNewPrice,
         onSell = viewModel::onSell, onSend = viewModel::onSend, onCancel = viewModel::onCancel, onAgain = viewModel::onAgain,
+        onSellLess = viewModel::onSellLess, onNetworks = onNetworks,
     )
 }
 
@@ -159,6 +160,8 @@ fun CashOutContent(
     onSend: () -> Unit = {},
     onCancel: () -> Unit = {},
     onAgain: () -> Unit = {},
+    onSellLess: () -> Unit = {},
+    onNetworks: () -> Unit = {},
 ) {
     val toast = rememberToastState()
     val scope = rememberCoroutineScope()
@@ -209,10 +212,10 @@ fun CashOutContent(
                 CashOutPage.LoadFailed -> CashOutLoadFailedPage(s, bottom, onRetry, onBack, onCopy)
                 CashOutPage.Verify -> VerifyIntroPage(s.verifyPage(), bottom, onVerify, onBack, onCopy)
                 CashOutPage.VerifyState -> VerifyStatePage(s.verifyPage(), bottom, onVerify, onSettings, onSupport, onBack, onCopy)
-                CashOutPage.Gate -> CashOutGatePage(s, bottom, onRetry, onBack, onSupport, onSendToExchange)
+                CashOutPage.Gate -> CashOutGatePage(s, bottom, onRetry, onBack, onSupport, onSendToExchange, onNetworks)
                 CashOutPage.Amount -> SaleAmountPage(s, bottom, onAmount, onUnit, onMax, onChain, onContinue, onCopy)
                 CashOutPage.Review -> SaleReviewPage(s, bottom, onPhone, onNewPrice, onSell, onCopy)
-                CashOutPage.Order -> s.order?.let { SaleOrderPage(s, it, bottom, onBack, onSupport, onSend, onCancel, onAgain, onCopy) }
+                CashOutPage.Order -> s.order?.let { SaleOrderPage(s, it, bottom, onBack, onSupport, onSend, onCancel, onAgain, onCopy, onSellLess) }
             }
         }
     }
@@ -239,16 +242,20 @@ private fun CashOutLoadFailedPage(state: CashOutUiState, bottomInset: Dp, onRetr
         if (offline) "You're offline" else if (state.orderUnread) "This sale didn't load" else "Cash Out didn't open",
         when {
             state.orderUnread -> if (offline) "This sale shows when you're back online. It isn't affected: if you sent the USDC, the sale carries on." else state.failure?.message ?: "We couldn't load this sale just now. It isn't affected."
-            offline -> "Cashing out needs a connection: Circaso and M-Pesa have to talk while you sell. Nothing left your wallet."
+            offline -> "Cashing out needs a connection: Circaso and M-Pesa have to talk while you sell."
             else -> state.failure?.message ?: CashOutViewModel.CouldNotOpen
         },
         "Try Again", onRetry, "Close", onBack, reference = state.failure?.reference, onCopy = onCopy, tone = if (offline) SheetTone.Neutral else SheetTone.Warning,
     )
 }
 
-/** R1's gates other than E3, in E6's honest voice: closed, barred, paused, nobody buying, or no wallet on the chain. */
+/**
+ * R1's gates other than E3, in E6's honest voice: closed, barred, paused, nobody buying, or no wallet on the chain.
+ * E6's "Notify Me When It's Ready" is left out: there is no route for it, so the closed page offers only E6's other way
+ * on, sending to an exchange.
+ */
 @Composable
-private fun CashOutGatePage(state: CashOutUiState, bottomInset: Dp, onRetry: () -> Unit, onBack: () -> Unit, onSupport: () -> Unit, onSendToExchange: () -> Unit) {
+private fun CashOutGatePage(state: CashOutUiState, bottomInset: Dp, onRetry: () -> Unit, onBack: () -> Unit, onSupport: () -> Unit, onSendToExchange: () -> Unit, onNetworks: () -> Unit) {
     when (state.block) {
         RampBlock.Barred -> MessagePage(bottomInset, CircasoIcon.Lock, CashOutBarredTitle, BarredMessage, "Contact Support", onSupport, "Close", onBack, tone = SheetTone.Warning)
         RampBlock.Restricted -> MessagePage(
@@ -258,19 +265,18 @@ private fun CashOutGatePage(state: CashOutUiState, bottomInset: Dp, onRetry: () 
         )
         RampBlock.NoMerchant -> MessagePage(
             bottomInset, CircasoIcon.Clock, "No one can buy USDC right now",
-            "Circaso's M-Pesa partners are offline for the moment. Nothing left your wallet. Try again soon.",
+            "Circaso's M-Pesa partners are offline for the moment. Try again soon.",
             "Try Again", onRetry, "Close", onBack, primaryEnabled = state.online, note = CashOutOfflineNote.takeIf { !state.online },
         )
         RampBlock.NoWallet -> MessagePage(
             bottomInset, CircasoIcon.Network, "Your wallet isn't on this network yet",
-            "Cashing out sends USDC from your wallet on this network. Add it under Wallet, Manage networks, then try again. Nothing left your wallet.",
-            "Close", onBack,
+            "Cashing out sends USDC from your wallet on this network. Add the network to your wallet, then try again.",
+            "Manage Networks", onNetworks, "Close", onBack,
         )
         // Closed to this person (or a server from before selling): E6's way on, sending to an exchange.
         else -> MessagePage(
             bottomInset, CircasoIcon.Bank, "Cash out isn't open to you yet",
-            "Cashing out to M-Pesa is opening to people a few at a time" + (if (state.testnet) ", and on Testnet it is for Circaso's own testing" else "") +
-                ". Until then, you can send your USDC to an exchange and withdraw from there.",
+            "Cashing out to M-Pesa isn't available on your account yet. Until it is, you can send your USDC to an exchange and withdraw from there.",
             "Send to an Exchange", onSendToExchange, "Close", onBack,
         )
     }
@@ -303,7 +309,7 @@ private fun SaleAmountSkeleton() {
         SkeletonLine(t.footnote, 0.45f)
     }
     SkeletonBlock(Modifier.fillMaxWidth().height(CircasoSizes.controlSm), CircasoShapes.pill, c.fillStrong)
-    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+    Column(verticalArrangement = Arrangement.spacedBy(AmountGap)) {
         SkeletonLine(t.footnote, 0.25f, Modifier.padding(horizontal = CircasoSpacing.s1))
         ListGroup {
             Row(Modifier.fillMaxWidth().padding(horizontal = CircasoSpacing.s4, vertical = CircasoSpacing.s3), horizontalArrangement = Arrangement.spacedBy(CircasoSpacing.s3), verticalAlignment = Alignment.CenterVertically) {
@@ -341,7 +347,7 @@ private fun SaleAmountPage(
         bottomInset,
         footer = {
             CircasoButton("Continue", { focusManager.clearFocus(); onContinue() }, size = ButtonSize.Large, block = true, enabled = state.canQuote || state.quoting, busy = state.quoting)
-            FooterNote(if (!state.online) CashOutOfflineNote else "You'll see every fee before you sell.")
+            FooterNote(if (!state.online) CashOutOfflineNote else "You'll see every fee before anything leaves your wallet.")
         },
     ) {
         Column(Modifier.fillMaxWidth().padding(top = CircasoSpacing.s2), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(CircasoSpacing.s1)) {
@@ -352,7 +358,8 @@ private fun SaleAmountPage(
                 error != null -> error
                 live != null && state.unit == SaleUnit.Usdc -> "You receive about ${live.receive.text}"
                 live != null -> "You send about ${live.pay.text}"
-                state.estimating -> "Getting a price…"
+                // An amount is typed and its price isn't in yet: said at once, never the limits flickering in between.
+                state.estimating || (state.askKey != null && state.online) -> "Getting a price…"
                 limits != null -> "${limits.minOrder.text} to ${limits.maxOrder.text} to M-Pesa"
                 else -> " "
             }
@@ -382,7 +389,7 @@ private fun SaleAmountPage(
                 ListRow(
                     "M-Pesa", sub = state.maskedPhone?.maskedForDisplay() ?: "Your verified number",
                     leading = { LetterDisc("M") },
-                    trailing = { CircasoIconImage(CircasoIcon.Check, c.ink, Modifier.size(22.dp).semantics { contentDescription = "Selected" }, strokeWidth = 2.4f) },
+                    trailing = { CircasoIconImage(CircasoIcon.Check, c.ink, Modifier.size(SelectedGlyph).semantics { contentDescription = "Selected" }, strokeWidth = 2.4f) },
                 )
             }
         }
@@ -395,6 +402,8 @@ private fun SaleAmountPage(
                 DetailRow("You sell", RampMoney.Coin + (state.blockchain?.let { " on " + chainName(it) } ?: ""))
                 RowDivider()
                 DetailRow("Fees", "Shown before you sell")
+                RowDivider()
+                DetailRow("Network fee", "If any, shown before you approve")
                 if (limits != null) {
                     RowDivider(); FigureRow("At a time", "${limits.minOrder.text} to ${limits.maxOrder.text}")
                     RowDivider(); FigureRow("Daily limit", limits.daily.text)
@@ -419,12 +428,12 @@ private fun SaleAmountEntry(state: CashOutUiState, onAmount: (String) -> Unit, f
         val room = constraints.maxWidth
         val sizes = listOf(t.amountHero to t.title2, t.amountLarge to t.title2, t.amountMedium to t.title3)
         val (number, currency) = remember(shown, unit, room, density, t) {
-            val spare = with(density) { (6.dp + 4.dp).roundToPx() }
+            val spare = with(density) { (AmountGap + CaretRoom).roundToPx() }
             sizes.firstOrNull { (n, cur) ->
                 measurer.measure(shown, n, maxLines = 1).size.width + measurer.measure(unit, cur.copy(fontWeight = FontWeight.SemiBold), maxLines = 1).size.width + spare <= room
             } ?: sizes.last()
         }
-        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        Row(horizontalArrangement = Arrangement.spacedBy(AmountGap)) {
             BasicText(unit, style = currency.copy(fontWeight = FontWeight.SemiBold, color = c.inkSecondary), modifier = Modifier.alignByBaseline())
             BasicTextField(
                 value = state.amountText, visualTransformation = if (state.unit == SaleUnit.Kes) GroupedDigits else GroupedDecimal,
@@ -496,7 +505,7 @@ private fun SaleReviewPage(state: CashOutUiState, bottomInset: Dp, onPhone: (Str
                 { focusManager.clearFocus(); if (expired) onNewPrice() else onSell() }, size = ButtonSize.Large, block = true,
                 enabled = if (expired) state.online else state.canConfirm || state.placing || state.quoting, busy = state.placing || state.quoting,
             )
-            FooterNote(if (!state.online) CashOutOfflineNote else "Next, you'll approve sending ${quote.pay.text}, as for any payment.")
+            FooterNote(if (!state.online) CashOutOfflineNote else "Next, you'll approve sending ${quote.pay.text}, plus a network fee if your wallet charges one. You'll see it first.")
         },
     ) {
         Column(Modifier.fillMaxWidth().padding(top = CircasoSpacing.s2).semantics(mergeDescendants = true) {}, horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(CircasoSpacing.s1)) {
@@ -528,15 +537,16 @@ private fun SaleReviewPage(state: CashOutUiState, bottomInset: Dp, onPhone: (Str
 @Composable
 private fun SaleQuoteDetails(quote: RampQuote, maskedPhone: String?) {
     Column(verticalArrangement = Arrangement.spacedBy(CircasoSpacing.s3)) {
+        // Worked out in the order it happens: the rate, what the USDC is worth, each fee taken out, what reaches M-Pesa.
         ListGroup {
-            FigureRow("You receive", quote.receive.text, strong = true)
-            RowDivider()
             FigureRow("Rate", rateLine(quote.rate))
-            quote.worth?.let { RowDivider(); FigureRow("Value", it.text) }
+            quote.worth?.let { RowDivider(); FigureRow("Worth at this rate", it.text) }
             RowDivider()
             FigureRow("Circaso fee", saleFee(quote.fee))
             RowDivider()
             FigureRow("M-Pesa payout fee", saleFee(quote.providerFee))
+            RowDivider()
+            FigureRow("You receive", quote.receive.text, strong = true)
         }
         ListGroup {
             DetailRow("To", "M-Pesa " + (maskedPhone?.maskedForDisplay() ?: "your verified number"))

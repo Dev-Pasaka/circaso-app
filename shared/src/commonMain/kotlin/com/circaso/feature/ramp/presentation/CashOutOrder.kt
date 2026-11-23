@@ -65,8 +65,10 @@ import kotlinx.coroutines.delay
 internal enum class SaleActions {
     /** The sale waits for this phone's USDC: "Send USDC", and Cancel. */
     Send,
-    /** The wallet can't cover the USDC and its fee: Cancel is the way on. */
+    /** The wallet can't cover the USDC and its fee: cancel and sell what fits. */
     Short,
+    /** The wallet is on the other network: switch there first. */
+    Switch,
     /** Nothing to do but wait: the server moves it on. */
     Following,
     /** Paid out. */
@@ -106,6 +108,7 @@ internal fun saleLook(order: RampOrder, s: CashOutUiState): SaleLook {
         RampOrderState.AwaitingTransfer -> when {
             s.sent -> SaleLook(null, SheetTone.Neutral, "Sending your USDC", "$usdc is on its way to Circaso's partner. This takes a few seconds.", SaleActions.Following, settled = false)
             s.sending -> SaleLook(null, SheetTone.Neutral, "Approve the transfer", "Confirm sending $usdc to finish your sale.", SaleActions.Send, settled = false)
+            s.depositOver && s.maybeSent -> SaleLook(CircasoIcon.Clock, SheetTone.Warning, "Time's up for this sale", MaybeSentWords, SaleActions.Following, settled = true, needsReference = true)
             s.depositOver -> SaleLook(CircasoIcon.Clock, SheetTone.Warning, "Time's up for this sale", "Your USDC wasn't sent in time, so nothing left your wallet. This updates in a moment.", SaleActions.Following, settled = true)
             s.sendHold == SendHold.Short -> {
                 val fee = (s.sendFee as? SendFee.Quoted)?.amountMinor
@@ -113,14 +116,15 @@ internal fun saleLook(order: RampOrder, s: CashOutUiState): SaleLook {
                 val has = s.balanceMinor?.let { " and holds ${CashOutUiState.usdcText(it)}" } ?: ""
                 SaleLook(
                     CircasoIcon.Warning, SheetTone.Warning, "Not enough USDC for this sale",
-                    "Your wallet needs ${CashOutUiState.usdcText(need)}${if (fee != null) " for this sale and its network fee" else " for this sale"}$has. Nothing left your wallet. Cancel this sale, then sell a little less.",
+                    "Your wallet needs ${CashOutUiState.usdcText(need)}${if (fee != null) " for this sale and its network fee" else " for this sale"}$has. Nothing left your wallet." +
+                        (s.sellable?.let { " You can sell ${CashOutUiState.usdcText(it)} instead." } ?: " Cancel this sale."),
                     SaleActions.Short, settled = true,
                 )
             }
             s.sendHold == SendHold.OtherNetwork -> SaleLook(
                 CircasoIcon.Network, SheetTone.Warning, "Switch to ${s.network.label} to finish",
-                "This sale is on ${s.network.label}, and your wallet is showing the other network. Switch on the Wallet tab, then send. Nothing left your wallet.",
-                SaleActions.Send, settled = true,
+                "This sale is on ${s.network.label}, and your wallet is showing the other network. Switch on the Wallet tab, then come back and send. Nothing left your wallet.",
+                SaleActions.Switch, settled = true,
             )
             s.sendHold == SendHold.Cancelled -> SaleLook(CircasoIcon.ArrowUp, SheetTone.Neutral, "Send your USDC to finish", "You didn't approve the transfer, so nothing left your wallet.$held", SaleActions.Send, settled = true)
             s.sendHold == SendHold.Unknown -> SaleLook(CircasoIcon.Warning, SheetTone.Warning, "We couldn't confirm the transfer", CashOutViewModel.SendUnknown, SaleActions.Send, settled = true, needsReference = true)
@@ -139,14 +143,16 @@ internal fun saleLook(order: RampOrder, s: CashOutUiState): SaleLook {
         RampOrderState.Funded -> SaleLook(null, SheetTone.Neutral, "Sending your M-Pesa payment", "Your USDC reached Circaso's partner. They're sending $kes to $phone.", SaleActions.Following, settled = false)
         RampOrderState.PayingOut -> SaleLook(null, SheetTone.Neutral, "Sending your M-Pesa payment", "$kes is on its way to $phone. It can take a minute.", SaleActions.Following, settled = false)
         RampOrderState.Completed -> SaleLook(CircasoIcon.Check, SheetTone.Neutral, "$kes sent to your M-Pesa", "Look out for the M-Pesa message on $phone.", SaleActions.Done, settled = true)
-        RampOrderState.Refunding -> SaleLook(null, SheetTone.Neutral, "Your USDC is on its way back", refundWords(order.failureReason, usdc, done = false), SaleActions.Following, settled = false)
-        RampOrderState.Refunded -> SaleLook(CircasoIcon.ArrowDown, SheetTone.Neutral, "Your USDC is back in your wallet", refundWords(order.failureReason, usdc, done = true, chain = chain), SaleActions.Again, settled = true)
+        RampOrderState.Refunding -> SaleLook(null, SheetTone.Neutral, if (order.failureReason == "never_funded") "This sale ended" else "Your USDC is on its way back", refundWords(order.failureReason, usdc, done = false), SaleActions.Following, settled = false)
+        RampOrderState.Refunded -> SaleLook(CircasoIcon.ArrowDown, SheetTone.Neutral, if (order.failureReason == "never_funded") "This sale ended" else "Your USDC is back in your wallet", refundWords(order.failureReason, usdc, done = true, chain = chain), SaleActions.Again, settled = true)
         // Nothing arrived by the deadline. If this phone sent it late, it comes back by itself (REFUNDING follows).
+        // Sent from here (or perhaps sent) and arrived late: it comes back by itself; nothing to retry, Support beside it.
         RampOrderState.Expired -> if (s.sent) SaleLook(
             CircasoIcon.Clock, SheetTone.Warning, "This sale timed out",
-            "Your USDC didn't reach Circaso's partner in time. If it arrives late, it's sent back to your wallet by itself, and this page updates when it is.",
-            SaleActions.Support, settled = true, needsReference = true,
-        ) else SaleLook(CircasoIcon.Clock, SheetTone.Neutral, "This sale timed out", "Nothing left your wallet. You can start a new sale whenever you like.", SaleActions.Again, settled = true)
+            "Your $usdc left your wallet but didn't reach Circaso's partner in time. It's sent back to you by itself, and this page updates when it is.",
+            SaleActions.Following, settled = true, needsReference = true,
+        ) else if (s.maybeSent) SaleLook(CircasoIcon.Clock, SheetTone.Warning, "This sale timed out", MaybeSentWords, SaleActions.Following, settled = true, needsReference = true)
+        else SaleLook(CircasoIcon.Clock, SheetTone.Neutral, "This sale timed out", "Nothing left your wallet. You can start a new sale whenever you like.", SaleActions.Again, settled = true)
         RampOrderState.Cancelled -> SaleLook(CircasoIcon.Close, SheetTone.Neutral, "Sale cancelled", "Nothing left your wallet.", SaleActions.Again, settled = true)
         RampOrderState.Review -> SaleLook(
             CircasoIcon.Shield, SheetTone.Warning, "We're checking this sale",
@@ -157,6 +163,9 @@ internal fun saleLook(order: RampOrder, s: CashOutUiState): SaleLook {
         else -> SaleLook(null, SheetTone.Neutral, "Working on your sale", "This is taking a moment. You don't need to do anything.", SaleActions.Following, settled = false)
     }
 }
+
+/** When it isn't known whether W4 went: never "nothing left your wallet". */
+internal const val MaybeSentWords = "If your USDC went, it comes back to your wallet by itself, and this page updates when it does."
 
 /** Why the USDC is coming back, worded from `failureReason` (guide: "word it, don't show it"). */
 internal fun refundWords(reason: String?, usdc: String, done: Boolean, chain: String? = null): String {
@@ -195,17 +204,19 @@ internal fun saleStages(order: RampOrder, sent: Boolean, sending: Boolean): List
 }
 
 /** What the two money figures are called: future while under way, past once paid out, conditional for an ending. */
-internal fun saleFigureLabels(state: RampOrderState, look: SaleLook): Pair<String, String> = when {
-    state == RampOrderState.Completed -> "You sold" to "You received"
-    look.actions == SaleActions.Again || look.actions == SaleActions.Support -> "Amount" to "Would have received"
+internal fun saleFigureLabels(state: RampOrderState, look: SaleLook): Pair<String, String> = when (state) {
+    RampOrderState.Completed -> "You sold" to "You received"
+    // Still being decided: what it is for, never that it failed.
+    RampOrderState.Review -> "You sell" to "To receive"
+    RampOrderState.Refunding, RampOrderState.Refunded, RampOrderState.Expired, RampOrderState.Cancelled -> "Amount" to "Would have received"
     else -> "You sell" to "You receive"
 }
 
-/** "KES 26"; "None" at zero. */
+/** "KES 26, taken out": a fee comes out of what the USDC is worth; "None" at zero. */
 internal fun saleFee(amount: RampAmount?): String = when {
     amount == null -> "None"
     MinorUnits.isZero(amount.amountMinor) -> "None"
-    else -> amount.text
+    else -> amount.text + ", taken out"
 }
 
 /**
@@ -217,6 +228,7 @@ internal fun saleFee(amount: RampAmount?): String = when {
 internal fun SaleOrderPage(
     state: CashOutUiState, order: RampOrder, bottomInset: Dp,
     onBack: () -> Unit, onSupport: () -> Unit, onSend: () -> Unit, onCancel: () -> Unit, onAgain: () -> Unit, onCopy: (String) -> Unit,
+    onSellLess: () -> Unit = {},
 ) {
     val c = CircasoTheme.colors
     val t = CircasoTheme.typography
@@ -259,9 +271,19 @@ internal fun SaleOrderPage(
                             )
                         }
                         SaleActions.Short -> {
-                            CircasoButton("Cancel Sale", onCancel, size = ButtonSize.Large, block = true, enabled = state.canCancel && state.online && !state.cancelling, busy = state.cancelling)
+                            val fits = state.sellable
+                            CircasoButton(
+                                if (fits != null) "Sell ${CashOutUiState.usdcText(fits)} Instead" else "Cancel Sale", if (fits != null) onSellLess else onCancel,
+                                size = ButtonSize.Large, block = true, enabled = state.canCancel && state.online && !state.cancelling, busy = state.cancelling,
+                            )
                             Reveal(!state.online) { FooterNote(CashOutOfflineNote, Modifier.padding(top = CircasoSpacing.s2)) }
-                            CircasoButton("Close", onBack, Modifier.padding(top = CircasoSpacing.s2), style = ButtonStyle.Plain, size = ButtonSize.Medium, block = true)
+                            if (fits != null) Reveal(state.online) { FooterNote("This sale is cancelled first. Nothing left your wallet.", Modifier.padding(top = CircasoSpacing.s2)) }
+                            CircasoButton(if (fits != null) "Cancel Sale" else "Close", if (fits != null) onCancel else onBack, Modifier.padding(top = CircasoSpacing.s2), style = ButtonStyle.Plain, size = ButtonSize.Medium, block = true, enabled = fits == null || (state.canCancel && state.online && !state.cancelling))
+                        }
+                        SaleActions.Switch -> {
+                            CircasoButton("Close", onBack, size = ButtonSize.Large, block = true)
+                            FooterNote("Switch networks on the Wallet tab, then open this sale again.", Modifier.padding(top = CircasoSpacing.s2))
+                            CircasoButton("Cancel Sale", onCancel, Modifier.padding(top = CircasoSpacing.s2), style = ButtonStyle.Plain, size = ButtonSize.Medium, block = true, enabled = state.canCancel && state.online && !state.cancelling, busy = state.cancelling)
                         }
                         SaleActions.Done -> CircasoButton("Done", onBack, size = ButtonSize.Large, block = true)
                         SaleActions.Support -> {
@@ -284,6 +306,8 @@ internal fun SaleOrderPage(
                                 },
                                 transitionSpec = { easeOver(still) }, label = "sale note", modifier = Modifier.padding(top = CircasoSpacing.s2),
                             ) { FooterNote(it) }
+                            // Where the money's whereabouts are in question, Support is there, never in the way.
+                            if (look.needsReference) CircasoButton("Contact Support", onSupport, Modifier.padding(top = CircasoSpacing.s2), style = ButtonStyle.Plain, size = ButtonSize.Medium, block = true)
                         }
                     }
                 }
@@ -321,13 +345,13 @@ internal fun SaleOrderPage(
                 if (look.needsReference) { ReferenceRow(order.orderId, onCopy); RowDivider() }
                 FigureRow(selling, order.pay.text)
                 RowDivider()
-                FigureRow(getting, order.receive.text, strong = true)
-                RowDivider()
                 FigureRow("Rate", rateLine(order.rate))
                 RowDivider()
                 FigureRow("Circaso fee", saleFee(order.fee))
                 RowDivider()
                 FigureRow("M-Pesa payout fee", saleFee(order.providerFee))
+                RowDivider()
+                FigureRow(getting, order.receive.text, strong = true)
                 // The wallet's own fee for sending the USDC, when there is one: on top, and said before it is approved.
                 (state.sendFee as? SendFee.Quoted)?.takeIf { order.state == RampOrderState.AwaitingTransfer }?.let { RowDivider(); FigureRow("Network fee", CashOutUiState.usdcText(it.amountMinor) + ", on top") }
                 RowDivider()

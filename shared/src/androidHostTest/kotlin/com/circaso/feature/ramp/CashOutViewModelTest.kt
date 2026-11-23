@@ -444,6 +444,36 @@ class CashOutViewModelTest {
         assertTrue(w.sends.isEmpty())
     }
 
+    @Test fun sellLessCancelsAndOffersWhatFits() = with(w = FakeSaleWallet("10000000").also { it.fee = AppResult.Success(FakeSaleWallet.quote("50000", QuoteProblem.InsufficientFunds)) }) { vm, f, _ ->
+        vm.toReview(); vm.onSell()
+        assertEquals("9950000", vm.state.value.sellable)
+        f.remote.cancel = AppResult.Success(saleDto("CANCELLED"))
+        vm.onSellLess()
+        assertEquals("s1", f.remote.cancels.single().first)
+        assertEquals(CashOutStep.Amount, vm.state.value.step)
+        assertEquals(SaleUnit.Usdc, vm.state.value.unit)
+        assertEquals("9.95", vm.state.value.amountText)
+    }
+
+    @Test fun aTransferWithNoAnswerNeverBecomesNothingLeft() = with(fixture().also { it.remote.sell = AppResult.Success(saleDto("AWAITING_TRANSFER", expiresAt = "1970-01-01T00:01:00Z")) }, FakeSaleWallet().also { it.send = AppResult.Failure(AppError.Network) }) { vm, f, _ ->
+        vm.toReview(); vm.onSell()
+        assertTrue(vm.state.value.maybeSent)
+        assertFalse(vm.state.value.canCancel, "it may have gone: cancelling isn't offered")
+        f.answer("EXPIRED", reason = "never_funded")
+        advanceTimeBy(61_000)
+        assertEquals(RampOrderState.Expired, vm.state.value.order?.state)
+        assertEquals(com.circaso.feature.ramp.presentation.MaybeSentWords, vm.look().message)
+        assertNotEquals(SaleActions.Again, vm.look().actions, "no Try Again while the USDC may be on its way back")
+    }
+
+    @Test fun aWalletOnTheOtherNetworkOffersNoSendUntilBack() = with(w = FakeSaleWallet().also { it.send = refusal("wallet.network_changed") }) { vm, _, _ ->
+        vm.toReview(); vm.onSell()
+        assertEquals(SaleActions.Switch, vm.look().actions)
+        assertFalse(vm.state.value.canSend)
+        vm.onResumed()
+        assertTrue(vm.state.value.canSend)
+    }
+
     @Test fun aFeeThatCouldNotBeCheckedSendsNothing() = with(w = FakeSaleWallet().also { it.fee = AppResult.Failure(AppError.Network) }) { vm, _, w ->
         vm.toReview(); vm.onSell()
         assertTrue(w.sends.isEmpty())
@@ -559,9 +589,17 @@ class CashOutViewModelTest {
             assertEquals(SaleActions.Again, it.look().actions)
         }
         ending("EXPIRED", "never_funded", sent = true) {
-            assertEquals(SaleActions.Support, it.look().actions)
+            // It comes back by itself: nothing to retry, Support beside it, the reference first.
+            assertEquals(SaleActions.Following, it.look().actions)
             assertTrue(it.look().needsReference)
+            assertEquals("Your 10.00 USDC left your wallet but didn't reach Circaso's partner in time. It's sent back to you by itself, and this page updates when it is.", it.look().message)
         }
+        ending("EXPIRED", "never_funded", sent = false) {
+            assertEquals(SaleActions.Again, it.look().actions)
+            assertEquals("Nothing left your wallet. You can start a new sale whenever you like.", it.look().message)
+        }
+        ending("REFUNDING", "payout_failed") { assertEquals("Amount" to "Would have received", saleFigureLabels(it.state.value.order!!.state, it.look())) }
+        ending("REVIEW") { assertEquals("You sell" to "To receive", saleFigureLabels(it.state.value.order!!.state, it.look())) }
         ending("REVIEW") {
             assertEquals("We're checking this sale", it.look().title)
             assertEquals("Your money is safe. A person at Circaso is checking this sale, and we'll update you. Please don't send it again.", it.look().message)

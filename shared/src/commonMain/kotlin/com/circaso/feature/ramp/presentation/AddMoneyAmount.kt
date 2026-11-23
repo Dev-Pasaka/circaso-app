@@ -92,11 +92,11 @@ import com.circaso.feature.wallet.domain.chainBaseName
 import com.circaso.feature.wallet.domain.chainName
 
 /** The gap between a currency and its number, as `.cx-amount` has it. */
-private val AmountGap = 6.dp
+internal val AmountGap = 6.dp
 /** Room for the caret beside the last digit, so a number that only just fits doesn't clip it. */
-private val CaretRoom = 4.dp
+internal val CaretRoom = 4.dp
 /** The tick that says M-Pesa is the way to pay (E2: 22 px). */
-private val SelectedGlyph = 22.dp
+internal val SelectedGlyph = 22.dp
 /** The price's time line: thin enough to be read as a detail, not a progress bar. */
 private val ClockTrack = 3.dp
 

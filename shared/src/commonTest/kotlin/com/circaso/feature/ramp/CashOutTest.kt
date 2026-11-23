@@ -287,6 +287,14 @@ class CashOutRepositoryTest {
         assertNull(f.sales[WalletNetwork.MAINNET]?.value)
     }
 
+    @Test fun everySalesFrameMovesItsWalletLabel() = runTest(UnconfinedTestDispatcher()) {
+        val f = RampFixture()
+        f.repo.saleSent(saleDto("AWAITING_TRANSFER").toDomain(), "tr-1")
+        f.repo.onFrame("order.updated", circasoJson().parseToJsonElement("""{"orderId":"s1","direction":"OFF_RAMP","state":"REVIEW","blockchain":"BASE-SEPOLIA","network":"TESTNET"}""").jsonObject)
+        assertEquals(RampOrderState.Review, f.repo.sales.first().paidBy("tr-1")?.state)
+        assertTrue(f.remote.reads.isEmpty(), "only a payout or a refund needs the order read")
+    }
+
     @Test fun aPaidOutFrameReadsTheSaleSoItsLabelGetsTheReceipt() = runTest(UnconfinedTestDispatcher()) {
         val f = RampFixture()
         f.repo.saleSent(saleDto("AWAITING_TRANSFER").toDomain(), "tr-1")

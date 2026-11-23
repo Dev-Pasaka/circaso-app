@@ -726,6 +726,7 @@ fun AppNavigation(forceUpdate: Boolean, home: @Composable () -> Unit) {
                     onBack = ::pop, onSupport = { backStack.add(HelpRoute) },
                     onSendToExchange = { pop(); backStack.add(SendToWalletRoute()) },
                     onPurchase = { id -> pop(); backStack.add(AddMoneyRoute(id)) },
+                    onNetworks = { backStack.add(NetworksRoute) },
                 )
             }
             // You › Verification: full screen like Add Money's verify pages, which it shares (Didit's screens rise over it).
