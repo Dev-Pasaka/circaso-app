@@ -459,6 +459,10 @@ breaking up with last round's "You sold". Each face is recorded into its `Graphi
 its own layer (`recorder`), which reads no animation: the breath, the sending sheen and the conversion only redraw the
 recording, never record the face again (before, a new display list a frame for as long as an order waited; checked on
 iOS that later label changes still show).
+A card about to turn with its copies ready keeps the words they were made with (`aboutToTurn`), so a sale whose poll
+missed PAYING_OUT (FUNDED straight to COMPLETED) turns on the next frame, then cross-fades to "Received on M-Pesa"
+(preview `cash-out-live-fast`). Dimmed cards take a stronger veil on dark ground (0.24, `DimVeilDark`), or a silver
+card hardly dims; a landing already heard opens whole, with no settle nudge.
 
 - **Cash Out's stages** (`saleCardStageOf(state, sent || maybeSent)`): AwaitingTransfer, Funded → Waiting (silver,
   "You sell 10.00 USDC", breathing) · PayingOut → Converting (silver breaks up into the green M-Pesa card, "You receive
@@ -476,7 +480,7 @@ iOS that later label changes still show).
   `quietLanding`, `onLanded` rings and marks heard; one remembered list for top-ups and sales). `ringLanding(id,
   quietCoins = false)` for a sale: its shillings land on M-Pesa, so no incoming USDC is the sale's and the coins are
   never held back (a refund's USDC plays the coins as any money received).
-- **Previews:** `cash-out-live` (a sale on a loop with the real chime), `-converting-early/-converting/-converting-late`,
+- **Previews:** `cash-out-live` (a sale on a loop with the real chime), `cash-out-live-fast` (PAYING_OUT missed), `-converting-early/-converting/-converting-late`,
   `-landing`; any Cash Out preview takes `-dark`, `-hc`, `-dark-hc`, `-still`.
 - **Tests:** `androidHostTest/feature/ramp/CashOutChimeTest.kt` (rings once on settle, first-seen-completed, re-open quiet,
   sound off, never for refund/expiry/cancel/review/failure, coins not silenced, no player, stage mapping, words, badge).

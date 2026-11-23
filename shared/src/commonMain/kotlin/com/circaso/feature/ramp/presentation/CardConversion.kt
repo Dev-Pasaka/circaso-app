@@ -135,6 +135,7 @@ internal const val SheenMs = CircasoMotion.MomentMs
 private const val SettleFrom = 0.965f
 /** A dimmed card: its colour gives way to grey, under a light veil of the ground (white text stays above 4.5:1). */
 private const val DimVeil = 0.10f
+private const val DimVeilDark = 0.24f
 /** The waiting card's slow breath and the sending card's slow sheen, as periods. */
 private const val BreathMs = CircasoMotion.MomentMs * 3
 private const val SendingSheenMs = CircasoMotion.MomentMs * 4
@@ -184,24 +185,28 @@ internal fun CardConversion(
     val c = CircasoTheme.colors
     val still = CircasoTheme.reduceMotion
     val toUsdc = direction == ConversionDirection.MpesaToUsdc
-    // Mid-conversion the faces keep the words they were copied with (an order that skips straight from waiting to
-    // landed changes them), so no copy is taken again on the frame it starts; they catch up once it's whole.
-    var midway by remember { mutableStateOf(false) }
-    val shownWords = remember { arrayOf(live) }
-    if (!midway) shownWords[0] = live
-    val words = shownWords[0]
     val secondFirst = stage == CardStage.Converting || stage == CardStage.Landed || (stage == CardStage.Held && heldOnSecond)
-    // 0 is the first card, 1 the second; read only while drawing.
+    // 0 is the first card, 1 the second; read only while drawing (here only its target, which moves once per turn).
     val progress = remember { Animatable(if (secondFirst) 1f else 0f) }
+    val particles = remember(direction) { CardParticles(if (toUsdc) GreenDust else SilverDust) }
+    // Mid-conversion the faces keep the words they were copied with, and so does a card about to turn with its copies
+    // ready (an order that skips straight from waiting to landed changes them, and a poll can easily miss PAYING_OUT):
+    // the conversion starts on the next frame from the copies already made, never waits for new words to settle.
+    // They catch up once it's whole.
+    var midway by remember { mutableStateOf(false) }
+    val aboutToTurn = (stage == CardStage.Converting || stage == CardStage.Landed) && particles.ready && progress.targetValue < 1f
+    val shownWords = remember { arrayOf(live) }
+    if (!midway && !aboutToTurn) shownWords[0] = live
+    val words = shownWords[0]
     val dimTo = if (stage == CardStage.Ended) 1f else 0f
     val dim = remember { Animatable(dimTo) }
-    val settle = remember { Animatable(if (secondFirst && !still) SettleFrom else 1f) }
+    // An order opened on a landing already heard is simply whole: no nudge each time it is opened from history.
+    val settle = remember { Animatable(if (secondFirst && !still && !quiet) SettleFrom else 1f) }
     val sheen = remember { Animatable(0f) }
     // How the progress is drawn: in pieces, or as a cross-fade (Reduce Motion, going back, or no bitmaps).
     var crossfade by remember { mutableStateOf(still) }
     val firstLayer = rememberGraphicsLayer()
     val secondLayer = rememberGraphicsLayer()
-    val particles = remember(direction) { CardParticles(if (toUsdc) GreenDust else SilverDust) }
     val scope = rememberCoroutineScope()
     val haptics = LocalHapticFeedback.current
     val landed by rememberUpdatedState(onLanded)
@@ -314,6 +319,8 @@ internal fun CardConversion(
     val breath = if (breathing) rememberInfiniteTransition(label = "breath").animateFloat(0f, 1f, infiniteRepeatable(tween(BreathMs, easing = LinearEasing), RepeatMode.Restart), label = "breath") else AtRest
     val sendingSheen = if (sending) rememberInfiniteTransition(label = "sending").animateFloat(0f, 1f, infiniteRepeatable(tween(SendingSheenMs, easing = LinearEasing), RepeatMode.Restart), label = "sending sheen") else AtRest
     val ground = c.bgGrouped
+    // A dark ground veils a light silver card only faintly: more of it there, so an ending reads as dimmed.
+    val veil = if (c.isDark) DimVeilDark else DimVeil
     val corner = with(LocalDensity.current) { CircasoShapes.lgCorner.toPx() }
     val (edgeWidth, edgeInk) = cardEdge()
     val edgePx = with(LocalDensity.current) { edgeWidth.toPx() }
@@ -343,7 +350,7 @@ internal fun CardConversion(
             drawLayer(firstLayer)
             if (breathing) drawSheen(path, band, breath.value, firstLight.loop * base)
             val d = dim.value
-            if (d > 0f) drawDim(path, ground, d * base)
+            if (d > 0f) drawDim(path, ground, d * base, veil)
         }
     }.then(recorder(firstLayer))
     /** The second card, drawn whole once it is (or fading in in a cross-fade), with its light as it lands. */
@@ -359,7 +366,7 @@ internal fun CardConversion(
             secondLayer.alpha = base
             drawLayer(secondLayer)
             val d = dim.value
-            if (d > 0f) drawDim(path, ground, d * base)
+            if (d > 0f) drawDim(path, ground, d * base, veil)
             val pass = sheen.value
             when {
                 pass > 0f && pass < 1f -> drawSheen(path, band, pass, 1f)
@@ -415,10 +422,10 @@ internal fun CardConversion(
  * Dims the card drawn under it by [amount] (0..1): its colour drains to grey (a saturation blend, so its light and
  * dark stay and the words keep their contrast), under a light veil of the ground.
  */
-private fun DrawScope.drawDim(path: Path, ground: Color, amount: Float) {
+private fun DrawScope.drawDim(path: Path, ground: Color, amount: Float, veil: Float) {
     clipPath(path) {
         drawRect(DimGrey, alpha = amount, blendMode = androidx.compose.ui.graphics.BlendMode.Saturation)
-        drawRect(ground, alpha = DimVeil * amount)
+        drawRect(ground, alpha = veil * amount)
     }
 }
 

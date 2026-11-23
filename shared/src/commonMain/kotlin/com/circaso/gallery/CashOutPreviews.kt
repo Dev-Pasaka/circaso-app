@@ -69,7 +69,7 @@ private val saleQuote = RampQuote(
  * `-refunding-late`, `-refunded`, `-refunded-mismatch`, `-expired`, `-expired-sent`, `-cancelled`, `-review-sale`,
  * `-unknown`). Also `-verify-declined`; `-sell-less` (cancel and sell what fits); `-maybe-sent` and `-maybe-sent-expired`
  * (W4 got no answer). The conversion (2026-11-23): `-live` (a sale on a loop: the silver USDC card, then M-Pesa's green
- * card forming as the payout is sent, landing with the haptic and the real chime), `-converting-early`, `-converting`
+ * card forming as the payout is sent, landing with the haptic and the real chime), `-live-fast` (the same with PAYING_OUT missed), `-converting-early`, `-converting`
  * and `-converting-late` (one frame held), `-landing` (opened on a payout not yet heard: it settles and chimes). Any of
  * them takes `-dark`, `-hc`, `-dark-hc` and `-still` (Reduce Motion), in that order: `cash-out-live-dark-still`. In the wallet: `activity-cash-out`, `activity-cash-out-states`, `transfer-cash-out`,
  * `transfer-cash-out-refunded` (PreviewScreens.kt).
@@ -95,7 +95,7 @@ private const val SaleId = "0193a7c2-5d1e-4b8f-9e2a-6c4f1d8b2e11"
 
 /** A sale from the USDC sent to the shillings landing on M-Pesa, on a loop, so the conversion can be watched and recorded. */
 @Composable
-private fun LiveSale(onSale: (RampOrderState, String?) -> CashOutUiState) {
+private fun LiveSale(skipPayingOut: Boolean = false, onSale: (RampOrderState, String?) -> CashOutUiState) {
     var state by remember { mutableStateOf(onSale(RampOrderState.AwaitingTransfer, null).copy(sent = true)) }
     LaunchedEffect(Unit) {
         while (true) {
@@ -103,8 +103,8 @@ private fun LiveSale(onSale: (RampOrderState, String?) -> CashOutUiState) {
             delay(2_400)
             state = onSale(RampOrderState.Funded, null)
             delay(2_400)
-            state = onSale(RampOrderState.PayingOut, null)
-            delay(2_600)
+            // A poll can miss PAYING_OUT altogether: the card then turns on COMPLETED, at once.
+            if (!skipPayingOut) { state = onSale(RampOrderState.PayingOut, null); delay(2_600) }
             state = onSale(RampOrderState.Completed, "TKN3H2X1QP").copy(celebrate = SaleId)
             delay(6_000)
         }
@@ -202,6 +202,7 @@ private fun CashOutPreviewScreen(name: String): Boolean {
         "cash-out-unknown" -> onSale(RampOrderState.Unknown)
         // The conversion (2026-11-23): played whole, held at one frame, and landing.
         "cash-out-live" -> { LiveSale { st, receipt -> onSale(st, receipt = receipt) }; return true }
+        "cash-out-live-fast" -> { LiveSale(skipPayingOut = true) { st, receipt -> onSale(st, receipt = receipt) }; return true }
         "cash-out-converting-early" -> { CashOutContent(onSale(RampOrderState.PayingOut), onBack = {}, frozenAt = 0.22f); return true }
         "cash-out-converting" -> { CashOutContent(onSale(RampOrderState.PayingOut), onBack = {}, frozenAt = 0.5f); return true }
         "cash-out-converting-late" -> { CashOutContent(onSale(RampOrderState.PayingOut), onBack = {}, frozenAt = 0.8f); return true }
