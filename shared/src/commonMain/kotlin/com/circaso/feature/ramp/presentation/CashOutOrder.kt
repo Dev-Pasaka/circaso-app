@@ -349,7 +349,9 @@ internal fun SaleOrderPage(
             }
         }
         Column {
-            val stages = saleStages(order, state.sent, state.sending)
+            // A sale held up (not enough, the other network, no SOL, a failed or unconfirmed send) shows no step spinning.
+            val held = state.sendHold != null && state.sendHold != SendHold.Cancelled
+            val stages = if (held) emptyList() else saleStages(order, state.sent, state.sending)
             val shown = lastOf(stages.takeIf { it.isNotEmpty() })
             Reveal(stages.isNotEmpty() && (!done || landing)) { if (shown != null) Stages(shown, Modifier.padding(bottom = CircasoSpacing.s5)) }
             val (selling, getting) = saleFigureLabels(order.state, look)

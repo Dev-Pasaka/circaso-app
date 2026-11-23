@@ -381,8 +381,8 @@ private fun SaleAmountPage(
                 Modifier.semantics { contentDescription = if (state.unit == SaleUnit.Usdc) "Typing the USDC to sell. Switch to shillings to receive." else "Typing the shillings to receive. Switch to USDC to sell." },
             )
             FlowRow(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(CircasoSpacing.s2, Alignment.CenterHorizontally), verticalArrangement = Arrangement.spacedBy(CircasoSpacing.s2)) {
-                BasicText(state.available ?: "Checking your balance…", style = t.footnote.copy(color = c.inkSecondary, fontFeatureSettings = "tnum"))
-                if (state.canMax) SuggestionChip("Max", { haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove); focusManager.clearFocus(); onMax() }, Modifier.semantics { contentDescription = "Sell everything: ${state.available}" })
+                BasicText(state.available ?: "Checking your balance…", Modifier.align(Alignment.CenterVertically), style = t.footnote.copy(color = c.inkSecondary, fontFeatureSettings = "tnum"))
+                if (state.canMax) SuggestionChip("Max", { haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove); focusManager.clearFocus(); onMax() }, Modifier.align(Alignment.CenterVertically).semantics { contentDescription = "Sell everything: ${state.available}" })
             }
         }
         Labelled("Receive with") {
