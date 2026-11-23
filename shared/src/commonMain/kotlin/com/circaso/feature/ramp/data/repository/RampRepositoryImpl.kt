@@ -203,6 +203,21 @@ class RampRepositoryImpl(
         }
     }
 
+    override suspend fun saleAttempt(order: RampOrder, on: Boolean) {
+        val network = order.network ?: networks.effective()
+        editSales(network) { list ->
+            val kept = list.firstOrNull { it.orderId == order.orderId }
+            when {
+                kept != null -> list.map { if (it.orderId == order.orderId) it.copy(attempted = on) else it }
+                on -> list + SavedSale.of(order, null, null).copy(attempted = true)
+                else -> list
+            }
+        }
+    }
+
+    override suspend fun saleAttempted(orderId: String): Boolean =
+        decodeSales(savedSales(networks.effective()).first()).firstOrNull { it.orderId == orderId }?.attempted == true
+
     override suspend fun saleTransfer(orderId: String): String? =
         decodeSales(savedSales(networks.effective()).first()).firstOrNull { it.orderId == orderId }?.transferId
 

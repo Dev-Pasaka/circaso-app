@@ -135,15 +135,16 @@ internal fun saleRowTitle(sale: com.circaso.feature.ramp.domain.SaleLabel): Stri
 /** The second line of a sale's row: the shillings, then the M-Pesa receipt once paid out, else where the sale stands. */
 internal fun saleRowSub(sale: com.circaso.feature.ramp.domain.SaleLabel): String {
     val kes = sale.receive.text
-    val where = when (sale.state) {
-        com.circaso.feature.ramp.domain.RampOrderState.Completed -> sale.receipt?.let { "Receipt $it" }
-        com.circaso.feature.ramp.domain.RampOrderState.Refunding -> "coming back"
-        com.circaso.feature.ramp.domain.RampOrderState.Refunded -> "returned to you"
-        com.circaso.feature.ramp.domain.RampOrderState.Review -> "being checked"
-        com.circaso.feature.ramp.domain.RampOrderState.Expired, com.circaso.feature.ramp.domain.RampOrderState.Cancelled -> "not paid out"
-        else -> "on its way"
+    // It is the USDC that comes back, never shillings: an unpaid sale's line has no shillings in it.
+    return when (sale.state) {
+        com.circaso.feature.ramp.domain.RampOrderState.Completed -> listOfNotNull(kes, sale.receipt?.let { "Receipt $it" }).joinToString(" · ")
+        com.circaso.feature.ramp.domain.RampOrderState.Refunding -> "Not paid out · USDC on its way back"
+        com.circaso.feature.ramp.domain.RampOrderState.Refunded -> "Not paid out · USDC back in your wallet"
+        com.circaso.feature.ramp.domain.RampOrderState.Expired -> "Not paid out · USDC coming back"
+        com.circaso.feature.ramp.domain.RampOrderState.Cancelled -> "Not paid out"
+        com.circaso.feature.ramp.domain.RampOrderState.Review -> "$kes · being checked"
+        else -> "$kes · on its way"
     }
-    return listOfNotNull(kes, where).joinToString(" · ")
 }
 
 /** The title bar's actions on the Wallet tab (design E1): hide balances, add money. */

@@ -83,6 +83,8 @@ enum class SendHold {
     Short,
     /** The wallet is switched to the other network: the sale's USDC is on this one. */
     OtherNetwork,
+    /** Solana: the wallet has no SOL for the network's fee (selling less USDC can't fix that). */
+    NoGas,
     /** Something else; [CashOutUiState.sendFailure] has its words. */
     Failed,
     /** No answer: whether it went is not known (the same key makes a retry safe). */
@@ -110,6 +112,8 @@ data class CashOutUiState(
     /** The typed amount, unit and chain the [estimate] is for. */
     val estimateFor: String? = null,
     val estimating: Boolean = false,
+    /** The amount whose live price couldn't be had (no rate, no connection): the line stops saying it is coming. */
+    val estimateFailedFor: String? = null,
     /** What the live price said is wrong with the amount (too small to leave anything after the fees, over a limit). */
     val estimateProblem: String? = null,
     val quoting: Boolean = false,
@@ -142,6 +146,8 @@ data class CashOutUiState(
     val depositLeft: Int? = null,
     val stale: Boolean = false,
     val cancelling: Boolean = false,
+    /** The cancel under way is "Sell X Instead" (so that button, not Cancel Sale, shows it is working). */
+    val sellingLess: Boolean = false,
     val cancelNote: String? = null,
     val failure: AddMoneyFailure? = null,
     val loadingOrder: Boolean = false,
@@ -208,14 +214,14 @@ data class CashOutUiState(
     /** The USDC's deadline has passed: the sale ends by itself (and late USDC is sent back). */
     val depositOver: Boolean get() = depositLeft != null && depositLeft <= 0
     /** "Send USDC" may be tapped: the sale waits, its fee is known, and nothing is under way. */
-    val canSend: Boolean get() = online && awaitingUsdc && order?.deposit != null && !sending && !pricingSend && !depositOver && !cancelling && sendHold != SendHold.Short && sendHold != SendHold.OtherNetwork
+    val canSend: Boolean get() = online && awaitingUsdc && order?.deposit != null && !sending && !pricingSend && !depositOver && !cancelling && sendHold != SendHold.Short && sendHold != SendHold.OtherNetwork && sendHold != SendHold.NoGas
     /** R6 for a sale: only while it waits for the USDC and before this phone sent it; the server has the last word. */
     val canCancel: Boolean get() = awaitingUsdc && !sending && !depositOver && !maybeSent
 
     /** After "Not enough USDC": what can be sold with the network fee on top (the balance less the fee); null if nothing. */
     val sellable: String?
         get() {
-            val fee = (sendFee as? SendFee.Quoted)?.amountMinor?.toLongOrNull() ?: return null
+            val fee = when (val f = sendFee) { is SendFee.Quoted -> f.amountMinor.toLongOrNull() ?: return null; SendFee.Free -> 0L; null -> return null }
             val all = balanceMinor?.toLongOrNull() ?: return null
             return (all - fee).takeIf { it > 0 }?.toString()
         }
@@ -432,7 +438,7 @@ class CashOutViewModel(
             }
         }
         if (clean != s.amountText) quoteKey = newIdempotencyKey()
-        local.update { it.copy(amountText = clean, failure = null, estimateProblem = null) }
+        local.update { it.copy(amountText = clean, failure = null, estimateProblem = null, estimateFailedFor = null) }
     }
 
     /** Switches between typing USDC and shillings, carrying the amount across with the live price when there is one. */
@@ -494,8 +500,8 @@ class CashOutViewModel(
                     it.copy(estimating = false, estimate = null, estimateFor = null, estimateProblem = when ((result.error as? AppError.Api)?.code) {
                         RampCodes.AmountInvalid -> AmountTooSmall
                         RampCodes.LimitExceeded -> limitText()
-                        else -> null // no price just now: the line falls back to the limits, and Continue says why
-                    })
+                        else -> null // no price just now: the line says so, and Continue says why
+                    }, estimateFailedFor = key)
                 }
             }
         }
@@ -637,7 +643,7 @@ class CashOutViewModel(
                     val q = r.value
                     when {
                         q?.problem == QuoteProblem.InsufficientFunds || q?.problem == QuoteProblem.InsufficientGas ->
-                            local.update { it.copy(pricingSend = false, sendFee = q.let { f -> if (MinorUnits.isZero(f.feeMinor)) SendFee.Free else SendFee.Quoted(f.feeMinor, f.quoteId) }, sendHold = SendHold.Short) }
+                            local.update { it.copy(pricingSend = false, sendFee = q.let { f -> if (MinorUnits.isZero(f.feeMinor)) SendFee.Free else SendFee.Quoted(f.feeMinor, f.quoteId) }, sendHold = if (q.problem == QuoteProblem.InsufficientGas) SendHold.NoGas else SendHold.Short) }
                         q == null || MinorUnits.isZero(q.feeMinor) -> {
                             local.update { it.copy(pricingSend = false, sendFee = SendFee.Free) }
                             if (autoSend && state.value.online) send()
@@ -679,6 +685,9 @@ class CashOutViewModel(
         local.update { it.copy(sending = true, sendHold = null, sendFailure = null) }
         viewModelScope.launch {
             val quoteId = (s.sendFee as? SendFee.Quoted)?.quoteId
+            // Marked on the phone before W4: should the answer never come (or the app die), a reopened sale never says
+            // "nothing left your wallet".
+            onPin { ramp.saleAttempt(order, true) }
             // The order id is the key, every time: a retry returns the same transfer (and its challenge), never a second.
             when (val r = onPin { saleWallet.send(requestOf(order, quoteId), order.orderId) }) {
                 is AppResult.Success -> {
@@ -693,13 +702,16 @@ class CashOutViewModel(
 
     private suspend fun onSendFailed(order: RampOrder, error: AppError) {
         val code = (error as? AppError.Api)?.code
+        // A definite no (the approval closed, a refusal): nothing went, and the marker goes with it.
+        if (refused(error) && code != RampCodes.SaleFunded) onPin { ramp.saleAttempt(order, false) }
         when {
             code == "wallet.cancelled" -> local.update { it.copy(sending = false, sendHold = SendHold.Cancelled) }
             // Another transfer already pays this sale: never send again; the order says where it stands.
             code == RampCodes.SaleFunded -> { local.update { it.copy(sending = false, sent = true) }; read(order.orderId) }
             // The fee changed since it was shown: the new one is shown, and nothing is sent until it is seen.
             code == "wallet.fee_changed" -> { local.update { it.copy(sending = false, sendFee = null, sendFailure = AddMoneyFailure(FeeChanged, null, calm = true)) }; prepareSend(autoSend = false) }
-            code == "wallet.insufficient_funds" || code == com.circaso.feature.wallet.domain.InsufficientGasCode -> local.update { it.copy(sending = false, sendHold = SendHold.Short) }
+            code == "wallet.insufficient_funds" -> local.update { it.copy(sending = false, sendHold = SendHold.Short) }
+            code == com.circaso.feature.wallet.domain.InsufficientGasCode -> local.update { it.copy(sending = false, sendHold = SendHold.NoGas) }
             code == NetworkChangedCode -> local.update { it.copy(sending = false, sendHold = SendHold.OtherNetwork) }
             // No definite answer: it isn't known whether it went. The same key makes "Send USDC" safe; the order is read.
             !refused(error) -> { local.update { it.copy(sending = false, maybeSent = true, sendHold = SendHold.Unknown, sendFailure = AddMoneyFailure(SendUnknown, ErrorMessages.reference(error))) }; read(order.orderId) }
@@ -716,8 +728,10 @@ class CashOutViewModel(
                 // A purchase is Add Money's to show.
                 if (!order.sale) { local.update { it.copy(handOff = order.orderId) }; return }
                 // Whether this phone already sent the USDC (the sale's own transfer, remembered when W4 answered).
-                val sentHere = order.network?.let { n -> withContext(PinnedNetwork(n)) { ramp.saleTransfer(order.orderId) } } ?: onPin { ramp.saleTransfer(order.orderId) }
-                local.update { it.copy(sent = sentHere != null) }
+                val network = order.network ?: pinned
+                val sentHere = withContext(PinnedNetwork(network)) { ramp.saleTransfer(order.orderId) }
+                val tried = sentHere == null && withContext(PinnedNetwork(network)) { ramp.saleAttempted(order.orderId) }
+                local.update { it.copy(sent = sentHere != null, maybeSent = tried) }
                 show(order)
                 prepareSend(autoSend = false)
             }
@@ -795,7 +809,7 @@ class CashOutViewModel(
                     if (refused(result.error)) cancelKey = newIdempotencyKey()
                     local.update {
                         it.copy(cancelling = false, cancelNote = when (code) {
-                            RampCodes.NotCancellable -> "Your USDC has already reached Circaso's partner, so this sale can't be cancelled. It finishes by itself, or your USDC comes back."
+                            RampCodes.NotCancellable -> "This sale has moved on, so it can't be cancelled. Here's where it stands."
                             else -> ErrorMessages.forError(result.error)
                         })
                     }
@@ -822,7 +836,7 @@ class CashOutViewModel(
         val order = s.order ?: return
         if (!s.canCancel || s.cancelling || !s.online) return
         val fits = s.sellable
-        local.update { it.copy(cancelling = true, cancelNote = null) }
+        local.update { it.copy(cancelling = true, sellingLess = true, cancelNote = null) }
         viewModelScope.launch {
             when (val result = onPin { cancelOrder(order.orderId, cancelKey) }) {
                 is AppResult.Success -> {
@@ -830,14 +844,14 @@ class CashOutViewModel(
                     quoteKey = newIdempotencyKey()
                     polling?.cancel(); depositClock?.cancel()
                     local.update {
-                        it.copy(cancelling = false, order = null, quote = null, sent = false, maybeSent = false, sendFee = null, sendHold = null, sendFailure = null, depositLeft = null,
+                        it.copy(cancelling = false, sellingLess = false, order = null, quote = null, sent = false, maybeSent = false, sendFee = null, sendHold = null, sendFailure = null, depositLeft = null,
                             unit = SaleUnit.Usdc, amountText = fits?.let { m -> MinorUnits.toDisplay(m, RampMoney.CoinDecimals, minFraction = 0).replace(",", "") } ?: "", estimate = null, estimateFor = null)
                     }
                     load()
                 }
                 is AppResult.Failure -> {
                     if (refused(result.error)) cancelKey = newIdempotencyKey()
-                    local.update { it.copy(cancelling = false, cancelNote = ErrorMessages.forError(result.error)) }
+                    local.update { it.copy(cancelling = false, sellingLess = false, cancelNote = ErrorMessages.forError(result.error)) }
                     read(order.orderId)
                 }
             }

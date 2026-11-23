@@ -77,6 +77,15 @@ interface RampRepository {
     /** The W4 transfer this phone sent for the sale [orderId], if it did (on the network of the coroutine). */
     suspend fun saleTransfer(orderId: String): String?
 
+    /**
+     * W4 for the sale [order] is being asked ([on] true), or definitely didn't happen (false). Kept on the phone so a
+     * sale reopened after an answer that never came is never said to have taken nothing.
+     */
+    suspend fun saleAttempt(order: RampOrder, on: Boolean)
+
+    /** This phone asked W4 for [orderId] and never heard a definite answer. */
+    suspend fun saleAttempted(orderId: String): Boolean
+
     /** R4. */
     suspend fun order(orderId: String): AppResult<RampOrder>
 

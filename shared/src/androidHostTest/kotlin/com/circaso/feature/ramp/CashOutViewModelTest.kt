@@ -173,7 +173,7 @@ class CashOutViewModelTest {
         assertEquals("BASE-SEPOLIA", paid.blockchain)
         assertEquals(WalletNetwork.TESTNET, paid.network)
         assertTrue(vm.state.value.sent)
-        assertEquals("Sending your USDC", vm.look().title)
+        assertEquals("Your USDC is on its way", vm.look().title)
         assertEquals("tr-1", f.repo.saleTransfer("s1"), "this phone remembers it paid the sale")
 
         f.answer("FUNDED"); f.frame("FUNDED")
@@ -440,7 +440,7 @@ class CashOutViewModelTest {
         assertFalse(vm.state.value.canSend)
         assertTrue(vm.state.value.canCancel)
         assertEquals(SaleActions.Short, vm.look().actions)
-        assertTrue(vm.look().message.startsWith("Your wallet needs 10.05 USDC for this sale and its network fee and holds 10.00 USDC."))
+        assertTrue(vm.look().message.startsWith("Your wallet needs 10.05 USDC for this sale and its network fee; it holds 10.00 USDC. Nothing left your wallet."))
         assertTrue(w.sends.isEmpty())
     }
 
@@ -472,6 +472,46 @@ class CashOutViewModelTest {
         assertFalse(vm.state.value.canSend)
         vm.onResumed()
         assertTrue(vm.state.value.canSend)
+    }
+
+    @Test fun aLivePriceThatFailsSaysSoInsteadOfWaitingForever() = with(fixture().also { it.remote.quote = refusal("ramp.pricing_unavailable", http = 502) }) { vm, _, _ ->
+        vm.onAmount("10"); advanceTimeBy(451)
+        val s = vm.state.value
+        assertFalse(s.estimating)
+        assertEquals(s.askKey, s.estimateFailedFor)
+        vm.onAmount("11")
+        assertNull(vm.state.value.estimateFailedFor, "a new amount is a new ask")
+    }
+
+    @Test fun noSolForTheFeeIsItsOwnStateWithoutSellLess() = with(w = FakeSaleWallet().also { it.fee = AppResult.Success(FakeSaleWallet.quote("0", QuoteProblem.InsufficientGas)) }) { vm, _, w ->
+        vm.toReview(); vm.onSell()
+        assertEquals(SendHold.NoGas, vm.state.value.sendHold)
+        assertEquals("Add a little SOL to finish", vm.look().title)
+        assertEquals(SaleActions.Switch, vm.look().actions)
+        assertFalse(vm.state.value.canSend)
+        assertTrue(w.sends.isEmpty())
+    }
+
+    @Test fun anUnansweredSendIsRememberedAcrossAReopen() = runTest(dispatcher) {
+        val f = fixture()
+        val w = FakeSaleWallet().also { it.send = AppResult.Failure(AppError.Network) }
+        val first = vm(f, w)
+        try { first.toReview(); first.onSell(); assertTrue(first.state.value.maybeSent) } finally { first.viewModelScope.coroutineContext[Job]?.cancel() }
+        // The app is opened again on the sale: it still never says nothing left.
+        val again = vm(f, w, orderId = "s1")
+        try {
+            assertTrue(again.state.value.maybeSent)
+            assertFalse(again.state.value.canCancel)
+        } finally { again.viewModelScope.coroutineContext[Job]?.cancel() }
+    }
+
+    @Test fun aCancelledApprovalIsNotRememberedAsMaybeSent() = runTest(dispatcher) {
+        val f = fixture()
+        val w = FakeSaleWallet().also { it.send = refusal("wallet.cancelled", http = 400) }
+        val first = vm(f, w)
+        try { first.toReview(); first.onSell() } finally { first.viewModelScope.coroutineContext[Job]?.cancel() }
+        val again = vm(f, w, orderId = "s1")
+        try { assertFalse(again.state.value.maybeSent); assertTrue(again.state.value.canCancel) } finally { again.viewModelScope.coroutineContext[Job]?.cancel() }
     }
 
     @Test fun aFeeThatCouldNotBeCheckedSendsNothing() = with(w = FakeSaleWallet().also { it.fee = AppResult.Failure(AppError.Network) }) { vm, _, w ->
@@ -559,7 +599,7 @@ class CashOutViewModelTest {
         f.remote.cancel = refusal("ramp.order_not_cancellable")
         f.answer("FUNDED")
         vm.onCancel()
-        assertTrue(vm.state.value.cancelNote!!.startsWith("Your USDC has already reached Circaso's partner"))
+        assertEquals("This sale has moved on, so it can't be cancelled. Here's where it stands.", vm.state.value.cancelNote)
         assertEquals(RampOrderState.Funded, vm.state.value.order?.state)
     }
 
@@ -624,7 +664,7 @@ class CashOutViewModelTest {
             assertTrue(vm.state.value.sent, "this phone already sent it")
             assertFalse(vm.state.value.canSend)
             assertFalse(vm.state.value.canCancel)
-            assertEquals("Sending your USDC", saleLook(vm.state.value.order!!, vm.state.value).title)
+            assertEquals("Your USDC is on its way", saleLook(vm.state.value.order!!, vm.state.value).title)
             assertTrue(w.sends.isEmpty())
         } finally { vm.viewModelScope.coroutineContext[Job]?.cancel() }
     }

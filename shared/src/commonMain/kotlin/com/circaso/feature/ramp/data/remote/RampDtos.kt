@@ -251,6 +251,8 @@ data class SavedSale(
     val receipt: String? = null,
     val state: String,
     val refundHash: String? = null,
+    /** W4 was asked for this sale and no definite answer came (see [com.circaso.feature.ramp.domain.RampRepository.saleAttempt]). */
+    val attempted: Boolean = false,
 ) {
     fun label() = com.circaso.feature.ramp.domain.SaleLabel(
         orderId, transferId, maskedPhone, RampAmount(receiveUnit, receiveMinor, ""), receipt, RampOrderState.of(state), refundHash,
@@ -275,6 +277,7 @@ data class SavedSale(
             state = wire(order.state),
             // A refunded sale's `txHash` is the refund (guide: "REFUNDED ... txHash is the refund").
             refundHash = (if (order.state == RampOrderState.Refunded) order.txHash?.lowercase() else null) ?: kept?.refundHash,
+            attempted = kept?.attempted == true,
         )
     }
 }

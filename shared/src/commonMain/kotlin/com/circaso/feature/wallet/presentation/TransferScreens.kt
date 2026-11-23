@@ -129,7 +129,7 @@ fun TransferContent(state: TransferUiState, onBack: () -> Unit) {
         val sale = if (!incoming) sales.paidBy(transfer.transferId) else null
         val refund = if (incoming) sales.refundedBy(transfer.txHash) else null
         // A person by name; anyone else by their address, never "Someone".
-        val name = if (topUp != null || sale != null) "M-Pesa" else transfer.counterpartName
+        val name = if (topUp != null || sale != null) "M-Pesa" else if (refund != null) "Cash out refund" else transfer.counterpartName
             ?: (if (incoming) transfer.from else transfer.toAddress).takeIf { it.isNotEmpty() }?.let(::shortAddress)
             ?: if (incoming) "An outside wallet" else "An outside wallet"
         val fiat = state.fiat?.takeIf { MinorUnits.isDollar(transfer.amount.asset) }?.let { f -> usdcToFiat(transfer.amount.amountMinor, f.rate)?.let { formatFiat(f.currency, it) } }

@@ -359,7 +359,8 @@ private fun SaleAmountPage(
                 live != null && state.unit == SaleUnit.Usdc -> "You receive about ${live.receive.text}"
                 live != null -> "You send about ${live.pay.text}"
                 // An amount is typed and its price isn't in yet: said at once, never the limits flickering in between.
-                state.estimating || (state.askKey != null && state.online) -> "Getting a price…"
+                state.estimating || (state.askKey != null && state.online && state.estimateFailedFor != state.askKey) -> "Getting a price…"
+                state.askKey != null && state.estimateFailedFor == state.askKey -> "No price just now. Continue tries again."
                 limits != null -> "${limits.minOrder.text} to ${limits.maxOrder.text} to M-Pesa"
                 else -> " "
             }
@@ -403,7 +404,7 @@ private fun SaleAmountPage(
                 RowDivider()
                 DetailRow("Fees", "Shown before you sell")
                 RowDivider()
-                DetailRow("Network fee", "If any, shown before you approve")
+                DetailRow("Network fee", "Before you approve")
                 if (limits != null) {
                     RowDivider(); FigureRow("At a time", "${limits.minOrder.text} to ${limits.maxOrder.text}")
                     RowDivider(); FigureRow("Daily limit", limits.daily.text)
