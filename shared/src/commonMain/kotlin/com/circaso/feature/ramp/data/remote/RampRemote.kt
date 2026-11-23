@@ -13,13 +13,15 @@ import io.ktor.http.ContentType
 import io.ktor.http.HttpMethod
 import io.ktor.http.contentType
 
-/** The ramp's routes for the app (guide R0–R6). */
+/** The ramp's routes for the app (guide R0–R7). */
 interface RampRemote {
     suspend fun status(): AppResult<RampStatusResponse>
     suspend fun startKyc(idempotencyKey: String): AppResult<KycResponse>
     suspend fun kyc(): AppResult<VerificationDto>
     suspend fun quote(request: QuoteRequest, idempotencyKey: String): AppResult<QuoteResponse>
     suspend fun buy(request: StartOnRampRequest, idempotencyKey: String): AppResult<OrderResponse>
+    /** R7: sell USDC for M-Pesa. */
+    suspend fun sell(request: StartOffRampRequest, idempotencyKey: String): AppResult<OrderResponse>
     suspend fun order(orderId: String): AppResult<OrderResponse>
     suspend fun orders(limit: Int = 50, cursor: String? = null): AppResult<OrdersResponse>
     suspend fun cancel(orderId: String, idempotencyKey: String): AppResult<OrderResponse>
@@ -57,6 +59,14 @@ class KtorRampRemote(
     override suspend fun buy(request: StartOnRampRequest, idempotencyKey: String) = call<OrderResponse> {
         method = HttpMethod.Post
         url("/v1/ramp/onramp/orders")
+        idempotencyKey(idempotencyKey)
+        contentType(ContentType.Application.Json)
+        setBody(request)
+    }
+
+    override suspend fun sell(request: StartOffRampRequest, idempotencyKey: String) = call<OrderResponse> {
+        method = HttpMethod.Post
+        url("/v1/ramp/offramp/orders")
         idempotencyKey(idempotencyKey)
         contentType(ContentType.Application.Json)
         setBody(request)

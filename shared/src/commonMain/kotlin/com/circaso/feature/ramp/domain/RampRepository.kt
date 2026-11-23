@@ -53,10 +53,37 @@ interface RampRepository {
      */
     suspend fun buy(quoteId: String, phone: String, idempotencyKey: String): AppResult<RampOrder>
 
+    /**
+     * R2 for a sale (`OFF_RAMP`): [usdcMinor] is the USDC to send (millionths), or [shillingsMinor] the shillings to
+     * receive (whole shillings in cents); exactly one. Reserves nothing. The same [idempotencyKey] on a retry of the same ask.
+     */
+    suspend fun sellQuote(blockchain: String, usdcMinor: String?, shillingsMinor: String?, idempotencyKey: String): AppResult<RampQuote>
+
+    /**
+     * R7: the sale. [phone] (E.164) must be the account's own verified number. One [idempotencyKey] per quote: the same
+     * quote again returns the same order. Answers `AWAITING_TRANSFER` with the `deposit` to send with W4.
+     */
+    suspend fun sell(quoteId: String, phone: String, idempotencyKey: String): AppResult<RampOrder>
+
+    /**
+     * The sale [order] was paid from this phone by the W4 transfer [transferId]: remembered, so that payment reads
+     * "Cashed out to M-Pesa" in the wallet, and the sale's screen knows the USDC was sent.
+     */
+    suspend fun saleSent(order: RampOrder, transferId: String)
+
+    /** The sales this phone paid, on the network being read (for the wallet's history). */
+    val sales: Flow<MpesaSales>
+
+    /** The W4 transfer this phone sent for the sale [orderId], if it did (on the network of the coroutine). */
+    suspend fun saleTransfer(orderId: String): String?
+
     /** R4. */
     suspend fun order(orderId: String): AppResult<RampOrder>
 
-    /** R6: only before the payment; while the prompt is open on the phone the server answers `ramp.order_not_cancellable`. */
+    /**
+     * R6: only before the payment; while the prompt is open on the phone the server answers `ramp.order_not_cancellable`.
+     * A sale: only while it waits for the USDC and before the transfer was confirmed.
+     */
     suspend fun cancel(orderId: String, idempotencyKey: String): AppResult<RampOrder>
 
     /** R5, newest page: refreshes [topUps]. */

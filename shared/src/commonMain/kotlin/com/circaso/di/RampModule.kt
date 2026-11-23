@@ -28,6 +28,11 @@ import com.circaso.feature.ramp.domain.RampRepository
 import com.circaso.feature.ramp.domain.RunIdentityCheckUseCase
 import com.circaso.feature.ramp.domain.StartKycUseCase
 import com.circaso.feature.ramp.presentation.AddMoneyViewModel
+import com.circaso.feature.ramp.presentation.CashOutViewModel
+import com.circaso.feature.ramp.domain.ObserveSalesUseCase
+import com.circaso.feature.ramp.domain.QuoteSaleUseCase
+import com.circaso.feature.ramp.domain.SaleWallet
+import com.circaso.feature.ramp.domain.SellForMpesaUseCase
 import com.circaso.feature.ramp.presentation.IdentityViewModel
 import com.circaso.feature.wallet.domain.WalletNetwork
 import com.circaso.feature.wallet.domain.WalletRepository
@@ -55,6 +60,9 @@ val rampModule = module {
             // one account's and goes at sign-out.
             savedIdentity = { network -> prefs.text(RampRepositoryImpl.identityKey(network)) },
             saveIdentity = { network, text -> prefs.setText(RampRepositoryImpl.identityKey(network), text) },
+            // The sales paid from this phone, per network, for the wallet's "Cashed out to M-Pesa"; under `text.wallet.` too.
+            savedSales = { network -> prefs.text(RampRepositoryImpl.salesKey(network)) },
+            saveSales = { network, text -> prefs.setText(RampRepositoryImpl.salesKey(network), text) },
             // The USDC arrived: the balance and the history are read again for that network.
             onArrived = { get<WalletRepository>().refresh() },
         )
@@ -67,6 +75,18 @@ val rampModule = module {
     factory { ObserveRampUpdatesUseCase(get()) }
     factory { ObserveTopUpsUseCase(get()) }
     factory { GetOwnMpesaNumberUseCase(get()) }
+    factory { QuoteSaleUseCase(get()) }
+    factory { SellForMpesaUseCase(get()) }
+    factory { ObserveSalesUseCase(get()) }
+    // The wallet as a sale needs it: the pinned network's balance, W17 and W4 with the person's approval.
+    factory<SaleWallet> {
+        val wallet = get<WalletRepository>()
+        object : SaleWallet {
+            override fun wallet(network: WalletNetwork) = wallet.walletOn(network)
+            override suspend fun fee(request: com.circaso.feature.wallet.domain.PaymentRequest) = wallet.quote(request)
+            override suspend fun send(request: com.circaso.feature.wallet.domain.PaymentRequest, idempotencyKey: String) = wallet.pay(request, idempotencyKey)
+        }
+    }
     factory { StartKycUseCase(get()) }
     factory { GetKycUseCase(get()) }
     factory { ObserveKycUpdatesUseCase(get()) }
@@ -75,6 +95,17 @@ val rampModule = module {
     viewModel { (orderId: String?, network: String?) ->
         AddMoneyViewModel(
             orderId, get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(),
+            maskedPhone = get<AccountRepository>().overview.map { it?.maskedPhone },
+            online = get<ConnectionState>().status.map { it == ConnectionStatus.Online },
+            networks = get(),
+            network = WalletNetwork.of(network),
+        )
+    }
+    // Cash out (E6): selling USDC for M-Pesa. [orderId] opens on a sale (a push, or the open order).
+    viewModel { (orderId: String?, network: String?) ->
+        CashOutViewModel(
+            orderId, get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(),
+            saleWallet = get(), ramp = get(),
             maskedPhone = get<AccountRepository>().overview.map { it?.maskedPhone },
             online = get<ConnectionState>().status.map { it == ConnectionStatus.Online },
             networks = get(),

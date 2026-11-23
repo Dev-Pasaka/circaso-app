@@ -150,6 +150,11 @@ data class PaymentRequest(
      * for it alone, and if the selection has moved since, nothing is sent or signed. Null: the selected network.
      */
     val network: WalletNetwork? = null,
+    /**
+     * A sale of USDC for M-Pesa this pays (R7's order id; guide "Selling USDC for M-Pesa"): W4 names it, and the
+     * order id is the payment's `Idempotency-Key`, so it can never be paid twice.
+     */
+    val rampOrderId: String? = null,
 ) {
     /**
      * A personal payment belongs to the network the person is looking at: if the selection moves under it, nothing is

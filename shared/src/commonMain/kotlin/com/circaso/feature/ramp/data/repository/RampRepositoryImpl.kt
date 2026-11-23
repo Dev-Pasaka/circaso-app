@@ -8,7 +8,13 @@ import com.circaso.feature.ramp.data.remote.OrderResponse
 import com.circaso.feature.ramp.data.remote.OrderUpdatedFrame
 import com.circaso.feature.ramp.data.remote.QuoteRequest
 import com.circaso.feature.ramp.data.remote.RampRemote
+import com.circaso.feature.ramp.data.remote.StartOffRampRequest
 import com.circaso.feature.ramp.data.remote.StartOnRampRequest
+import com.circaso.feature.ramp.data.remote.SavedSale
+import com.circaso.feature.ramp.domain.MpesaSales
+import com.circaso.feature.ramp.domain.RampAmount
+import com.circaso.feature.ramp.domain.RampDirection
+import com.circaso.feature.ramp.domain.SaleLabel
 import com.circaso.feature.ramp.data.remote.SavedIdentity
 import com.circaso.feature.ramp.data.remote.VerificationDto
 import com.circaso.feature.ramp.data.remote.toDomain
@@ -70,6 +76,9 @@ class RampRepositoryImpl(
     private val savedIdentity: (WalletNetwork) -> Flow<String?> = { flowOf(null) },
     private val saveIdentity: suspend (WalletNetwork, String) -> Unit = { _, _ -> },
     private val now: () -> Long = ::nowMillis,
+    /** One network's sales paid from this phone (JSON), and its writer: the wallet history's "Cashed out to M-Pesa". */
+    private val savedSales: (WalletNetwork) -> Flow<String?> = { flowOf(null) },
+    private val saveSales: suspend (WalletNetwork, String) -> Unit = { _, _ -> },
 ) : RampRepository {
     private val _updates = MutableSharedFlow<RampOrderUpdate>(extraBufferCapacity = 16)
     override val updates: Flow<RampOrderUpdate> = _updates
@@ -162,6 +171,63 @@ class RampRepositoryImpl(
         return result.map { it.seen() }
     }
 
+    override suspend fun sellQuote(blockchain: String, usdcMinor: String?, shillingsMinor: String?, idempotencyKey: String): AppResult<RampQuote> {
+        // One side only: the USDC to send (as a decimal, e.g. "10.5"), or the whole shillings to receive.
+        val crypto = usdcMinor?.let { AmountDto(amount = MinorUnits.toDisplay(it, RampMoney.CoinDecimals, minFraction = 0).replace(",", "")) }
+        val fiat = if (crypto == null) shillingsMinor?.let { AmountDto(amount = MinorUnits.toDisplay(it, RampMoney.FiatDecimals, minFraction = 0).replace(",", "")) } else null
+        return remote.quote(QuoteRequest(direction = OffRamp, blockchain = blockchain, fiat = fiat, crypto = crypto), idempotencyKey).map { it.toDomain() }
+    }
+
+    override suspend fun sell(quoteId: String, phone: String, idempotencyKey: String): AppResult<RampOrder> {
+        val result = remote.sell(StartOffRampRequest(quoteId, phone), idempotencyKey)
+        when {
+            // The server took the number as the account's own: remembered, so the next sale or top-up doesn't ask for it.
+            result is AppResult.Success -> phones.put(phone)
+            (result as? AppResult.Failure)?.error.let { (it as? AppError.Api)?.code } == RampCodes.PhoneNotYours -> phones.clear()
+        }
+        return result.map { it.seen() }
+    }
+
+    private val salesLock = Mutex()
+
+    @OptIn(ExperimentalCoroutinesApi::class)
+    override val sales: Flow<MpesaSales> = networks.followed.flatMapLatest { network -> savedSales(network).map { MpesaSales.of(decodeSales(it).map { s -> s.label() }) } }.distinctUntilChanged()
+
+    private fun decodeSales(text: String?): List<SavedSale> = text?.let { runCatching { json.decodeFromString(salesSerializer, it) }.getOrNull() } ?: emptyList()
+
+    override suspend fun saleSent(order: RampOrder, transferId: String) {
+        val network = order.network ?: networks.effective()
+        editSales(network) { list ->
+            val kept = list.firstOrNull { it.orderId == order.orderId }
+            list.filterNot { it.orderId == order.orderId } + SavedSale.of(order, transferId.lowercase(), kept)
+        }
+    }
+
+    override suspend fun saleTransfer(orderId: String): String? =
+        decodeSales(savedSales(networks.effective()).first()).firstOrNull { it.orderId == orderId }?.transferId
+
+    /** A sale this phone paid moved on: its label follows (the receipt once paid out, the refund's hash once back). */
+    private suspend fun noteSale(order: RampOrder) {
+        val network = order.network ?: networks.effective()
+        editSales(network) { list ->
+            val kept = list.firstOrNull { it.orderId == order.orderId } ?: return@editSales list
+            list.map { if (it.orderId == order.orderId) SavedSale.of(order, kept.transferId, kept) else it }
+        }
+    }
+
+    /** Keeping a label must never fail the call it rides on. */
+    private suspend fun editSales(network: WalletNetwork, change: (List<SavedSale>) -> List<SavedSale>) {
+        salesLock.withLock {
+            runCatching {
+                val before = decodeSales(savedSales(network).first())
+                val after = change(before).takeLast(MaxRemembered)
+                if (after != before) saveSales(network, json.encodeToString(salesSerializer, after))
+            }
+        }
+    }
+
+    private val salesSerializer = kotlinx.serialization.builtins.ListSerializer(SavedSale.serializer())
+
     override suspend fun order(orderId: String): AppResult<RampOrder> = remote.order(orderId).map { it.seen() }
 
     override suspend fun cancel(orderId: String, idempotencyKey: String): AppResult<RampOrder> = remote.cancel(orderId, idempotencyKey).map { it.seen() }
@@ -173,9 +239,17 @@ class RampRepositoryImpl(
 
     override suspend fun ownPhone(): String? = phones.get()
 
-    /** An order as the server just gave it: a completed one is remembered and, the first time, refreshes the wallet. */
+    /**
+     * An order as the server just gave it: a completed top-up is remembered and, the first time, refreshes the wallet;
+     * a sale's label follows it, and a sale whose USDC came back refreshes the wallet once.
+     */
     private suspend fun OrderResponse.seen(): RampOrder {
         val order = toDomain()
+        if (order.sale) {
+            noteSale(order)
+            if (order.state == RampOrderState.Refunded) arrivedOnce(order.orderId)
+            return order
+        }
         if (order.state == RampOrderState.Completed) {
             remember(order.network ?: networks.effective(), listOf(this))
             arrivedOnce(order.orderId)
@@ -189,7 +263,8 @@ class RampRepositoryImpl(
     }
 
     private suspend fun remember(network: WalletNetwork, orders: List<OrderResponse>) {
-        val done = orders.filter { RampOrderState.of(it.state) == RampOrderState.Completed && !it.txHash.isNullOrBlank() }
+        // Top-ups only: a sale's hash is the USDC leaving, or coming back, never money bought.
+        val done = orders.filter { RampDirection.of(it.direction) == RampDirection.OnRamp && RampOrderState.of(it.state) == RampOrderState.Completed && !it.txHash.isNullOrBlank() }
         if (done.isEmpty()) return
         topUpsLock.withLock {
             val saved = decode(savedTopUps(network).first())
@@ -211,7 +286,17 @@ class RampRepositoryImpl(
         if (type != OrderUpdated) return // a newer server's frame types are ignored
         val frame = runCatching { json.decodeFromJsonElement(OrderUpdatedFrame.serializer(), data) }.getOrNull() ?: return
         val state = RampOrderState.of(frame.state)
-        _updates.emit(RampOrderUpdate(frame.orderId, state, frame.failureReason))
+        val direction = RampDirection.of(frame.direction)
+        _updates.emit(RampOrderUpdate(frame.orderId, state, frame.failureReason, direction))
+        if (direction == RampDirection.OffRamp) {
+            // A sale paid out or refunded: read once, so its wallet label gets the receipt or the refund (and a refund
+            // refreshes the balance), whether or not its screen is open.
+            if (state == RampOrderState.Completed || state == RampOrderState.Refunded) {
+                val network = WalletNetwork.of(frame.network) ?: WalletNetwork.ofChainOrNull(frame.blockchain) ?: networks.effective()
+                withContext(PinnedNetwork(network)) { runCatching { remote.order(frame.orderId).map { it.seen() } } }
+            }
+            return
+        }
         if (state == RampOrderState.Completed) {
             // The frame names the chain, and a chain is on one network: the wallet read is for that network whatever
             // the Wallet tab shows.
@@ -230,6 +315,9 @@ class RampRepositoryImpl(
         const val OrderUpdated = "order.updated"
         const val KycUpdated = "kyc.updated"
         const val OnRamp = "ON_RAMP"
+        const val OffRamp = "OFF_RAMP"
+        /** The setting that holds one network's sales paid from this phone (under `text.wallet.`, wiped at sign-out). */
+        fun salesKey(network: WalletNetwork): String = "wallet.ramp.sales." + network.wire
         /** The setting that holds one network's last known identity check (under `text.wallet.`, wiped at sign-out). */
         fun identityKey(network: WalletNetwork): String = "wallet.ramp.kyc." + network.wire
         /** The setting that holds one network's top-up labels (under `text.wallet.`, wiped at sign-out). */

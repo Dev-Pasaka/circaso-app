@@ -85,8 +85,10 @@ import kotlinx.coroutines.launch
  * amount, price, the M-Pesa prompt, and the order until it lands.
  */
 @Composable
-fun AddMoneyScreen(viewModel: AddMoneyViewModel, onBack: () -> Unit, onSupport: () -> Unit) {
+fun AddMoneyScreen(viewModel: AddMoneyViewModel, onBack: () -> Unit, onSupport: () -> Unit, onSale: (String) -> Unit = {}) {
     val state by viewModel.state.collectAsState()
+    // The order this opened on is a sale (a push, or the open order): Cash Out takes it from here.
+    LaunchedEffect(state.handOff) { state.handOff?.let(onSale) }
     // Back in front (from Settings, from Didit's hosted page, from anywhere): a check that may have moved is read again.
     LifecycleResumeEffect(viewModel) { viewModel.onResumed(); onPauseOrDispose { viewModel.onPaused() } }
     AddMoneyContent(
@@ -432,7 +434,7 @@ internal fun SkeletonLine(style: TextStyle, fraction: Float, modifier: Modifier 
 }
 
 @Composable
-private fun SkeletonRows(count: Int) {
+internal fun SkeletonRows(count: Int) {
     val t = CircasoTheme.typography
     ListGroup {
         repeat(count) { i ->
@@ -477,7 +479,7 @@ private fun AmountSkeleton() {
 }
 
 @Composable
-private fun OrderSkeleton() {
+internal fun OrderSkeleton() {
     val c = CircasoTheme.colors
     val t = CircasoTheme.typography
     Column(Modifier.fillMaxWidth().padding(top = CircasoSpacing.s6), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(CircasoSpacing.s3)) {

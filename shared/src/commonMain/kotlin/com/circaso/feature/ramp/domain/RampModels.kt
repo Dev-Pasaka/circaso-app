@@ -172,9 +172,38 @@ data class RampStatus(
     val limits: RampLimits,
     /** The fee as a percentage ("1.5"), inside what is paid. */
     val feePercent: String,
+    /** Selling USDC for M-Pesa (2026-11-23), on its own switch; null from a server before selling. */
+    val offRamp: OffRampStatus? = null,
 )
 
-/** R2: a price that holds until [expiresAt] and reserves nothing. The [fee] is inside [pay]. */
+/**
+ * R1's `offRamp`: [open] says whether "Cash Out" is offered at all; [merchantOnline] whether someone can buy USDC now;
+ * [canSell] is every gate at once (open, verified or not required, not barred, active, someone online, no open order).
+ * [limits] are on what the person receives, in shillings.
+ */
+data class OffRampStatus(val open: Boolean, val merchantOnline: Boolean, val canSell: Boolean, val limits: RampLimits?)
+
+/** Which way an order goes: buying USDC with M-Pesa, or selling it for M-Pesa. */
+enum class RampDirection { OnRamp, OffRamp;
+    companion object {
+        fun of(wire: String?): RampDirection = if (wire.equals("OFF_RAMP", ignoreCase = true)) OffRamp else OnRamp
+    }
+}
+
+/**
+ * Where a sale's USDC goes (R7's `deposit`, only while `AWAITING_TRANSFER`): the app sends exactly [amountMinor] of
+ * [asset] to [address] on [blockchain] with W4, naming the sale, before [expiresAt] (epoch ms).
+ */
+data class SaleDeposit(val address: String, val blockchain: String, val asset: String, val amountMinor: String, val amount: String, val expiresAt: Long?) {
+    // An address is not secret, but it has no place in a log line beside an amount.
+    override fun toString(): String = "SaleDeposit($blockchain, ***)"
+}
+
+/**
+ * R2: a price that holds until [expiresAt] and reserves nothing. Buying: the [fee] is inside [pay]. Selling
+ * ([direction] [RampDirection.OffRamp]): [pay] is the USDC sent, [worth] is that at the [rate], and [receive] is
+ * `worth - fee - providerFee`, rounded down to the shilling.
+ */
 data class RampQuote(
     val quoteId: String,
     val blockchain: String,
@@ -185,21 +214,29 @@ data class RampQuote(
     val fee: RampAmount,
     /** Server time (epoch ms); null when it couldn't be read, and the quote is then held for [QuoteSeconds]. */
     val expiresAt: Long?,
+    val direction: RampDirection = RampDirection.OnRamp,
+    /** Selling: the payout provider's charge for sending the shillings to M-Pesa, paid by the person. */
+    val providerFee: RampAmount? = null,
+    /** Selling: what the USDC is worth at the rate, before any fee. */
+    val worth: RampAmount? = null,
 ) {
     companion object { const val QuoteSeconds = 60 }
 }
 
 /**
- * An order's state as the server names it. [PaymentRequested] is "check your phone"; [Paid] M-Pesa confirmed;
- * [Releasing] the USDC is being sent; [Review] a person at Circaso is looking.
+ * An order's state as the server names it. Buying: [PaymentRequested] is "check your phone"; [Paid] M-Pesa confirmed;
+ * [Releasing] the USDC is being sent. Selling: [AwaitingTransfer] waits for the person's USDC; [Funded] it reached
+ * the seller and is held there; [PayingOut] the shillings were sent to M-Pesa; [Refunding] / [Refunded] the USDC is
+ * coming back / is back. [Review] a person at Circaso is looking.
  */
 enum class RampOrderState {
     Reserved, PaymentRequested, Paid, Releasing, Completed, Expired, Cancelled, Failed, Review,
+    AwaitingTransfer, Funded, PayingOut, Refunding, Refunded,
     /** A state this version doesn't know (a newer server's): shown as still under way, never as an ending. */
     Unknown;
 
     /** Nothing more happens by itself: stop following it. [Review] ends the following too, a person takes over. */
-    val settled: Boolean get() = this == Completed || this == Expired || this == Cancelled || this == Failed || this == Review
+    val settled: Boolean get() = this == Completed || this == Expired || this == Cancelled || this == Failed || this == Review || this == Refunded
 
     /** The shillings have left the person's M-Pesa. */
     val paid: Boolean get() = this == Paid || this == Releasing || this == Completed
@@ -215,6 +252,11 @@ enum class RampOrderState {
             "CANCELLED" -> Cancelled
             "FAILED" -> Failed
             "REVIEW" -> Review
+            "AWAITING_TRANSFER" -> AwaitingTransfer
+            "FUNDED" -> Funded
+            "PAYING_OUT" -> PayingOut
+            "REFUNDING" -> Refunding
+            "REFUNDED" -> Refunded
             else -> Unknown
         }
     }
@@ -234,13 +276,22 @@ data class RampOrder(
     val txHash: String?,
     /** The server's short reason (`payment_failed`, `cancelled`, …); for support, never shown as copy. */
     val failureReason: String?,
-    /** When the unpaid prompt runs out (epoch ms). */
+    /** When the unpaid prompt runs out (epoch ms); a sale's deadline for its USDC to arrive. */
     val expiresAt: Long?,
     val createdAt: Long?,
-)
+    val direction: RampDirection = RampDirection.OnRamp,
+    /** A sale: the payout provider's charge, paid by the person. */
+    val providerFee: RampAmount? = null,
+    /** A sale waiting for its USDC: where and what to send (only while [RampOrderState.AwaitingTransfer]). */
+    val deposit: SaleDeposit? = null,
+    /** A sale paid out: the M-Pesa confirmation code. */
+    val receipt: String? = null,
+) {
+    val sale: Boolean get() = direction == RampDirection.OffRamp
+}
 
 /** `ramp` / `order.updated`: the order moved. It carries no fee or hash, so the order is read again (R4) after it. */
-data class RampOrderUpdate(val orderId: String, val state: RampOrderState, val failureReason: String?) {
+data class RampOrderUpdate(val orderId: String, val state: RampOrderState, val failureReason: String?, val direction: RampDirection = RampDirection.OnRamp) {
     companion object {
         /** [orderId] of a `resync` (the socket's gap is past its replay window): whichever order is on screen reads itself again. */
         const val ReloadAll = "*"
@@ -273,4 +324,43 @@ object RampCodes {
     const val TooManyPrompts = "ramp.too_many_prompts"
     const val OrderNotFound = "ramp.order_not_found"
     const val NotCancellable = "ramp.order_not_cancellable"
+    /** Selling isn't open to this person on this network (R2, R7, 409): "Cash Out" shows its closed page. */
+    const val OffRampUnavailable = "ramp.offramp_unavailable"
+    /** The payout provider's charge can't be read right now (R2 for a sale, 502). */
+    const val PayoutFeeUnavailable = "ramp.payout_fee_unavailable"
+    const val PricingUnavailable = "ramp.pricing_unavailable"
+    const val ChainUnsupported = "ramp.chain_unsupported"
+    /** W4: another transfer already pays this sale (409). Never send again: show the order. */
+    const val SaleFunded = "wallet.ramp_order_funded"
+}
+
+/**
+ * A sale as this phone remembers it for the wallet's history (designs E1/E7): the W4 transfer that paid it reads
+ * "Cashed out to M-Pesa" with the shillings and the M-Pesa receipt; the refund's transaction reads as the USDC coming
+ * back. Nothing personal beyond the masked number the server already shows.
+ */
+data class SaleLabel(
+    val orderId: String,
+    /** The W4 transfer that sent the USDC from this phone; null until it was sent. */
+    val transferId: String?,
+    val maskedPhone: String,
+    /** What reaches M-Pesa, "KES 1,269". */
+    val receive: RampAmount,
+    val receipt: String?,
+    val state: RampOrderState,
+    /** The refund's transaction hash, once the USDC came back. */
+    val refundHash: String?,
+)
+
+/** The sales this phone knows, looked up by the transfer that paid each one and by its refund's hash. */
+data class MpesaSales(val byTransfer: Map<String, SaleLabel> = emptyMap(), val byRefund: Map<String, SaleLabel> = emptyMap()) {
+    fun paidBy(transferId: String): SaleLabel? = byTransfer[transferId.lowercase()]
+    fun refundedBy(txHash: String?): SaleLabel? = txHash?.lowercase()?.let { byRefund[it] }
+
+    companion object {
+        fun of(labels: List<SaleLabel>) = MpesaSales(
+            labels.mapNotNull { l -> l.transferId?.let { it.lowercase() to l } }.toMap(),
+            labels.mapNotNull { l -> l.refundHash?.let { it.lowercase() to l } }.toMap(),
+        )
+    }
 }

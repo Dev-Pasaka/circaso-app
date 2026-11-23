@@ -140,6 +140,11 @@ internal class FakeRampRemote : RampRemote {
     var quoteGate: kotlinx.coroutines.CompletableDeferred<Unit>? = null
     override suspend fun quote(request: QuoteRequest, idempotencyKey: String): AppResult<QuoteResponse> { quotes += request to idempotencyKey; networks += pinnedNetwork(); quoteGate?.await(); return quote }
     override suspend fun buy(request: StartOnRampRequest, idempotencyKey: String): AppResult<OrderResponse> { buys += request to idempotencyKey; networks += pinnedNetwork(); return buy }
+
+    /** R7 (selling). */
+    var sell: AppResult<OrderResponse> = AppResult.Success(saleDto("AWAITING_TRANSFER"))
+    val sells = mutableListOf<Pair<com.circaso.feature.ramp.data.remote.StartOffRampRequest, String>>()
+    override suspend fun sell(request: com.circaso.feature.ramp.data.remote.StartOffRampRequest, idempotencyKey: String): AppResult<OrderResponse> { sells += request to idempotencyKey; networks += pinnedNetwork(); return sell }
     override suspend fun order(orderId: String): AppResult<OrderResponse> { reads += orderId; return order }
     override suspend fun orders(limit: Int, cursor: String?): AppResult<OrdersResponse> = orders
     override suspend fun cancel(orderId: String, idempotencyKey: String): AppResult<OrderResponse> { cancels += orderId to idempotencyKey; return cancel }
@@ -163,12 +168,16 @@ internal class RampFixture(
     fun identitySlot(network: WalletNetwork) = identities.getOrPut(network) { MutableStateFlow(null) }
     var arrivals = 0
     val arrivedOn = mutableListOf<WalletNetwork?>()
+    /** The sales paid from this phone, per network, as they are kept (JSON). */
+    val sales = mutableMapOf<WalletNetwork, MutableStateFlow<String?>>()
+    fun salesSlot(network: WalletNetwork) = sales.getOrPut(network) { MutableStateFlow(null) }
     val repo = RampRepositoryImpl(
         remote, networks, phones, circasoJson(),
         savedTopUps = { slot(it) }, saveTopUps = { network, text -> slot(network).value = text },
         onArrived = { arrivals++; arrivedOn += pinnedNetwork() },
         savedIdentity = { identitySlot(it) }, saveIdentity = { network, text -> identitySlot(network).value = text },
         now = { clock() },
+        savedSales = { salesSlot(it) }, saveSales = { network, text -> salesSlot(network).value = text },
     )
 }
 
