@@ -197,9 +197,9 @@ class VaultViewModel(
         VaultProblem.Unsupported -> copy(error = "This phone's passkeys can't lock a vault. Update the phone, or use Google Password Manager or iCloud Keychain.")
         VaultProblem.NoVault -> copy(error = "There's no vault on this account yet.")
         VaultProblem.WrongPasskey -> copy(error = "That passkey doesn't open this vault. Pick the Circaso PIN Vault passkey.")
+        VaultProblem.NoPasskey -> copy(error = NoPasskeyText)
         is VaultProblem.Passkey -> copy(
-            error = if (problem.reason == "no-passkey") "No Circaso passkey on this phone. Sign in to the same Google or Apple account you saved it with."
-            else "Your passkey didn't answer. Try again.",
+            error = "Your passkey didn't answer. Try again.",
             // What the passkey provider said, for support.
             errorRef = problem.reason,
         )
@@ -209,6 +209,8 @@ class VaultViewModel(
     }
 
     companion object {
+        const val NoPasskeyText = "This phone doesn't have your Circaso passkey. It may be on another phone, or in another Google or Apple account. " +
+            "Try again and choose another device, or sign in to that account on this phone."
         const val RevealMillis = 60_000L
         const val MaxAnswers = 3
         private const val MaxText = 120

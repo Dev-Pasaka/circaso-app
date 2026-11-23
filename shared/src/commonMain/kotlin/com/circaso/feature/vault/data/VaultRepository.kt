@@ -3,6 +3,7 @@ package com.circaso.feature.vault.data
 import com.circaso.core.common.AppError
 import com.circaso.core.common.AppResult
 import com.circaso.core.crypto.SignalCrypto
+import com.circaso.core.platform.AccountPasskey
 import com.circaso.core.platform.PasskeyPrf
 import com.circaso.core.platform.PrfResult
 import com.circaso.feature.vault.domain.VaultContents
@@ -19,6 +20,8 @@ sealed interface VaultProblem {
     data object NoVault : VaultProblem
     /** The passkey's secret didn't open it: another passkey was picked, or the vault is damaged. */
     data object WrongPasskey : VaultProblem
+    /** This phone's password manager doesn't have the account's passkey (another phone or account has it, or it's gone). */
+    data object NoPasskey : VaultProblem
     data class Server(val error: AppError) : VaultProblem
     data class Passkey(val reason: String) : VaultProblem
 }
@@ -31,8 +34,9 @@ sealed interface VaultOutcome<out T> {
 
 /**
  * The PIN Vault (2026-11-11): the Circle wallet PIN (and optional security answers) sealed on this phone with a key
- * from the person's circaso.com passkey ([PasskeyPrf]); the server keeps only the sealed bytes. Saving makes a passkey
- * the first time and reuses it after.
+ * from the person's circaso.com passkey ([PasskeyPrf]); the server keeps only the sealed bytes. Saving uses the
+ * account's one passkey ([AccountPasskey]: this vault's, else the one another network's vault or the group key backup
+ * is sealed under) and makes one only when the account has none.
  *
  * Opening asks the passkey first and the server second: the server counts `GET /v1/vault` as an opening (it logs it,
  * emails the person and pauses sending for 24 hours), so backing out of Face ID must never reach it. That works because
@@ -57,6 +61,8 @@ class VaultRepository(
      * the server picks it from `X-Wallet-Network`). What is remembered is forgotten when it changes.
      */
     private val network: () -> String = { "" },
+    /** Which passkey to use, or whether to make one: the one rule the group key backup shares. */
+    private val account: AccountPasskey = AccountPasskey(passkeys),
 ) {
     private val sealer = VaultCrypto(crypto)
     private val knownStatus = MutableStateFlow<VaultStatus?>(null)
@@ -96,8 +102,9 @@ class VaultRepository(
     }
 
     /**
-     * Seals [contents] and saves it. With no vault yet a passkey is made ([handle] and [displayName] label it in the
-     * person's password manager); with one, its passkey is used again and the vault replaced.
+     * Seals [contents] and saves it under the account's passkey ([AccountPasskey]). Only an account with no passkey
+     * anywhere gets one made ([handle] and [displayName] label it in the person's password manager): making a second
+     * would replace the first in the password manager and orphan whatever it sealed.
      */
     suspend fun save(contents: VaultContents, handle: String, displayName: String): VaultOutcome<Unit> {
         val person = userId() ?: return VaultOutcome.Problem(VaultProblem.Server(AppError.Unexpected(401)))
@@ -106,18 +113,12 @@ class VaultRepository(
             is AppResult.Failure -> return VaultOutcome.Problem(VaultProblem.Server(s.error))
         }
         val salt = PrfSalt
-        val (credentialId, secret) = when (val credential = existing.credentialId?.let { decodeUrl(it) }) {
-            null -> when (val made = passkeys.create(person, handle, displayName, salt)) {
-                is PrfResult.Success -> made.credentialId to (made.secret ?: when (val again = passkeys.secret(made.credentialId, salt)) {
-                    is PrfResult.Success -> again.secret ?: return VaultOutcome.Problem(VaultProblem.Unsupported)
-                    else -> return VaultOutcome.Problem(again.problem())
-                })
-                else -> return VaultOutcome.Problem(made.problem())
-            }
-            else -> when (val used = passkeys.secret(credential, salt)) {
-                is PrfResult.Success -> credential to (used.secret ?: return VaultOutcome.Problem(VaultProblem.Unsupported))
-                else -> return VaultOutcome.Problem(used.problem())
-            }
+        // A vault whose passkey can't be read is not "no passkey": nothing is made over it.
+        val own = existing.credentialId?.let { runCatching { decodeUrl(it) }.getOrNull() ?: return VaultOutcome.Problem(VaultProblem.WrongPasskey) }
+        val (credentialId, secret) = when (val a = account.secret(own, person, handle, displayName, salt)) {
+            is AccountPasskey.Answer.Ready -> a.credentialId to a.secret
+            is AccountPasskey.Answer.NoAnswer -> return VaultOutcome.Problem(a.result.problem())
+            is AccountPasskey.Answer.Unknown -> return VaultOutcome.Problem(VaultProblem.Server(a.error))
         }
         // A copy for the group key backup, handed over only once the vault is saved, then wiped.
         val forBackup = secret.copyOf()
@@ -194,6 +195,7 @@ class VaultRepository(
     private fun PrfResult.problem(): VaultProblem = when (this) {
         PrfResult.Cancelled -> VaultProblem.Cancelled
         PrfResult.Unsupported -> VaultProblem.Unsupported
+        PrfResult.NoPasskey -> VaultProblem.NoPasskey
         is PrfResult.Failed -> VaultProblem.Passkey(reason)
         is PrfResult.Success -> VaultProblem.Unsupported
     }

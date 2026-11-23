@@ -37,7 +37,8 @@ import kotlin.io.encoding.ExperimentalEncodingApi
 @OptIn(ExperimentalEncodingApi::class)
 class AndroidPasskeyPrf(private val activities: CurrentActivity) : PasskeyPrf {
     private val random = SecureRandom()
-    @Volatile private var lastTransports: List<String>? = null
+    /** The transports the passkey made in this run reported, with its id: they describe that passkey only. */
+    @Volatile private var madeHere: Pair<String, List<String>>? = null
     @Volatile private var justCreatedAt: Long? = null
 
     override suspend fun isSupported(): Boolean = Build.VERSION.SDK_INT >= Build.VERSION_CODES.P
@@ -71,7 +72,8 @@ class AndroidPasskeyPrf(private val activities: CurrentActivity) : PasskeyPrf {
                 ?: return PrfResult.Failed("no-id").also { Log.e(Tag, "passkey create: no credential id") }
             val prf = parsed.prf()
             val attestation = parsed["response"] as? JsonObject
-            lastTransports = (attestation?.get("transports") as? kotlinx.serialization.json.JsonArray)?.mapNotNull { it.jsonPrimitive.contentOrNull }
+            val lastTransports = (attestation?.get("transports") as? kotlinx.serialization.json.JsonArray)?.mapNotNull { it.jsonPrimitive.contentOrNull }
+            madeHere = lastTransports?.let { b64(unb64(id)) to it }
             Log.i(Tag, "passkey create: done, prf=${prf?.get("enabled")} secret=${prf.first() != null} id=${id.take(10)}… attachment=${parsed["authenticatorAttachment"]} transports=$lastTransports")
             justCreatedAt = System.currentTimeMillis()
             if (prf?.get("enabled")?.jsonPrimitive?.contentOrNull == "false") return PrfResult.Unsupported
@@ -90,6 +92,9 @@ class AndroidPasskeyPrf(private val activities: CurrentActivity) : PasskeyPrf {
 
     override suspend fun secret(credentialId: ByteArray, prfSalt: ByteArray): PrfResult {
         val activity = visibleActivity() ?: return PrfResult.Failed("no-screen").also { Log.e(Tag, "passkey: no visible screen") }
+        // "internal" finds it in this phone's password manager; "hybrid" keeps "use another device" on offer, the only
+        // way in when the passkey lives on another phone or in another account.
+        val transports = madeHere?.takeIf { it.first == b64(credentialId) }?.second?.takeIf { it.isNotEmpty() } ?: listOf("internal", "hybrid")
         val json = buildJsonObject {
             put("challenge", b64(bytes(32)))
             put("rpId", PasskeyPrf.RelyingParty)
@@ -99,7 +104,7 @@ class AndroidPasskeyPrf(private val activities: CurrentActivity) : PasskeyPrf {
                 add(buildJsonObject {
                     put("type", "public-key"); put("id", b64(credentialId))
                     // Kept on this phone (and synced by the password manager): look here first, not on another device.
-                    putJsonArray("transports") { (lastTransports?.takeIf { it.isNotEmpty() } ?: listOf("internal", "hybrid")).forEach { add(it) } }
+                    putJsonArray("transports") { transports.forEach { add(it) } }
                 })
             }
             putJsonObject("extensions") { putJsonObject("prf") { putJsonObject("eval") { put("first", b64(prfSalt)) } } }
@@ -108,7 +113,7 @@ class AndroidPasskeyPrf(private val activities: CurrentActivity) : PasskeyPrf {
         justCreatedAt?.let { val wait = 3_000 - (System.currentTimeMillis() - it); if (wait > 0) kotlinx.coroutines.delay(wait) }
         justCreatedAt = null
         return try {
-            Log.i(Tag, "passkey use: start id=${b64(credentialId).take(10)}… (transports=${lastTransports ?: "default"})")
+            Log.i(Tag, "passkey use: start id=${b64(credentialId).take(10)}… (transports=$transports)")
             val result = CredentialManager.create(activity).getCredential(activity, GetCredentialRequest(listOf(GetPublicKeyCredentialOption(json))))
             val body = (result.credential as? PublicKeyCredential)?.authenticationResponseJson
                 ?: return PrfResult.Failed("no-response").also { Log.e(Tag, "passkey use: unexpected credential ${result.credential.type}") }
@@ -121,8 +126,15 @@ class AndroidPasskeyPrf(private val activities: CurrentActivity) : PasskeyPrf {
             PrfResult.Cancelled
         } catch (e: NoCredentialException) {
             Log.e(Tag, "passkey use: no passkey", e)
-            PrfResult.Failed("no-passkey")
+            PrfResult.NoPasskey
         } catch (e: GetCredentialException) {
+            // "NotAllowedError: User canceled the request": the person backed out inside the password manager's own
+            // screens (the fingerprint, or "use another device" when this phone has no such passkey). A choice, not a
+            // failure; the caller decides what to offer after it.
+            if (e.type.endsWith("TYPE_NOT_ALLOWED_ERROR")) {
+                Log.i(Tag, "passkey use: backed out (${e.describe()})")
+                return PrfResult.Cancelled
+            }
             Log.e(Tag, "passkey use failed: ${e.type}: ${e.errorMessage}", e)
             PrfResult.Failed(e.describe())
         } catch (e: Exception) {

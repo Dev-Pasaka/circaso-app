@@ -29,6 +29,12 @@ sealed interface PrfResult {
     /** [secret] is null when the passkey was made but its maker gave no PRF secret at creation: ask with [PasskeyPrf.secret]. */
     class Success(val credentialId: ByteArray, val secret: ByteArray?) : PrfResult
     data object Cancelled : PrfResult
+    /**
+     * This phone's password manager has no such passkey: it lives on another phone or in another Google or Apple
+     * account, or was replaced. Only when the provider says so outright; backing out of its "another device" sheet
+     * is [Cancelled].
+     */
+    data object NoPasskey : PrfResult
     /** The passkey provider has no PRF (an older iPhone, or a password manager without it). */
     data object Unsupported : PrfResult
     data class Failed(val reason: String) : PrfResult

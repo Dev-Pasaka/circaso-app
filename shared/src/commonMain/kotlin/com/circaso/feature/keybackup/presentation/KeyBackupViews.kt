@@ -92,6 +92,7 @@ fun RestoreGroupNamesCard(viewModel: KeyBackupViewModel, unlock: String, floatin
                     CircasoButton("Restore With $unlock", viewModel::onRestore, Modifier.weight(1f), style = ButtonStyle.Secondary, size = ButtonSize.Medium, busy = s.busy, enabled = s.online)
                 }
                 if (!s.online) BasicText("Restoring needs a connection.", Modifier.semantics { liveRegion = LiveRegionMode.Polite }, style = t.footnote.copy(color = c.inkTertiary))
+                PasskeyMissingLines(s, viewModel, more = KeyBackupCopy.PasskeyMissingOnChats)
             } else {
                 CircasoButton("OK", viewModel::onNotNow, style = ButtonStyle.Plain, size = ButtonSize.Medium, block = true)
             }
@@ -118,6 +119,7 @@ fun GroupBackupSection(viewModel: KeyBackupViewModel, unlock: String) {
                         "Group names backup",
                         sub = when {
                             s.unknown -> "Checking…"
+                            s.on && s.needsRepair -> "${KeyBackupCopy.RepairSub} · repair with $unlock"
                             s.on && s.unreadableGroups > 0 -> "Some group names are missing here · restore with $unlock"
                             s.on -> "Group names come back after you sign out or change phones"
                             !s.online -> "Turning this on needs a connection"
@@ -127,6 +129,7 @@ fun GroupBackupSection(viewModel: KeyBackupViewModel, unlock: String) {
                         trailing = {
                             when {
                                 s.unknown -> Unit
+                                s.on && s.needsRepair -> CircasoButton("Repair", viewModel::onTurnOn, style = ButtonStyle.Secondary, size = ButtonSize.Medium, busy = s.busy, enabled = s.online)
                                 s.on && s.unreadableGroups > 0 -> CircasoButton("Restore", viewModel::onRestore, style = ButtonStyle.Secondary, size = ButtonSize.Medium, busy = s.busy, enabled = s.online)
                                 s.on -> CircasoButton("Turn Off", viewModel::onTurnOffRequested, style = ButtonStyle.Destructive, size = ButtonSize.Medium, busy = s.busy, enabled = s.online && !s.busy)
                                 else -> CircasoButton("Turn On", viewModel::onTurnOn, style = ButtonStyle.Secondary, size = ButtonSize.Medium, busy = s.busy, enabled = s.online)
@@ -134,8 +137,24 @@ fun GroupBackupSection(viewModel: KeyBackupViewModel, unlock: String) {
                         },
                     )
                 }
-                Box(Modifier.padding(horizontal = CircasoSpacing.s4)) { Column { ErrorLines(s) } }
+                Box(Modifier.padding(horizontal = CircasoSpacing.s4)) {
+                    Column(verticalArrangement = Arrangement.spacedBy(CircasoSpacing.s2)) {
+                        ErrorLines(s)
+                        // Here the question is always on offer beside Restore: someone sent from the Chats card finds it.
+                        PasskeyMissingLines(s, viewModel, ask = s.askPasskeyMissing || s.unreadableGroups > 0)
+                        if (s.on && s.passkeyMissing) {
+                            CircasoButton(KeyBackupCopy.NewBackup, viewModel::onNewBackupRequested, style = ButtonStyle.Destructive, size = ButtonSize.Medium, busy = s.busy, enabled = s.online && !s.busy)
+                        }
+                    }
+                }
             }
+            ConfirmSheet(
+                visible = s.confirmNew,
+                title = KeyBackupCopy.NewBackupTitle,
+                message = KeyBackupCopy.NewBackupMessage,
+                confirmLabel = KeyBackupCopy.NewBackup, destructive = true, icon = com.circaso.designsystem.components.CircasoIcon.Shield,
+                enabled = s.online, note = if (!s.online) "Starting a new backup needs a connection." else null, onConfirm = viewModel::onNewBackup, onDismiss = viewModel::onNewBackupDismissed,
+            )
             ConfirmSheet(
                 visible = s.confirmOff,
                 title = "Turn off group names backup?",
@@ -144,6 +163,25 @@ fun GroupBackupSection(viewModel: KeyBackupViewModel, unlock: String) {
                 enabled = s.online, note = if (!s.online) "Turning this off needs a connection." else null, onConfirm = viewModel::onTurnOff, onDismiss = viewModel::onTurnOffDismissed,
             )
         }
+    }
+}
+
+/**
+ * A restore that couldn't reach the backup's passkey: after backing out, a quiet question; once known (or answered
+ * yes), where the passkey may be and what to do. [more] is the surface's own last line (Chats points to Security).
+ */
+@Composable
+private fun PasskeyMissingLines(s: KeyBackupUi, viewModel: KeyBackupViewModel, more: String? = null, ask: Boolean = s.askPasskeyMissing) {
+    val c = CircasoTheme.colors
+    val t = CircasoTheme.typography
+    if (!s.on) return
+    if (s.passkeyMissing) {
+        Column(Modifier.semantics { liveRegion = LiveRegionMode.Polite }, verticalArrangement = Arrangement.spacedBy(CircasoSpacing.s1)) {
+            BasicText(KeyBackupCopy.PasskeyMissing, style = t.footnote.copy(color = c.inkSecondary))
+            more?.let { BasicText(it, style = t.footnote.copy(color = c.inkSecondary)) }
+        }
+    } else if (ask) {
+        CircasoButton(KeyBackupCopy.AskPasskeyMissing, viewModel::onPasskeyMissing, style = ButtonStyle.Plain, size = ButtonSize.Medium)
     }
 }
 

@@ -722,3 +722,38 @@ Pasaka asked for Circle's social login to go. Android: the SDK's Facebook depend
 - **Posting (2026-11-14, like WhatsApp status):** Post records the moment and closes the composer; a video is got
   ready (made smaller when over 32 MiB) and sent by `MomentsRepositoryImpl` in the app's scope, in order, resumed
   after a restart, with one determinate ring for the batch. See `project-status.md` → "Posting a moment".
+
+## One passkey per account: the PIN Vault and the group key backup (2026-11-22, branch `fix/one-passkey-vault-and-backup`)
+
+Both features seal under a circaso.com passkey's PRF secret (guide V1–V4, KB1–KB7), with the same relying party and
+the same WebAuthn `user.id` (the account id). Google Password Manager and iCloud Keychain keep **one** passkey per
+site and person: making a second one replaces the first, and whatever the first sealed can never be opened again.
+That happened on a real account (the vault under one passkey, the backup root under an earlier one that no longer
+existed), so:
+
+- **The rule lives in `core/platform/AccountPasskey.kt` and nowhere else.** Neither repository calls
+  `PasskeyPrf.create`. `AccountPasskey.secret(own, …)`: the asking feature's own record first; else the first passkey
+  another record names (each wallet network's vault, the selected one first, then the backup root); a passkey is made
+  only when no record names one, and never while a record couldn't be read (`Answer.Unknown`). Wired in `VaultModule`
+  (the other networks' vault slots are read with `PinnedNetwork`).
+- **Healing (`KeyBackupRepository.reseal`):** when a PRF secret arrives for a passkey other than the one the server's
+  root names (`onPrfSecret` after a vault open or save, `turnOn`) **and this phone holds the root**, the same root is
+  sealed again under the answering passkey and saved with KB2 + `expectedVersion`. The root key doesn't change, so
+  backed-up group keys and saved names stay readable. Never without the local root, and never with a root that isn't
+  the server's (proof: a backed-up group key that the phone's root opens; an account with no backed-up group key
+  isn't healed).
+- **`KeyBackupState.needsRepair`** (from `refresh`): this phone holds the root but the server's copy names another
+  passkey than the vault does. The Security row then reads "Locked with a passkey you no longer use, so other phones
+  can't restore" with **Repair** (= `turnOn`: one answer from the passkey in use).
+- **A passkey that isn't here:** `PrfResult.NoPasskey` (Android `NoCredentialException`) →
+  `KeyBackupProblem.PasskeyMissing` / `VaultProblem.NoPasskey`. Android's `NotAllowedError` ("User canceled the
+  request", what backing out of "use another device" gives) is `Cancelled`, as on iOS where the two can't be told
+  apart; so after a cancelled restore the card offers "Passkey not on this phone?" instead of claiming it. Copy is in
+  `KeyBackupCopy` (tested).
+- **Start a New Backup** (Security, behind a confirm sheet; `KeyBackupRepository.startNew`): KB3 then KB2 under the
+  passkey this phone can use. Nothing is deleted before a passkey has answered; if the answering passkey opens the old
+  root after all it is a restore, and if this phone holds the root it is a reseal. A passkey is made here only when no
+  vault names one.
+- **Not done:** iOS still reports a missing passkey as a cancel (`PasskeyImpl.swift` is untouched). A vault whose own
+  passkey is gone has no in-app way out beyond Remove and save again. A phone holding a root from before backup was
+  turned off and on elsewhere still uploads keys under it (older gap; `reseal` refuses to make it worse).
