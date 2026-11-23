@@ -36,6 +36,8 @@ internal fun BackupPreview(name: String): Boolean {
         "backup-setup-offline" -> setUp.copy(online = false)
         "backup-setup-error" -> setUp.copy(error = "This phone doesn't have your Circaso passkey. It may be on another phone, or in another Google or Apple account. Try again and choose another device, or sign in to that account on this phone.")
         "backup-setup-done" -> setUp.copy(step = BackupStep.Done)
+        "backup-setup-turned-off" -> setUp.copy(notice = com.circaso.feature.keybackup.presentation.BackupPromptCopy.TurnedOffElsewhere)
+        "backup-not-here-again" -> restore.copy(step = BackupStep.PasskeyNotHere, error = com.circaso.feature.keybackup.presentation.BackupPromptCopy.NoOtherDevice)
         "backup-restore" -> restore
         "backup-restore-groups" -> restore.copy(unreadableGroups = 3)
         "backup-restore-busy" -> restore.copy(busy = true)

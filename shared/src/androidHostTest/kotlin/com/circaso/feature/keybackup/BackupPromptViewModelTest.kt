@@ -296,6 +296,50 @@ class BackupPromptViewModelTest {
     }
 
     @Test
+    fun `Use Another Device that finds nothing says so instead of looking like it did nothing`() = runTest(dispatcher) {
+        backupOnElsewhere()
+        val vm = viewModel(repository().also { it.refresh() })
+        calm(vm)
+        passkey.use = PrfResult.NoPasskey
+        vm.onPrimary(); runCurrent()
+        assertNull(vm.state.value.error)
+
+        vm.onPrimary(); runCurrent()
+        assertEquals(BackupStep.PasskeyNotHere, vm.state.value.step)
+        assertEquals(BackupPromptCopy.NoOtherDevice, vm.state.value.error)
+    }
+
+    @Test
+    fun `with a screen reader on, done waits to be closed`() = runTest(dispatcher) {
+        val vm = viewModel(repository().also { it.refresh() })
+        vm.onScreenReader(true)
+        calm(vm)
+        vm.onPrimary(); runCurrent()
+        advanceTimeBy(BackupPromptViewModel.DoneLongMillis * 2); runCurrent()
+        assertEquals(BackupStep.Done, vm.state.value.step)
+        assertTrue(vm.state.value.visible)
+        vm.onPrimary(); runCurrent()
+        assertNull(vm.state.value.sheet)
+    }
+
+    @Test
+    fun `Not Now on Chats' card keeps it away for a week too`() = runTest(dispatcher) {
+        backupOnElsewhere()
+        val backup = repository().also { it.refresh() }
+        val vm = viewModel(backup)
+        calm(vm)
+        vm.onClose(); runCurrent()
+        assertTrue(vm.state.value.resumeRestore)
+
+        vm.onCardDismissed(); runCurrent()
+        assertFalse(vm.state.value.resumeRestore)
+        assertEquals(clock + BackupPromptViewModel.QuietMillis, memory.map["user-1|Card"])
+
+        clock += 24L * 60 * 60 * 1000
+        assertFalse(viewModel(backup).also { calm(it) }.state.value.resumeRestore, "the next launch too")
+    }
+
+    @Test
     fun `a cancelled restore keeps the sheet, asks quietly, and once put away Chats offers to resume`() = runTest(dispatcher) {
         backupOnElsewhere()
         val backup = repository().also { it.refresh() }

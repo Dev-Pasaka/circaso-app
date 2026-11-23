@@ -33,7 +33,9 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.text.BasicText
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -85,8 +87,12 @@ fun BoxScope.CircasoSheet(
     onDismiss: () -> Unit,
     label: String,
     dismissible: Boolean = true,
+    /** Counted in [LocalSheetsOnScreen] while open; false only for a sheet that itself waits for no other sheet. */
+    counted: Boolean = true,
     content: @Composable ColumnScope.() -> Unit,
 ) {
+    val sheets = LocalSheetsOnScreen.current
+    if (visible && counted && sheets != null) androidx.compose.runtime.DisposableEffect(sheets) { sheets.add(); onDispose { sheets.remove() } }
     val c = CircasoTheme.colors
     val ios = CircasoTheme.platform == PlatformStyle.Ios
     BackHandler(enabled = visible, onBack = { if (dismissible) onDismiss() })
@@ -158,6 +164,21 @@ fun BoxScope.CircasoSheet(
     }
 }
 
+
+/**
+ * Counts the sheets open on screen (2026-11-23), so a sheet that rises by itself (the chat backup's) never lands on
+ * another one: anything built on [CircasoSheet] counts while visible, with no list kept by hand.
+ */
+@androidx.compose.runtime.Stable
+class SheetsOnScreen {
+    var count by androidx.compose.runtime.mutableIntStateOf(0)
+        private set
+    val any: Boolean get() = count > 0
+    internal fun add() { count++ }
+    internal fun remove() { count-- }
+}
+
+val LocalSheetsOnScreen = androidx.compose.runtime.staticCompositionLocalOf<SheetsOnScreen?> { null }
 
 /** A floating card's shadow: deeper than a bottom sheet's, since it sits over the screen rather than at its edge. */
 private val FloatingSheetShadow = 28.dp

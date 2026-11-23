@@ -235,6 +235,8 @@ fun AppNavigation(forceUpdate: Boolean, home: @Composable () -> Unit) {
     val asha = if (state == AuthState.Active) AshaLauncher { ashaBubble.summon() } else null
     // Secret inputs on screen (PIN pads, codes, passwords): the screen is never shown to Asha while one is.
     val secretsOnScreen = remember { com.circaso.designsystem.components.SecretsOnScreen() }
+    // Sheets open on screen: a sheet that rises by itself (the chat backup's) waits until there are none.
+    val sheetsOnScreen = remember { com.circaso.designsystem.chrome.SheetsOnScreen() }
     val screenCapture = com.circaso.feature.assistant.presentation.rememberScreenCapture()
     val announcements: SyncAnnouncements = koinInject()
     val toast = rememberToastState()
@@ -285,6 +287,7 @@ fun AppNavigation(forceUpdate: Boolean, home: @Composable () -> Unit) {
         com.circaso.feature.wallet.presentation.LocalMpesaSales provides (if (state == AuthState.Active) sales else com.circaso.feature.ramp.domain.MpesaSales()),
         LocalAshaLauncher provides asha,
         com.circaso.designsystem.components.LocalSecretsOnScreen provides secretsOnScreen,
+        com.circaso.designsystem.chrome.LocalSheetsOnScreen provides sheetsOnScreen,
         com.circaso.feature.share.presentation.LocalShareLinks provides (if (state == AuthState.Active) shareLauncher else null),
         com.circaso.feature.share.presentation.LocalShareLinksStatus provides shareStatus,
     ) {
@@ -363,15 +366,26 @@ fun AppNavigation(forceUpdate: Boolean, home: @Composable () -> Unit) {
                 // never over a money step, a call, a secret, Asha or another sheet.
                 val backupPrompt = koinViewModel<com.circaso.feature.keybackup.presentation.BackupPromptViewModel>()
                 val backupBio: com.circaso.core.platform.Biometrics = koinInject()
-                val backupUnlock = if (backupBio.available()) backupBio.name else "Screen Lock"
+                val backupUnlock = when {
+                    backupBio.available() -> backupBio.name
+                    com.circaso.designsystem.theme.CircasoTheme.platform == com.circaso.designsystem.platform.PlatformStyle.Ios -> "Passcode"
+                    else -> "Screen Lock"
+                }
                 val chatsNow by chatsViewModel.state.collectAsState()
                 val callForBackup by calls.state.collectAsState()
                 val joinNow by groupJoin.state.collectAsState()
-                val backupCalm = backStack.lastOrNull() == HomeRoute && homeTab == com.circaso.feature.home.presentation.Tab.Chats.ordinal &&
-                    callForBackup == null && !secretsOnScreen.any && !ashaBubble.open && !(chatsNow.meetAsha && chatsNow.loaded) &&
-                    chatsNow.previewing == null && !joinNow.open && !shareUi.sheetOpen && pendingShare == null && pendingLink == null
                 // First time on Home: the contacts prompt once, then the phone book syncs, so New chat isn't empty.
                 val phoneBook: com.circaso.feature.contacts.data.repository.PhoneBookAutoSync = koinInject()
+                val askingContacts by phoneBook.asking.collectAsState()
+                // Any open sheet counts (sheetsOnScreen: the hold sheet, Leave Circaso?, Meet Asha, an invite…); the
+                // rest are what isn't a sheet: a call, a secret, Asha, the contacts prompt, a link or share arriving.
+                val backupCalm = backStack.lastOrNull() == HomeRoute && homeTab == com.circaso.feature.home.presentation.Tab.Chats.ordinal &&
+                    callForBackup == null && !secretsOnScreen.any && !sheetsOnScreen.any && !ashaBubble.open && !askingContacts &&
+                    chatsNow.loaded && !chatsNow.meetAsha && chatsNow.previewing == null && !joinNow.open && !shareUi.sheetOpen &&
+                    pendingShare == null && pendingLink == null
+                // Told here, where Home is always composed (the layer lives in the Chats tab's overlay and leaves with it).
+                androidx.compose.runtime.LaunchedEffect(backupCalm) { backupPrompt.onCalm(backupCalm) }
+                androidx.compose.runtime.DisposableEffect(backupPrompt) { onDispose { backupPrompt.onCalm(false) } }
                 androidx.compose.runtime.LaunchedEffect(phoneBook) { phoneBook.onHome() }
                 HomeScreen(
                     selectedTab = homeTab,
@@ -406,7 +420,7 @@ fun AppNavigation(forceUpdate: Boolean, home: @Composable () -> Unit) {
                     walletActions = { WalletTitleActions(walletViewModel, onAddMoney = { backStack.add(AddMoneyRoute()) }) },
                     chatsOverlay = {
                         ChatsOverlay(chatsViewModel, onAsha = { backStack.add(AshaRoute) }, onVoice = { backStack.add(AshaRoute); backStack.add(VoiceRoute) })
-                        BackupPromptLayer(backupPrompt, backupUnlock, calm = backupCalm)
+                        BackupPromptLayer(backupPrompt, backupUnlock)
                     },
                     walletOverlay = {
                         WalletOverlay(walletViewModel, walletActions(null, backStack::add), biometrics = koinViewModel(), groupMenu = groupMenuActions())

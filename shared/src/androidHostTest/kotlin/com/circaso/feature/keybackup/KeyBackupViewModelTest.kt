@@ -182,7 +182,8 @@ class KeyBackupViewModelTest {
         assertEquals("Start a new backup?", KeyBackupCopy.NewBackupTitle)
         assertEquals(
             "Your old backup is deleted from Circaso, for every phone, and a new one is made with the passkey this phone has. " +
-                "Group names on this phone are backed up again. Groups that were only in the old backup show members' names until someone in the group is online.",
+                "Group names on this phone are backed up again. Groups that were only in the old backup show members' names until someone in the group is online, " +
+                "and names you saved that were only in the old backup are lost.",
             KeyBackupCopy.NewBackupMessage,
         )
         assertEquals("Start a New Backup", KeyBackupCopy.NewBackup)

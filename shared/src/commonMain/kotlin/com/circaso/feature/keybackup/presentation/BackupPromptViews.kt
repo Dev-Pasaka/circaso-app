@@ -2,6 +2,7 @@ package com.circaso.feature.keybackup.presentation
 
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.snap
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.expandVertically
@@ -60,12 +61,13 @@ class BackupPromptActions(
 )
 
 /**
- * The backup sheet's layer (2026-11-23), in Home's overlay. [calm]: Home on Chats is on top with nothing else open
- * (no call, money step, secret input or other sheet); the sheet rises a moment after, and steps aside when it isn't.
+ * The backup sheet's layer (2026-11-23), in the Chats tab's overlay. Whether the screen is calm is told to the view
+ * model by Home ([BackupPromptViewModel.onCalm]), which stays composed when the tab changes.
  */
 @Composable
-fun BoxScope.BackupPromptLayer(viewModel: BackupPromptViewModel, unlock: String, calm: Boolean) {
-    LaunchedEffect(calm) { viewModel.onCalm(calm) }
+fun BoxScope.BackupPromptLayer(viewModel: BackupPromptViewModel, unlock: String) {
+    val reader = com.circaso.core.platform.rememberScreenReaderOn()
+    LaunchedEffect(reader) { viewModel.onScreenReader(reader) }
     val s by viewModel.state.collectAsState()
     BackupPromptSheet(
         s, unlock,
@@ -89,12 +91,12 @@ data class BackupPromptLook(
 object BackupPromptCopy {
     const val NotNow = "Not Now"
     const val SetUpTitle = "Back up your chats"
-    const val SetUpMessage = "Group names and the names you save come back on a new phone. It's locked with your Circaso passkey, so only you can open it."
-    const val SetUpDoneTitle = "Your chats are backed up"
+    const val SetUpMessage = "Keeps your group names and the names you save, so they come back on a new phone. It's locked with your Circaso passkey, so only you can open it."
+    const val SetUpDoneTitle = "Your group names are backed up"
     const val SetUpDoneMessage = "Group names and saved names come back when you change phones or sign in again."
     const val RestoreTitle = "Restore your chats"
     const val RestoreMessage = "Your backup brings back your group names and the names you saved. Open it with your Circaso passkey."
-    const val RestoredTitle = "Your chats are back"
+    const val RestoredTitle = "Your group names are back"
     const val RestoredMessage = "Group names and saved names are on this phone again."
     const val NotHereTitle = "Your passkey isn't on this phone"
     const val NotHereMessage = "Your backup is locked with a passkey on another phone, or in another Google or Apple account. " +
@@ -111,7 +113,11 @@ object BackupPromptCopy {
     const val CardTitle = "Restore your chats"
     const val CardMessage = "Your backup is ready. Restore it to bring back group names and the names you saved."
 
-    fun groupsMissing(n: Int) = (if (n == 1) "1 group shows" else "$n groups show") + " members' names instead of its own until you restore."
+    const val NoOtherDevice = "This phone couldn't offer another device. On the phone that has your passkey, open Circaso, then Security, and tap Repair. Or start a new backup."
+    const val TurnedOffElsewhere = "Your backup was turned off on another phone. Turn it on again to keep your group names."
+
+    fun groupsMissing(n: Int) = if (n == 1) "1 group shows members' names instead of its own until you restore."
+        else "$n groups show members' names instead of their own until you restore."
     fun groupsLeft(n: Int) = (if (n == 1) "1 group wasn't" else "$n groups weren't") + " in your backup. Their names come back when a member's phone is online."
 }
 
@@ -130,7 +136,7 @@ fun backupPromptLook(s: BackupPromptUi, unlock: String): BackupPromptLook? {
             )
         }
         BackupStep.PasskeyNotHere -> BackupPromptLook(BackupPromptCopy.NotHereTitle, BackupPromptCopy.NotHereMessage, CircasoIcon.Warning, SheetTone.Warning, BackupPromptCopy.UseAnotherDevice)
-        BackupStep.ConfirmNew -> BackupPromptLook(KeyBackupCopy.NewBackupTitle, KeyBackupCopy.NewBackupMessage, CircasoIcon.Warning, SheetTone.Critical, KeyBackupCopy.NewBackup, destructive = true, secondary = "Cancel")
+        BackupStep.ConfirmNew -> BackupPromptLook(KeyBackupCopy.NewBackupTitle, KeyBackupCopy.NewBackupMessage, CircasoIcon.Shield, SheetTone.Critical, KeyBackupCopy.NewBackup, destructive = true, secondary = "Cancel")
         BackupStep.Ask -> when (sheet) {
             BackupSheet.SetUp -> BackupPromptLook(BackupPromptCopy.SetUpTitle, BackupPromptCopy.SetUpMessage, CircasoIcon.Lock, SheetTone.Neutral, "Turn On With $unlock")
             BackupSheet.Restore -> BackupPromptLook(
@@ -153,15 +159,18 @@ fun BoxScope.BackupPromptSheet(s: BackupPromptUi, unlock: String, actions: Backu
     val now = backupPromptLook(s, unlock)
     val held = remember { mutableStateOf<Pair<BackupPromptUi, BackupPromptLook>?>(null) }
     if (s.visible && now != null) held.value = s to now
-    val (shown, look) = held.value ?: return
-    val confirm = shown.step == BackupStep.ConfirmNew
     val reduce = CircasoTheme.reduceMotion
+    // Always composed, so its first rise animates (an AnimatedVisibility that starts visible doesn't).
     CircasoSheet(
-        visible = s.visible,
-        onDismiss = if (confirm) actions.onStartNewCancelled else actions.onClose,
-        label = look.title,
-        dismissible = !shown.busy,
+        visible = s.visible && held.value != null,
+        // A drag, the scrim or Back always mean "not now", on every step; Cancel on the confirm goes back a step.
+        onDismiss = actions.onClose,
+        label = held.value?.second?.title ?: "",
+        dismissible = held.value?.first?.busy != true,
+        // It waits for every other sheet; it doesn't count itself.
+        counted = false,
     ) {
+        val (shown, look) = held.value ?: return@CircasoSheet
         AnimatedContent(
             shown to look,
             transitionSpec = {
@@ -172,8 +181,12 @@ fun BoxScope.BackupPromptSheet(s: BackupPromptUi, unlock: String, actions: Backu
             contentKey = { (st, _) -> st.sheet to st.step },
             label = "backup-step",
         ) { (st, lk) ->
-            Column(verticalArrangement = Arrangement.spacedBy(CircasoSpacing.s4)) {
-                Box(Modifier.semantics { if (st.step == BackupStep.Done) liveRegion = LiveRegionMode.Polite }) {
+            Column(
+                Modifier.animateContentSize(if (reduce) snap() else tween(CircasoMotion.BaseMs)),
+                verticalArrangement = Arrangement.spacedBy(CircasoSpacing.s4),
+            ) {
+                // Every step after the first is announced: it changes after the system's passkey sheet closes.
+                Box(Modifier.semantics { if (st.step != BackupStep.Ask) liveRegion = LiveRegionMode.Polite }) {
                     SheetMessage(lk.title, lk.message, lk.icon, tone = lk.tone)
                 }
                 BackupSheetButtons(st, lk, actions, st.step == BackupStep.ConfirmNew)
@@ -188,30 +201,26 @@ private fun BackupSheetButtons(s: BackupPromptUi, look: BackupPromptLook, action
     val t = CircasoTheme.typography
     val done = s.step == BackupStep.Done
     // Offline, every step but "done" waits: the button can't be tapped and says why, and it is live again once back.
-    val note = if (!s.online && !done) BackupPromptCopy.Offline else null
+    // A problem is said right under the button that met it; a plain notice (why the sheet changed) likewise.
+    val note = s.error ?: (if (!s.online && !done) BackupPromptCopy.Offline else s.notice)
     Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(CircasoSpacing.s2)) {
         SheetActions(
             look.primary, actions.onPrimary,
             // The passkey-not-here step has two ways forward before "Not Now": its own row below.
             secondaryLabel = if (s.step == BackupStep.PasskeyNotHere) null else look.secondary,
             onSecondary = if (confirm) actions.onStartNewCancelled else actions.onClose,
-            destructive = look.destructive, enabled = done || s.online, busy = s.busy, note = note,
+            destructive = look.destructive, enabled = done || s.online, busy = s.busy, note = note, noteIsError = s.error != null,
         )
+        s.errorRef?.takeIf { s.error != null }?.let {
+            BasicText("Ref $it", Modifier.fillMaxWidth(), style = t.caption1.copy(color = c.inkTertiary, textAlign = TextAlign.Center))
+        }
         if (s.step == BackupStep.PasskeyNotHere) {
-            CircasoButton(KeyBackupCopy.NewBackup, actions.onStartNew, style = ButtonStyle.Destructive, size = ButtonSize.Large, block = true, enabled = s.online && !s.busy)
+            // Not red here: the confirm that follows is the dangerous step, and says so.
+            CircasoButton(KeyBackupCopy.NewBackup, actions.onStartNew, style = ButtonStyle.Secondary, size = ButtonSize.Large, block = true, enabled = s.online && !s.busy)
             CircasoButton(BackupPromptCopy.NotNow, actions.onClose, style = ButtonStyle.Plain, size = ButtonSize.Large, block = true, enabled = !s.busy)
         }
         if (s.step == BackupStep.Ask && s.askNotHere && s.sheet == BackupSheet.Restore) {
             CircasoButton(KeyBackupCopy.AskPasskeyMissing, actions.onNotHere, style = ButtonStyle.Plain, size = ButtonSize.Medium, block = true, enabled = !s.busy)
-        }
-        s.error?.let { e ->
-            Column(
-                Modifier.fillMaxWidth().padding(horizontal = CircasoSpacing.s2).semantics { liveRegion = LiveRegionMode.Polite },
-                verticalArrangement = Arrangement.spacedBy(2.dp), horizontalAlignment = Alignment.CenterHorizontally,
-            ) {
-                BasicText(e, style = t.footnote.copy(color = c.critical, textAlign = TextAlign.Center))
-                s.errorRef?.let { BasicText("Ref $it", style = t.caption1.copy(color = c.inkTertiary, textAlign = TextAlign.Center)) }
-            }
         }
     }
 }
@@ -242,7 +251,7 @@ fun BackupRestoreCardContent(s: BackupPromptUi, unlock: String, onRestore: () ->
             verticalArrangement = Arrangement.spacedBy(CircasoSpacing.s3),
         ) {
             Row(Modifier.semantics(mergeDescendants = true) {}, horizontalArrangement = Arrangement.spacedBy(CircasoSpacing.s3), verticalAlignment = Alignment.Top) {
-                Box(Modifier.size(CircasoSizes.iconButton).clip(CircasoShapes.circle).background(c.fill), contentAlignment = Alignment.Center) {
+                Box(Modifier.size(CircasoSizes.noticeBadge).clip(CircasoShapes.circle).background(c.fill), contentAlignment = Alignment.Center) {
                     CircasoIconImage(CircasoIcon.Lock, c.inkSecondary, Modifier.size(18.dp))
                 }
                 Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(CircasoSpacing.s1)) {
@@ -253,7 +262,13 @@ fun BackupRestoreCardContent(s: BackupPromptUi, unlock: String, onRestore: () ->
                     )
                 }
             }
-            Row(horizontalArrangement = Arrangement.spacedBy(CircasoSpacing.s2)) {
+            // Large text: the buttons stack, Restore first, so "Restore With Fingerprint" is never cut off.
+            if (androidx.compose.ui.platform.LocalDensity.current.fontScale > 1.3f) {
+                Column(verticalArrangement = Arrangement.spacedBy(CircasoSpacing.s2)) {
+                    CircasoButton("Restore With $unlock", onRestore, style = ButtonStyle.Secondary, size = ButtonSize.Medium, block = true, enabled = s.online)
+                    CircasoButton(BackupPromptCopy.NotNow, onNotNow, style = ButtonStyle.Plain, size = ButtonSize.Medium, block = true)
+                }
+            } else Row(horizontalArrangement = Arrangement.spacedBy(CircasoSpacing.s2)) {
                 // "Not Now" takes only what it needs, so "Restore With Fingerprint" is never cut off.
                 CircasoButton(BackupPromptCopy.NotNow, onNotNow, style = ButtonStyle.Plain, size = ButtonSize.Medium)
                 CircasoButton("Restore With $unlock", onRestore, Modifier.weight(1f), style = ButtonStyle.Secondary, size = ButtonSize.Medium, enabled = s.online)

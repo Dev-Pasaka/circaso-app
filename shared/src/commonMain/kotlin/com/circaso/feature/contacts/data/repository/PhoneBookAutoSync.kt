@@ -51,6 +51,9 @@ class PhoneBookAutoSync(
     private var lastSentAt: Long? = null
     private var notBefore = 0L
     private var later: Job? = null
+    private val askingNow = kotlinx.coroutines.flow.MutableStateFlow(false)
+    /** The system's contacts prompt is up: a sheet that rises by itself (the chat backup's) waits for it. */
+    val asking: kotlinx.coroutines.flow.StateFlow<Boolean> = askingNow
 
     @OptIn(FlowPreview::class)
     fun start() {
@@ -63,7 +66,8 @@ class PhoneBookAutoSync(
     suspend fun onHome() {
         if (!reader.hasAccess() && !asked()) {
             markAsked()
-            val allowed = try { reader.requestAccess() } catch (e: CancellationException) { throw e } catch (e: Exception) { false }
+            askingNow.value = true
+            val allowed = try { reader.requestAccess() } catch (e: CancellationException) { throw e } catch (e: Exception) { false } finally { askingNow.value = false }
             if (!allowed) return
         }
         syncIfAllowed()

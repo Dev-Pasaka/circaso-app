@@ -61,6 +61,8 @@ data class BackupPromptUi(
     val errorRef: String? = null,
     /** After a restore, groups the backup didn't have (their names come from a member's phone instead). */
     val leftAfterRestore: Int = 0,
+    /** A plain note (not an error) on the sheet: why it changed by itself. */
+    val notice: String? = null,
     /** Done after starting a new backup, rather than restoring. */
     val startedNew: Boolean = false,
     /** Chats' quiet card: a backup is waiting to be restored on this phone and its sheet was put away. */
@@ -111,13 +113,20 @@ class BackupPromptViewModel(
         val askNotHere: Boolean = false,
         val error: String? = null,
         val errorRef: String? = null,
-        val leftAfterRestore: Int = 0,
+        /** Said without being an error: why the sheet changed by itself (the backup was turned off elsewhere). */
+        val notice: String? = null,
         val startedNew: Boolean = false,
+        /** TalkBack or VoiceOver is on: "done" stays until it is closed. */
+        val screenReader: Boolean = false,
         val calm: Boolean = false,
         /** Calm for [SettleMillis]: the screen has landed (Home just drew, a sheet just closed). */
         val settled: Boolean = false,
         val cardDismissed: Boolean = false,
     )
+
+    /** The quiet time key of Chats' card ("Not Now" on it keeps it away for [QuietMillis] too). */
+    private val cardKey = "Card"
+    private var cardQuiet = 0L
 
     private val local = MutableStateFlow(Local())
     private var settle: Job? = null
@@ -133,6 +142,7 @@ class BackupPromptViewModel(
             val supported = backup.supported()
             val person = userId()
             val quiet = if (person == null || !supported) emptyMap() else BackupSheet.entries.associateWith { runCatching { memory.quietUntil(person, it.name) }.getOrDefault(0L) }
+            cardQuiet = if (person == null) 0L else runCatching { memory.quietUntil(person, cardKey) }.getOrDefault(0L)
             local.update { it.copy(supported = supported, loaded = true, quiet = quiet) }
         }
     }
@@ -152,8 +162,10 @@ class BackupPromptViewModel(
         val visible = sheet != null && calm && settled
         return BackupPromptUi(
             sheet = sheet, step = if (sheet == null) BackupStep.Ask else step, visible = visible, online = online, busy = busy,
-            askNotHere = askNotHere, error = error, errorRef = errorRef, leftAfterRestore = leftAfterRestore, startedNew = startedNew,
-            resumeRestore = supported && wanted(b) == BackupSheet.Restore && sheet == null && !cardDismissed,
+            askNotHere = askNotHere, error = error, errorRef = errorRef, notice = notice, startedNew = startedNew,
+            // Read live: the restored groups reach the list a moment after the restore returns.
+            leftAfterRestore = if (sheet == BackupSheet.Restore && step == BackupStep.Done && !startedNew) unreadable else 0,
+            resumeRestore = supported && wanted(b) == BackupSheet.Restore && sheet == null && !cardDismissed && cardQuiet <= now(),
             unreadableGroups = unreadable,
         )
     }
@@ -191,17 +203,19 @@ class BackupPromptViewModel(
     /** Restore, and "Use Another Device" (the same passkey sheet, where the other device's QR code is offered). */
     private fun onRestore() = act(BackupSheet.Restore) {
         when (val problem = backup.restore()) {
-            null -> {
-                val left = state.value.unreadableGroups
-                local.update { it.copy(step = BackupStep.Done, leftAfterRestore = left, askNotHere = false) }
+            null -> { local.update { it.copy(step = BackupStep.Done, askNotHere = false) }; null }
+            KeyBackupProblem.PasskeyMissing -> {
+                // Asked again from "not here" and still nothing (the phone offered no other device): say so, or the tap
+                // would look like it did nothing.
+                val again = local.value.step == BackupStep.PasskeyNotHere
+                local.update { it.copy(step = BackupStep.PasskeyNotHere, askNotHere = false, error = if (again) BackupPromptCopy.NoOtherDevice else null) }
                 null
             }
-            KeyBackupProblem.PasskeyMissing -> { local.update { it.copy(step = BackupStep.PasskeyNotHere, askNotHere = false) }; null }
             // Backing out is a choice, but it is also all a phone without the passkey can do with the system sheet
             // (only "use another device" on offer, and iOS says no more than "cancelled"), so ask without claiming it.
             KeyBackupProblem.Cancelled -> { local.update { it.copy(askNotHere = it.step == BackupStep.Ask) }; null }
             // Turned off on another phone meanwhile: what's due now is setting one up.
-            KeyBackupProblem.TurnedOff -> { backup.refresh(); local.update { it.copy(step = BackupStep.Ask, held = null) }; null }
+            KeyBackupProblem.TurnedOff -> { backup.refresh(); local.update { it.copy(step = BackupStep.Ask, held = null, notice = BackupPromptCopy.TurnedOffElsewhere) }; null }
             else -> problem
         }
     }
@@ -236,7 +250,7 @@ class BackupPromptViewModel(
             local.update { it.copy(quiet = it.quiet + (sheet to until)) }
             userId()?.let { person -> viewModelScope.launch { runCatching { memory.quiet(person, sheet.name, until) } } }
         }
-        local.update { it.copy(putAway = it.putAway + sheet, reopened = null, held = null, step = BackupStep.Ask, askNotHere = false, error = null, errorRef = null, leftAfterRestore = 0, startedNew = false) }
+        local.update { it.copy(putAway = it.putAway + sheet, reopened = null, held = null, step = BackupStep.Ask, askNotHere = false, error = null, errorRef = null, notice = null, startedNew = false) }
     }
 
     /** Chats' card: the restore, now, in its sheet (offline the sheet opens and waits for the connection). */
@@ -245,24 +259,36 @@ class BackupPromptViewModel(
         onRestore()
     }
 
-    /** Chats' card "Not Now": gone for this session (the restore is still in Security). */
-    fun onCardDismissed() = local.update { it.copy(cardDismissed = true) }
+    /** Chats' card "Not Now": quiet for [QuietMillis], like the sheets (the restore is still in Security). */
+    fun onCardDismissed() {
+        val until = now() + QuietMillis
+        cardQuiet = until
+        local.update { it.copy(cardDismissed = true) }
+        userId()?.let { person -> viewModelScope.launch { runCatching { memory.quiet(person, cardKey, until) } } }
+    }
+
+    /** TalkBack or VoiceOver is on: "done" waits for the person instead of closing by itself. */
+    fun onScreenReader(on: Boolean) = local.update { it.copy(screenReader = on) }
 
     private fun act(sheet: BackupSheet, block: suspend () -> KeyBackupProblem?) {
         if (local.value.busy || !state.value.online) return
-        local.update { it.copy(held = sheet, busy = true, error = null, errorRef = null) }
+        local.update { it.copy(held = sheet, busy = true, error = null, errorRef = null, notice = null) }
         viewModelScope.launch {
             val problem = try { block() } finally { local.update { it.copy(busy = false) } }
             val words = problem?.let(::problemWords)
-            local.update { it.copy(error = words?.first, errorRef = words?.second) }
+            // (Cleared as it started; a step may have set its own line meanwhile, kept when there is no problem.)
+            if (words != null) local.update { it.copy(error = words.first, errorRef = words.second) }
             if (local.value.step == BackupStep.Done) closeSoon()
         }
     }
 
     /** A short success, then the sheet closes by itself; longer when there is more to read. */
     private fun closeSoon() = viewModelScope.launch {
-        delay(if (local.value.leftAfterRestore > 0) DoneLongMillis else DoneMillis)
-        if (local.value.step == BackupStep.Done) onClose()
+        if (local.value.screenReader) return@launch
+        delay(DoneMillis)
+        // Groups the backup didn't have are known by now: more to read, so longer.
+        if (state.value.leftAfterRestore > 0) delay(DoneLongMillis - DoneMillis)
+        if (local.value.step == BackupStep.Done && !local.value.screenReader) onClose()
     }
 
     private suspend fun names(): Pair<String, String> {

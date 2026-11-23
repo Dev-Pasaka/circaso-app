@@ -158,7 +158,8 @@ object KeyBackupCopy {
     const val NewBackup = "Start a New Backup"
     const val NewBackupTitle = "Start a new backup?"
     const val NewBackupMessage = "Your old backup is deleted from Circaso, for every phone, and a new one is made with the passkey this phone has. " +
-        "Group names on this phone are backed up again. Groups that were only in the old backup show members' names until someone in the group is online."
+        "Group names on this phone are backed up again. Groups that were only in the old backup show members' names until someone in the group is online, " +
+        "and names you saved that were only in the old backup are lost."
     const val RepairSub = "Locked with a passkey you no longer use, so other phones can't restore"
     const val Unsupported = "This phone's passkeys can't do this. Update the phone, or use Google Password Manager or iCloud Keychain."
     const val WrongPasskey = "That passkey doesn't open your backup. Pick your Circaso passkey."
