@@ -30,6 +30,12 @@ dependencyResolutionManagement {
             forRepository { maven { name = "OnnxRuntimeMinimal"; url = uri("third_party/onnxruntime-minimal/maven") } }
             filter { includeModule("com.circaso.thirdparty", "onnxruntime-android-silero") }
         }
+        // Didit's identity verification SDK (:diditkyc) is published in Didit's own repository only; nothing else comes
+        // from there.
+        exclusiveContent {
+            forRepository { maven { name = "Didit"; url = uri("https://raw.githubusercontent.com/didit-protocol/sdk-android/main/repository") } }
+            filter { includeGroup("me.didit") }
+        }
         // libsignal moved off Maven Central after 0.86; Signal publishes newer builds here.
         maven {
             name = "SignalBuildArtifacts"
@@ -55,3 +61,4 @@ dependencyResolutionManagement {
 include(":androidApp")
 include(":shared")
 include(":circlewallet")
+include(":diditkyc")

@@ -705,7 +705,7 @@ fun AppNavigation(forceUpdate: Boolean, home: @Composable () -> Unit) {
             // E2: full screen like the other money flows; Back from an order leaves it running (re-entering resumes it).
             entry<AddMoneyRoute>(metadata = Panes.FullScreen) { route ->
                 com.circaso.feature.ramp.presentation.AddMoneyScreen(
-                    koinViewModel<com.circaso.feature.ramp.presentation.AddMoneyViewModel>(key = "add-money-${route.orderId}", parameters = { parametersOf(route.orderId) }),
+                    koinViewModel<com.circaso.feature.ramp.presentation.AddMoneyViewModel>(key = "add-money-${route.orderId}-${route.network}", parameters = { parametersOf(route.orderId, route.network) }),
                     onBack = ::pop, onSupport = { backStack.add(HelpRoute) },
                 )
             }

@@ -23,6 +23,12 @@ sealed interface NotificationDestination {
     /** A top-up from M-Pesa (push `ramp.order`, 2026-11-22): the order's status; with no [orderId], the wallet. */
     data class RampOrder(val orderId: String? = null) : NotificationDestination
 
+    /**
+     * Identity verification moved (push `ramp.kyc`, 2026-11-22: verified, declined, a step asked for again, the ID
+     * expired): Add Money, which reads where the check stands on [network] (`MAINNET`, `TESTNET`) and shows that.
+     */
+    data class RampKyc(val network: String? = null) : NotificationDestination
+
     /** A support ticket (push `support.ticket`, 2026-11-08); with no [ticketId], the person's tickets. */
     data class Ticket(val ticketId: String? = null) : NotificationDestination
 
@@ -53,6 +59,7 @@ sealed interface NotificationDestination {
                 is Moment -> { put("to", "moment"); put("posterId", d.posterId); put("momentId", d.momentId) }
                 is Ticket -> { put("to", "ticket"); put("ticketId", d.ticketId) }
                 is RampOrder -> { put("to", "rampOrder"); put("orderId", d.orderId) }
+                is RampKyc -> { put("to", "rampKyc"); put("network", d.network) }
                 Asha -> put("to", "asha")
                 Security -> put("to", "security")
                 Contacts -> put("to", "contacts")
@@ -78,6 +85,7 @@ sealed interface NotificationDestination {
                 "moment" -> Moment(get("posterId"), get("momentId"))
                 "ticket" -> Ticket(get("ticketId"))
                 "rampOrder" -> RampOrder(get("orderId"))
+                "rampKyc" -> RampKyc(get("network"))
                 "asha" -> Asha
                 "security" -> Security
                 "contacts" -> Contacts
@@ -105,6 +113,8 @@ sealed interface NotificationDestination {
                 kind == "call.missed" || kind == "call.ended" -> MissedCall(chatId, get("callId"))
                 // "Your USDC has arrived" / "Your top-up didn't go through": the order itself (R4).
                 kind == "ramp.order" -> RampOrder(get("orderId"))
+                // "You're verified. You can add money now." and the calm lines for the rest: Add Money shows the state.
+                kind == "ramp.kyc" -> RampKyc(get("network"))
                 kind?.startsWith("chama.") == true -> chatId?.let { Chat(it) } ?: Wallet
                 kind == "moment.loved" -> Moment(null, get("momentId"))
                 kind?.startsWith("moment.") == true -> Moment(get("userId"), get("momentId"))

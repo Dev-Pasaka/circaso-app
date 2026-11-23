@@ -19,6 +19,21 @@ interface RampRepository {
      */
     val topUps: Flow<Map<String, String>>
 
+    /** `ramp` / `kyc.updated` frames as they arrive (and as they are replayed after a reconnect), for any network. */
+    val kycUpdates: Flow<KycUpdate>
+
+    /**
+     * R0 `POST /v1/ramp/kyc`: starts the identity check, or returns the one still open (never a second). **Online-only**:
+     * never queued. One [idempotencyKey] per tap, the same on a retry that got no definite answer.
+     */
+    suspend fun startKyc(idempotencyKey: String): AppResult<KycStart>
+
+    /**
+     * `GET /v1/ramp/kyc`: where the check stands. While one is unfinished the server asks Didit itself, so this is what
+     * to read the moment the SDK closes (its own result is a hint, never the truth).
+     */
+    suspend fun kyc(): AppResult<RampVerification>
+
     /** R1. `ramp.unavailable` means buying isn't open to this person on this network. */
     suspend fun status(): AppResult<RampStatus>
 

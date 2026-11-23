@@ -66,6 +66,8 @@ class AddMoneyViewModelTest {
     private fun TestScope.vm(f: RampFixture, orderId: String? = null) = AddMoneyViewModel(
         orderId, GetRampStatusUseCase(f.repo), QuoteTopUpUseCase(f.repo), BuyWithMpesaUseCase(f.repo), GetRampOrderUseCase(f.repo), CancelRampOrderUseCase(f.repo),
         ObserveRampUpdatesUseCase(f.repo), GetOwnMpesaNumberUseCase(f.repo),
+        com.circaso.feature.ramp.domain.StartKycUseCase(f.repo), com.circaso.feature.ramp.domain.GetKycUseCase(f.repo), com.circaso.feature.ramp.domain.ObserveKycUpdatesUseCase(f.repo),
+        com.circaso.feature.ramp.domain.RunIdentityCheckUseCase(verifier = { com.circaso.feature.ramp.domain.NoIdentityVerifier }, openPage = { false }),
         maskedPhone = masked, online = online, networks = WalletNetworks.fixed(WalletNetwork.TESTNET, known = true),
         now = { testScheduler.currentTime }, pollMillis = 4_000,
     )
@@ -140,11 +142,14 @@ class AddMoneyViewModelTest {
         assertEquals(RampBlock.Verify, vm.state.value.block)
     }
 
-    @Test fun kycRequiredFromAnyRouteIsTheSameGate() = with { vm, f ->
+    // A server from before verification says only `kyc: "NONE"`: read as "required, never started" (E3).
+    @Test fun kycRequiredFromAnyRouteReadsR1AndShowsItsGate() = with { vm, f ->
         f.remote.quote = refusal("ramp.kyc_required")
+        f.remote.status = AppResult.Success(statusDto(kyc = "NONE"))
         vm.toReview()
         assertEquals(AddMoneyStep.Blocked, vm.state.value.step)
         assertEquals(RampBlock.Verify, vm.state.value.block)
+        assertEquals(2, f.remote.statusAsks)
     }
 
     @Test fun kycNotRequiredOrVerifiedLetsThePersonIn() = with(RampFixture().also { it.remote.status = AppResult.Success(statusDto(kyc = "VERIFIED")) }) { vm, _ ->

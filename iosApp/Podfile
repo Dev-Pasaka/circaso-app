@@ -35,6 +35,13 @@ target 'iosApp' do
   # breadcrumbs (the app's scrubbed Diagnostics notes) and Kotlin exceptions; no user id. See CrashReporterImpl.swift and
   # the "Upload dSYMs to Crashlytics" build phase.
   pod 'FirebaseCrashlytics', '12.19.0'
+  # Identity verification before a first top-up (guide "Identity verification (KYC)", 2026-11-22): Didit's native SDK,
+  # started with the session token the backend makes. It isn't on CocoaPods Trunk: the podspec is Didit's own, at the
+  # tag. `Core` is the ID photo, the selfie and the face match with auto-capture, and no NFC chip reading (which would
+  # add OpenSSL, an entitlement and an App Review question for a step the workflow doesn't use). A prebuilt
+  # XCFramework for iOS 13+. See DiditKycImpl.swift; without `pod install` it compiles its stub and the app opens
+  # Didit's hosted page instead.
+  pod 'DiditSDK/Core', :podspec => 'https://raw.githubusercontent.com/didit-protocol/sdk-ios/4.15.4/DiditSDK.podspec'
   # Circle's social login (Google, Facebook) is not used. Its binary links both frameworks, so they must ship or the app
   # can't start; Facebook's is switched off in Info.plist (no app id, no auto-init, no event logging, no ad id).
 end

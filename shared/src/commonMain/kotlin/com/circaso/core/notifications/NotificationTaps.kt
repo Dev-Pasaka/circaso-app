@@ -85,6 +85,9 @@ object NotificationRoutes {
         is NotificationDestination.Ticket -> NotificationOpening(listOfNotNull(TicketsRoute, destination.ticketId?.let { TicketRoute(it) }), HomeTabName.You)
         // Under the Wallet tab, so Back from the order shows the balance it changed.
         is NotificationDestination.RampOrder -> NotificationOpening(listOfNotNull(destination.orderId?.let { AddMoneyRoute(it) }), HomeTabName.Wallet)
+        // Add Money itself, on the network the check is for: it reads R1 and lands on the right state (verified goes
+        // straight on to the amount). Under the Wallet tab, where closing it leaves the person.
+        is NotificationDestination.RampKyc -> NotificationOpening(listOf(AddMoneyRoute(network = destination.network?.uppercase()?.takeIf { it == "MAINNET" || it == "TESTNET" })), HomeTabName.Wallet)
         NotificationDestination.Asha -> NotificationOpening(listOf(AshaRoute), HomeTabName.Chats)
         NotificationDestination.Security -> NotificationOpening(listOf(SecurityRoute), HomeTabName.You)
         NotificationDestination.Contacts -> NotificationOpening(listOf(ContactsRoute), HomeTabName.You)

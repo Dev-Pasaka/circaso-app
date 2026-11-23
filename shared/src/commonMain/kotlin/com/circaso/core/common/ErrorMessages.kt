@@ -110,6 +110,12 @@ object ErrorMessages {
         // the ramp: buying USDC with M-Pesa (R1–R6, 2026-11-22)
         "ramp.unavailable" to "Adding money from M-Pesa isn't open to you yet.",
         "ramp.kyc_required" to "Verify your identity before you add money.",
+        // Identity verification (guide "Identity verification (KYC)", 2026-11-22). The verify pages have fuller words
+        // of their own for each; these are what any other screen would say.
+        "ramp.blocked" to "You can't add money on Circaso. Contact Support if you think this is a mistake.",
+        "ramp.kyc_attempts_exceeded" to "You've tried a few times today. You can try again tomorrow.",
+        "ramp.kyc_unavailable" to "We couldn't start your verification. Try again in a moment.",
+        "ramp.kyc_not_configured" to "Identity verification isn't available yet. Please try again later.",
         "ramp.account_restricted" to "Adding money is paused on this account right now.",
         "ramp.wallet_required" to "Your wallet isn't on that network yet. Add it under Networks, then try again.",
         "ramp.chain_unsupported" to "Adding money isn't offered on that network.",

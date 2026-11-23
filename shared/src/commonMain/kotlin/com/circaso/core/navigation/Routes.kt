@@ -157,11 +157,13 @@ data class TargetRoute(val chatId: String, val walletReady: Boolean = false, val
 data class SendToWalletRoute(val fromWalletId: String? = null) : Route
 
 /**
- * Add money: buy USDC with M-Pesa (design E2/E3, guide R1–R6). [orderId] opens on that order's status (a `ramp.order`
- * push); without it the flow starts at the amount, or resumes the person's open order.
+ * Add money: buy USDC with M-Pesa (design E2/E3, guide R0–R6). [orderId] opens on that order's status (a `ramp.order`
+ * push); without it the flow starts at the amount, at identity verification where the server asks for it, or resumes
+ * the person's open order. [network] is the wallet network a `ramp.kyc` push was about (`MAINNET`, `TESTNET`): the
+ * flow opens on it; without it, on the network the Wallet tab shows.
  */
 @Serializable
-data class AddMoneyRoute(val orderId: String? = null) : Route
+data class AddMoneyRoute(val orderId: String? = null, val network: String? = null) : Route
 
 /** One payment (design C7). */
 @Serializable

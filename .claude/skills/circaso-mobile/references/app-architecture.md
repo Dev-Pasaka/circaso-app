@@ -47,7 +47,11 @@ feature/<name>/
     repository/             Repository implementations (the only place remote + local meet)
 ```
 
-Features, in build order: `auth` (sign-in, phone, device), `profile`, `contacts` (+connections, invites, blocks), `assistant` (Asha), `account` (security, recovery). Later: chats, wallet, calls (flagged off until the backend exists). Since then: `messaging`, `wallet`, `chama`, `calls`, `status` (Moments), `support`, `share`, `vault`, `ramp` (Add money, 2026-11-22).
+Features, in build order: `auth` (sign-in, phone, device), `profile`, `contacts` (+connections, invites, blocks), `assistant` (Asha), `account` (security, recovery). Later: chats, wallet, calls (flagged off until the backend exists). Since then: `messaging`, `wallet`, `chama`, `calls`, `status` (Moments), `support`, `share`, `vault`, `ramp` (Add money, 2026-11-22; identity verification, 2026-11-23).
+
+Vendor SDKs live outside `shared`, each behind a seam installed at launch: Circle's wallet SDK in `:circlewallet` /
+`CircleWalletImpl.swift` (`WalletSignerBridge`), Didit's identity verification SDK in `:diditkyc` / `DiditKycImpl.swift`
+(`IdentityVerifierBridge`).
 
 `androidMain` / `iosMain` mirror `core/platform` for the actuals only. `iosApp` and `androidApp` stay thin shells.
 
@@ -358,8 +362,149 @@ Buying USDC with M-Pesa from a partner merchant the server picks (the app never 
   through, timed out, cancelled, in review, an unknown state) with its three-step progress list, the offline and
   "couldn't check" notes and the cancel note. E2's **Card** row is left out (no backend). E2's design is one page;
   it is two here because a price is a server call that lasts a minute.
-- **Not done:** KYC (no route); cash out; the number could be saved at
+- **Not done:** cash out; the number could be saved at
   phone verification so nobody is asked for it; an orders history screen (R5 is only read for the wallet labels).
+
+## Add money: identity verification (2026-11-23, guide "Identity verification (KYC)" R0; design E3)
+
+A person verifies their identity **once, when they first add money**, and only where the server says it is required
+(R1's `verification.required`: always on Mainnet, on Testnet when staff switch it on). Nothing else in the app asks.
+Built on the backend's `feat/ramp-kyc` guide. **Class: Online-only** (offline-first.md): never queued, nothing kept on
+the phone; the state shown is whatever R1, R0, `GET /v1/ramp/kyc` or a `kyc.updated` frame last said.
+
+- **The SDK is behind a seam, like Circle's.** Shared code knows only `IdentityVerifier` (`verify(sessionToken)` →
+  `VerifierOutcome`: Finished / Cancelled / CameraDenied / Ended / Offline / Unavailable / Failed), installed through
+  `IdentityVerifierBridge` at launch. **The outcome is a hint, never the truth**: after every one the app reads
+  `GET /v1/ramp/kyc`.
+  - Android: Gradle module `:diditkyc` holds `me.didit:didit-sdk-core` 4.15.4 (Didit's own Maven repository, declared
+    in `settings.gradle.kts` with an exclusive `me.didit` filter; no credentials). `CircasoApplication` installs
+    `DiditKyc`; the SDK itself is initialised the first time someone verifies. `startVerification(token, configuration)`
+    then `launchVerificationUI(activity)` as soon as the SDK has begun (it shows its own loading and "couldn't start"
+    screens). Min SDK 23 (the app's is 24). No new permission: `CAMERA`, `RECORD_AUDIO`, location and `VIBRATE` were
+    already declared; the SDK adds a `FileProvider` (`${applicationId}.didit.fileprovider`) and a browser `<queries>`.
+    `androidApp` excludes `META-INF/versions/9/OSGI-INF/MANIFEST.MF` as Didit's setup asks.
+  - iOS: `DiditKycImpl.swift` behind `#if canImport(DiditSDK)`; `pod 'DiditSDK/Core'` 4.15.4 from Didit's podspec URL
+    (not on Trunk; a prebuilt XCFramework, iOS 13+). The SDK's only way in is its SwiftUI modifier, so `ContentView`
+    carries `.identityVerification()` (which is `.diditVerification { … }`) and `DiditSdk.shared.startVerification(token:)`
+    presents from there. `Info.plist`: the camera, microphone and photo-library purpose strings now also name identity
+    verification (the keys were already there; no new key, no entitlement).
+  - **Core, not the full SDK, on both:** no NFC chip reading (it would add OpenSSL, an iOS entitlement and an App
+    Review question for a step the workflow doesn't have). Colours come from Didit's white-label settings.
+  - Configuration on both: close button and its exit confirmation on, `closeOnComplete` on (Circaso's own "Checking
+    your details" follows at once, with no second "done" screen to tap), logging off, the phone's language, system font.
+  - **Fallback:** a build without the SDK (no `pod install`) or an SDK that stops for a reason of its own opens the
+    session's `url` in the **system's** in-app browser (`openInSystemBrowserAndWait`: a Custom Tab by intent extras,
+    `SFSafariViewController`), never in Circaso's own web view (which has no camera by design). No OS-version gate was
+    needed: the SDK's minimums are below the app's.
+- **Layers** (`feature/ramp`): `KycResponse`/`VerificationDto`/`KycSessionDto` (`RampDtos`), R0 + the read in
+  `KtorRampRemote` (through `walletCall`, so they carry `X-Wallet-Network`), `RampRepository.startKyc/kyc/kycUpdates`,
+  use cases `StartKyc`, `GetKyc`, `ObserveKycUpdates`, `RunIdentityCheck`; `AddMoneyViewModel` owns the flow
+  (`VerifyUi` inside `AddMoneyUiState`); `AddMoneyVerify.kt` has the words (`verifyLook`) and the two pages.
+  `RampStatus` gains `verification` and `blocked`; a server from before verification is read off its short `kyc`.
+- **Flow:** R1 → `blocked` wins (its own page) → account paused → **`verification` not cleared: the verify pages** →
+  no partner online → amount. A check that R1 says is `PENDING` or `IN_REVIEW` is read (`GET /v1/ramp/kyc`, which asks
+  Didit) *before* the page shows, so coming back after finishing lands on the result, not on "Continue". The button
+  calls R0 (busy from the tap until Didit's screens are up; the page under them doesn't move), then the SDK; when it
+  closes, the read; `VERIFIED` shows "You're verified" for 1.8 s with a success haptic while R1 is read behind it,
+  then the amount page, with nothing to tap. The amount typed before a `ramp.kyc_required` is kept.
+- **Idempotency:** one key per tap of the button, the same on a retry with no definite answer (network, `5xx`,
+  `request.in_progress`), a new one once the server answered (success or `4xx`): R0 itself returns the same open
+  session, so "Continue Verification" never starts over.
+- **Waiting for a result:** after `Finished` the page is "Checking your details" at once and the read repeats every
+  5 s for a minute, then every 20 s; `IN_REVIEW` is read every 20 s while the page is open. The frame and the push
+  arrive beside it. Nothing is read offline. Back from the hosted page (where "finished" can't be known) the wait is
+  given 20 s under its own words (never "ID and selfie sent"), then the page says "Finish verifying your identity".
+- **Frames, resync, resume:** `ramp` / `kyc.updated` replaces what is shown, for the flow's own network only;
+  `VERIFIED` is final (a replayed older frame never walks it back); while Didit's screens are up frames are held and
+  applied once they close. A `resync` and the app coming to the front (`LifecycleResumeEffect`) read the check again.
+  When today's tries come back (`retryAt`, or the 429's `retryAfterSeconds`) the page reads itself again: by a
+  timer while it is open, and again whenever the app comes to the front or the connection returns
+  (`readIfItMayHaveMoved`), so nobody is left with only Close once the time has come.
+- **Closing Didit's screens early:** R0 already said a check is open, so "Finish verifying your identity" is on the
+  page the instant they are gone; the read follows behind and replaces it only if the server says otherwise.
+- **Design review (2026-11-23, `design-reviewer`), fixed the same day:** the hosted page claiming "sent"; "you won't
+  be asked again" and "for good" (an ID can expire; each network has its own check); a busy stale page after closing
+  the SDK; a Close-only dead end after `retryAt`; "less than a minute" that never changed; the ground colour snapping
+  between E3 and the other states (`CircasoScaffold(easeGround = true)`, opt-in, used only by Add Money; never on
+  a theme change or under Reduce Motion); titles repeated in their messages; "Continue Verification" too long for large text (now "Continue", the
+  guide's word); E3's footer stepping; the haptic missed when verified is the first state; a red banner for a calm
+  note; the live region speaking twice. **Second pass, fixed:** the ground easing leaking into Home and New Group
+  (now opt-in); the live region back on the lasting wrapper with the leaving words silenced; the slow message
+  repeating its footnote; a wake-up read the server doesn't yet agree with is tried again after 15, 30 and 60 s;
+  overlapping reads (only the newest answer is shown); an SDK that ended itself offers nothing until the server has
+  answered; after the hosted page's 20 s the open check is still read every 20 s for three minutes; a cap with no
+  time given is left alone on resume. **Open:** the first paint is still the amount page's skeleton before E3;
+  `CircasoButton`'s label shifts when its spinner appears (a design-system matter); iOS has no watchdog if Didit's
+  screens were never presented (they do present on the simulator: checked with the probe); the live region needs
+  one TalkBack and one VoiceOver pass on a phone.
+- **Errors → states:** `ramp.kyc_required` on R2/R3 → R1 is read and its state shown (if R1 disagrees, the refusal's
+  words on the amount page, never a loop); `ramp.blocked` anywhere → the barred page; `ramp.kyc_attempts_exceeded` →
+  "You've tried a few times today"; `ramp.kyc_unavailable` → on our side, Try Again, with the request reference;
+  `ramp.kyc_not_configured` → on our side, no retry, with the reference; `ramp.unavailable` / `ramp.account_restricted`
+  → their existing pages; no connection or an unknown code → a note on the page ("Nothing is lost").
+- **Push:** `kind: "ramp.kyc"` (+ `network`) → `NotificationDestination.RampKyc` → `AddMoneyRoute(network = …)` under
+  the Wallet tab; the flow is pinned to the push's network and reads R1, so it lands on the right state (verified goes
+  straight to the amount). The alert is the server's own words (`Wording.swift` leaves `ramp.kyc` alone).
+- **Never logged or kept:** `KycSession` and `KycSessionDto` hide themselves in `toString`; the token and the link
+  are never in the UI state; the SDK's logging is off.
+- **Pages:** `AddMoneyPage.Verify` is E3 itself (plain ground, `Start Verification`, the consent note naming Didit,
+  a Testnet line saying it is a practice run); `AddMoneyPage.VerifyState` is every state after it, in the order
+  page's own layout (badge, title, paragraph, a three-step story while a result is awaited, the buttons pinned).
+- **Copy** (title / message / button), from `verifyLook`:
+  - Never started: E3, "Start Verification".
+  - Open check: "Finish verifying your identity" / "You've already started. Pick up where you left off: it takes a
+    few minutes." / Continue.
+  - Step asked again: "We need one more thing" / "A reviewer asked for one step again to finish verifying you. The
+    rest is already done." / Continue.
+  - Checking: "Checking your details" / "This usually takes less than a minute. You don't need to do anything."
+    (after a minute: "This is taking longer than usual. Nothing more is needed from you.") / Close
+    ("You can leave this screen. We'll tell you when it's done.").
+  - Back from the hosted page (not known whether they finished, so nothing is said to be sent): "Checking where
+    your verification stands" / "If you finished, the result shows here in a moment." / Close.
+  - In review: "We're taking a closer look" / "A reviewer is going over your details. This usually takes a few
+    minutes, and we'll notify you as soon as it's done." / Close.
+  - Verified: "You're verified" / "That's it. You can add money any time now." (no button; "Taking you to Add
+    Money.").
+  - Declined, retryable ("Try Again"): `document` "We couldn't verify your ID" / "Try again with a clear photo of a
+    valid ID, with all four corners showing."; `document_expired` "Your ID has expired" / "Verify again with an ID
+    that is still valid."; `document_unreadable` "We couldn't read your ID" / "Its details didn't come through
+    clearly. Try again with your national ID or passport."; `liveness` "The selfie check didn't pass" / "Try again in
+    good light, with your face uncovered."; `face_match` "Your selfie didn't match your ID" / "Try again in good
+    light, facing the camera, with your own ID."; `declined` or an unknown reason "We couldn't verify you this time" /
+    "Something in the check didn't pass. Please try again.".
+  - Declined with today's tries used (`canStart` false, `retryAt`): the same title / "Next time, … Today's tries are
+    used up. You can try again tomorrow, after 09:05." / Close.
+  - Declined for good ("Contact Support", no retry): `not_approved` "We couldn't verify your identity" / "Trying again
+    won't change this. Contact Support and we'll help you from here."; `identity_in_use` "This ID is already in use";
+    `blocked` "You can't add money on Circaso".
+  - Out of time: "Your verification ran out of time" / "Start again when you're ready. It takes a few minutes." /
+    Verify Again. ID expired since: "Your ID has expired" / "The ID you verified with is no longer valid. Verify again
+    with one that is." / Verify Again.
+  - Tries used up: "You've tried a few times today" / "You can try again tomorrow, after 09:05." / Close.
+  - Didit out of reach: "We couldn't start your verification" / "This is on our side, and nothing is lost: it didn't
+    use one of your tries. Try again in a moment." / Try Again.
+  - Not set up: "Identity verification isn't available yet" / "We're still setting it up on our side. Nothing is
+    needed from you and nothing is lost. Please try again later." / Close.
+  - Camera refused: "Circaso can't use your camera" / "…Turn Camera on for Circaso in Settings, then come back and
+    continue." / Open Settings.
+  - Offline: the button waits, with "You're offline. Verifying your identity needs a connection."; a wait says
+    "You're offline. This updates by itself when you're back."
+  - Barred (R1 `blocked`, `ramp.blocked`): "You can't add money on Circaso" / "Contact Support if you think this is
+    a mistake." / Contact Support.
+- **Previews** (`gallery/AddMoneyPreviews.kt`): `add-money-verify` and `-mainnet`, `-starting`, `-offline`, `-failed`,
+  `-continue`, `-continue-starting`, `-continue-offline`, `-sdk-stopped`, `-more`, `-checking`, `-checking-offline`,
+  `-checking-stale`, `-checking-slow`, `-returned`, `-review`, `-done`, `-declined` (`-face`, `-document`, `-unreadable`, `-liveness`, `-unknown`),
+  `-declined-wait`, `-final`, `-in-use`, `-blocked`, `-expired`, `-id-expired`, `-expired-wait`, `-tries`,
+  `-tries-open`, `-down`, `-down-starting`, `-setup`, `-camera`; `add-money-barred`. Debug probes that need no server:
+  `add-money-verify-probe` (runs the installed SDK with a token no server made) and `-probe-page` (the system
+  browser).
+- **Tests:** `androidHostTest/feature/ramp/AddMoneyVerifyTest.kt` (68: whether it is asked, starting, each SDK outcome
+  against each server answer, R0 with nothing to do, every error code and the keys on retries, R2/R3 routing, frames,
+  leaving and coming back, every state's words, the cap, offline, the push) and `commonTest/feature/ramp/RampTest.kt`
+  (the guide's JSON for R0, the read, R1 and the frame; an older server; the routes and their keys on the wire; that
+  a session never shows in a log line; the push destination).
+- **Not verified until a real phone runs a sandbox session** (the SDK can't run in previews): see
+  `project-status.md` → "Next work".
 
 ## Chamas: group goals and the shared wallet (2026-10-29, guide CH1–CH6; designs D2–D6)
 

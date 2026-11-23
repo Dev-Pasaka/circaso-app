@@ -28,7 +28,8 @@ enum Wording {
         case "wallet.setup": return (appName, "Someone wants to send you money")
         // Words with nothing personal in them stay as the server wrote them.
         // "ramp.order" (2026-11-22): "Your USDC has arrived" / "Your top-up didn't go through", never an amount.
-        case "session.revoked", "asha.back", "support.ticket", "transfer.updated", "ramp.order": return nil
+        // "ramp.kyc" (2026-11-22): "You're verified. You can add money now." and three calm lines; never the reason.
+        case "session.revoked", "asha.back", "support.ticket", "transfer.updated", "ramp.order", "ramp.kyc": return nil
         default: return (appName, "New notification")
         }
     }

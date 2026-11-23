@@ -14,5 +14,6 @@ struct ContentView: View {
     var body: some View {
         ComposeView()
             .ignoresSafeArea()
+            .identityVerification() // Didit's screens (KYC before a first top-up) open over the app from here; see DiditKycImpl.swift
     }
 }
