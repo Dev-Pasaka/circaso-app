@@ -391,7 +391,7 @@ in the canvas; these are deliberate departures from E2's plain "Pay with" row an
   (it settles from 96.5 % with one sheen pass, the `Confirm` haptic and the chime on the same frame) ·
   Failed/Expired/Cancelled unpaid → **Ended** (back to green if needed, colour drains to grey under a light veil) ·
   Review, an ending after payment, or an unknown state once paid → **Held** (a conversion under way finishes, then the
-  card holds; endings after payment dim lightly; never back to green, which would say the shillings went home).
+  card holds, undimmed, with the ending's badge under it; never back to green, which would say the shillings went home).
 - **Timing:** conversion `ConvertMs` = Moment + Base + Quick = 1330 ms (linear progress, per-piece cubic easing; the
   last silver square lands exactly at 1), sheen `SheenMs` = 900 ms; watched end to end the landing is ~1.3 s after
   "paid" plus the settle. Interrupted states carry on from where the progress is; an order first seen paid or
@@ -400,14 +400,21 @@ in the canvas; these are deliberate departures from E2's plain "Pay with" row an
   `GraphicsLayer`; both are copied to bitmaps **ahead, while the green card waits** (and again if their words change),
   so the conversion starts on the frame "paid" arrives. Each copy is held as one `ShaderBrush(ImageShader(bitmap))`;
   `CardParticles` precomputes the grid and every piece's timing, drift and arrival in arrays; a frame only reads them
-  and fills each square with `drawRect(shader)` under an inline translate/scale (sub-pixel placed). **Don't use
+  and fills each square with `canvas.drawRect` through one `Paint` per face (the image as its shader,
+  **anti-aliasing off**, so squares sharing an edge meet exactly at any scale; anti-aliased fills showed a lattice of
+  seams) under an inline translate/scale. Arriving squares are exactly home before they finish fading in. **Don't use
   `drawImage(bitmap, srcOffset, …)` per piece:** on iOS (Skiko) every such call turns the whole bitmap into a new Skia
   image, and ~600 a frame stalled the conversion for ~2 s on the simulator; the shader fill runs at 60 fps. While the
   card waits, one square of each kind is drawn unseen (`warm`) so the first real frame doesn't pay for pipeline
   set-up (the first conversion after launch still showed one ~1 s hitch before this; recheck on a device). The copies
   are snapshot state, so a face drawn before they existed is drawn again. Progress is read in the draw phase only;
   the slow loops are composed only while they run. No allocation per frame. The shadow fades as the first pieces
-  leave and returns as the last arrive. A dimmed card uses a `BlendMode.Saturation` grey over the face plus a 10 %
+  leave and returns as the silver forms; the card's edge (a hairline, 1.5 dp `ink` in high contrast) is drawn over
+  the stack rather than captured in the faces (it shattered into fragments) and fades the same way. Mid-conversion
+  the faces keep the words they were copied with, so an order that skips from waiting to completed doesn't force a new
+  copy on its first frame; the silver label then cross-fades to "Added from M-Pesa". An order opened already
+  completed waits at 96.5 % until the view model decides, then springs (new) or eases in `QuickMs` (heard before).
+  If the stored list can't be read, the landing counts as new (never left waiting). A dimmed card uses a `BlendMode.Saturation` grey over the face plus a 10 %
   veil of the ground (a `GraphicsLayer.colorFilter` had no effect on iOS).
 - **Reduce Motion:** a cross-fade (Base) between the cards; no pieces, breath, sheen or settle. Screen readers hear
   the card in words ("M-Pesa, You pay KES 2,000, from +254 7•• ••• 678" / "USDC on Base, Added from M-Pesa 15.31

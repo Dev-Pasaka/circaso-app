@@ -420,7 +420,8 @@ class AddMoneyViewModel(
         when {
             order.state == RampOrderState.Completed -> if (landingsDecided.add(id)) viewModelScope.launch {
                 // Decided (and the sound readied) now, so the chime can ring on the very frame the card settles.
-                val fresh = sounds?.armLanding(id) ?: true
+                // A storage read that fails never leaves the card waiting: it lands as new (the worst case is a second chime).
+                val fresh = runCatching { sounds?.armLanding(id) }.getOrNull() ?: true
                 if (!fresh) sounds?.unfollow(id)
                 local.update {
                     if (it.order?.orderId != id || it.order.state != RampOrderState.Completed) it

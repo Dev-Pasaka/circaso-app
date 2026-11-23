@@ -179,6 +179,16 @@ class AddMoneyChimeTest {
         }
     }
 
+    @Test fun aSettingThatCannotBeReadStillLandsTheCard() = runTest(dispatcher) {
+        val broken = MoneySounds(NoChime, coins = {}, soundOn = { true }, rung = { error("storage") }, saveRung = {}, now = { 0L })
+        val vm = vm(RampFixture().also { it.answer("COMPLETED") }, broken, orderId = "o1")
+        try {
+            assertEquals("o1", vm.state.value.celebrate, "never left waiting: it lands as new")
+        } finally { vm.viewModelScope.coroutineContext[Job]?.cancel() }
+    }
+
+    private object NoChime : PaymentChime { override fun play() = Unit }
+
     @Test fun theOrderIdsKeptAreCapped() = runTest(dispatcher) {
         val phone = Phone()
         repeat(MoneySounds.Remembered + 5) { assertTrue(phone.sounds.topUpLanded("order-$it")) }

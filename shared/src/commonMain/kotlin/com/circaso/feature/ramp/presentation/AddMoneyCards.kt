@@ -47,7 +47,8 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageShader
 import androidx.compose.ui.graphics.Path
-import androidx.compose.ui.graphics.ShaderBrush
+import androidx.compose.ui.graphics.Paint
+import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.clipPath
 import androidx.compose.ui.graphics.drawscope.scale
@@ -157,7 +158,7 @@ internal fun MpesaMethodCard(maskedPhone: String?, modifier: Modifier = Modifier
         MpesaWordmark(26.dp)
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
             BasicText(phone ?: "Your verified number", style = t.headline.copy(color = RampBrand.OnMpesa, fontFeatureSettings = "tnum"))
-            BasicText("The M-Pesa request goes here", style = t.footnote.copy(color = RampBrand.OnMpesa))
+            BasicText("M-Pesa asks for your PIN on this number", style = t.footnote.copy(color = RampBrand.OnMpesa))
         }
         CircasoIconImage(CircasoIcon.Check, RampBrand.OnMpesa, Modifier.size(SelectedGlyph), strokeWidth = 2.4f)
     }
@@ -172,7 +173,7 @@ internal fun MpesaChip(maskedPhone: String?, modifier: Modifier = Modifier) {
     Row(
         modifier.clip(CircasoShapes.pill).background(MpesaBrush).border(edge, edgeInk, CircasoShapes.pill)
             .padding(start = 6.dp, end = CircasoSpacing.s3, top = 6.dp, bottom = 6.dp)
-            .clearAndSetSemantics { contentDescription = "Paid with M-Pesa" + (phone?.let { ", from $it" } ?: "") },
+            .clearAndSetSemantics { contentDescription = "Pay with M-Pesa" + (phone?.let { ", from $it" } ?: "") },
         verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(CircasoSpacing.s2),
     ) {
         MpesaWordmark(18.dp)
@@ -209,10 +210,12 @@ internal fun cardStageOf(state: RampOrderState, everPaid: Boolean = false): Card
     else -> if (everPaid) CardStage.Held else CardStage.Waiting
 }
 
-/** How far a held card dims: an ending after the payment a little (it is over, the money isn't lost), review not at all. */
-internal fun heldDim(state: RampOrderState): Float = if (state == RampOrderState.Review || !state.settled) 0f else HeldDim
-
-private const val HeldDim = 0.45f
+/**
+ * A held card doesn't dim: the money may have moved and isn't lost, so the card stays as it is and the badge and
+ * words under it say what happened.
+ */
+@Suppress("UNUSED_PARAMETER")
+internal fun heldDim(state: RampOrderState): Float = 0f
 
 /** What the two cards say, from the order and the words the page uses for its figures. */
 internal data class CardWords(
@@ -281,7 +284,13 @@ internal fun ConversionCard(
     val c = CircasoTheme.colors
     val still = CircasoTheme.reduceMotion
     val stage = cardStageOf(order.state, everPaid)
-    val words = cardWords(order, look)
+    val live = cardWords(order, look)
+    // Mid-conversion the faces keep the words they were copied with (an order that skips straight from waiting to
+    // completed changes them), so no copy is taken again on the frame it starts; they catch up once it's whole.
+    var midway by remember { mutableStateOf(false) }
+    val shownWords = remember { arrayOf(live) }
+    if (!midway) shownWords[0] = live
+    val words = shownWords[0]
     val silverFirst = stage == CardStage.Converting || stage == CardStage.Landed || (stage == CardStage.Held && everPaid)
     // 0 is the M-Pesa card, 1 the USDC card; read only while drawing.
     val progress = remember { Animatable(if (silverFirst) 1f else 0f) }
@@ -289,7 +298,7 @@ internal fun ConversionCard(
     val dim = remember { Animatable(dimTo) }
     // Opened on a completed top-up, the card is already whole: it only settles (from a touch smaller) when it is new.
     val openedLanded = remember { stage == CardStage.Landed }
-    val settle = remember { Animatable(if (silverFirst && !openedLanded) SettleFrom else 1f) }
+    val settle = remember { Animatable(if (silverFirst && !still) SettleFrom else 1f) }
     val sheen = remember { Animatable(0f) }
     // How the progress is drawn: in pieces, or as a cross-fade (Reduce Motion, going back, or no bitmaps).
     var crossfade by remember { mutableStateOf(still) }
@@ -317,10 +326,15 @@ internal fun ConversionCard(
             crossfade = still || !particles.prepare(greenLayer, silverLayer, dust, words)
         } else if (progress.value <= 0f) crossfade = still
         val left = 1f - progress.value
-        coroutineScope {
-            // Smaller while it waits for the USDC, in step with the pieces gathering.
-            launch { if (!still) settle.animateTo(SettleFrom, tween((ConvertMs * left).toInt(), easing = FastOutSlowInEasing)) }
-            progress.animateTo(1f, if (crossfade) tween((CircasoMotion.BaseMs * left).toInt()) else tween((ConvertMs * left).toInt(), easing = LinearEasing))
+        midway = true
+        try {
+            coroutineScope {
+                // Smaller while it waits for the USDC, in step with the pieces gathering.
+                launch { if (!still) settle.animateTo(SettleFrom, tween((ConvertMs * left).toInt(), easing = FastOutSlowInEasing)) }
+                progress.animateTo(1f, if (crossfade) tween((CircasoMotion.BaseMs * left).toInt()) else tween((ConvertMs * left).toInt(), easing = LinearEasing))
+            }
+        } finally {
+            if (progress.value >= 1f) midway = false
         }
     }
     // The card follows the order. A conversion under way always finishes, whatever comes next.
@@ -364,8 +378,6 @@ internal fun ConversionCard(
             celebrate && !celebrated -> {
                 celebrated = true
                 scope.launch {
-                    // A card opened already whole settles in from a touch smaller, as a watched one does.
-                    if (openedLanded && !still) settle.snapTo(SettleFrom)
                     haptics.performHapticFeedback(HapticFeedbackType.Confirm)
                     landed()
                     if (still) { settle.snapTo(1f); return@launch }
@@ -375,7 +387,7 @@ internal fun ConversionCard(
                 }
             }
             // Heard before: no settle, no chime. Undecided (the view model is a few ms from saying): the card waits.
-            quiet && !celebrated -> if (still || openedLanded) settle.snapTo(1f) else settle.animateTo(1f, CircasoSpring.settle())
+            quiet && !celebrated -> if (still) settle.snapTo(1f) else settle.animateTo(1f, tween(CircasoMotion.QuickMs))
         }
     }
 
@@ -387,7 +399,9 @@ internal fun ConversionCard(
     val breath = if (breathing) rememberInfiniteTransition(label = "breath").animateFloat(0f, 1f, infiniteRepeatable(tween(BreathMs, easing = LinearEasing), RepeatMode.Restart), label = "breath") else AtRest
     val sendingSheen = if (sending) rememberInfiniteTransition(label = "sending").animateFloat(0f, 1f, infiniteRepeatable(tween(SendingSheenMs, easing = LinearEasing), RepeatMode.Restart), label = "sending sheen") else AtRest
     val ground = c.bgGrouped
-    val corner = with(LocalDensity.current) { CardCorner.toPx() }
+    val corner = with(LocalDensity.current) { CircasoShapes.lgCorner.toPx() }
+    val (edgeWidth, edgeInk) = cardEdge()
+    val edgePx = with(LocalDensity.current) { edgeWidth.toPx() }
     val description = if (stage == CardStage.Converting || stage == CardStage.Landed || (stage == CardStage.Held && everPaid)) words.usdcDescription else words.mpesaDescription
 
     CardStack(
@@ -404,8 +418,8 @@ internal fun ConversionCard(
         Box(
             Modifier.fillMaxSize().graphicsLayer {
                 val p = frozenAt ?: progress.value
-                // Fades out as the first pieces leave and back in as the last arrive, never popping.
-                val whole = if (crossfade) 1f else 1f - smooth(0f, 0.12f, p) * (1f - smooth(0.88f, 1f, p))
+                // Fades out as the first pieces leave and back in as the silver forms, never popping.
+                val whole = if (crossfade) 1f else 1f - smooth(0f, 0.12f, p) * (1f - smooth(0.45f, 0.85f, p))
                 alpha = whole * (1f - 0.6f * dim.value)
                 shadowElevation = if (c.isDark) 0f else 10.dp.toPx()
                 shape = CircasoShapes.lg
@@ -449,18 +463,24 @@ internal fun ConversionCard(
                 }
             }
         })
-        // The pieces, over both faces while the conversion runs.
-        Box(Modifier.fillMaxSize().drawBehind {
-            val p = frozenAt ?: progress.value
-            if (!crossfade && particles.ready && p > 0f && p < 1f) particles.draw(this, p)
-            // Ready and still waiting: each kind of draw is done once now, unseen, so the first frame of the real thing
-            // doesn't pay for setting it up (on the iOS simulator that first frame was a second).
-            else if (!crossfade && particles.ready && p <= 0f) particles.warm(this)
+        // The pieces, over both faces while the conversion runs; then the card's edge, which isn't part of either copy
+        // (it would shatter into fragments) and fades with the shadow instead: the outline the silver forms inside.
+        Box(Modifier.fillMaxSize().drawWithCache {
+            val inset = edgePx / 2f
+            val outline = Path().apply { addRoundRect(RoundRect(inset, inset, size.width - inset, size.height - inset, CornerRadius(corner - inset))) }
+            val stroke = androidx.compose.ui.graphics.drawscope.Stroke(edgePx)
+            onDrawBehind {
+                val p = frozenAt ?: progress.value
+                if (!crossfade && particles.ready && p > 0f && p < 1f) particles.draw(this, p)
+                // Ready and still waiting: each kind of draw is done once now, unseen, so the first frame of the real
+                // thing doesn't pay for setting it up (on the iOS simulator that first frame was a second).
+                else if (!crossfade && particles.ready && p <= 0f) particles.warm(this)
+                val whole = if (crossfade) 1f else 1f - smooth(0f, 0.12f, p) * (1f - smooth(0.35f, 0.75f, p))
+                if (whole > 0f) drawPath(outline, edgeInk, alpha = whole, style = stroke)
+            }
         })
     }
 }
-
-private val CardCorner = 22.dp
 
 /**
  * Dims the card drawn under it by [amount] (0..1): its colour drains to grey (a saturation blend, so its light and
@@ -521,7 +541,6 @@ private fun CardStack(modifier: Modifier, content: @Composable () -> Unit) {
 @Composable
 private fun MpesaFace(words: CardWords, modifier: Modifier) {
     val t = CircasoTheme.typography
-    val (edge, edgeInk) = cardEdge()
     Box(modifier) {
         // The face's own layer: recorded once, so each frame of the animation only redraws it, never its words.
         Box(
@@ -529,7 +548,7 @@ private fun MpesaFace(words: CardWords, modifier: Modifier) {
                 // Depth: two faint rings off the right edge, as a bank card has.
                 drawCircle(Color.White.copy(alpha = 0.06f), radius = size.height * 0.95f, center = Offset(size.width * 1.05f, size.height * 0.1f))
                 drawCircle(Color.White.copy(alpha = 0.05f), radius = size.height * 0.62f, center = Offset(size.width * 1.02f, size.height * 0.95f))
-            }.border(edge, edgeInk, CircasoShapes.lg),
+            },
         ) {
             Column(Modifier.fillMaxSize().padding(CircasoSpacing.s5), verticalArrangement = Arrangement.SpaceBetween) {
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(CircasoSpacing.s3)) {
@@ -549,7 +568,6 @@ private fun MpesaFace(words: CardWords, modifier: Modifier) {
 @Composable
 private fun UsdcFace(words: CardWords, modifier: Modifier) {
     val t = CircasoTheme.typography
-    val (edge, edgeInk) = cardEdge()
     Box(modifier) {
         Box(
             Modifier.fillMaxSize().graphicsLayer().clip(CircasoShapes.lg).background(SilverBrush).drawWithCache {
@@ -557,7 +575,7 @@ private fun UsdcFace(words: CardWords, modifier: Modifier) {
                 val glow = Brush.radialGradient(listOf(RampBrand.UsdcBlue.copy(alpha = 0.20f), RampBrand.UsdcBlue.copy(alpha = 0f)), center = Offset(0f, 0f), radius = size.width * 0.55f)
                 val glint = Brush.radialGradient(listOf(Color.White.copy(alpha = 0.55f), Color.White.copy(alpha = 0f)), center = Offset(size.width, size.height), radius = size.width * 0.5f)
                 onDrawBehind { drawRect(glow); drawRect(glint) }
-            }.border(edge, edgeInk, CircasoShapes.lg),
+            },
         ) {
             Column(Modifier.fillMaxSize().padding(CircasoSpacing.s5), verticalArrangement = Arrangement.SpaceBetween) {
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(CircasoSpacing.s3)) {
@@ -568,7 +586,9 @@ private fun UsdcFace(words: CardWords, modifier: Modifier) {
                     }
                 }
                 Column(Modifier.padding(top = CircasoSpacing.s3), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                    BasicText(words.getLabel, style = t.footnote.copy(color = RampBrand.OnSilverSoft, fontWeight = FontWeight.Medium))
+                    androidx.compose.animation.Crossfade(words.getLabel, animationSpec = tween(if (CircasoTheme.reduceMotion) 0 else CircasoMotion.BaseMs), label = "usdc label") { label ->
+                        BasicText(label, style = t.footnote.copy(color = RampBrand.OnSilverSoft, fontWeight = FontWeight.Medium))
+                    }
                     BasicText(words.get, style = t.amountMedium.copy(color = RampBrand.OnSilver), maxLines = 1, autoSize = TextAutoSize.StepBased(minFontSize = 16.sp, maxFontSize = t.amountMedium.fontSize))
                 }
             }
@@ -587,8 +607,8 @@ private class CardParticles {
     // Each face's copy as a shader, made once per copy: every square is a rect filled from it. (Drawing the bitmap
     // itself square by square made iOS turn the whole bitmap into a new Skia image on every call, ~600 a frame.)
     // Snapshot state: a face drawn before the copies were ready (a frozen frame, the first frame) is drawn again once they are.
-    private var green by mutableStateOf<Brush?>(null)
-    private var silver by mutableStateOf<Brush?>(null)
+    private var green by mutableStateOf<Paint?>(null)
+    private var silver by mutableStateOf<Paint?>(null)
     private var count = 0
     private var x = IntArray(0)
     private var y = IntArray(0)
@@ -603,8 +623,6 @@ private class CardParticles {
     private var dustX = FloatArray(0)
     private var dustY = FloatArray(0)
     private var dustRadius = 0f
-    private var overlapX = IntArray(0)
-    private var overlapY = IntArray(0)
 
     val ready get() = green != null && silver != null
 
@@ -624,7 +642,7 @@ private class CardParticles {
         if (g.width <= 1 || g.height <= 1 || s.width != g.width || s.height != g.height) return false
         if (g.width != cutWidth || g.height != cutHeight) cut(g.width, g.height)
         dustRadius = dust
-        green = ShaderBrush(ImageShader(g)); silver = ShaderBrush(ImageShader(s))
+        green = facePaint(g); silver = facePaint(s)
         capturedFor = words
         true
     }.getOrDefault(false)
@@ -638,7 +656,6 @@ private class CardParticles {
         leave = FloatArray(count); driftX = FloatArray(count); driftY = FloatArray(count)
         arrive = FloatArray(count); fromX = FloatArray(count); fromY = FloatArray(count)
         dustX = FloatArray(count); dustY = FloatArray(count)
-        overlapX = IntArray(count); overlapY = IntArray(count)
         // The same scatter every time: a conversion looks like itself, never random noise.
         val random = Random(Seed)
         for (r in 0 until rows) for (col in 0 until cols) {
@@ -646,8 +663,6 @@ private class CardParticles {
             val left = col * width / cols
             val top = r * height / rows
             x[i] = left; y[i] = top
-            overlapX[i] = if (col < cols - 1) 1 else 0
-            overlapY[i] = if (r < rows - 1) 1 else 0
             w[i] = (col + 1) * width / cols - left
             h[i] = (r + 1) * height / rows - top
             val across = col / (cols - 1f)
@@ -676,7 +691,8 @@ private class CardParticles {
                 if (a >= 1f) {
                     inPlace(s, i)
                 } else if (a > 0f) {
-                    val e = 1f - (1f - a).pow(3)
+                    // Home, exactly, a little before the square is done fading in: nothing settles by a fraction of a pixel.
+                    val e = min(1f, (1f - (1f - a).pow(3)) / 0.85f)
                     piece(s, i, x[i] + w[i] / 2f + fromX[i] * (1f - e), y[i] + h[i] / 2f + fromY[i] * (1f - e), 0.25f + 0.75f * e, min(1f, a * 1.6f))
                 }
                 // The green square, leaving (drawn over the silver, which forms behind it).
@@ -692,7 +708,7 @@ private class CardParticles {
                 val fade = 1f - u.pow(1.3f)
                 piece(g, i, cx, cy, 1f - 0.78f * u, fade)
                 // A fleck of dust trailing it: round, lighter, gone a little sooner.
-                drawCircle(DustInk, radius = dustRadius * (1f - 0.5f * u), center = Offset(cx - driftX[i] * go * dustX[i] * 0.4f, cy - driftY[i] * go * dustY[i] * 0.5f), alpha = 0.7f * fade * (1f - u))
+                if (u > 0.12f) drawCircle(DustInk, radius = dustRadius * (1f - 0.5f * u), center = Offset(cx - driftX[i] * go * dustX[i] * 0.4f, cy - driftY[i] * go * dustY[i] * 0.5f), alpha = 0.7f * fade * (1f - u))
             }
         }
     }
@@ -713,26 +729,34 @@ private class CardParticles {
         }
     }
 
-    /**
-     * Square [i] of [face] where it belongs on the card, reaching a pixel into its right and lower neighbours (not
-     * past the card's edge): the card is scaled while it settles, and squares that only met would show hairline seams.
-     */
-    private fun DrawScope.inPlace(face: Brush, i: Int) {
-        drawRect(face, Offset(x[i].toFloat(), y[i].toFloat()), Size((w[i] + overlapX[i]).toFloat(), (h[i] + overlapY[i]).toFloat()))
+    /** Square [i] of [face] where it belongs on the card. */
+    private fun DrawScope.inPlace(face: Paint, i: Int) {
+        face.alpha = 1f
+        drawIntoCanvas { it.drawRect(x[i].toFloat(), y[i].toFloat(), (x[i] + w[i]).toFloat(), (y[i] + h[i]).toFloat(), face) }
     }
 
     /**
      * Square [i] of [face], centred on ([cx], [cy]) at [scale]: placed to the sub-pixel, so slow pieces glide. The
      * canvas is moved so the square's own part of the shader travels with it.
      */
-    private fun DrawScope.piece(face: Brush, i: Int, cx: Float, cy: Float, scale: Float, alpha: Float) {
+    private fun DrawScope.piece(face: Paint, i: Int, cx: Float, cy: Float, scale: Float, alpha: Float) {
+        face.alpha = alpha
         translate(cx, cy) {
             scale(scale, scale, Offset.Zero) {
                 translate(-(x[i] + w[i] / 2f), -(y[i] + h[i] / 2f)) {
-                    drawRect(face, Offset(x[i].toFloat(), y[i].toFloat()), Size(w[i].toFloat(), h[i].toFloat()), alpha = alpha)
+                    drawIntoCanvas { it.drawRect(x[i].toFloat(), y[i].toFloat(), (x[i] + w[i]).toFloat(), (y[i] + h[i]).toFloat(), face) }
                 }
             }
         }
+    }
+
+    /**
+     * A face's copy as a fill: the image as a shader, **without anti-aliasing**, so squares sharing an edge meet
+     * exactly at any scale (anti-aliased edges each blend half a pixel with the ground, a lattice of seams).
+     */
+    private fun facePaint(image: androidx.compose.ui.graphics.ImageBitmap) = Paint().apply {
+        isAntiAlias = false
+        shader = ImageShader(image)
     }
 
     companion object {
