@@ -33,7 +33,9 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.text.BasicText
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -53,6 +55,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.graphics.graphicsLayer
@@ -85,8 +88,12 @@ fun BoxScope.CircasoSheet(
     onDismiss: () -> Unit,
     label: String,
     dismissible: Boolean = true,
+    /** Counted in [LocalSheetsOnScreen] while open; false only for a sheet that itself waits for no other sheet. */
+    counted: Boolean = true,
     content: @Composable ColumnScope.() -> Unit,
 ) {
+    val sheets = LocalSheetsOnScreen.current
+    if (visible && counted && sheets != null) androidx.compose.runtime.DisposableEffect(sheets) { sheets.add(); onDispose { sheets.remove() } }
     val c = CircasoTheme.colors
     val ios = CircasoTheme.platform == PlatformStyle.Ios
     BackHandler(enabled = visible, onBack = { if (dismissible) onDismiss() })
@@ -131,7 +138,9 @@ fun BoxScope.CircasoSheet(
                         detectVerticalDragGestures(
                             onDragEnd = {
                                 scope.launch {
-                                    if (dismissible && drag.value > dismissAt) onDismiss() else drag.animateTo(0f, spring(stiffness = Spring.StiffnessMedium))
+                                    // A sheet whose dismiss only steps back (a confirm inside it) stays up: it springs home.
+                                    if (dismissible && drag.value > dismissAt) onDismiss()
+                                    drag.animateTo(0f, spring(stiffness = Spring.StiffnessMedium))
                                 }
                             },
                             onDragCancel = { scope.launch { drag.animateTo(0f) } },
@@ -158,6 +167,21 @@ fun BoxScope.CircasoSheet(
     }
 }
 
+
+/**
+ * Counts the sheets open on screen (2026-11-23), so a sheet that rises by itself (the chat backup's) never lands on
+ * another one: anything built on [CircasoSheet] counts while visible, with no list kept by hand.
+ */
+@androidx.compose.runtime.Stable
+class SheetsOnScreen {
+    var count by androidx.compose.runtime.mutableIntStateOf(0)
+        private set
+    val any: Boolean get() = count > 0
+    internal fun add() { count++ }
+    internal fun remove() { count-- }
+}
+
+val LocalSheetsOnScreen = androidx.compose.runtime.staticCompositionLocalOf<SheetsOnScreen?> { null }
 
 /** A floating card's shadow: deeper than a bottom sheet's, since it sits over the screen rather than at its edge. */
 private val FloatingSheetShadow = 28.dp
@@ -270,6 +294,8 @@ fun SheetActions(
     busy: Boolean = false,
     note: String? = null,
     noteIsError: Boolean = false,
+    /** The request id to quote to support, right under an error [note]. */
+    noteRef: String? = null,
 ) {
     val c = CircasoTheme.colors
     val t = CircasoTheme.typography
@@ -280,10 +306,14 @@ fun SheetActions(
         val ground = if (!destructive) Modifier else Modifier.clip(CircasoShapes.pill)
             .background(if (enabled) c.critical.copy(alpha = if (c.isDark) 0.22f else 0.12f) else c.fill)
         CircasoButton(primaryLabel, onPrimary, ground, style = if (destructive) ButtonStyle.Destructive else ButtonStyle.Primary, size = ButtonSize.Large, block = true, enabled = enabled, busy = busy)
-        if (note != null) BasicText(
-            note, Modifier.fillMaxWidth().padding(horizontal = CircasoSpacing.s2),
-            style = t.footnote.copy(color = if (noteIsError) c.critical else c.inkSecondary, textAlign = TextAlign.Center),
-        )
+        // A note changes in place (offline, a problem): read out when it does.
+        if (note != null) Column(
+            Modifier.fillMaxWidth().padding(horizontal = CircasoSpacing.s2).semantics(mergeDescendants = true) { liveRegion = androidx.compose.ui.semantics.LiveRegionMode.Polite },
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            BasicText(note, Modifier.fillMaxWidth(), style = t.footnote.copy(color = if (noteIsError) c.critical else c.inkSecondary, textAlign = TextAlign.Center))
+            if (noteRef != null) BasicText("Ref $noteRef", Modifier.fillMaxWidth(), style = t.caption1.copy(color = c.inkTertiary, textAlign = TextAlign.Center))
+        }
         if (secondaryLabel != null) CircasoButton(secondaryLabel, onSecondary, style = ButtonStyle.Plain, size = ButtonSize.Large, block = true, enabled = !busy)
     }
 }

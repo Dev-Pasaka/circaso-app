@@ -51,7 +51,6 @@ class PhoneBookAutoSync(
     private var lastSentAt: Long? = null
     private var notBefore = 0L
     private var later: Job? = null
-
     @OptIn(FlowPreview::class)
     fun start() {
         scope.launch { ready.distinctUntilChanged().filter { it }.collect { syncIfAllowed() } }
@@ -63,7 +62,7 @@ class PhoneBookAutoSync(
     suspend fun onHome() {
         if (!reader.hasAccess() && !asked()) {
             markAsked()
-            val allowed = try { reader.requestAccess() } catch (e: CancellationException) { throw e } catch (e: Exception) { false }
+            val allowed = try { com.circaso.core.platform.SystemPrompts.during { reader.requestAccess() } } catch (e: CancellationException) { throw e } catch (e: Exception) { false }
             if (!allowed) return
         }
         syncIfAllowed()

@@ -34,10 +34,6 @@ data class KeyBackupUi(
     val error: String? = null,
     /** The request id to quote to support, after [error]. */
     val errorRef: String? = null,
-    /** A restore finished this session (the card then says what's left, if anything, instead of offering again). */
-    val restored: Boolean = false,
-    /** "Not Now" on the Chats card, for this session. */
-    val dismissed: Boolean = false,
     val confirmOff: Boolean = false,
     /** This phone holds the root but the server's copy is under a passkey the account no longer uses: offer Repair. */
     val needsRepair: Boolean = false,
@@ -54,14 +50,9 @@ data class KeyBackupUi(
     val on get() = onServer == true || onPhone
     /** Not known yet (no server answer and nothing on this phone): the row says "Checking…". */
     val unknown get() = onServer == null && !onPhone
-
-    /** Chats shows "Restore your group names": backup is on for the account and some names are missing here. */
-    val offerRestore get() = supported && onServer == true && unreadableGroups > 0 && !restored && !dismissed
-    /** After a restore, groups the backup didn't have (their names come from a member's phone instead). */
-    val leftAfterRestore get() = if (restored && !dismissed) unreadableGroups else 0
 }
 
-/** The group key backup's Chats card (restore) and Security row (on/off). */
+/** The group key backup's Security row: on/off, restore, repair, a new backup. Chats' sheets are [BackupPromptViewModel]. */
 class KeyBackupViewModel(
     private val backup: KeyBackupRepository,
     chats: ChatsRepository,
@@ -91,7 +82,7 @@ class KeyBackupViewModel(
         backup.restore().also { problem ->
             local.update { s ->
                 when (problem) {
-                    null -> s.copy(restored = true, passkeyMissing = false, askPasskeyMissing = false)
+                    null -> s.copy(passkeyMissing = false, askPasskeyMissing = false)
                     KeyBackupProblem.PasskeyMissing -> s.copy(passkeyMissing = true, askPasskeyMissing = false)
                     // Backing out is a choice, but it is also all a phone without the passkey can do with the sheet
                     // ("use another device" only), so the way forward is offered without claiming it.
@@ -104,8 +95,6 @@ class KeyBackupViewModel(
 
     /** "Passkey not on this phone?" after backing out of a restore. */
     fun onPasskeyMissing() = local.update { it.copy(passkeyMissing = true, askPasskeyMissing = false, error = null, errorRef = null) }
-
-    fun onNotNow() = local.update { it.copy(dismissed = true) }
 
     /** Turn On, and Repair (the same step on a phone that holds the root: the passkey in use seals it again). */
     fun onTurnOn() = act {
@@ -153,13 +142,9 @@ class KeyBackupViewModel(
     /** [on]: backup is on for the account (this copy of the state doesn't carry what the repository knows). */
     private fun KeyBackupUi.withProblem(p: KeyBackupProblem?, on: Boolean): KeyBackupUi = when (p) {
         null, KeyBackupProblem.Cancelled -> this
-        KeyBackupProblem.Unsupported -> copy(error = "This phone's passkeys can't do this. Update the phone, or use Google Password Manager or iCloud Keychain.")
-        KeyBackupProblem.WrongPasskey -> copy(error = "That passkey doesn't open your backup. Pick your Circaso passkey.")
-        KeyBackupProblem.TurnedOff -> copy(error = "Your backup was turned off on another phone.")
         // With a backup on, its own state says this (passkeyMissing); with none yet, there is only the passkey to find.
         KeyBackupProblem.PasskeyMissing -> if (on) copy(passkeyMissing = true, askPasskeyMissing = false) else copy(error = KeyBackupCopy.NoPasskey)
-        is KeyBackupProblem.Passkey -> copy(error = "Your passkey didn't answer. Try again.")
-        is KeyBackupProblem.Server -> copy(error = ErrorMessages.forError(p.error), errorRef = ErrorMessages.reference(p.error))
+        else -> problemWords(p)?.let { (e, ref) -> copy(error = e, errorRef = ref) } ?: this
     }
 }
 
@@ -167,13 +152,28 @@ class KeyBackupViewModel(
 object KeyBackupCopy {
     const val PasskeyMissing = "This phone doesn't have the passkey that locked your backup. It may be on another phone, or in another Google or Apple account. " +
         "If Circaso is still signed in there, open Security on that phone and tap Repair. Or tap Restore and choose another device."
-    const val PasskeyMissingOnChats = "You can also start a new backup in Security."
     const val AskPasskeyMissing = "Passkey not on this phone?"
     const val NoPasskey = "This phone doesn't have your Circaso passkey. It may be on another phone, or in another Google or Apple account. " +
         "Try again and choose another device, or sign in to that account on this phone."
     const val NewBackup = "Start a New Backup"
     const val NewBackupTitle = "Start a new backup?"
     const val NewBackupMessage = "Your old backup is deleted from Circaso, for every phone, and a new one is made with the passkey this phone has. " +
-        "Group names on this phone are backed up again. Groups that were only in the old backup show members' names until someone in the group is online."
+        "Group names on this phone are backed up again. Groups that were only in the old backup show members' names until someone in the group is online, " +
+        "and names you saved that were only in the old backup are lost."
     const val RepairSub = "Locked with a passkey you no longer use, so other phones can't restore"
+    const val Unsupported = "This phone's passkeys can't do this. Update the phone, or use Google Password Manager or iCloud Keychain."
+    const val WrongPasskey = "That passkey doesn't open your backup. Pick your Circaso passkey."
+    const val TurnedOff = "Your backup was turned off on another phone."
+    const val NoAnswer = "Your passkey didn't answer. Try again."
+}
+
+/** What a problem says on a sheet or row, and the reference to quote to support; null for a cancel (a choice, not an error). */
+internal fun problemWords(p: KeyBackupProblem): Pair<String, String?>? = when (p) {
+    KeyBackupProblem.Cancelled -> null
+    KeyBackupProblem.Unsupported -> KeyBackupCopy.Unsupported to null
+    KeyBackupProblem.WrongPasskey -> KeyBackupCopy.WrongPasskey to null
+    KeyBackupProblem.TurnedOff -> KeyBackupCopy.TurnedOff to null
+    KeyBackupProblem.PasskeyMissing -> KeyBackupCopy.NoPasskey to null
+    is KeyBackupProblem.Passkey -> KeyBackupCopy.NoAnswer to null
+    is KeyBackupProblem.Server -> ErrorMessages.forError(p.error) to ErrorMessages.reference(p.error)
 }
