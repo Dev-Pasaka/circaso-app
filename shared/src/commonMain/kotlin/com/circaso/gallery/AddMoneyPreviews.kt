@@ -131,6 +131,8 @@ internal fun AddMoneyPreview(name: String): Boolean {
         "add-money-verify-more" -> verify(KycStatus.Pending, reason = KycReasons.ResubmissionRequested)
         // Everything sent: waiting for the result, which arrives by itself.
         "add-money-verify-checking" -> verify(KycStatus.Pending) { copy(checking = true) }
+        // The server's own word that it was submitted (2026-11-23): the same wait, with nothing to start.
+        "add-money-verify-submitted" -> AddMoneyUiState(step = AddMoneyStep.Blocked, block = RampBlock.Verify, testnet = true, verify = VerifyUi(RampVerification(KycStatus.Pending, required = true, canStart = false, submitted = true), checking = true))
         "add-money-verify-checking-offline" -> verify(KycStatus.Pending) { copy(checking = true) }.copy(online = false)
         "add-money-verify-checking-stale" -> verify(KycStatus.Pending) { copy(checking = true, stale = true) }
         "add-money-verify-checking-slow" -> verify(KycStatus.Pending) { copy(checking = true, slow = true) }

@@ -88,7 +88,7 @@ import kotlinx.coroutines.launch
 fun AddMoneyScreen(viewModel: AddMoneyViewModel, onBack: () -> Unit, onSupport: () -> Unit) {
     val state by viewModel.state.collectAsState()
     // Back in front (from Settings, from Didit's hosted page, from anywhere): a check that may have moved is read again.
-    LifecycleResumeEffect(viewModel) { viewModel.onResumed(); onPauseOrDispose { } }
+    LifecycleResumeEffect(viewModel) { viewModel.onResumed(); onPauseOrDispose { viewModel.onPaused() } }
     AddMoneyContent(
         state, onBack, onSupport,
         onVerify = viewModel::onVerify, onSettings = { viewModel.onSettingsOpened(); openAppSettings() },
@@ -197,8 +197,8 @@ fun AddMoneyContent(
             when (pageOf(s)) {
                 AddMoneyPage.Loading -> LoadingPage(s, bottom)
                 AddMoneyPage.LoadFailed -> LoadFailedPage(s, bottom, onRetry, onBack, onCopy)
-                AddMoneyPage.Verify -> VerifyIntroPage(s, bottom, onVerify, onBack, onCopy)
-                AddMoneyPage.VerifyState -> VerifyStatePage(s, bottom, onVerify, onSettings, onSupport, onBack, onCopy)
+                AddMoneyPage.Verify -> VerifyIntroPage(s.verifyPage(), bottom, onVerify, onBack, onCopy)
+                AddMoneyPage.VerifyState -> VerifyStatePage(s.verifyPage(), bottom, onVerify, onSettings, onSupport, onBack, onCopy)
                 AddMoneyPage.Gate -> GatePage(s, bottom, onRetry, onBack, onSupport)
                 AddMoneyPage.Amount -> AmountPage(s, bottom, onAmount, onChain, onContinue, onCopy)
                 AddMoneyPage.Review -> ReviewPage(s, bottom, onPhone, onNewPrice, onConfirm, onCopy)
@@ -328,15 +328,15 @@ internal val CopyGlyph = 14.dp
 
 /** A whole-page message in the sheets' own pattern: badge, title, one paragraph; the main button and the way out pinned below. */
 @Composable
-private fun MessagePage(
+internal fun MessagePage(
     bottomInset: Dp,
     icon: CircasoIcon,
     title: String,
     message: String,
     primary: String,
     onPrimary: () -> Unit,
-    secondary: String?,
-    onSecondary: () -> Unit,
+    secondary: String? = null,
+    onSecondary: () -> Unit = {},
     reference: String? = null,
     onCopy: (String) -> Unit = {},
     tone: SheetTone = SheetTone.Neutral,
@@ -425,7 +425,7 @@ private fun LoadingPage(state: AddMoneyUiState, bottomInset: Dp) {
 
 /** A bar as tall as one line of [style] at the person's text size, [fraction] of the width. */
 @Composable
-private fun SkeletonLine(style: TextStyle, fraction: Float, modifier: Modifier = Modifier, strong: Boolean = true) {
+internal fun SkeletonLine(style: TextStyle, fraction: Float, modifier: Modifier = Modifier, strong: Boolean = true) {
     val line = with(LocalDensity.current) { style.fontSize.toDp() }
     val lead = with(LocalDensity.current) { (style.lineHeight.toDp() - line) / 2 }
     SkeletonBlock(modifier.padding(vertical = lead).fillMaxWidth(fraction).height(line), color = if (strong) CircasoTheme.colors.fillStrong else CircasoTheme.colors.fill)

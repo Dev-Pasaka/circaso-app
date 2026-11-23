@@ -56,8 +56,33 @@ import com.circaso.feature.ramp.domain.KycReasons
 import com.circaso.feature.ramp.domain.KycStatus
 import com.circaso.feature.ramp.domain.RampVerification
 
-// Identity verification before a first top-up (design E3; guide "Identity verification (KYC)"). The words for every
-// state live here, apart from the drawing, so each can be tested: one state, one calm sentence or two, one thing to do.
+// Identity verification (design E3; guide "Identity verification (KYC)"), wherever it is done from: before a first
+// top-up in Add Money, or from the profile's Verification row. The words for every state live here, apart from the
+// drawing, so each can be tested: one state, one calm sentence or two, one thing to do.
+
+/** Where the check is being done from. The states and their words are the same; only where it leads differs. */
+enum class VerifyEntry {
+    /** Before a first top-up: verified goes straight on to the amount, and the pages are closed with a cross. */
+    AddMoney,
+    /** The profile's Verification screen: verified stays, and the system's Back leaves. */
+    Profile,
+}
+
+/** What a verify page draws from, whichever screen holds it. */
+internal data class VerifyPageState(
+    val verify: VerifyUi,
+    val online: Boolean,
+    /** The check is for Testnet: a practice run that doesn't count on Mainnet. */
+    val testnet: Boolean,
+    /** The button may be tapped now. */
+    val canVerify: Boolean,
+    val entry: VerifyEntry = VerifyEntry.AddMoney,
+) {
+    /** The plain way out under the main button ("Not Now"); the profile's screen has Back for that. */
+    val wayOut: Boolean get() = entry == VerifyEntry.AddMoney
+}
+
+internal fun AddMoneyUiState.verifyPage() = VerifyPageState(verify, online, testnet, canVerify, VerifyEntry.AddMoney)
 
 /** Which of the verify pages' states is showing. */
 internal enum class VerifyKind {
@@ -140,7 +165,7 @@ internal fun retryWhen(retryAt: Long?, now: Long): String? {
  * "You can try again tomorrow, after 09:05." With no time to go by, tomorrow: tries are counted by the day. A time
  * that has just passed is "in a moment": the page is reading its state again, and the button comes back with it.
  */
-private fun tryAgain(retryAt: Long?, now: Long) = when {
+internal fun tryAgain(retryAt: Long?, now: Long) = when {
     retryAt == null -> "You can try again tomorrow."
     retryAt <= now -> "You can try again in a moment."
     else -> "You can try again ${retryWhen(retryAt, now)}."
@@ -198,17 +223,35 @@ private fun story(active: String?) = listOf(
  * What the verify pages say for where the check stands. Built from the server's `verification` and from what this
  * phone was last told when it tried to start (never from a guess): one state, its words, and the one thing to do.
  */
-internal fun verifyLook(verify: VerifyUi, now: Long = nowMillis()): VerifyLook {
+internal fun verifyLook(verify: VerifyUi, now: Long = nowMillis(), entry: VerifyEntry = VerifyEntry.AddMoney): VerifyLook {
+    // The button that only leaves: a cross's "Close" in Add Money, "Done" on the profile's pushed screen.
+    val look = stateLook(verify, now, entry)
+    return if (entry == VerifyEntry.Profile && look.action == VerifyAction.Close) look.copy(button = "Done") else look
+}
+
+private fun stateLook(verify: VerifyUi, now: Long, entry: VerifyEntry): VerifyLook {
     val v = verify.verification ?: RampVerification(KycStatus.None, required = true, canStart = true)
     fun waiting(title: String, message: String, retryAt: Long?) = VerifyLook(
         VerifyKind.Waiting, CircasoIcon.Clock, SheetTone.Neutral, title, "$message ${tryAgain(retryAt, now)}", VerifyAction.Close, "Close",
         note = "Nothing is needed from you until then.",
     )
+    // Everything was sent and the decision is awaited. The promise is only made while it is likely to hold.
+    fun checking() = VerifyLook(
+        VerifyKind.Checking, null, SheetTone.Neutral, "We're checking your details",
+        if (verify.slow) "This is taking longer than usual. Nothing more is needed from you." else "This usually takes less than a minute. You don't need to do anything.",
+        VerifyAction.Close, "Close", stages = story("Result on its way"), waiting = true, note = "You can leave this screen. We'll tell you when it's done.",
+    )
     return when {
-        verify.verified || (v.status == KycStatus.Verified && v.required) -> VerifyLook(
+        verify.verified || (v.status == KycStatus.Verified && (v.required || entry == VerifyEntry.Profile)) -> if (entry == VerifyEntry.Profile) VerifyLook(
+            // From the profile it stays: nothing follows by itself, and the screen says what being verified means.
+            VerifyKind.Verified, CircasoIcon.Check, SheetTone.Neutral, "You're verified", "Your identity is confirmed.", VerifyAction.None, "", stages = story(null),
+        ) else VerifyLook(
             VerifyKind.Verified, CircasoIcon.Check, SheetTone.Neutral, "You're verified", "That's it. You can add money any time now.",
             VerifyAction.None, "", stages = story(null), note = "Taking you to Add Money.",
         )
+        // `submitted`, read before `canStart` and before anything this phone was told when it last tried: the person
+        // has finished and the server is waiting on the decision. Nothing is offered, whatever else is set.
+        v.status == KycStatus.Pending && v.submitted -> checking()
         verify.trouble == VerifyTrouble.CameraDenied -> VerifyLook(
             VerifyKind.CameraDenied, CircasoIcon.Camera, SheetTone.Neutral, "Circaso can't use your camera",
             "Verifying needs the camera, for your ID and your selfie. Turn Camera on for Circaso in Settings, then come back and continue.",
@@ -228,12 +271,8 @@ internal fun verifyLook(verify: VerifyUi, now: Long = nowMillis()): VerifyLook {
             VerifyKind.TriesUsedUp, CircasoIcon.Clock, SheetTone.Neutral, "You've tried a few times today", tryAgain(verify.retryAt ?: v.retryAt, now),
             VerifyAction.Close, "Close", note = "Nothing is needed from you until then.",
         )
-        verify.checking -> VerifyLook(
-            VerifyKind.Checking, null, SheetTone.Neutral, "Checking your details",
-            // The promise is only made while it is likely to hold.
-            if (verify.slow) "This is taking longer than usual. Nothing more is needed from you." else "This usually takes less than a minute. You don't need to do anything.",
-            VerifyAction.Close, "Close", stages = story("Result on its way"), waiting = true, note = "You can leave this screen. We'll tell you when it's done.",
-        )
+        // Didit's last screen just closed and the server hasn't caught up yet: the same wait.
+        verify.checking -> checking()
         // Back from the hosted page: nothing is said to be sent, because it isn't known.
         verify.returned -> VerifyLook(
             VerifyKind.Returned, null, SheetTone.Neutral, "Checking where your verification stands", "If you finished, the result shows here in a moment.",
@@ -243,7 +282,10 @@ internal fun verifyLook(verify: VerifyUi, now: Long = nowMillis()): VerifyLook {
             KycStatus.None -> when {
                 v.canStart -> VerifyLook(
                     VerifyKind.Intro, null, SheetTone.Neutral, "Verify once, add money any time",
-                    "Sending and receiving on Circaso never needs this. Moving money in or out of Circaso does, by law.", VerifyAction.Start, "Start Verification",
+                    // Where the server doesn't ask for it yet (offered from the profile), never said to be the law.
+                    if (v.required) "Sending and receiving on Circaso never needs this. Moving money in or out of Circaso does, by law."
+                    else "Sending and receiving on Circaso never needs this. Adding money doesn't need it yet either: verify now and it's done when it does.",
+                    VerifyAction.Start, "Start Verification",
                 )
                 // Required, never started, and the server won't start one now: said as it is, never a dead button.
                 v.retryAt != null -> waiting("Today's tries are used up", "Verification can't be started again today.", v.retryAt)
@@ -293,6 +335,7 @@ internal fun verifyLook(verify: VerifyUi, now: Long = nowMillis()): VerifyLook {
 }
 
 internal const val VerifyOfflineNote = "You're offline. Verifying your identity needs a connection."
+internal const val TestnetPracticeNote = "On Testnet this is a practice run with sample documents. It doesn't count on Mainnet."
 
 /**
  * Design E3, "Verify once, add money any time": what is needed (an ID and a selfie), how long it takes, who runs the
@@ -302,10 +345,10 @@ internal const val VerifyOfflineNote = "You're offline. Verifying your identity 
  * its own check), and its "verification partner" is named, as the guide's consent note asks.
  */
 @Composable
-internal fun VerifyIntroPage(state: AddMoneyUiState, bottomInset: Dp, onVerify: () -> Unit, onBack: () -> Unit, onCopy: (String) -> Unit) {
+internal fun VerifyIntroPage(state: VerifyPageState, bottomInset: Dp, onVerify: () -> Unit, onBack: () -> Unit, onCopy: (String) -> Unit) {
     val c = CircasoTheme.colors
     val t = CircasoTheme.typography
-    val look = verifyLook(state.verify)
+    val look = verifyLook(state.verify, entry = state.entry)
     val busy = state.verify.starting
     AddMoneyPageFrame(
         bottomInset, grouped = false, side = CircasoSpacing.s6,
@@ -315,8 +358,8 @@ internal fun VerifyIntroPage(state: AddMoneyUiState, bottomInset: Dp, onVerify: 
                 CircasoButton(look.button, onVerify, size = ButtonSize.Large, block = true, enabled = state.canVerify || busy, busy = busy)
                 // Each note opens the room it needs, gap included, so the buttons never step.
                 Reveal(!state.online) { FooterNote(VerifyOfflineNote, Modifier.padding(top = CircasoSpacing.s2)) }
-                Reveal(state.online && state.testnet) { FooterNote("On Testnet this is a practice run with sample documents. It doesn't count on Mainnet.", Modifier.padding(top = CircasoSpacing.s2)) }
-                CircasoButton("Not Now", onBack, Modifier.padding(top = CircasoSpacing.s2), style = ButtonStyle.Plain, size = ButtonSize.Medium, block = true, enabled = !busy)
+                Reveal(state.online && state.testnet) { FooterNote(TestnetPracticeNote, Modifier.padding(top = CircasoSpacing.s2)) }
+                if (state.wayOut) CircasoButton("Not Now", onBack, Modifier.padding(top = CircasoSpacing.s2), style = ButtonStyle.Plain, size = ButtonSize.Medium, block = true, enabled = !busy)
             }
         },
     ) {
@@ -345,7 +388,7 @@ private val VerifyRowGap = 14.dp
 private val VerifyNoteInset = 14.dp
 private val VerifyNoteGap = 10.dp
 private val VerifyNoteGlyph = 18.dp
-private val VerifyRowGlyph = 20.dp
+internal val VerifyRowGlyph = 20.dp
 
 @Composable
 private fun VerifyRow(icon: CircasoIcon, title: String, sub: String) {
@@ -374,13 +417,15 @@ private data class VerifyFooter(val action: VerifyAction, val button: String)
  */
 @Composable
 internal fun VerifyStatePage(
-    state: AddMoneyUiState, bottomInset: Dp, onVerify: () -> Unit, onSettings: () -> Unit, onSupport: () -> Unit, onBack: () -> Unit, onCopy: (String) -> Unit,
+    state: VerifyPageState, bottomInset: Dp, onVerify: () -> Unit, onSettings: () -> Unit, onSupport: () -> Unit, onBack: () -> Unit, onCopy: (String) -> Unit,
+    /** Said under the state when it is the phone's last known copy, not something the server just said (the profile, offline). */
+    lastChecked: String? = null,
 ) {
     val c = CircasoTheme.colors
     val t = CircasoTheme.typography
     val still = CircasoTheme.reduceMotion
     val verify = state.verify
-    val look = verifyLook(verify)
+    val look = verifyLook(verify, entry = state.entry)
     val busy = verify.starting
     // Verified in front of the person: felt once, as it happens.
     val haptics = LocalHapticFeedback.current
@@ -397,15 +442,15 @@ internal fun VerifyStatePage(
                         VerifyAction.Start -> {
                             CircasoButton(footer.button, onVerify, size = ButtonSize.Large, block = true, enabled = state.canVerify || busy, busy = busy)
                             Reveal(!state.online) { FooterNote(VerifyOfflineNote, Modifier.padding(top = CircasoSpacing.s2)) }
-                            CircasoButton("Not Now", onBack, Modifier.padding(top = CircasoSpacing.s2), style = ButtonStyle.Plain, size = ButtonSize.Medium, block = true, enabled = !busy)
+                            if (state.wayOut) CircasoButton("Not Now", onBack, Modifier.padding(top = CircasoSpacing.s2), style = ButtonStyle.Plain, size = ButtonSize.Medium, block = true, enabled = !busy)
                         }
                         VerifyAction.Settings -> {
                             CircasoButton(footer.button, onSettings, size = ButtonSize.Large, block = true)
-                            CircasoButton("Not Now", onBack, Modifier.padding(top = CircasoSpacing.s2), style = ButtonStyle.Plain, size = ButtonSize.Medium, block = true)
+                            if (state.wayOut) CircasoButton("Not Now", onBack, Modifier.padding(top = CircasoSpacing.s2), style = ButtonStyle.Plain, size = ButtonSize.Medium, block = true)
                         }
                         VerifyAction.Support -> {
                             CircasoButton(footer.button, onSupport, size = ButtonSize.Large, block = true)
-                            CircasoButton("Close", onBack, Modifier.padding(top = CircasoSpacing.s2), style = ButtonStyle.Plain, size = ButtonSize.Medium, block = true)
+                            if (state.wayOut) CircasoButton("Close", onBack, Modifier.padding(top = CircasoSpacing.s2), style = ButtonStyle.Plain, size = ButtonSize.Medium, block = true)
                         }
                         VerifyAction.Close -> {
                             CircasoButton(footer.button, onBack, style = ButtonStyle.Secondary, size = ButtonSize.Large, block = true)
@@ -456,13 +501,15 @@ internal fun VerifyStatePage(
             val reference = lastOf(verify.reference)
             Reveal(verify.reference != null && verify.trouble != null) { if (reference != null) Reference(reference, onCopy) }
             FailureNote(verify.failure, onCopy)
+            val checked = lastOf(lastChecked)
+            Reveal(lastChecked != null) { if (checked != null) FooterNote(checked, Modifier.padding(top = CircasoSpacing.s4)) }
         }
     }
 }
 
 /** Words giving way to other words: a cross-fade, while what holds them eases to the new height. */
-private fun AnimatedContentTransitionScope<*>.easeWords(still: Boolean): ContentTransform =
+internal fun AnimatedContentTransitionScope<*>.easeWords(still: Boolean): ContentTransform =
     (fadeIn(tween(if (still) 0 else CircasoMotion.BaseMs)) togetherWith fadeOut(tween(if (still) 0 else CircasoMotion.QuickMs))) using SizeTransform(clip = false)
 
 /** Between a title and its paragraph, as the sheets have it (the canvas's 6 px). */
-private val VerifyTitleGap = 6.dp
+internal val VerifyTitleGap = 6.dp

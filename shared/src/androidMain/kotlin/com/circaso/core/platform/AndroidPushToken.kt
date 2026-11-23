@@ -66,6 +66,12 @@ class CircasoMessagingService : FirebaseMessagingService() {
             }
             return
         }
+        // Identity verification moved (`ramp.kyc`): the profile's copy is read again beside the notification, which is
+        // shown below as it always was.
+        runCatching {
+            val koin = KoinPlatform.getKoin()
+            com.circaso.feature.ramp.data.repository.IdentityPush.received(message.data, koin.get<kotlinx.coroutines.CoroutineScope>()) { koin.get() }
+        }
         runCatching {
             val koin = KoinPlatform.getKoin()
             val notices = koin.get<PushNotices>()

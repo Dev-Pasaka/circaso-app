@@ -23,6 +23,13 @@ interface RampRepository {
     val kycUpdates: Flow<KycUpdate>
 
     /**
+     * Where the identity check stood when the server last said (R0, the read, R1 or a frame), for the network being
+     * read (the pinned one, else the selected one); null until it has answered once. Kept on the phone per network and
+     * wiped at sign-out, so the profile shows the last known status offline. **Read**: never a reason to wait.
+     */
+    val identity: Flow<IdentitySnapshot?>
+
+    /**
      * R0 `POST /v1/ramp/kyc`: starts the identity check, or returns the one still open (never a second). **Online-only**:
      * never queued. One [idempotencyKey] per tap, the same on a retry that got no definite answer.
      */

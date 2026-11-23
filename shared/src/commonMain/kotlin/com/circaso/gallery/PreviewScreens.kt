@@ -300,9 +300,24 @@ fun PreviewScreens(name: String) {
             // Mine is from the long list, so it also shows in the row (to take it back without opening the list).
             com.circaso.designsystem.components.ReactionBubble(current = "🔥", onPick = {}, onOptions = {}, initiallyExpanded = name.endsWith("expanded"))
         }
-        "you", "you-notification-privacy-on" -> YouContent(
+        // `you-verified`, `you-unverified`, `you-identity-loading`: the Verification row in the Money group (F2).
+        "you", "you-notification-privacy-on", "you-verified", "you-unverified", "you-identity-loading" -> YouContent(
             YouUiState(
                 profile = profile, maskedPhone = "+254 7•• ••• 678",
+                identity = when (name) {
+                    "you-identity-loading" -> com.circaso.feature.ramp.presentation.IdentityRowUi.Loading
+                    "you-notification-privacy-on" -> com.circaso.feature.ramp.presentation.IdentityRowUi.Hidden
+                    else -> com.circaso.feature.ramp.presentation.identityRow(
+                        com.circaso.feature.ramp.domain.IdentitySnapshot(
+                            com.circaso.feature.ramp.domain.RampVerification(
+                                if (name == "you-unverified") com.circaso.feature.ramp.domain.KycStatus.None else com.circaso.feature.ramp.domain.KycStatus.Verified,
+                                required = true, canStart = name == "you-unverified",
+                            ),
+                            unavailable = false, checkedAt = 0,
+                        ),
+                        asking = false, unanswered = false, online = true, testnet = false,
+                    )
+                },
                 failed = if (name == "you") listOf(com.circaso.core.sync.FailedChange(1, "Profile change", "Your profile changed on another phone. We've loaded the latest, so check and save again.")) else emptyList(),
                 // The switches in their other state: privacy on, money sound off.
                 notificationPrivacy = name != "you", moneySound = name == "you",
@@ -588,7 +603,7 @@ private fun PreviewScreensC(name: String) {
             }
             com.circaso.feature.wallet.presentation.ActivityContent(state, {}, {}, {}, {})
         }
-        else -> if (!GroupWalletPreview(name) && !ChatMoneyPreview(name) && !MomentsChatsPreview(name) && !AshaPreview(name) && !VaultPreview(name) && !SavedNamesPreview(name) && !GroupLinkPreview(name) && !SecurityCodePreview(name) && !SheetsPreview(name) && !HelpLogPreview(name) && !TicketPreview(name) && !CallPreviews(name) && !AddMoneyPreview(name)) BasicText("Unknown preview: $name")
+        else -> if (!GroupWalletPreview(name) && !ChatMoneyPreview(name) && !MomentsChatsPreview(name) && !AshaPreview(name) && !VaultPreview(name) && !SavedNamesPreview(name) && !GroupLinkPreview(name) && !SecurityCodePreview(name) && !SheetsPreview(name) && !HelpLogPreview(name) && !TicketPreview(name) && !CallPreviews(name) && !AddMoneyPreview(name) && !IdentityPreview(name)) BasicText("Unknown preview: $name")
     }
 }
 

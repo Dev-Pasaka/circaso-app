@@ -46,13 +46,19 @@ fun ListRow(
     horizontalPadding: androidx.compose.ui.unit.Dp = CircasoSpacing.s4,
     /** How screen readers announce a tappable row: a button, or a choice in a list (`Role.RadioButton`). */
     role: androidx.compose.ui.semantics.Role = androidx.compose.ui.semantics.Role.Button,
+    /** The sub line is cut after two lines; a row whose sub line is its status passes more, so large text never cuts it. */
+    subMaxLines: Int = 2,
+    /** What a tap does, for screen readers ("Open verification"); the row's words alone otherwise. */
+    onClickLabel: String? = null,
+    /** Under the title and sub line, inside the text column (a status that moves there at large text sizes). */
+    below: (@Composable () -> Unit)? = null,
 ) {
     val c = CircasoTheme.colors
     val t = CircasoTheme.typography
     Row(
         modifier
             .fillMaxWidth()
-            .then(if (onClick != null) Modifier.pressable(role = role, onClick = onClick) else Modifier)
+            .then(if (onClick != null) Modifier.pressable(role = role, onClickLabel = onClickLabel, onClick = onClick) else Modifier)
             .defaultMinSize(minHeight = 56.dp)
             .padding(horizontal = horizontalPadding, vertical = CircasoSpacing.s3),
         horizontalArrangement = Arrangement.spacedBy(CircasoSpacing.s3),
@@ -65,7 +71,8 @@ fun ListRow(
                 BasicText(title, Modifier.weight(1f, fill = false), style = t.body.copy(color = if (destructive) c.critical else c.ink), maxLines = 1, overflow = TextOverflow.Ellipsis)
                 titleEnd()
             }
-            if (sub != null) BasicText(sub, style = t.subhead.copy(color = c.inkSecondary), maxLines = 2, overflow = TextOverflow.Ellipsis)
+            if (sub != null) BasicText(sub, style = t.subhead.copy(color = c.inkSecondary), maxLines = subMaxLines, overflow = TextOverflow.Ellipsis)
+            below?.invoke()
         }
         if (meta != null) BasicText(meta, style = t.footnote.copy(color = c.inkTertiary))
         trailing?.invoke()

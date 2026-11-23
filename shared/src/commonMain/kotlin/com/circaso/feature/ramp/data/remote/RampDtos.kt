@@ -100,6 +100,8 @@ data class VerificationDto(
     val canStart: Boolean = false,
     val reason: String? = null,
     val retryAt: String? = null,
+    /** Finished by the person, decision awaited (2026-11-23); absent from a server before it, and then false. */
+    val submitted: Boolean = false,
     /** Only on the frame: the network the check moved on. */
     val network: String? = null,
 )
@@ -118,6 +120,8 @@ data class KycResponse(
     val canStart: Boolean = false,
     val reason: String? = null,
     val retryAt: String? = null,
+    /** Finished by the person, decision awaited (2026-11-23): `session` is then null. */
+    val submitted: Boolean = false,
     val session: KycSessionDto? = null,
 )
 
@@ -137,12 +141,12 @@ internal fun isoMillis(iso: String?): Long? = iso?.let { runCatching { kotlin.ti
 
 internal fun RampAmountDto.toDomain() = RampAmount(unit, amountMinor, amount)
 
-internal fun VerificationDto.toDomain() = RampVerification(KycStatus.of(status), required, canStart, reason?.takeIf { it.isNotBlank() }, isoMillis(retryAt))
+internal fun VerificationDto.toDomain() = RampVerification(KycStatus.of(status), required, canStart, reason?.takeIf { it.isNotBlank() }, isoMillis(retryAt), submitted)
 
 internal fun KycResponse.toDomain() = KycStart(
-    RampVerification(KycStatus.of(status), required, canStart, reason?.takeIf { it.isNotBlank() }, isoMillis(retryAt)),
-    // A session with no token is nothing to start: treated as none.
-    session?.takeIf { it.sessionToken.isNotBlank() }?.let { KycSession(it.sessionToken, it.url, isoMillis(it.expiresAt)) },
+    RampVerification(KycStatus.of(status), required, canStart, reason?.takeIf { it.isNotBlank() }, isoMillis(retryAt), submitted),
+    // A session with no token is nothing to start: treated as none. Neither is one for a check already submitted.
+    session?.takeIf { it.sessionToken.isNotBlank() && !submitted }?.let { KycSession(it.sessionToken, it.url, isoMillis(it.expiresAt)) },
 )
 
 /** What a server from before verification means by its short `kyc`: `NONE` is "required, never started". */
@@ -182,4 +186,20 @@ internal fun OrderResponse.toDomain() = RampOrder(
     failureReason = failureReason,
     expiresAt = isoMillis(expiresAt),
     createdAt = isoMillis(createdAt),
+)
+
+/**
+ * The check as it is kept on the phone for one network ([com.circaso.feature.ramp.domain.IdentitySnapshot]): only the
+ * state and its reason code, never anything personal, never a session.
+ */
+@Serializable
+data class SavedIdentity(
+    val status: String? = null,
+    val required: Boolean = true,
+    val canStart: Boolean = false,
+    val reason: String? = null,
+    val retryAt: Long? = null,
+    val submitted: Boolean = false,
+    val unavailable: Boolean = false,
+    val checkedAt: Long = 0,
 )
