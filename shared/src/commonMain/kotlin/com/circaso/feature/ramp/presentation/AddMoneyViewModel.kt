@@ -128,6 +128,14 @@ data class AddMoneyUiState(
      * screen hands over to it at once.
      */
     val handOff: String? = null,
+    /**
+     * This order's USDC is in the wallet and its success hasn't been heard on this phone yet (watched as it landed, or
+     * opened later from a push or the open order): the page plays the card settling with the `Confirm` haptic and calls
+     * [AddMoneyViewModel.onLanded] on that frame, which rings the chime. Null once rung, and for every other order.
+     */
+    val celebrate: String? = null,
+    /** This completed order's landing was heard on this phone before: its card is simply there, no settle, no chime. */
+    val quietLanding: String? = null,
 ) {
     val limits get() = status?.limits
     val amountMinor: String? get() = RampMoney.wholeToMinor(amountText)
@@ -212,6 +220,8 @@ class AddMoneyViewModel(
     network: WalletNetwork? = null,
     /** How long "You're verified" stays before the flow goes on to the amount. */
     private val verifiedHoldMillis: Long = VerifiedHoldMillis,
+    /** The money sounds: the chime when a top-up lands, once per order, if You → Money sound is on. */
+    private val sounds: com.circaso.core.platform.MoneySounds? = null,
 ) : ViewModel() {
     /** The wallet network the whole flow is for, fixed when it opens: the quote, the prompt and the order are all its. */
     private var pinned: WalletNetwork = network ?: networks.current()
@@ -253,6 +263,8 @@ class AddMoneyViewModel(
     private var polling: Job? = null
     /** The order this screen was opened on has been read once; "Try Again" after it starts a new top-up. */
     private var opened = false
+    /** The completed orders whose chime has been decided on (to ring or not): asked once each. */
+    private val landingsDecided = mutableSetOf<String>()
 
     val state: StateFlow<AddMoneyUiState> = combine(local, online, maskedPhone, combine(pin, networks.state) { on, all -> all.known && on == WalletNetwork.TESTNET }) { ui, isOnline, masked, testnet ->
         ui.copy(online = isOnline, maskedPhone = ui.order?.maskedPhone?.takeIf { it.isNotBlank() } ?: masked, testnet = testnet)
@@ -278,6 +290,8 @@ class AddMoneyViewModel(
         // The identity check moved (`kyc.updated`, live or replayed): only this flow's network is taken.
         viewModelScope.launch { observeKyc().collect { moved -> if (moved.network == null || moved.network == pinned) check.show(moved.verification) } }
         viewModelScope.launch { savedPhone = ownNumber(); local.update { it.copy(needsPhone = savedPhone == null) } }
+        // The chime is loaded while the person is still choosing an amount: a landing never waits on it.
+        sounds?.prepare()
         // The connection is back: a check that was waiting on it is read at once, not at the next tick.
         viewModelScope.launch { state.map { it.online }.distinctUntilChanged().drop(1).collect { back -> if (back) check.readIfItMayHaveMoved() } }
         load()
@@ -386,9 +400,61 @@ class AddMoneyViewModel(
         if (order.sale) { polling?.cancel(); local.update { it.copy(handOff = order.orderId, loadingOrder = true, step = AddMoneyStep.Loading) }; return }
         // An order says which network it is on: everything after is for that one.
         order.network?.let { pinned = it; pin.value = it }
-        local.update { it.copy(step = AddMoneyStep.Order, order = order, everPaid = it.everPaid || order.state.paid, placing = false, failure = null, stale = false) }
+        local.update {
+            it.copy(step = AddMoneyStep.Order, order = order, everPaid = it.everPaid || order.state.paid, placing = false, failure = null, stale = false,
+                celebrate = it.celebrate?.takeIf { id -> id == order.orderId && order.state == RampOrderState.Completed },
+                quietLanding = it.quietLanding?.takeIf { id -> id == order.orderId })
+        }
         // Followed until it settles; an order that had ended and moved again (paid after its time ran out) is followed anew.
         if (!order.state.settled && polling?.isActive != true) follow()
+        listenFor(order)
+    }
+
+    /**
+     * The sounds for the order on screen: while it is under way its USDC is the chime's, not the coins'; once it is
+     * completed, whether its landing is still to be heard on this phone ([AddMoneyUiState.celebrate]). An order that
+     * ended any other way never rings.
+     */
+    private fun listenFor(order: RampOrder) {
+        val id = order.orderId
+        when {
+            order.state == RampOrderState.Completed -> if (landingsDecided.add(id)) viewModelScope.launch {
+                // Decided (and the sound readied) now, so the chime can ring on the very frame the card settles.
+                // A storage read that fails never leaves the card waiting: it lands as new (the worst case is a second chime).
+                val fresh = runCatching { sounds?.armLanding(id) }.getOrNull() ?: true
+                if (!fresh) sounds?.unfollow(id)
+                local.update {
+                    if (it.order?.orderId != id || it.order.state != RampOrderState.Completed) it
+                    else if (fresh) it.copy(celebrate = id) else it.copy(quietLanding = id)
+                }
+            }
+            // Only paid money is on its way: before that, incoming money is someone else's and plays the coins.
+            order.state.paid && !order.state.settled -> sounds?.follow(id)
+            else -> sounds?.unfollow(id)
+        }
+    }
+
+    /**
+     * The page's card has settled on the USDC that landed ([AddMoneyUiState.celebrate]): the chime, in time with it and
+     * the haptic, once per order, if the money sound is on. Anything else (a failure, an order already heard) is quiet.
+     */
+    fun onLanded() {
+        val s = local.value
+        val order = s.order ?: return
+        if (order.state != RampOrderState.Completed || s.celebrate != order.orderId) return
+        local.update { it.copy(celebrate = null) }
+        val sounds = sounds ?: return
+        // The sound first, on this frame; then it is written down as heard.
+        sounds.ringLanding(order.orderId)
+        viewModelScope.launch {
+            sounds.markHeard(order.orderId)
+            sounds.unfollow(order.orderId)
+        }
+    }
+
+    override fun onCleared() {
+        local.value.order?.let { sounds?.unfollow(it.orderId) }
+        super.onCleared()
     }
 
     fun onAmount(text: String) {
@@ -584,7 +650,8 @@ class AddMoneyViewModel(
     /** After an order that didn't go through: back to the amount (R1 first, in case something changed). */
     fun onAgain() {
         polling?.cancel()
-        local.update { it.copy(order = null, everPaid = false, quote = null, cancelNote = null, stale = false) }
+        local.value.order?.let { sounds?.unfollow(it.orderId) }
+        local.update { it.copy(order = null, everPaid = false, quote = null, cancelNote = null, stale = false, celebrate = null, quietLanding = null) }
         load()
     }
 

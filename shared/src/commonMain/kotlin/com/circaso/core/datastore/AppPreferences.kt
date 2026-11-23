@@ -127,7 +127,10 @@ class AppPreferences(private val store: DataStore<Preferences>) : com.circaso.co
          */
         const val MomentAutoDownloadOff = "moment_auto_download_off"
 
-        /** The coins sound for money received is off (You → Money sound); it is on unless turned off. */
+        /**
+         * The money sounds are off (You → Money sound): the coins for money received and the chime when a top-up's USDC
+         * lands (2026-11-23). On unless turned off; the phone's silent mode silences them as well.
+         */
         const val MoneySoundOff = "money_sound_off"
 
         /**
@@ -161,6 +164,11 @@ class AppPreferences(private val store: DataStore<Preferences>) : com.circaso.co
             "biometric_lost." + (if (network == "MAINNET") "mainnet." else "") + (walletId ?: "personal")
 
         /** The selected wallet network and the server's last list of them (`text.wallet.*`: wiped at sign-out). */
+        /**
+         * The top-ups whose landing chime has rung on this phone (order ids, comma separated, the newest 50), so it rings
+         * once per order. Under `text.wallet.`, so it goes at sign-out with the rest of the wallet's.
+         */
+        const val RampChimedText = "wallet.ramp.chimed"
         const val WalletNetworkText = "wallet.network"
         const val WalletNetworksText = "wallet.networks"
     }

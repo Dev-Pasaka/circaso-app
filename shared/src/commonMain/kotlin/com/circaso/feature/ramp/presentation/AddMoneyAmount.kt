@@ -154,15 +154,8 @@ internal fun AmountPage(state: AddMoneyUiState, bottomInset: Dp, onAmount: (Stri
                 )
             }
         }
-        Labelled("Pay with") {
-            ListGroup {
-                ListRow(
-                    "M-Pesa", sub = state.maskedPhone?.maskedForDisplay() ?: "Your verified number",
-                    leading = { LetterDisc("M") },
-                    trailing = { CircasoIconImage(CircasoIcon.Check, c.ink, Modifier.size(SelectedGlyph).semantics { contentDescription = "Selected" }, strokeWidth = 2.4f) },
-                )
-            }
-        }
+        // M-Pesa is how this is paid, from the first page: its own green card, with the number the request goes to.
+        Labelled("Pay with") { MpesaMethodCard(state.maskedPhone) }
         val chains = state.status?.blockchains.orEmpty()
         if (chains.size > 1) Labelled("Receive on") {
             SegmentedControl(chains.map { chainBaseName(it) }, chains.indexOf(state.blockchain).coerceAtLeast(0), { onChain(chains[it]) })
@@ -307,9 +300,13 @@ internal fun ReviewPage(state: AddMoneyUiState, bottomInset: Dp, onPhone: (Strin
             FooterNote(if (!state.online) OfflineNote else "You'll confirm with your M-Pesa PIN on your phone.")
         },
     ) {
-        Column(Modifier.fillMaxWidth().padding(top = CircasoSpacing.s2).semantics(mergeDescendants = true) {}, horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(CircasoSpacing.s1)) {
-            BasicText("You pay", style = t.subhead.copy(color = c.inkSecondary))
-            AmountDisplay(quote.pay.unit, quote.pay.number, size = AmountSize.Large)
+        Column(Modifier.fillMaxWidth().padding(top = CircasoSpacing.s2), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(CircasoSpacing.s1)) {
+            Column(Modifier.semantics(mergeDescendants = true) {}, horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(CircasoSpacing.s1)) {
+                BasicText("You pay", style = t.subhead.copy(color = c.inkSecondary))
+                AmountDisplay(quote.pay.unit, quote.pay.number, size = AmountSize.Large)
+            }
+            // With M-Pesa, from the number the request goes to.
+            MpesaChip(state.maskedPhone, Modifier.padding(top = CircasoSpacing.s2))
         }
         Column {
             QuoteDetails(quote, state.maskedPhone)
