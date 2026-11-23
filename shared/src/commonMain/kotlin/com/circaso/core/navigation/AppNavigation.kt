@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.Box
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.launch
 import androidx.compose.foundation.layout.padding
@@ -371,21 +372,14 @@ fun AppNavigation(forceUpdate: Boolean, home: @Composable () -> Unit) {
                     com.circaso.designsystem.theme.CircasoTheme.platform == com.circaso.designsystem.platform.PlatformStyle.Ios -> "Passcode"
                     else -> "Screen Lock"
                 }
-                val chatsNow by chatsViewModel.state.collectAsState()
-                val callForBackup by calls.state.collectAsState()
-                val joinNow by groupJoin.state.collectAsState()
+                // Told from Home, always composed while Home is (the layer lives in the Chats tab's overlay and leaves
+                // with it), in a scope of its own so chat updates don't recompose Home.
+                BackupCalmReporter(backupPrompt, chatsViewModel, groupJoin, shareLinks, calls) {
+                    backStack.lastOrNull() == HomeRoute && homeTab == com.circaso.feature.home.presentation.Tab.Chats.ordinal &&
+                        !secretsOnScreen.any && !sheetsOnScreen.any && !ashaBubble.open && pendingShare == null && pendingLink == null
+                }
                 // First time on Home: the contacts prompt once, then the phone book syncs, so New chat isn't empty.
                 val phoneBook: com.circaso.feature.contacts.data.repository.PhoneBookAutoSync = koinInject()
-                val askingContacts by phoneBook.asking.collectAsState()
-                // Any open sheet counts (sheetsOnScreen: the hold sheet, Leave Circaso?, Meet Asha, an invite…); the
-                // rest are what isn't a sheet: a call, a secret, Asha, the contacts prompt, a link or share arriving.
-                val backupCalm = backStack.lastOrNull() == HomeRoute && homeTab == com.circaso.feature.home.presentation.Tab.Chats.ordinal &&
-                    callForBackup == null && !secretsOnScreen.any && !sheetsOnScreen.any && !ashaBubble.open && !askingContacts &&
-                    chatsNow.loaded && !chatsNow.meetAsha && chatsNow.previewing == null && !joinNow.open && !shareUi.sheetOpen &&
-                    pendingShare == null && pendingLink == null
-                // Told here, where Home is always composed (the layer lives in the Chats tab's overlay and leaves with it).
-                androidx.compose.runtime.LaunchedEffect(backupCalm) { backupPrompt.onCalm(backupCalm) }
-                androidx.compose.runtime.DisposableEffect(backupPrompt) { onDispose { backupPrompt.onCalm(false) } }
                 androidx.compose.runtime.LaunchedEffect(phoneBook) { phoneBook.onHome() }
                 HomeScreen(
                     selectedTab = homeTab,
@@ -861,6 +855,32 @@ fun AppNavigation(forceUpdate: Boolean, home: @Composable () -> Unit) {
     }
     }
     }
+}
+
+/**
+ * Whether the chat backup's sheet may rise (2026-11-23), told to its view model. [home]: Home's Chats on top, no secret,
+ * no open sheet (every `CircasoSheet` counts itself: the hold sheet, Leave Circaso?, Meet Asha, an invite…), no Asha,
+ * no link or share arriving. Here as well: chats loaded, no call, the group-join and share sheets, the in-app browser
+ * and a system permission prompt. Its own scope, so a chat update recomposes only this.
+ */
+@Composable
+private fun BackupCalmReporter(
+    prompt: com.circaso.feature.keybackup.presentation.BackupPromptViewModel,
+    chats: ChatsViewModel,
+    groupJoin: com.circaso.feature.messaging.presentation.GroupJoinViewModel,
+    shareLinks: com.circaso.feature.share.presentation.ShareLinkViewModel,
+    calls: com.circaso.feature.calls.CallController,
+    home: () -> Boolean,
+) {
+    val chatsCalm by remember(chats) { chats.state.map { it.loaded && !it.meetAsha && it.previewing == null }.distinctUntilChanged() }.collectAsState(false)
+    val call by calls.state.collectAsState()
+    val join by groupJoin.state.collectAsState()
+    val share by shareLinks.state.collectAsState()
+    val page by com.circaso.core.web.InAppBrowser.page.collectAsState()
+    val prompts by com.circaso.core.platform.SystemPrompts.up.collectAsState()
+    val calm = home() && chatsCalm && call == null && !join.open && !share.sheetOpen && page == null && prompts == 0
+    LaunchedEffect(calm) { prompt.onCalm(calm) }
+    androidx.compose.runtime.DisposableEffect(prompt) { onDispose { prompt.onCalm(false) } }
 }
 
 @Composable

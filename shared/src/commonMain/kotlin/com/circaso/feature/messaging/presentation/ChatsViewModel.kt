@@ -112,7 +112,7 @@ class ChatsViewModel(
         viewModelScope.launch { connection.status.collect { s -> _state.update { it.copy(online = s == ConnectionStatus.Online) } } }
         viewModelScope.launch { outbox.waitingMessages.collect { n -> _state.update { it.copy(waitingToSend = n) } } }
         viewModelScope.launch { refreshChats() }
-        viewModelScope.launch { notifications.ensurePermission() } // asked here, on the Chats tab, never at launch
+        viewModelScope.launch { com.circaso.core.platform.SystemPrompts.during { notifications.ensurePermission() } } // asked here, on the Chats tab, never at launch
     }
 
     fun onQuery(text: String) = _state.update { it.copy(query = text) }

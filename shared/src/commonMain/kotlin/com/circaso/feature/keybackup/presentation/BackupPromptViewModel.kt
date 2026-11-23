@@ -20,7 +20,9 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
@@ -88,6 +90,7 @@ data class BackupPromptUi(
  * money flow, a call or a secret), and a moment after it got calm. "Not Now" keeps a sheet quiet for [QuietMillis]
  * on this phone; a restore put away stays on offer as a quiet card on Chats.
  */
+@OptIn(kotlinx.coroutines.FlowPreview::class)
 class BackupPromptViewModel(
     private val backup: KeyBackupRepository,
     chats: ChatsRepository,
@@ -116,6 +119,8 @@ class BackupPromptViewModel(
         /** Said without being an error: why the sheet changed by itself (the backup was turned off elsewhere). */
         val notice: String? = null,
         val startedNew: Boolean = false,
+        /** After a restore: groups still unreadable once the list settled (fixed, so "done" never changes its words). */
+        val leftAfterRestore: Int = 0,
         /** TalkBack or VoiceOver is on: "done" stays until it is closed. */
         val screenReader: Boolean = false,
         val calm: Boolean = false,
@@ -131,9 +136,10 @@ class BackupPromptViewModel(
     private val local = MutableStateFlow(Local())
     private var settle: Job? = null
 
+    private val unreadableGroups = chats.chats.map { list -> list.count { it.chat.kind == ChatKind.Group && it.chat.nameState != GroupNameState.Known } }.distinctUntilChanged()
+
     val state: StateFlow<BackupPromptUi> = combine(
-        local, backup.status, connection.status.map { it == ConnectionStatus.Online }.distinctUntilChanged(),
-        chats.chats.map { list -> list.count { it.chat.kind == ChatKind.Group && it.chat.nameState != GroupNameState.Known } }.distinctUntilChanged(),
+        local, backup.status, connection.status.map { it == ConnectionStatus.Online }.distinctUntilChanged(), unreadableGroups,
     ) { l, b, online, unreadable -> l.toUi(b, online, unreadable) }
         .stateIn(viewModelScope, SharingStarted.Eagerly, BackupPromptUi())
 
@@ -163,8 +169,7 @@ class BackupPromptViewModel(
         return BackupPromptUi(
             sheet = sheet, step = if (sheet == null) BackupStep.Ask else step, visible = visible, online = online, busy = busy,
             askNotHere = askNotHere, error = error, errorRef = errorRef, notice = notice, startedNew = startedNew,
-            // Read live: the restored groups reach the list a moment after the restore returns.
-            leftAfterRestore = if (sheet == BackupSheet.Restore && step == BackupStep.Done && !startedNew) unreadable else 0,
+            leftAfterRestore = if (sheet == BackupSheet.Restore && step == BackupStep.Done && !startedNew) leftAfterRestore else 0,
             resumeRestore = supported && wanted(b) == BackupSheet.Restore && sheet == null && !cardDismissed && cardQuiet <= now(),
             unreadableGroups = unreadable,
         )
@@ -203,7 +208,12 @@ class BackupPromptViewModel(
     /** Restore, and "Use Another Device" (the same passkey sheet, where the other device's QR code is offered). */
     private fun onRestore() = act(BackupSheet.Restore) {
         when (val problem = backup.restore()) {
-            null -> { local.update { it.copy(step = BackupStep.Done, askNotHere = false) }; null }
+            null -> {
+                // The restored names reach the list a moment after the restore returns: count once it has settled.
+                val left = withTimeoutOrNull(SettleListMillis * 4) { unreadableGroups.debounce(SettleListMillis).first() } ?: 0
+                local.update { it.copy(step = BackupStep.Done, askNotHere = false, leftAfterRestore = left) }
+                null
+            }
             KeyBackupProblem.PasskeyMissing -> {
                 // Asked again from "not here" and still nothing (the phone offered no other device): say so, or the tap
                 // would look like it did nothing.
@@ -250,7 +260,7 @@ class BackupPromptViewModel(
             local.update { it.copy(quiet = it.quiet + (sheet to until)) }
             userId()?.let { person -> viewModelScope.launch { runCatching { memory.quiet(person, sheet.name, until) } } }
         }
-        local.update { it.copy(putAway = it.putAway + sheet, reopened = null, held = null, step = BackupStep.Ask, askNotHere = false, error = null, errorRef = null, notice = null, startedNew = false) }
+        local.update { it.copy(putAway = it.putAway + sheet, reopened = null, held = null, step = BackupStep.Ask, askNotHere = false, error = null, errorRef = null, notice = null, startedNew = false, leftAfterRestore = 0) }
     }
 
     /** Chats' card: the restore, now, in its sheet (offline the sheet opens and waits for the connection). */
@@ -284,11 +294,14 @@ class BackupPromptViewModel(
 
     /** A short success, then the sheet closes by itself; longer when there is more to read. */
     private fun closeSoon() = viewModelScope.launch {
-        if (local.value.screenReader) return@launch
-        delay(DoneMillis)
-        // Groups the backup didn't have are known by now: more to read, so longer.
-        if (state.value.leftAfterRestore > 0) delay(DoneLongMillis - DoneMillis)
-        if (local.value.step == BackupStep.Done && !local.value.screenReader) onClose()
+        // Done while hidden (a call came in mid-passkey, or one comes while it shows): the clock runs only while seen.
+        while (true) {
+            state.first { it.visible || it.step != BackupStep.Done }
+            if (local.value.screenReader || local.value.step != BackupStep.Done) return@launch
+            delay(if (state.value.leftAfterRestore > 0) DoneLongMillis else DoneMillis)
+            if (local.value.screenReader || local.value.step != BackupStep.Done) return@launch
+            if (state.value.visible) { onClose(); return@launch }
+        }
     }
 
     private suspend fun names(): Pair<String, String> {
@@ -303,6 +316,8 @@ class BackupPromptViewModel(
         const val SettleMillis = 1_200L
         const val DoneMillis = 2_400L
         const val DoneLongMillis = 6_000L
+        /** How long the chat list must be still before the groups left after a restore are counted. */
+        const val SettleListMillis = 300L
 
         /** What this phone needs from the backup, whatever the person said before. */
         fun wanted(b: KeyBackupState): BackupSheet? = when {

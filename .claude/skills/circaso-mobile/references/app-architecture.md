@@ -1123,12 +1123,15 @@ one sheet does what this phone needs, right after signing in, with no new server
   passkey the vault doesn't use (`needsRepair`) → **Repair**. Unknown (offline at launch, unsupported phone) → none.
   One sheet at a time; once past its first step or busy it is held whatever the status does (a restore's "done" isn't
   swept away by `onPhone` turning true), and nothing follows it.
-- **When:** only while `calm` (worked out in `AppNavigation`'s Home entry, which tells the view model even when the
-  Chats tab's overlay isn't composed): Home on top, the Chats tab, chats loaded, no call, no secret input
-  (`SecretsOnScreen`), **no other sheet open** (`SheetsOnScreen` / `LocalSheetsOnScreen`: every `CircasoSheet` counts
-  itself while visible unless `counted = false`, so the hold sheet, Leave Circaso?, Meet Asha and invites all count),
-  no Asha bubble, no contacts prompt (`PhoneBookAutoSync.asking`), no group-join or share sheet, no pending link. It rises `SettleMillis` (1.2 s) after the screen gets calm and steps aside (keeping
-  its place) when it isn't. Money steps are pushed routes, so they are never under it.
+- **When:** only while `calm` (`BackupCalmReporter` in `AppNavigation`, its own scope under the Home entry, which tells
+  the view model even when the Chats tab's overlay isn't composed): Home on top, the Chats tab, chats loaded, no Meet
+  Asha, no call, no secret input (`SecretsOnScreen`), **no other sheet open** (`SheetsOnScreen` /
+  `LocalSheetsOnScreen`: every `CircasoSheet` counts itself while visible unless `counted = false`, so the hold sheet,
+  Leave Circaso?, Meet Asha and invites all count), no Asha bubble, no system permission prompt (`SystemPrompts.during`
+  wraps the contacts and Android notification asks; iOS's push authorisation in Swift isn't wrapped), no in-app
+  browser, no group-join or share sheet, no pending link. It rises `SettleMillis` (1.2 s) after the screen gets calm
+  and steps aside (keeping its place) when it isn't. Money steps are pushed routes, so they are never under it.
+  "Done" only counts down while seen (a call mid-passkey keeps it for later).
 - **SetUp:** "Back up your chats" / "Turn On With {Face ID|Fingerprint|Screen Lock}" = `turnOn`: the vault's passkey
   if one exists, else a new one made in the same step (one system sheet); the vault then uses it (`AccountPasskey`).
   Done: "Your group names are backed up", closes itself after 2.4 s (never while TalkBack/VoiceOver is on:
@@ -1140,8 +1143,10 @@ one sheet does what this phone needs, right after signing in, with no new server
   Not Now. `Cancelled` keeps the sheet and adds "Passkey not on this phone?" (Android's back-out of the hybrid sheet and
   iOS's missing passkey both arrive as a cancel). Use Another Device answered "not here" again says "This phone
   couldn't offer another device…". `TurnedOff` re-reads and shows SetUp with a note why. Done: "Your group names are
-  back" (or "N groups weren't in your backup…", read live from the list, 6 s), "Your new backup is on". Drag, scrim
-  and Back mean Not Now on every step; Cancel on the confirm goes back to the choice.
+  back" (or "N groups weren't in your backup…", counted once the chat list has been still for
+  `SettleListMillis`, then fixed, 6 s), "Your new backup is on". Drag, scrim and Back mean Not Now, except on the
+  confirm, where they go back to the choice as Cancel does. Errors and notes sit under the main button with their Ref
+  (`SheetActions(noteRef)`), in a polite live region.
 - **Repair:** healed silently the next time the passkey answers (the vault's `onPrfSecret` reseals); until then
   "Finish securing your backup" / "Repair With …" = `turnOn`. Done: "Your backup is secure".
 - **Offline:** the sheet stays, its button can't be tapped and says "Needs a connection. You can carry on when you're
@@ -1162,3 +1167,5 @@ one sheet does what this phone needs, right after signing in, with no new server
 - **Not verified:** real passkey sheets (needs a Play-signed build on a phone: the circaso.com asset links only match
   the Play signing key); whether Android's Credential Manager offers the QR/hybrid option when the backup's passkey
   isn't on the phone (it may answer `NoCredentialException` at once, which lands on the "not here" step anyway).
+  The screen-reader check is read once when the layer is composed (turning TalkBack/VoiceOver on mid-session isn't
+  seen until Chats is shown again).

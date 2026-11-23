@@ -33,6 +33,8 @@ import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.isTraversalGroup
+import androidx.compose.ui.semantics.traversalIndex
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.circaso.designsystem.chrome.CircasoSheet
@@ -50,6 +52,9 @@ import com.circaso.designsystem.theme.CircasoShapes
 import com.circaso.designsystem.theme.CircasoSizes
 import com.circaso.designsystem.theme.CircasoSpacing
 import com.circaso.designsystem.theme.CircasoTheme
+
+/** From this text size up, Chats' card stacks its two buttons so neither is cut off. */
+private const val StackCardButtonsAtFontScale = 1.3f
 
 /** What the backup sheet's buttons do. */
 class BackupPromptActions(
@@ -113,7 +118,7 @@ object BackupPromptCopy {
     const val CardTitle = "Restore your chats"
     const val CardMessage = "Your backup is ready. Restore it to bring back group names and the names you saved."
 
-    const val NoOtherDevice = "This phone couldn't offer another device. On the phone that has your passkey, open Circaso, then Security, and tap Repair. Or start a new backup."
+    const val NoOtherDevice = "This phone couldn't offer another device. If Circaso is still signed in on the phone that has your passkey, open Security there. Or start a new backup."
     const val TurnedOffElsewhere = "Your backup was turned off on another phone. Turn it on again to keep your group names."
 
     fun groupsMissing(n: Int) = if (n == 1) "1 group shows members' names instead of its own until you restore."
@@ -163,8 +168,8 @@ fun BoxScope.BackupPromptSheet(s: BackupPromptUi, unlock: String, actions: Backu
     // Always composed, so its first rise animates (an AnimatedVisibility that starts visible doesn't).
     CircasoSheet(
         visible = s.visible && held.value != null,
-        // A drag, the scrim or Back always mean "not now", on every step; Cancel on the confirm goes back a step.
-        onDismiss = actions.onClose,
+        // Back, the scrim or a drag mean "not now", except on the confirm, where they go back to the choice (as Cancel).
+        onDismiss = if (held.value?.first?.step == BackupStep.ConfirmNew) actions.onStartNewCancelled else actions.onClose,
         label = held.value?.second?.title ?: "",
         dismissible = held.value?.first?.busy != true,
         // It waits for every other sheet; it doesn't count itself.
@@ -209,11 +214,8 @@ private fun BackupSheetButtons(s: BackupPromptUi, look: BackupPromptLook, action
             // The passkey-not-here step has two ways forward before "Not Now": its own row below.
             secondaryLabel = if (s.step == BackupStep.PasskeyNotHere) null else look.secondary,
             onSecondary = if (confirm) actions.onStartNewCancelled else actions.onClose,
-            destructive = look.destructive, enabled = done || s.online, busy = s.busy, note = note, noteIsError = s.error != null,
+            destructive = look.destructive, enabled = done || s.online, busy = s.busy, note = note, noteIsError = s.error != null, noteRef = s.errorRef?.takeIf { s.error != null },
         )
-        s.errorRef?.takeIf { s.error != null }?.let {
-            BasicText("Ref $it", Modifier.fillMaxWidth(), style = t.caption1.copy(color = c.inkTertiary, textAlign = TextAlign.Center))
-        }
         if (s.step == BackupStep.PasskeyNotHere) {
             // Not red here: the confirm that follows is the dangerous step, and says so.
             CircasoButton(KeyBackupCopy.NewBackup, actions.onStartNew, style = ButtonStyle.Secondary, size = ButtonSize.Large, block = true, enabled = s.online && !s.busy)
@@ -239,14 +241,15 @@ fun BackupRestoreCard(viewModel: BackupPromptViewModel, unlock: String, floating
 fun BackupRestoreCardContent(s: BackupPromptUi, unlock: String, onRestore: () -> Unit, onNotNow: () -> Unit, floating: Boolean = false) {
     val c = CircasoTheme.colors
     val t = CircasoTheme.typography
-    val reduce = CircasoTheme.reduceMotion
+    // The same drop as every floating notice on Chats (transform only), and read before the list under it.
     AnimatedVisibility(
         s.resumeRestore,
-        enter = if (reduce) fadeIn(snap()) else fadeIn(tween(CircasoMotion.BaseMs)) + expandVertically(tween(CircasoMotion.BaseMs)),
-        exit = if (reduce) fadeOut(snap()) else fadeOut(tween(CircasoMotion.ExitMs)) + shrinkVertically(tween(CircasoMotion.QuickMs)),
+        enter = com.circaso.designsystem.chrome.NoticeVisibility.enter(),
+        exit = com.circaso.designsystem.chrome.NoticeVisibility.exit(),
     ) {
         Column(
             Modifier.fillMaxWidth().padding(horizontal = CircasoSpacing.s4, vertical = CircasoSpacing.s2)
+                .semantics { traversalIndex = -1f; isTraversalGroup = true }
                 .glass(CircasoShapes.lg, floating = floating).padding(CircasoSpacing.s3),
             verticalArrangement = Arrangement.spacedBy(CircasoSpacing.s3),
         ) {
@@ -263,7 +266,7 @@ fun BackupRestoreCardContent(s: BackupPromptUi, unlock: String, onRestore: () ->
                 }
             }
             // Large text: the buttons stack, Restore first, so "Restore With Fingerprint" is never cut off.
-            if (androidx.compose.ui.platform.LocalDensity.current.fontScale > 1.3f) {
+            if (androidx.compose.ui.platform.LocalDensity.current.fontScale > StackCardButtonsAtFontScale) {
                 Column(verticalArrangement = Arrangement.spacedBy(CircasoSpacing.s2)) {
                     CircasoButton("Restore With $unlock", onRestore, style = ButtonStyle.Secondary, size = ButtonSize.Medium, block = true, enabled = s.online)
                     CircasoButton(BackupPromptCopy.NotNow, onNotNow, style = ButtonStyle.Plain, size = ButtonSize.Medium, block = true)

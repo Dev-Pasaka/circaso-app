@@ -245,7 +245,7 @@ class BackupPromptViewModelTest {
         assertEquals(BackupSheet.Restore, vm.state.value.sheet)
         assertEquals("Restore With Face ID", backupPromptLook(vm.state.value, "Face ID")?.primary)
 
-        vm.onPrimary(); runCurrent()
+        vm.onPrimary(); runCurrent(); advanceTimeBy(BackupPromptViewModel.SettleListMillis + 1); runCurrent()
 
         assertEquals(1, groups.size, "the backed-up group key is back")
         assertTrue(backup.status.value.onPhone)
@@ -340,6 +340,38 @@ class BackupPromptViewModelTest {
     }
 
     @Test
+    fun `done reached while the sheet stepped aside waits to be seen before it closes`() = runTest(dispatcher) {
+        val vm = viewModel(repository().also { it.refresh() })
+        calm(vm)
+        vm.onPrimary()
+        vm.onCalm(false) // a call came in while the passkey answered
+        runCurrent()
+        assertEquals(BackupStep.Done, vm.state.value.step)
+        advanceTimeBy(BackupPromptViewModel.DoneLongMillis * 2); runCurrent()
+        assertEquals(BackupStep.Done, vm.state.value.step, "never closed unseen")
+
+        calm(vm)
+        assertTrue(vm.state.value.visible)
+        advanceTimeBy(BackupPromptViewModel.DoneMillis + 1); runCurrent()
+        assertNull(vm.state.value.sheet)
+    }
+
+    @Test
+    fun `a backup turned off elsewhere mid-restore turns into set-up, and says why`() = runTest(dispatcher) {
+        backupOnElsewhere()
+        val vm = viewModel(repository().also { it.refresh() })
+        calm(vm)
+        assertEquals(BackupSheet.Restore, vm.state.value.sheet)
+        server.remove()
+
+        vm.onPrimary(); runCurrent()
+
+        assertEquals(BackupSheet.SetUp, vm.state.value.sheet)
+        assertEquals(BackupPromptCopy.TurnedOffElsewhere, vm.state.value.notice)
+        assertNull(vm.state.value.error)
+    }
+
+    @Test
     fun `a cancelled restore keeps the sheet, asks quietly, and once put away Chats offers to resume`() = runTest(dispatcher) {
         backupOnElsewhere()
         val backup = repository().also { it.refresh() }
@@ -358,7 +390,7 @@ class BackupPromptViewModelTest {
         assertTrue(vm.state.value.resumeRestore)
 
         passkey.use = null
-        vm.onResume(); runCurrent()
+        vm.onResume(); runCurrent(); advanceTimeBy(BackupPromptViewModel.SettleListMillis + 1); runCurrent()
         assertEquals(BackupStep.Done, vm.state.value.step, "one tap on the card restores, in the sheet")
         assertTrue(vm.state.value.visible)
         assertTrue(backup.status.value.onPhone)
@@ -413,7 +445,7 @@ class BackupPromptViewModelTest {
         val backup = repository().also { it.refresh() }
         val vm = viewModel(backup)
         calm(vm)
-        vm.onPrimary(); runCurrent()
+        vm.onPrimary(); runCurrent(); advanceTimeBy(BackupPromptViewModel.SettleListMillis + 1); runCurrent()
         // Restored: this phone needs nothing now, yet the sheet stays on its "done".
         assertNull(BackupPromptViewModel.wanted(backup.status.value))
         assertEquals(BackupSheet.Restore, vm.state.value.sheet)
