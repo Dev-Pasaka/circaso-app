@@ -365,6 +365,77 @@ Buying USDC with M-Pesa from a partner merchant the server picks (the app never 
 - **Not done:** cash out; the number could be saved at
   phone verification so nobody is asked for it; an orders history screen (R5 is only read for the wallet labels).
 
+### Add money motion: the M-Pesa card becoming USDC, and the chime (2026-11-23, branch `feat/add-money-motion`)
+
+Pasaka asked for buying to *feel* like converting cash: "the green card with the M-Pesa logo disintegrating, changing
+into a silver USDC-blue card", the USDC amount on it, and a chime whenever it lands unless the sound is off. No frame
+in the canvas; these are deliberate departures from E2's plain "Pay with" row and the order page's badge.
+
+- **Brand colours** (`RampBrand` in `AddMoneyCards.kt`): M-Pesa green `#0F8039→#0A6A30`, USDC blue `#2775CA`, a
+  brushed silver `#F8F9FB/#E3E6EA/#CBD0D6` with `#1C1C1E` ink. They are the brands', the same in every theme, and are
+  never the app's accent: green only as M-Pesa's own card/chip, blue only as USDC's disc and glow. White on the green
+  is ≥ 4.5:1 at its lightest corner; ink on silver ≥ 10:1. The surroundings use tokens; edges are a hairline (1.5 dp
+  `ink` in high contrast).
+- **M-Pesa's mark:** Safaricom's logo isn't bundled (it needs their artwork and permission) and an imitation looked
+  counterfeit beside the real green, so `MpesaWordmark` sets "M-PESA" in green on a white tag. Swap in the real logo
+  if Pasaka gets it.
+- **Amount and review:** `MpesaMethodCard` (the green card with the wordmark, the masked number, "The M-Pesa request
+  goes here", a tick; `selected` semantics) replaces the "Pay with" row; `MpesaChip` sits under "You pay" on the
+  review.
+- **Order hero (`ConversionCard`)**, replacing the badge; the four steps stay under it as a compact caption
+  (`Stages(compact = true)`), and an ending other than success keeps a small `SheetBadge` under the card.
+  `cardStageOf(state, everPaid)`: Reserved/PaymentRequested → **Waiting** (green card, KES, masked number; a 2 pt
+  breath and a faint sheen every 2.7 s) · Paid/Releasing → **Converting** (the green card comes apart into a 22-column
+  grid of squares that drift up-right, shrink and fade with a fleck of dust each, left to right, while the silver USDC
+  card forms behind them from specks; then a slow sheen every 3.6 s while the USDC is sent) · Completed → **Landed**
+  (it settles from 96.5 % with one sheen pass, the `Confirm` haptic and the chime on the same frame) ·
+  Failed/Expired/Cancelled unpaid → **Ended** (back to green if needed, colour drains to grey under a light veil) ·
+  Review, an ending after payment, or an unknown state once paid → **Held** (a conversion under way finishes, then the
+  card holds; endings after payment dim lightly; never back to green, which would say the shillings went home).
+- **Timing:** conversion `ConvertMs` = Moment + Base + Quick = 1330 ms (linear progress, per-piece cubic easing; the
+  last silver square lands exactly at 1), sheen `SheenMs` = 900 ms; watched end to end the landing is ~1.3 s after
+  "paid" plus the settle. Interrupted states carry on from where the progress is; an order first seen paid or
+  completed shows the silver card at once.
+- **How it's drawn:** each face is a normal composable with its own `graphicsLayer` (recorded once), recorded into a
+  `GraphicsLayer`; both are copied to bitmaps **ahead, while the green card waits** (and again if their words change),
+  so the conversion starts on the frame "paid" arrives. Each copy is held as one `ShaderBrush(ImageShader(bitmap))`;
+  `CardParticles` precomputes the grid and every piece's timing, drift and arrival in arrays; a frame only reads them
+  and fills each square with `drawRect(shader)` under an inline translate/scale (sub-pixel placed). **Don't use
+  `drawImage(bitmap, srcOffset, …)` per piece:** on iOS (Skiko) every such call turns the whole bitmap into a new Skia
+  image, and ~600 a frame stalled the conversion for ~2 s on the simulator; the shader fill runs at 60 fps. While the
+  card waits, one square of each kind is drawn unseen (`warm`) so the first real frame doesn't pay for pipeline
+  set-up (the first conversion after launch still showed one ~1 s hitch before this; recheck on a device). The copies
+  are snapshot state, so a face drawn before they existed is drawn again. Progress is read in the draw phase only;
+  the slow loops are composed only while they run. No allocation per frame. The shadow fades as the first pieces
+  leave and returns as the last arrive. A dimmed card uses a `BlendMode.Saturation` grey over the face plus a 10 %
+  veil of the ground (a `GraphicsLayer.colorFilter` had no effect on iOS).
+- **Reduce Motion:** a cross-fade (Base) between the cards; no pieces, breath, sheen or settle. Screen readers hear
+  the card in words ("M-Pesa, You pay KES 2,000, from +254 7•• ••• 678" / "USDC on Base, Added from M-Pesa 15.31
+  USDC"); the state change is announced by the title's live region, as before.
+- **The chime** (`files/payment_chime.wav` and `androidApp/res/raw/payment_chime.wav`, made by
+  `scripts/make_payment_chime.py`: E6 then B6, soft bell partials, 0.62 s, 32 kHz mono, 40 KB, about the coins'
+  loudness). `PaymentChime` (common interface) → `AndroidPaymentChime` (SoundPool, `USAGE_NOTIFICATION_EVENT`, plays
+  only in `RINGER_MODE_NORMAL`) and `IosPaymentChime` (System Sound Services: muted by the Ring/Silent switch, ringer
+  volume, never touches the app's `AVAudioSession` that voice notes/calls/Asha set to categories ignoring the switch;
+  chosen over an ambient `AVAudioSession` for that reason). DI: platform Koin modules; `NoPaymentChime` elsewhere.
+- **When it rings** (`MoneySounds`, `core/platform/PaymentChime.kt`, a `single` in `WalletModule`): the setting is the
+  existing **You → Money sound** (`MoneySoundOff`; its sub line now "Coins when money arrives, and a chime when money
+  from M-Pesa lands"). The view model decides as soon as the order shows Completed (`armLanding`: heard before? sound
+  on? sound loaded) and sets `celebrate` (or `quietLanding` for one heard before: no settle, no chime); the card calls
+  `onLanded()` on the settle frame and `ringLanding` plays synchronously, then the order id is written to
+  `text.wallet.ramp.chimed` (newest 50, wiped at sign-out). So: watched or opened later from a push/the open order,
+  once per order per phone; sound off still counts as heard; failures, review and endings never ring. The chime is
+  loaded when Add Money opens. While a **paid** top-up is on its way on screen, and 30 s after the chime, the coins for
+  incoming money keep quiet (the same USDC arrives as `payment.received`).
+- **Previews:** `add-money-live` (a top-up on a loop, with the real chime), `-converting-early` / `-converting` (mid
+  disintegration) / `-converting-late` (frozen frames), `-landing`, and any Add Money preview with the endings `-dark`,
+  `-hc`, `-dark-hc`, `-still` (Reduce Motion), e.g. `add-money-live-dark-still`.
+- **Tests:** `androidHostTest/feature/ramp/AddMoneyChimeTest.kt` (rings once when the card settles, quiet on
+  re-open, setting off, never for failures/review, coins quiet for the top-up's USDC, the cap, the stage mapping and the
+  card's words).
+- **Not verified:** real-device audio (both platforms), Android at all beyond the build, the silent switch/ringer
+  behaviour on hardware, frame timing on a low-end Android.
+
 ## Cash out: selling USDC for M-Pesa (2026-11-23, guide "Selling USDC for M-Pesa" R1/R2/R7/W4; design E6's place)
 
 A person sells USDC from their own wallet and the shillings go to **their own verified M-Pesa number**; Circaso's engine

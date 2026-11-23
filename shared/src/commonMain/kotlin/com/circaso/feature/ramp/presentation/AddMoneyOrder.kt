@@ -240,7 +240,14 @@ internal fun OrderPage(
     ) {
         Column(Modifier.fillMaxWidth().padding(top = CircasoSpacing.s2), horizontalAlignment = Alignment.CenterHorizontally) {
             // The money, as the hero: the card keeps its place while everything under it changes.
-            ConversionCard(order, look, celebrate = state.celebrate == order.orderId, onLanded = onLanded, frozenAt = frozenAt)
+            ConversionCard(
+                order, look, everPaid = state.everPaid, celebrate = state.celebrate == order.orderId, quiet = state.quietLanding == order.orderId,
+                onLanded = onLanded, frozenAt = frozenAt,
+            )
+            // An ending other than the money arriving says what it is at a glance, as the sheets do: a warning, a
+            // clock, the shield of a review, a cross.
+            val ending = lastOf(look.icon?.takeIf { look.ended && !done }?.let { it to look.tone })
+            Reveal(look.ended && !done && look.icon != null) { ending?.let { (icon, tone) -> SheetBadge(icon, tone, Modifier.padding(top = CircasoSpacing.s5)) } }
             // The state is announced as it changes: the person may be looking at the M-Pesa prompt, not at this screen.
             AnimatedContent(
                 order.state to look, contentKey = { it.first }, transitionSpec = { easeOver(still) }, label = "order state",

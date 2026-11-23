@@ -134,6 +134,8 @@ data class AddMoneyUiState(
      * [AddMoneyViewModel.onLanded] on that frame, which rings the chime. Null once rung, and for every other order.
      */
     val celebrate: String? = null,
+    /** This completed order's landing was heard on this phone before: its card is simply there, no settle, no chime. */
+    val quietLanding: String? = null,
 ) {
     val limits get() = status?.limits
     val amountMinor: String? get() = RampMoney.wholeToMinor(amountText)
@@ -288,6 +290,8 @@ class AddMoneyViewModel(
         // The identity check moved (`kyc.updated`, live or replayed): only this flow's network is taken.
         viewModelScope.launch { observeKyc().collect { moved -> if (moved.network == null || moved.network == pinned) check.show(moved.verification) } }
         viewModelScope.launch { savedPhone = ownNumber(); local.update { it.copy(needsPhone = savedPhone == null) } }
+        // The chime is loaded while the person is still choosing an amount: a landing never waits on it.
+        sounds?.prepare()
         // The connection is back: a check that was waiting on it is read at once, not at the next tick.
         viewModelScope.launch { state.map { it.online }.distinctUntilChanged().drop(1).collect { back -> if (back) check.readIfItMayHaveMoved() } }
         load()
@@ -398,7 +402,8 @@ class AddMoneyViewModel(
         order.network?.let { pinned = it; pin.value = it }
         local.update {
             it.copy(step = AddMoneyStep.Order, order = order, everPaid = it.everPaid || order.state.paid, placing = false, failure = null, stale = false,
-                celebrate = it.celebrate?.takeIf { id -> id == order.orderId && order.state == RampOrderState.Completed })
+                celebrate = it.celebrate?.takeIf { id -> id == order.orderId && order.state == RampOrderState.Completed },
+                quietLanding = it.quietLanding?.takeIf { id -> id == order.orderId })
         }
         // Followed until it settles; an order that had ended and moved again (paid after its time ran out) is followed anew.
         if (!order.state.settled && polling?.isActive != true) follow()
@@ -414,10 +419,16 @@ class AddMoneyViewModel(
         val id = order.orderId
         when {
             order.state == RampOrderState.Completed -> if (landingsDecided.add(id)) viewModelScope.launch {
-                if (sounds?.landedBefore(id) == true) { sounds.unfollow(id); return@launch }
-                local.update { if (it.order?.orderId == id && it.order.state == RampOrderState.Completed) it.copy(celebrate = id) else it }
+                // Decided (and the sound readied) now, so the chime can ring on the very frame the card settles.
+                val fresh = sounds?.armLanding(id) ?: true
+                if (!fresh) sounds?.unfollow(id)
+                local.update {
+                    if (it.order?.orderId != id || it.order.state != RampOrderState.Completed) it
+                    else if (fresh) it.copy(celebrate = id) else it.copy(quietLanding = id)
+                }
             }
-            !order.state.settled -> sounds?.follow(id)
+            // Only paid money is on its way: before that, incoming money is someone else's and plays the coins.
+            order.state.paid && !order.state.settled -> sounds?.follow(id)
             else -> sounds?.unfollow(id)
         }
     }
@@ -432,8 +443,10 @@ class AddMoneyViewModel(
         if (order.state != RampOrderState.Completed || s.celebrate != order.orderId) return
         local.update { it.copy(celebrate = null) }
         val sounds = sounds ?: return
+        // The sound first, on this frame; then it is written down as heard.
+        sounds.ringLanding(order.orderId)
         viewModelScope.launch {
-            sounds.topUpLanded(order.orderId)
+            sounds.markHeard(order.orderId)
             sounds.unfollow(order.orderId)
         }
     }
@@ -637,7 +650,7 @@ class AddMoneyViewModel(
     fun onAgain() {
         polling?.cancel()
         local.value.order?.let { sounds?.unfollow(it.orderId) }
-        local.update { it.copy(order = null, everPaid = false, quote = null, cancelNote = null, stale = false, celebrate = null) }
+        local.update { it.copy(order = null, everPaid = false, quote = null, cancelNote = null, stale = false, celebrate = null, quietLanding = null) }
         load()
     }
 

@@ -33,7 +33,10 @@ object NoPaymentChime : PaymentChime {
  *   lands or opened later (a push, the open order); the order ids it has rung for are kept ([rung]/[saveRung], the
  *   newest [Remembered]), so opening it again stays quiet. With the setting off the order still counts as heard.
  * - **One sound per arrival.** The same USDC also arrives as an incoming payment, which would play the coins: while
- *   a top-up is being followed on screen ([follow]) and for a short while after it rings, the coins keep quiet.
+ *   a paid top-up is on its way on screen ([follow]) and for a short while after it rings, the coins keep quiet.
+ * - **In time with the card.** Whether a landing rings is decided ahead ([armLanding]: heard before? sound on? the
+ *   sound loaded), so on the frame the card settles [ringLanding] plays at once, with nothing read from storage first;
+ *   the order is written down as heard just after ([markHeard]).
  */
 class MoneySounds(
     private val chime: PaymentChime,
@@ -47,7 +50,10 @@ class MoneySounds(
     @kotlin.concurrent.Volatile private var followingOrder: String? = null
     @kotlin.concurrent.Volatile private var quietUntil = 0L
 
-    /** A top-up is being followed on screen until it lands: its USDC gets the chime, not the coins. */
+    /** Loads the chime ahead (Add Money opened), so the first landing never waits on decoding. */
+    fun prepare() = chime.prepare()
+
+    /** A paid top-up is on its way on screen until it lands: its USDC gets the chime, not the coins. */
     fun follow(orderId: String) {
         followingOrder = orderId
         chime.prepare()
@@ -68,22 +74,41 @@ class MoneySounds(
     suspend fun landedBefore(orderId: String): Boolean = orderId in heard()
 
     /**
-     * [orderId]'s USDC is in the wallet and its card has just settled in front of the person: the chime, once.
-     * Returns whether it rang (false: heard before, or the setting is off).
+     * [orderId] has landed: whether its landing is still to be heard on this phone (false: heard before). When it is,
+     * the setting is read now and the sound made ready, so [ringLanding] needs nothing more.
      */
-    suspend fun topUpLanded(orderId: String): Boolean {
-        val first = lock.withLock {
-            val before = heard()
-            if (orderId in before) return@withLock false
-            saveRung((before + orderId).takeLast(Remembered).joinToString(","))
-            true
-        }
-        if (!first) return false
-        quietUntil = now() + QuietMillis
-        if (!soundOn()) return false
-        chime.play()
+    suspend fun armLanding(orderId: String): Boolean {
+        if (landedBefore(orderId)) return false
+        armed[orderId] = soundOn()
+        chime.prepare()
         return true
     }
+
+    /** The card has settled on [orderId]'s USDC: the chime now, if it was armed with the sound on. Returns whether it rang. */
+    fun ringLanding(orderId: String): Boolean {
+        val on = armed.remove(orderId) ?: return false
+        quietUntil = now() + QuietMillis
+        if (on) chime.play()
+        return on
+    }
+
+    /** [orderId]'s landing has been heard (or felt, with the sound off): it never rings again on this phone. */
+    suspend fun markHeard(orderId: String) {
+        lock.withLock {
+            val before = heard()
+            if (orderId !in before) saveRung((before + orderId).takeLast(Remembered).joinToString(","))
+        }
+    }
+
+    /** All three at once (arm, ring, mark): the chime for [orderId] if its landing is new. Returns whether it rang. */
+    suspend fun topUpLanded(orderId: String): Boolean {
+        if (!armLanding(orderId)) return false
+        val rang = ringLanding(orderId)
+        markHeard(orderId)
+        return rang
+    }
+
+    private val armed = mutableMapOf<String, Boolean>()
 
     private suspend fun heard(): List<String> = rung()?.split(',')?.filter { it.isNotBlank() }.orEmpty()
 

@@ -116,6 +116,7 @@ class AddMoneyChimeTest {
         }
         with(phone, RampFixture().also { it.answer("COMPLETED") }, orderId = "o1") { vm, _ ->
             assertNull(vm.state.value.celebrate, "heard on this phone already")
+            assertEquals("o1", vm.state.value.quietLanding, "the card is simply there: no settle")
             vm.onLanded()
             assertEquals(1, phone.chimes)
         }
@@ -192,7 +193,11 @@ class AddMoneyChimeTest {
         assertEquals(CardStage.Converting, cardStageOf(RampOrderState.Paid))
         assertEquals(CardStage.Converting, cardStageOf(RampOrderState.Releasing))
         assertEquals(CardStage.Landed, cardStageOf(RampOrderState.Completed))
-        listOf(RampOrderState.Failed, RampOrderState.Expired, RampOrderState.Cancelled).forEach { assertEquals(CardStage.Ended, cardStageOf(it), "$it dims, never turns") }
+        listOf(RampOrderState.Failed, RampOrderState.Expired, RampOrderState.Cancelled).forEach {
+            assertEquals(CardStage.Ended, cardStageOf(it), "$it dims, never turns")
+            assertEquals(CardStage.Held, cardStageOf(it, everPaid = true), "$it after the payment holds: the money may have moved")
+        }
+        assertEquals(CardStage.Held, cardStageOf(RampOrderState.Unknown, everPaid = true), "an unknown state once paid never turns back to green")
         assertEquals(CardStage.Held, cardStageOf(RampOrderState.Review))
         assertEquals(CardStage.Waiting, cardStageOf(RampOrderState.Unknown))
 
