@@ -80,8 +80,8 @@ internal fun statusDto(
 )
 
 /** The identity check as the server words it (R1's `verification`, the read, the frame). */
-internal fun checkDto(status: String, canStart: Boolean = status in setOf("NONE", "PENDING", "EXPIRED"), reason: String? = null, retryAt: String? = null, required: Boolean = true) =
-    VerificationDto(status = status, required = required, canStart = canStart, reason = reason, retryAt = retryAt)
+internal fun checkDto(status: String, canStart: Boolean = status in setOf("NONE", "PENDING", "EXPIRED"), reason: String? = null, retryAt: String? = null, required: Boolean = true, submitted: Boolean = false) =
+    VerificationDto(status = status, required = required, canStart = canStart, reason = reason, retryAt = retryAt, submitted = submitted)
 
 /** R1 for someone who must verify and stands at [status]. */
 internal fun unverified(status: String = "NONE", canStart: Boolean = status in setOf("NONE", "PENDING", "EXPIRED"), reason: String? = null, retryAt: String? = null) =
@@ -151,15 +151,24 @@ internal class MemoryPhone(var phone: String? = null) : RampPhoneStore {
     override suspend fun clear() { phone = null }
 }
 
-internal class RampFixture(val remote: FakeRampRemote = FakeRampRemote(), val phones: MemoryPhone = MemoryPhone(), networks: WalletNetworks = WalletNetworks.fixed(WalletNetwork.TESTNET, known = true)) {
+internal class RampFixture(
+    val remote: FakeRampRemote = FakeRampRemote(), val phones: MemoryPhone = MemoryPhone(), networks: WalletNetworks = WalletNetworks.fixed(WalletNetwork.TESTNET, known = true),
+    /** The clock the phone's copy of the identity check is stamped with. */
+    var clock: () -> Long = { 0L },
+) {
     val saved = mutableMapOf<WalletNetwork, MutableStateFlow<String?>>()
     private fun slot(network: WalletNetwork) = saved.getOrPut(network) { MutableStateFlow(null) }
+    /** The phone's last known identity check, per network, as it is kept (JSON). */
+    val identities = mutableMapOf<WalletNetwork, MutableStateFlow<String?>>()
+    fun identitySlot(network: WalletNetwork) = identities.getOrPut(network) { MutableStateFlow(null) }
     var arrivals = 0
     val arrivedOn = mutableListOf<WalletNetwork?>()
     val repo = RampRepositoryImpl(
         remote, networks, phones, circasoJson(),
         savedTopUps = { slot(it) }, saveTopUps = { network, text -> slot(network).value = text },
         onArrived = { arrivals++; arrivedOn += pinnedNetwork() },
+        savedIdentity = { identitySlot(it) }, saveIdentity = { network, text -> identitySlot(network).value = text },
+        now = { clock() },
     )
 }
 
@@ -495,7 +504,7 @@ class RampWireTest {
         assertEquals("You can't add money on Circaso. Contact Support if you think this is a mistake.", ErrorMessages.forError(AppError.Api("ramp.blocked", 403, null, null, emptyMap())))
     }
 
-    @Test fun theVerificationPushOpensAddMoneyOnItsNetwork() {
+    @Test fun theVerificationPushCarriesItsNetwork() {
         val data = mapOf("kind" to "ramp.kyc", "network" to "MAINNET")
         assertEquals(NotificationDestination.RampKyc("MAINNET"), NotificationDestination.fromPush(data))
         assertEquals(NotificationDestination.RampKyc("MAINNET"), NotificationDestination.fromExtras(data + ("google.message_id" to "0:1")))

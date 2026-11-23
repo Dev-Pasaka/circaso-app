@@ -165,6 +165,14 @@ data class SendToWalletRoute(val fromWalletId: String? = null) : Route
 @Serializable
 data class AddMoneyRoute(val orderId: String? = null, val network: String? = null) : Route
 
+/**
+ * You › Verification: where my identity check stands on a wallet network, and the check itself (design F2's row, E3
+ * and its states). [network] is the one a `ramp.kyc` push was about (`MAINNET`, `TESTNET`); without it, the network
+ * the Wallet tab shows.
+ */
+@Serializable
+data class IdentityRoute(val network: String? = null) : Route
+
 /** One payment (design C7). */
 @Serializable
 data class TransferRoute(val transferId: String) : Route

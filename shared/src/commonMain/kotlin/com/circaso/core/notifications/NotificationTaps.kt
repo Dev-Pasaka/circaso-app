@@ -6,6 +6,7 @@ import com.circaso.core.navigation.AshaRoute
 import com.circaso.core.navigation.ChatRoute
 import com.circaso.core.navigation.ContactsRoute
 import com.circaso.core.navigation.EditProfileRoute
+import com.circaso.core.navigation.IdentityRoute
 import com.circaso.core.navigation.MomentViewerRoute
 import com.circaso.core.navigation.NeedsAttentionRoute
 import com.circaso.core.navigation.NotificationsRoute
@@ -63,6 +64,12 @@ object NotificationRoutes {
      * Every opening names the Home tab it belongs to (core/navigation/TabStacks: a tab owns what it opened), so a chat
      * tapped while on You opens under Chats, and a later tap on Chats doesn't file it under You.
      */
+    /**
+     * The tap changes nothing because the screen on top ([top]) already shows what it is about: a `ramp.kyc` push
+     * while the person is in Add Money, whose verify pages hear the same news and go on to the amount by themselves.
+     */
+    fun staysOn(destination: NotificationDestination, top: Any?): Boolean = destination is NotificationDestination.RampKyc && top is AddMoneyRoute
+
     suspend fun resolve(destination: NotificationDestination, lookups: NotificationLookups): NotificationOpening = when (destination) {
         is NotificationDestination.Chat -> NotificationOpening(
             listOf(ChatRoute(destination.chatId, destination.localId ?: destination.messageId?.let { lookups.messageLocalId(it) })),
@@ -85,9 +92,10 @@ object NotificationRoutes {
         is NotificationDestination.Ticket -> NotificationOpening(listOfNotNull(TicketsRoute, destination.ticketId?.let { TicketRoute(it) }), HomeTabName.You)
         // Under the Wallet tab, so Back from the order shows the balance it changed.
         is NotificationDestination.RampOrder -> NotificationOpening(listOfNotNull(destination.orderId?.let { AddMoneyRoute(it) }), HomeTabName.Wallet)
-        // Add Money itself, on the network the check is for: it reads R1 and lands on the right state (verified goes
-        // straight on to the amount). Under the Wallet tab, where closing it leaves the person.
-        is NotificationDestination.RampKyc -> NotificationOpening(listOf(AddMoneyRoute(network = destination.network?.uppercase()?.takeIf { it == "MAINNET" || it == "TESTNET" })), HomeTabName.Wallet)
+        // The profile's Verification screen, on the network the check is for (2026-11-23): it shows where the check
+        // stands and stays there ("You're verified" doesn't push anyone into a top-up). Under the You tab, where Back
+        // leaves the person. Someone in Add Money stays in it ([staysOn]).
+        is NotificationDestination.RampKyc -> NotificationOpening(listOf(IdentityRoute(network = destination.network?.uppercase()?.takeIf { it == "MAINNET" || it == "TESTNET" })), HomeTabName.You)
         NotificationDestination.Asha -> NotificationOpening(listOf(AshaRoute), HomeTabName.Chats)
         NotificationDestination.Security -> NotificationOpening(listOf(SecurityRoute), HomeTabName.You)
         NotificationDestination.Contacts -> NotificationOpening(listOf(ContactsRoute), HomeTabName.You)

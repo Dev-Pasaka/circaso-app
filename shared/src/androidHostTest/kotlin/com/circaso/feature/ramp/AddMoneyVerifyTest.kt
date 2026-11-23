@@ -8,6 +8,9 @@ import com.circaso.core.notifications.NotificationDestination
 import com.circaso.core.notifications.NotificationLookups
 import com.circaso.core.notifications.NotificationRoutes
 import com.circaso.core.navigation.AddMoneyRoute
+import com.circaso.core.navigation.IdentityRoute
+import com.circaso.feature.ramp.data.remote.KycResponse
+import com.circaso.feature.ramp.data.remote.KycSessionDto
 import com.circaso.feature.ramp.domain.BuyWithMpesaUseCase
 import com.circaso.feature.ramp.domain.CancelRampOrderUseCase
 import com.circaso.feature.ramp.domain.GetKycUseCase
@@ -233,7 +236,7 @@ class AddMoneyVerifyTest {
         f.says("PENDING")
         vm.onVerify()
         assertEquals(VerifyKind.Checking, vm.kind)
-        assertEquals("Checking your details", vm.look.title)
+        assertEquals("We're checking your details", vm.look.title)
         assertEquals(VerifyAction.Close, vm.look.action)
         assertTrue(vm.look.waiting)
         assertEquals(listOf(StageMark.Done, StageMark.Active, StageMark.Waiting), vm.look.stages.map { it.mark })
@@ -935,9 +938,168 @@ class AddMoneyVerifyTest {
         assertEquals(VerifyKind.InReview, vm.kind)
     }
 
+    // ---- `submitted` (2026-11-23): finished by the person, the decision awaited ----------------------------------------
+
+    /** The server saying the check was submitted: `PENDING`, nothing to start, `submitted` true. */
+    private fun RampFixture.submitted(status: String = "PENDING") {
+        remote.kyc = AppResult.Success(checkDto(status, canStart = false, submitted = true))
+    }
+    private fun submittedFixture(status: String = "PENDING") = RampFixture(phones = MemoryPhone(Phone)).also {
+        it.remote.status = AppResult.Success(statusDto(kyc = "NONE", verification = checkDto(status, canStart = false, submitted = true)))
+        it.submitted(status)
+    }
+
+    @Test fun aSubmittedCheckOpensOnWereCheckingWithNothingToTap() = with(f = submittedFixture()) { vm, f ->
+        assertEquals(VerifyKind.Checking, vm.kind)
+        assertEquals(AddMoneyPage.VerifyState, pageOf(vm.state.value))
+        assertEquals("We're checking your details", vm.look.title)
+        assertEquals(VerifyAction.Close, vm.look.action)
+        assertTrue(vm.look.waiting)
+        assertEquals(listOf(StageMark.Done, StageMark.Active, StageMark.Waiting), vm.look.stages.map { it.mark })
+        assertFalse(vm.state.value.canVerify, "there is nothing to continue")
+        vm.onVerify()
+        assertTrue(f.remote.kycStarts.isEmpty(), "R0 is never asked while the check is submitted")
+        assertTrue(sdk.tokens.isEmpty(), "and the SDK is never reopened")
+    }
+
+    @Test fun submittedIsReadBeforeCanStartWhateverTheServerSendsBesideIt() = runTest(dispatcher) {
+        // A server that says both: `submitted` wins.
+        val both = checkDto("PENDING", canStart = true, submitted = true)
+        val f = RampFixture(phones = MemoryPhone(Phone)).also { it.remote.status = AppResult.Success(statusDto(kyc = "NONE", verification = both)); it.remote.kyc = AppResult.Success(both) }
+        val vm = vm(f)
+        try {
+            assertEquals(VerifyKind.Checking, vm.kind)
+            assertFalse(vm.state.value.canVerify)
+            vm.onVerify()
+            assertTrue(f.remote.kycStarts.isEmpty())
+        } finally { vm.viewModelScope.coroutineContext[Job]?.cancel() }
+    }
+
+    @Test fun aSubmittedCheckIsReadEveryFiveSecondsForAsLongAsThePageIsOpen() = with(f = submittedFixture()) { vm, f ->
+        val reads = f.remote.kycReads
+        advanceTimeBy(AddMoneyViewModel.CheckMillis + 1)
+        assertEquals(reads + 1, f.remote.kycReads)
+        // Past the first minute it is still the server's five seconds (a wait this phone only believes in slows down).
+        advanceTimeBy(60_000)
+        val later = f.remote.kycReads
+        advanceTimeBy(AddMoneyViewModel.CheckMillis)
+        assertEquals(later + 1, f.remote.kycReads)
+        assertEquals(VerifyKind.Checking, vm.kind)
+        assertTrue(vm.verify.slow, "the words stop promising a minute")
+        // Offline nothing is asked; the page says it updates by itself.
+        online.value = false
+        val offline = f.remote.kycReads
+        advanceTimeBy(30_000)
+        assertEquals(offline, f.remote.kycReads)
+    }
+
+    @Test fun aSubmittedCheckThatIsDecidedGoesOnToTheAmount() = with(f = submittedFixture()) { vm, f ->
+        f.says("VERIFIED", canStart = false)
+        f.cleared()
+        advanceTimeBy(AddMoneyViewModel.CheckMillis + 1)
+        assertEquals(VerifyKind.Verified, vm.kind)
+        advanceTimeBy(Hold + 1)
+        assertEquals(AddMoneyStep.Amount, vm.state.value.step, "Add Money still goes on to the amount after verification")
+    }
+
+    @Test fun afterTheSdkFinishesTheServersSubmittedKeepsTheWait() = with { vm, f ->
+        f.submitted()
+        vm.onVerify()
+        assertEquals(1, sdk.tokens.size)
+        assertEquals(VerifyKind.Checking, vm.kind)
+        assertTrue(vm.verify.verification?.submitted == true)
+        assertFalse(vm.state.value.canVerify)
+        vm.onVerify()
+        assertEquals(1, f.remote.kycStarts.size, "no second R0")
+        assertEquals(1, sdk.tokens.size, "the SDK isn't reopened")
+    }
+
+    @Test fun closingTheSdkEarlyButTheServerSaysSubmittedShowsTheWaitNotContinue() = with { vm, f ->
+        // The SDK's own word is a hint: it says "cancelled", the server says the person had finished.
+        sdk.outcome = VerifierOutcome.Cancelled
+        f.submitted()
+        vm.onVerify()
+        assertEquals(VerifyKind.Checking, vm.kind)
+        assertFalse(vm.state.value.canVerify)
+    }
+
+    @Test fun r0SayingSubmittedOpensNothing() = with(status = "PENDING") { vm, f ->
+        // Opened on "Continue" (the read hadn't caught up); R0 says the check was submitted: no session, nothing to run.
+        assertEquals(VerifyKind.Continue, vm.kind)
+        f.remote.kycStart = AppResult.Success(KycResponse("PENDING", required = true, canStart = false, submitted = true, session = null))
+        f.submitted()
+        vm.onVerify()
+        assertEquals(1, f.remote.kycStarts.size)
+        assertTrue(sdk.tokens.isEmpty())
+        assertEquals(VerifyKind.Checking, vm.kind)
+        assertFalse(vm.verify.starting)
+    }
+
+    @Test fun r0SayingSubmittedWithASessionStillNeverOpensTheSdk() = with(status = "PENDING") { vm, f ->
+        f.remote.kycStart = AppResult.Success(KycResponse("PENDING", required = true, canStart = false, submitted = true, session = KycSessionDto(SessionToken, SessionUrl, null)))
+        f.submitted()
+        vm.onVerify()
+        assertTrue(sdk.tokens.isEmpty(), "a submitted check is never reopened, even if a session came with it")
+        assertTrue(pages.isEmpty())
+        assertEquals(VerifyKind.Checking, vm.kind)
+    }
+
+    @Test fun theFrameFlippingSubmittedMovesThePageBothWays() = with(status = "PENDING") { vm, f ->
+        assertEquals(VerifyKind.Continue, vm.kind)
+        f.repo.onFrame("kyc.updated", circasoJson().parseToJsonElement("""{"network":"TESTNET","status":"PENDING","required":true,"canStart":false,"reason":null,"retryAt":null,"submitted":true}""").jsonObject)
+        assertEquals(VerifyKind.Checking, vm.kind)
+        assertFalse(vm.state.value.canVerify)
+        // Didit takes "finished" back: a reviewer asks for a step again.
+        f.repo.onFrame("kyc.updated", circasoJson().parseToJsonElement("""{"network":"TESTNET","status":"PENDING","required":true,"canStart":true,"reason":"resubmission_requested","retryAt":null,"submitted":false}""").jsonObject)
+        assertEquals(VerifyKind.OneMoreThing, vm.kind)
+        assertTrue(vm.state.value.canVerify)
+        assertFalse(vm.verify.checking)
+    }
+
+    @Test fun inReviewIsSubmittedTooAndOffersNothing() = with(f = submittedFixture("IN_REVIEW")) { vm, f ->
+        assertEquals(VerifyKind.InReview, vm.kind)
+        assertFalse(vm.state.value.canVerify)
+        vm.onVerify()
+        assertTrue(f.remote.kycStarts.isEmpty())
+    }
+
+    @Test fun aServerThatDoesNotSendSubmittedBehavesAsBefore() = with(status = "PENDING") { vm, f ->
+        // No field: false. An open check is "Continue", and finishing it waits on this phone's own word.
+        assertFalse(vm.verify.verification?.submitted == true)
+        assertEquals(VerifyKind.Continue, vm.kind)
+        assertTrue(vm.state.value.canVerify)
+        vm.onVerify()
+        assertEquals(VerifyKind.Checking, vm.kind)
+    }
+
+    @Test fun aSubmittedCheckThatRunsOutOfTimeSaysSo() = with(f = submittedFixture()) { vm, f ->
+        f.says("EXPIRED", canStart = true, reason = KycReasons.SessionExpired)
+        advanceTimeBy(AddMoneyViewModel.CheckMillis + 1)
+        assertEquals(VerifyKind.Expired, vm.kind)
+        assertTrue(vm.state.value.canVerify)
+    }
+
+    @Test fun submittedWinsOverANoteThisPhoneWasShowing() {
+        // The camera note, then the server says the check was submitted after all: only the wait shows.
+        val look = verifyLook(VerifyUi(RampVerification(KycStatus.Pending, required = true, canStart = false, submitted = true), trouble = VerifyTrouble.CameraDenied), now = 0)
+        assertEquals(VerifyKind.Checking, look.kind)
+        assertEquals(VerifyAction.Close, look.action)
+        assertFalse(VerifyUi(RampVerification(KycStatus.Pending, required = true, canStart = true, submitted = true)).startable)
+        assertTrue(VerifyUi(RampVerification(KycStatus.Pending, required = true, canStart = true)).startable)
+    }
+
+    @Test fun leavingTheAppRestsTheReadsAndComingBackReadsAtOnce() = with(f = submittedFixture()) { vm, f ->
+        vm.onPaused()
+        val away = f.remote.kycReads
+        advanceTimeBy(30_000)
+        assertEquals(away, f.remote.kycReads, "nothing is read behind the person's back")
+        vm.onResumed()
+        assertEquals(away + 1, f.remote.kycReads)
+    }
+
     // ---- the push -----------------------------------------------------------------------------------------------------
 
-    @Test fun thePushOpensAddMoneyOnItsNetworkUnderTheWalletTab() = runTest(dispatcher) {
+    @Test fun thePushOpensVerificationOnItsNetworkUnderTheYouTabUnlessAddMoneyIsOpen() = runTest(dispatcher) {
         val lookups = object : NotificationLookups {
             override suspend fun messageLocalId(messageId: String): Long? = null
             override suspend fun paymentCardLocalId(chatId: String, transferId: String): Long? = null
@@ -946,11 +1108,17 @@ class AddMoneyVerifyTest {
         }
         val destination = assertNotNull(NotificationDestination.fromPush(mapOf("kind" to "ramp.kyc", "network" to "MAINNET")))
         val opening = NotificationRoutes.resolve(destination, lookups)
-        assertEquals(listOf<Any>(AddMoneyRoute(network = "MAINNET")), opening.routes)
-        assertEquals(com.circaso.core.notifications.HomeTabName.Wallet, opening.tab)
+        assertEquals(listOf<Any>(IdentityRoute(network = "MAINNET")), opening.routes)
+        assertEquals(com.circaso.core.notifications.HomeTabName.You, opening.tab)
         // A network this version doesn't know opens on the one the wallet shows.
-        assertEquals(listOf<Any>(AddMoneyRoute()), NotificationRoutes.resolve(NotificationDestination.RampKyc("MOONNET"), lookups).routes)
-        assertEquals(listOf<Any>(AddMoneyRoute()), NotificationRoutes.resolve(NotificationDestination.RampKyc(), lookups).routes)
+        assertEquals(listOf<Any>(IdentityRoute()), NotificationRoutes.resolve(NotificationDestination.RampKyc("MOONNET"), lookups).routes)
+        assertEquals(listOf<Any>(IdentityRoute()), NotificationRoutes.resolve(NotificationDestination.RampKyc(), lookups).routes)
+        // Someone in Add Money stays in it: its verify pages hear the same news and go on to the amount by themselves.
+        assertTrue(NotificationRoutes.staysOn(destination, AddMoneyRoute()))
+        assertTrue(NotificationRoutes.staysOn(destination, AddMoneyRoute(network = "TESTNET")))
+        assertFalse(NotificationRoutes.staysOn(destination, IdentityRoute()))
+        assertFalse(NotificationRoutes.staysOn(destination, null))
+        assertFalse(NotificationRoutes.staysOn(NotificationDestination.RampOrder("o1"), AddMoneyRoute()), "only the verification push stays put")
     }
 
     @Test fun openedFromThePushTheFlowIsForThePushsNetworkAndLandsOnTheRightState() = runTest(dispatcher) {

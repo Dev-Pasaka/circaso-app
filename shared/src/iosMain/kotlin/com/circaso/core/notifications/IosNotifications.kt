@@ -61,6 +61,14 @@ class IosChatNotifications : ChatNotifications {
 
 /** Called by the notification delegate (AppDelegate) before showing a push while Circaso is open: not for the chat on screen. */
 fun shouldPresent(userInfo: Map<Any?, *>): Boolean {
+    // Identity verification moved (`ramp.kyc`) while Circaso is open: the profile's copy is read again; the banner
+    // still shows.
+    runCatching {
+        val koin = KoinPlatform.getKoin()
+        com.circaso.feature.ramp.data.repository.IdentityPush.received(
+            mapOf("kind" to userInfo["kind"] as? String, "network" to userInfo["network"] as? String), koin.get<kotlinx.coroutines.CoroutineScope>(),
+        ) { koin.get() }
+    }
     val chatId = userInfo["chatId"] as? String ?: return true
     val open = runCatching { KoinPlatform.getKoin().get<ChatNotifications>().activeChatId }.getOrNull()
     return chatId != open

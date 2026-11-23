@@ -47,7 +47,7 @@ feature/<name>/
     repository/             Repository implementations (the only place remote + local meet)
 ```
 
-Features, in build order: `auth` (sign-in, phone, device), `profile`, `contacts` (+connections, invites, blocks), `assistant` (Asha), `account` (security, recovery). Later: chats, wallet, calls (flagged off until the backend exists). Since then: `messaging`, `wallet`, `chama`, `calls`, `status` (Moments), `support`, `share`, `vault`, `ramp` (Add money, 2026-11-22; identity verification, 2026-11-23).
+Features, in build order: `auth` (sign-in, phone, device), `profile`, `contacts` (+connections, invites, blocks), `assistant` (Asha), `account` (security, recovery). Later: chats, wallet, calls (flagged off until the backend exists). Since then: `messaging`, `wallet`, `chama`, `calls`, `status` (Moments), `support`, `share`, `vault`, `ramp` (Add money, 2026-11-22; identity verification, 2026-11-23; the profile's Verification row and screen, 2026-11-23).
 
 Vendor SDKs live outside `shared`, each behind a seam installed at launch: Circle's wallet SDK in `:circlewallet` /
 `CircleWalletImpl.swift` (`WalletSignerBridge`), Didit's identity verification SDK in `:diditkyc` / `DiditKycImpl.swift`
@@ -369,6 +369,9 @@ Buying USDC with M-Pesa from a partner merchant the server picks (the app never 
 
 A person verifies their identity **once, when they first add money**, and only where the server says it is required
 (R1's `verification.required`: always on Mainnet, on Testnet when staff switch it on). Nothing else in the app asks.
+**Since 2026-11-23 the same check can also be done from the profile, the check itself lives in `IdentityCheck`, the
+last known status is kept on the phone, `submitted` is honoured and the push opens Verification: read "Identity
+verification in the profile" below, which supersedes what this section says on those points.**
 Built on the backend's `feat/ramp-kyc` guide. **Class: Online-only** (offline-first.md): never queued, nothing kept on
 the phone; the state shown is whatever R1, R0, `GET /v1/ramp/kyc` or a `kyc.updated` frame last said.
 
@@ -505,6 +508,121 @@ the phone; the state shown is whatever R1, R0, `GET /v1/ramp/kyc` or a `kyc.upda
   a session never shows in a log line; the push destination).
 - **Not verified until a real phone runs a sandbox session** (the SDK can't run in previews): see
   `project-status.md` → "Next work".
+
+## Identity verification in the profile (2026-11-23, branch `feat/kyc-in-profile`; design F2's "Verification" row, E3)
+
+Pasaka: "on the profile section, if my KYC profile is verified, I should see if it's verified. And if it's unverified,
+I should be able to verify it on my own without having to start a transaction to verify it." Built on the backend's
+`fix/ramp-kyc-submitted` guide (`submitted` on the verification) and for the routes being opened to everyone (below).
+
+- **One check, two ways in.** The check itself was lifted out of `AddMoneyViewModel` into **`IdentityCheck`**
+  (`feature/ramp/presentation/IdentityCheck.kt`): R0, Didit's screens or the hosted page, the read after them, the
+  wait, frames held under the SDK, the daily cap, coming back to the app, the keys on retries. It owns no state: the
+  screen's state holds the `VerifyUi` and hands it over through `IdentityCheck.Host` (`verify`, `update`, `showing`,
+  `online`, `canVerify`, and what to do on `onVerified`, `onNotRequired`, `onBlocked`), so a screen can still change
+  its page and the check in one step. `AddMoneyViewModel` and `IdentityViewModel` are the two hosts. Add Money's
+  behaviour is unchanged (its 68 tests pass as they were, bar one title): verified still shows for 1.8 s and goes on to
+  the amount. The pages are shared too: `VerifyIntroPage` / `VerifyStatePage` take a `VerifyPageState`
+  (`verify`, `online`, `testnet`, `canVerify`, `entry`), and `verifyLook(verify, now, entry)` words both.
+  `VerifyEntry.Profile` differs only where the destination does: no "Not Now" (the bar's Back leaves), the button that
+  only leaves reads "Done" rather than "Close", and verified says "Your identity is confirmed." and goes nowhere.
+- **`submitted` (the backend's 2026-11-23 change) is read before `canStart`, everywhere a state is decided:**
+  `RampVerification.submitted` (false when the server doesn't send it), `awaitingDecision`, `startable`;
+  `VerifyUi.startable`; `verifyLook` (a `PENDING` + `submitted` check is "We're checking your details" before any
+  note this phone was showing); `IdentityCheck.show` (sets `checking`, drops a camera or tries note), `onVerify`
+  (refuses), R0's answer (a session that came with `submitted` is never opened; the DTO mapper drops it); the
+  profile's row. While it is true: no button, R0 never asked, the SDK never reopened, and `GET /v1/ramp/kyc` is read
+  **every 5 s for as long as the page is open** (a wait this phone only believes in, after the SDK's "finished", is
+  still 5 s for a minute and then 20 s, as before; `IN_REVIEW` stays at 20 s). Reads rest while the app isn't in front
+  (`IdentityCheck.onPaused`; Didit's own screens over the app don't count) and resume with a read. The title of the
+  wait is now the guide's "We're checking your details" in both entries.
+- **The phone's copy (offline-first: reading the status is a Read; verifying is Online-only).** `RampRepositoryImpl`
+  files every answer the server gives about the check (R0, `GET /v1/ramp/kyc`, R1's `verification`, a `kyc.updated`
+  frame under the frame's own network) as `SavedIdentity` JSON in `AppPreferences` under
+  `text.wallet.ramp.kyc.<NETWORK>`: one per wallet network, wiped at sign-out with the other `text.wallet.*` settings
+  (so one account's), holding only the state, its reason code, `retryAt`, `submitted` and when it was said. Never a
+  session. `ramp.unavailable` from a verification route is remembered as "not open here"; no answer (no connection, a
+  fault) leaves the copy alone; R1 refusing says nothing about the check. `RampRepository.identity` /
+  `ObserveIdentityUseCase` read it for the network being read (the pinned one, else the selected one).
+- **The row.** You tab → **Money** group, first row, titled **"Verification"** as F2 names it (the task said
+  "Identity"; the frame wins on copy). F2 puts it under "Account" beside "Profile", a group the app no longer has
+  (Profile became the hero's Edit Profile, 2026-10-30); Money is where the code already meant it to go ("Money rows
+  (currency, limits, verification)") and what it is for (E3: "Sending and receiving on Circaso never needs this.
+  Moving money in or out of Circaso does"). Styled as its neighbours (`ListRow`, a sub line, the chevron), with the
+  status at its end as F2 draws it: the canvas's `cx-badge` (a 14 px sign and a 13/18 semibold word in the tone's
+  colour; F2 itself shows the amber clock "In review"), or the one word for what opening it does in `action` colour.
+  **No verified mark by the name:** F2 has none, the palette has no positive colour, "Verified" beside a name in the
+  canvas means the Circaso team (SP frames), and the status is per network, so a mark on the name would say more than
+  is true on Testnet. `identityRow()` (pure, tested) decides it; `IdentityRowModel` keeps it true (asks on the profile
+  being opened: each arrival on the tab, the app coming to the front, the connection returning, another network
+  selected); `IdentityRow` draws it, with a skeleton of the row as its first paint and a cross-fade between statuses.
+  - Verified: "Your identity is confirmed" · ✓ Verified. Not verified: "Needed to move money in or out of Circaso"
+    ("Not verified" where the server doesn't require it) · **Verify**. In progress: "Started. Pick up where you left
+    off" · **Continue**. Step asked again: "One more step is needed" · **Continue**. Checking (`submitted`): "We're
+    checking your details" · clock Checking. In review: "A reviewer is going over your details" · clock In review.
+    Needs another try: "The last check didn't pass" / "The last check ran out of time" / "Your ID has expired" ·
+    **Try again**. Tries used up: "You can try again tomorrow, after 09:05." Couldn't verify (final): "Contact
+    Support for help" · ! Couldn't verify (critical). Not asked for and can't be started: "Not needed right now".
+    A newer server's status with nothing to do: "We're working on your verification" · clock In progress.
+  - Offline, or the read got no answer: the same status from the copy, with the sub line "Last known status.
+    Verifying needs a connection." (when there is something to do) / "Last known status. Updates when you're back
+    online." / "Last known status. Couldn't check just now.", and the action word quietened. Nothing known: "Shows
+    when you're back online" / "Couldn't check just now".
+  - Testnet: every sub line starts "Testnet · ".
+  - `ramp.unavailable`: no row at all.
+- **The screen** (`IdentityRoute(network?)`, `IdentityViewModel`, `IdentityScreen.kt`; nav title "Verification",
+  Back, the Testnet strip from the network it is pinned to when it opens). Pages (`IdentityPage`): Loading (the shape
+  of a state's page, breathing), LoadFailed (nothing on the phone and no answer: "You're offline" or "Your
+  verification didn't load" with the request reference and Try Again), Unavailable ("Verification isn't available
+  yet", never an error), Gate (barred / "Verification is paused on this account", Contact Support), NotNeeded ("No
+  verification needed"), Intro (E3), State (every state after E3, the shared page), **Verified**. It reads
+  `GET /v1/ramp/kyc` (not R1: the top-up's gates aren't needed to verify), shows the copy first, and marks it
+  ("Showing your last known status, checked today, 14:05.") when offline or when the read got no answer. A "verified"
+  from the copy isn't final (the server's answer replaces it: an ID can expire); one the server gave in this visit
+  is (a replayed frame never walks it back). Coming back to the app reads a settled status again.
+  - **Verified stays**: the badge, "You're verified", "Your identity is confirmed. There's nothing more to do." (Testnet:
+    "…confirmed for Testnet. This was a practice check."), then three rows: "Add money and cash out / What being
+    verified unlocks on Circaso", "Your documents stay with Didit / Our verification partner holds your ID and selfie.
+    Circaso keeps only the result.", "Counts on Mainnet / Testnet has its own practice check, with sample documents."
+    (Testnet: "Counts on Testnet only / It used sample documents. Mainnet has its own check, with your real ID.").
+    No button; no jump into Add Money; a `Confirm` haptic only when it happened in front of the person after the
+    server had spoken in this visit. **No date**: the contract gives none (see gaps).
+- **Frames and the push.** `kyc.updated` is filed in the copy (the row follows) and heard by an open screen, for its
+  own network only. `ramp.kyc`: a tap opens `IdentityRoute(network)` under the **You** tab
+  (`NotificationRoutes.resolve`), unless Add Money is the screen on top (`NotificationRoutes.staysOn`: it hears the
+  same news and goes on to the amount). The push arriving while the app runs reads the check for its network
+  (`IdentityPush.received`: Android `onMessageReceived`, iOS `shouldPresent`), so the row is right before anyone taps.
+- **Routes being opened (backend, in progress on 2026-11-23).** The verification routes are being opened so they work
+  with the ramp off or verification not required for trading. Until a server has that, R0 and the read answer
+  `ramp.unavailable` (403): the row is left out and the screen says "Verification isn't available yet". When the
+  routes open, the next answer replaces the remembered "not open here" by itself. A network where verification isn't
+  required but may be started (`required: false`, `canStart: true`) shows E3 and can be verified.
+- **Never logged or kept:** as before (`KycSession`, `KycSessionDto` hide themselves; the token and link never reach
+  a state); the copy holds no session and nothing personal (test: `IdentityCopyTest`).
+- **Previews** (`gallery/IdentityPreviews.kt`): the screen `identity` (verified, Testnet), `-verified-mainnet`,
+  `-verified-offline`, `-verified-unconfirmed`, `-verified-just`, `-loading`, `-load-failed`, `-load-offline`,
+  `-unavailable`, `-barred`, `-restricted`, `-not-needed`, `-none`, `-none-mainnet`, `-none-offline`, `-optional`,
+  `-starting`, `-continue`, `-continue-offline`, `-more`, `-checking`, `-checking-slow`, `-checking-offline`,
+  `-review`, `-declined`, `-expired`, `-id-expired`, `-wait`, `-final`, `-tries`, `-down`, `-setup`, `-camera`; the
+  row in every status on one page `identity-rows` (`-offline`, `-unconfirmed`, `-mainnet`); on the You tab
+  `you-verified`, `you-unverified`, `you-identity-loading`; Add Money's `add-money-verify-submitted`.
+- **Tests:** `androidHostTest/feature/ramp/IdentityViewModelTest.kt` (43: every status from the profile, verifying
+  without a top-up and staying on verified, `submitted`, the 403, each error with its reference, the copy and
+  offline, frames, the push's network, coming back, and the row's model: asking, offline, the 403, frames and the
+  push, another network selected); `AddMoneyVerifyTest` (82: the 68 it had, the push's new destination, and 14 for
+  `submitted` in Add Money); `commonTest/feature/ramp/IdentityTest.kt` (`SubmittedWireTest` 9: the guide's JSON for
+  R0, the read, R1 and the frame, and a server that doesn't send the field; `IdentityCopyTest` 13: the copy per
+  network, what replaces it and what doesn't, no session in it, the push's read; `IdentityRowTest` 15: every row
+  status, Testnet, offline, nothing known, hidden).
+- **Contract gaps (told to Pasaka, 2026-11-23):** (1) no "verified at" date anywhere in `verification`, so the screen
+  can't say when; (2) until the routes are opened, someone the ramp isn't open to can't verify or see a status
+  (`ramp.unavailable`); (3) "cash out" in "Add money and cash out" is Pasaka's wording for what verifying unlocks,
+  while cash out itself is still MISSING (E6); (4) the push says "a tap opens Add money" in the guide: the app opens
+  Verification instead (asked for); (5) whether the server always writes `submitted: false` or leaves it out can't be
+  told from the wire, so "the server knows the field" is never assumed: a wait that only this phone believes in is
+  kept as before.
+- **Not verified on a phone:** the SDK run from the profile (same seam as Add Money, which is also still unrun on a
+  phone), the push tap on a device, TalkBack/VoiceOver passes.
 
 ## Chamas: group goals and the shared wallet (2026-10-29, guide CH1–CH6; designs D2–D6)
 

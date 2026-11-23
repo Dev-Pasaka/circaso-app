@@ -15,6 +15,8 @@ class GetOwnMpesaNumberUseCase(private val ramp: RampRepository) { suspend opera
 class StartKycUseCase(private val ramp: RampRepository) { suspend operator fun invoke(idempotencyKey: String) = ramp.startKyc(idempotencyKey) }
 class GetKycUseCase(private val ramp: RampRepository) { suspend operator fun invoke() = ramp.kyc() }
 class ObserveKycUpdatesUseCase(private val ramp: RampRepository) { operator fun invoke() = ramp.kycUpdates }
+/** The last known state of the check on the network being read, from the phone. **Read**: works offline. */
+class ObserveIdentityUseCase(private val ramp: RampRepository) { operator fun invoke() = ramp.identity }
 
 /**
  * Runs the open check where the person does it: Didit's own screens ([IdentityVerifier.verify]), or, with [hosted],

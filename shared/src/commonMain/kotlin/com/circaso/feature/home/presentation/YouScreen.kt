@@ -99,15 +99,22 @@ data class YouActions(
     val onMomentsPrivacy: () -> Unit = {},
     /** The share links I made, each one can be turned off (SH2, SH3). */
     val onSharedLinks: () -> Unit = {},
+    /** Money › Verification: where my identity check stands, and the check itself. */
+    val onIdentity: () -> Unit = {},
 )
 
 @Composable
 fun YouScreen(viewModel: YouViewModel, actions: YouActions, appVersion: String, bottomPadding: androidx.compose.foundation.layout.PaddingValues) {
     val state by viewModel.state.collectAsState()
+    // The profile being opened (each arrival on the tab) and the app coming back to the front: the Verification row asks
+    // the server again. What the phone knows is on screen meanwhile.
+    val arrival = LocalTabArrival.current
+    androidx.compose.runtime.LaunchedEffect(arrival) { if (arrival >= 0) viewModel.refreshIdentity() }
+    androidx.lifecycle.compose.LifecycleResumeEffect(viewModel) { viewModel.refreshIdentity(); onPauseOrDispose { } }
     YouContent(state, actions.copy(onRetry = viewModel::onRetry, onDiscard = viewModel::onDiscard), appVersion, bottomPadding, viewModel::onSignOutRequested, viewModel::onSignOutCancelled, viewModel::onSignOutConfirmed)
 }
 
-/** Design F2. Stateless so it can be shown with sample data. Money rows (currency, limits, verification) arrive with the wallet. */
+/** Design F2. Stateless so it can be shown with sample data. Verification (2026-11-23) sits with the money rows; limits arrive later. */
 @OptIn(ExperimentalFoundationApi::class, androidx.compose.ui.ExperimentalComposeUiApi::class)
 @Composable
 fun YouContent(
@@ -240,6 +247,12 @@ fun YouContent(
                     }
                 }
                 Section("Money") {
+                    // Design F2's Verification row, with the money it is for: sending and receiving never need it;
+                    // moving money in or out of Circaso does. Left out where the server has no verification to offer.
+                    if (state.identity != com.circaso.feature.ramp.presentation.IdentityRowUi.Hidden) {
+                        com.circaso.feature.ramp.presentation.IdentityRow(state.identity, actions.onIdentity)
+                        RowDivider(Modifier.padding(start = CircasoSpacing.s4))
+                    }
                     ListRow("Currency", sub = "How amounts are shown in your wallet and chats", trailing = { RowChevron() }, onClick = actions.onCurrency)
                     RowDivider(Modifier.padding(start = CircasoSpacing.s4))
                     SwitchRow("Money sound", state.moneySound, actions.onMoneySound, sub = "Coins dropping into your wallet when money arrives")

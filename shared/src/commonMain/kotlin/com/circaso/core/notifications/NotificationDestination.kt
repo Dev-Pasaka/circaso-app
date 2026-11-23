@@ -25,7 +25,8 @@ sealed interface NotificationDestination {
 
     /**
      * Identity verification moved (push `ramp.kyc`, 2026-11-22: verified, declined, a step asked for again, the ID
-     * expired): Add Money, which reads where the check stands on [network] (`MAINNET`, `TESTNET`) and shows that.
+     * expired): the profile's Verification screen, which reads where the check stands on [network] (`MAINNET`,
+     * `TESTNET`) and shows that; someone already in Add Money stays there.
      */
     data class RampKyc(val network: String? = null) : NotificationDestination
 
@@ -113,7 +114,7 @@ sealed interface NotificationDestination {
                 kind == "call.missed" || kind == "call.ended" -> MissedCall(chatId, get("callId"))
                 // "Your USDC has arrived" / "Your top-up didn't go through": the order itself (R4).
                 kind == "ramp.order" -> RampOrder(get("orderId"))
-                // "You're verified. You can add money now." and the calm lines for the rest: Add Money shows the state.
+                // "You're verified. You can add money now." and the calm lines for the rest: Verification shows the state.
                 kind == "ramp.kyc" -> RampKyc(get("network"))
                 kind?.startsWith("chama.") == true -> chatId?.let { Chat(it) } ?: Wallet
                 kind == "moment.loved" -> Moment(null, get("momentId"))

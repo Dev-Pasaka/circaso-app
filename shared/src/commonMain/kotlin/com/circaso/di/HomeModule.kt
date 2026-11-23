@@ -8,6 +8,7 @@ import com.circaso.feature.assistant.presentation.VoiceViewModel
 import com.circaso.feature.contacts.presentation.BlockedViewModel
 import com.circaso.feature.contacts.presentation.ContactsViewModel
 import com.circaso.feature.profile.presentation.EditProfileViewModel
+import kotlinx.coroutines.flow.map
 import org.koin.core.module.dsl.viewModel
 import org.koin.core.qualifier.named
 import org.koin.dsl.module
@@ -25,7 +26,15 @@ val homeModule = module {
     viewModel { (category: String?) -> com.circaso.feature.support.presentation.NewTicketViewModel(category, get(), get()) }
     viewModel { (ticketId: String) -> com.circaso.feature.support.presentation.TicketViewModel(ticketId, get(), get()) }
     viewModel { (phone: String?) -> com.circaso.feature.support.presentation.LostAccessViewModel(phone, get()) }
-    viewModel { YouViewModel(get(), get(), get(), get(), get(), get(), kickOutbox = get(named("kickOutbox")), prefs = get()) }
+    viewModel {
+        YouViewModel(
+            get(), get(), get(), get(), get(), get(), kickOutbox = get(named("kickOutbox")), prefs = get(),
+            // Money › Verification: the phone's last known identity check, and the read that refreshes it.
+            identityRow = com.circaso.feature.ramp.presentation.IdentityRowModel(
+                get(), get(), online = get<com.circaso.core.sync.ConnectionState>().status.map { it == com.circaso.core.platform.ConnectionStatus.Online }, networks = get(),
+            ),
+        )
+    }
     viewModel { EditProfileViewModel(get(), get(), get(), get(), get(), get(), get(), get(), get(), get()) }
     viewModel { ContactsViewModel(get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), editName = com.circaso.feature.names.presentation.EditNameController(get(), get())) }
     viewModel { BlockedViewModel(get(), get(), get()) }

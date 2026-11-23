@@ -71,6 +71,17 @@ enum class KycStatus {
             "EXPIRED" -> Expired
             else -> Unknown
         }
+
+        /** As the server writes it; an unknown status is kept as `UNKNOWN`, which reads back as [Unknown]. */
+        fun wire(status: KycStatus): String = when (status) {
+            None -> "NONE"
+            Pending -> "PENDING"
+            InReview -> "IN_REVIEW"
+            Verified -> "VERIFIED"
+            Declined -> "DECLINED"
+            Expired -> "EXPIRED"
+            Unknown -> "UNKNOWN"
+        }
     }
 }
 
@@ -88,10 +99,30 @@ data class RampVerification(
     val reason: String? = null,
     /** When today's tries are used up: the moment R0 may be called again (epoch ms). */
     val retryAt: Long? = null,
+    /**
+     * The person has done their part and the decision is awaited (2026-11-23): a `PENDING` check they completed, and
+     * `IN_REVIEW`. The server's word, read from Didit; false from a server that doesn't send it. **Read before
+     * [canStart]**: while it is true nothing is offered, R0 is never called and the SDK is never reopened.
+     */
+    val submitted: Boolean = false,
 ) {
     /** Nothing stands between the person and buying, as far as identity goes. */
     val cleared: Boolean get() = !required || status == KycStatus.Verified
+
+    /** Finished by the person and still undecided: "We're checking your details", with nothing to tap. */
+    val awaitingDecision: Boolean get() = submitted && (status == KycStatus.Pending || status == KycStatus.InReview)
+
+    /** R0 may be called now. [submitted] wins over [canStart], whatever a server sends beside it. */
+    val startable: Boolean get() = canStart && !awaitingDecision
 }
+
+/**
+ * The identity check as this phone last heard it for one wallet network, kept so the profile can say where it stands
+ * without a connection (offline-first: a **Read**). [verification] is null when the server has never answered with
+ * one; [unavailable] when its last answer was that verification isn't open here (`ramp.unavailable`, a server from
+ * before the routes were opened to everyone). [checkedAt] is when the server last said so (epoch ms).
+ */
+data class IdentitySnapshot(val verification: RampVerification?, val unavailable: Boolean, val checkedAt: Long)
 
 /** The reason codes the screens word (guide: "Reason codes"); any other is a newer server's. */
 object KycReasons {

@@ -9,9 +9,13 @@ import com.circaso.feature.ramp.data.remote.OrderUpdatedFrame
 import com.circaso.feature.ramp.data.remote.QuoteRequest
 import com.circaso.feature.ramp.data.remote.RampRemote
 import com.circaso.feature.ramp.data.remote.StartOnRampRequest
+import com.circaso.feature.ramp.data.remote.SavedIdentity
 import com.circaso.feature.ramp.data.remote.VerificationDto
 import com.circaso.feature.ramp.data.remote.toDomain
+import com.circaso.core.sync.nowMillis
+import com.circaso.feature.ramp.domain.IdentitySnapshot
 import com.circaso.feature.ramp.domain.KycStart
+import com.circaso.feature.ramp.domain.KycStatus
 import com.circaso.feature.ramp.domain.KycUpdate
 import com.circaso.feature.ramp.domain.RampVerification
 import com.circaso.feature.ramp.domain.RampCodes
@@ -34,6 +38,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.sync.Mutex
@@ -61,6 +66,10 @@ class RampRepositoryImpl(
     private val onArrived: suspend () -> Unit = {},
     /** For the one thing done beside a call: reading the orders after R1, so old top-ups are labelled in the wallet. */
     private val scope: CoroutineScope? = null,
+    /** One network's last known identity check (JSON), and its writer: the profile's copy for when there is no connection. */
+    private val savedIdentity: (WalletNetwork) -> Flow<String?> = { flowOf(null) },
+    private val saveIdentity: suspend (WalletNetwork, String) -> Unit = { _, _ -> },
+    private val now: () -> Long = ::nowMillis,
 ) : RampRepository {
     private val _updates = MutableSharedFlow<RampOrderUpdate>(extraBufferCapacity = 16)
     override val updates: Flow<RampOrderUpdate> = _updates
@@ -68,11 +77,50 @@ class RampRepositoryImpl(
     private val _kycUpdates = MutableSharedFlow<KycUpdate>(extraBufferCapacity = 16)
     override val kycUpdates: Flow<KycUpdate> = _kycUpdates
 
-    // Identity verification is never kept on the phone: the state is whatever R0, the read or a frame last said, and
-    // the session's token and link live only as long as the launch they are for.
-    override suspend fun startKyc(idempotencyKey: String): AppResult<KycStart> = remote.startKyc(idempotencyKey).map { it.toDomain() }
+    // Identity verification is the server's alone to decide: the state is whatever R0, the read, R1 or a frame last
+    // said. That last word (the state and its reason code, nothing personal) is kept per network so the profile can
+    // show it offline; the session's token and link live only as long as the launch they are for.
+    override suspend fun startKyc(idempotencyKey: String): AppResult<KycStart> {
+        val network = networks.effective()
+        return remote.startKyc(idempotencyKey).map { it.toDomain() }.also { heard(network, it.map { start -> start.verification }) }
+    }
 
-    override suspend fun kyc(): AppResult<RampVerification> = remote.kyc().map { it.toDomain() }
+    override suspend fun kyc(): AppResult<RampVerification> {
+        val network = networks.effective()
+        return remote.kyc().map { it.toDomain() }.also { heard(network, it) }
+    }
+
+    @OptIn(ExperimentalCoroutinesApi::class)
+    override val identity: Flow<IdentitySnapshot?> = networks.followed.flatMapLatest { network -> savedIdentity(network).map { decodeIdentity(it) } }.distinctUntilChanged()
+
+    private val identityLock = Mutex()
+
+    private fun decodeIdentity(text: String?): IdentitySnapshot? {
+        val saved = text?.let { runCatching { json.decodeFromString(SavedIdentity.serializer(), it) }.getOrNull() } ?: return null
+        val verification = saved.status?.let { RampVerification(KycStatus.of(it), saved.required, saved.canStart, saved.reason, saved.retryAt, saved.submitted) }
+        return IdentitySnapshot(verification, saved.unavailable, saved.checkedAt)
+    }
+
+    /**
+     * What one of the verification's own routes just answered for [network]: a state replaces the copy; "not open here"
+     * (`ramp.unavailable`) is remembered as that; anything else (no connection, a fault) leaves the copy as it was.
+     */
+    private suspend fun heard(network: WalletNetwork, result: AppResult<RampVerification>) {
+        when (result) {
+            is AppResult.Success -> remember(network, result.value)
+            is AppResult.Failure -> if ((result.error as? AppError.Api)?.code == RampCodes.Unavailable) {
+                save(network, SavedIdentity(unavailable = true, checkedAt = now()))
+            }
+        }
+    }
+
+    private suspend fun remember(network: WalletNetwork, v: RampVerification) =
+        save(network, SavedIdentity(KycStatus.wire(v.status), v.required, v.canStart, v.reason, v.retryAt, v.submitted, unavailable = false, checkedAt = now()))
+
+    /** Keeping the copy must never fail the call it rides on. */
+    private suspend fun save(network: WalletNetwork, identity: SavedIdentity) {
+        identityLock.withLock { runCatching { saveIdentity(network, json.encodeToString(SavedIdentity.serializer(), identity)) } }
+    }
 
     private val mapSerializer = MapSerializer(String.serializer(), String.serializer())
     private val topUpsLock = Mutex()
@@ -87,10 +135,12 @@ class RampRepositoryImpl(
     private fun decode(text: String?): Map<String, String> = text?.let { runCatching { json.decodeFromString(mapSerializer, it) }.getOrNull() } ?: emptyMap()
 
     override suspend fun status(): AppResult<RampStatus> {
+        val network = networks.effective()
         val result = remote.status().map { it.toDomain() }
         // Open to this person: the top-ups this phone hasn't seen (made on another phone) get their wallet label too.
         if (result is AppResult.Success) {
-            val network = networks.effective()
+            // R1 carries the check in full: the profile's copy follows it. (R1 refusing says nothing about the check.)
+            remember(result.value.network ?: network, result.value.verification)
             scope?.launch(PinnedNetwork(network)) { runCatching { refreshOrders() } }
         }
         return result
@@ -152,7 +202,10 @@ class RampRepositoryImpl(
         if (data == null) return
         if (type == KycUpdated) {
             val moved = runCatching { json.decodeFromJsonElement(VerificationDto.serializer(), data) }.getOrNull() ?: return
-            _kycUpdates.emit(KycUpdate(WalletNetwork.of(moved.network), moved.toDomain()))
+            val network = WalletNetwork.of(moved.network)
+            // The frame says which network it is for; one without a network can't be filed, so it is only passed on.
+            if (network != null) remember(network, moved.toDomain())
+            _kycUpdates.emit(KycUpdate(network, moved.toDomain()))
             return
         }
         if (type != OrderUpdated) return // a newer server's frame types are ignored
@@ -177,6 +230,8 @@ class RampRepositoryImpl(
         const val OrderUpdated = "order.updated"
         const val KycUpdated = "kyc.updated"
         const val OnRamp = "ON_RAMP"
+        /** The setting that holds one network's last known identity check (under `text.wallet.`, wiped at sign-out). */
+        fun identityKey(network: WalletNetwork): String = "wallet.ramp.kyc." + network.wire
         /** The setting that holds one network's top-up labels (under `text.wallet.`, wiped at sign-out). */
         fun topUpsKey(network: WalletNetwork): String = "wallet.ramp.topups." + network.wire
         private const val MaxRemembered = 200

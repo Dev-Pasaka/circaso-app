@@ -213,6 +213,9 @@ fun AppNavigation(forceUpdate: Boolean, home: @Composable () -> Unit) {
         if (state != AuthState.Active) return@LaunchedEffect
         taps.pending.filterNotNull().collect { destination ->
             androidx.compose.runtime.snapshotFlow { backStack.firstOrNull() }.first { it == HomeRoute }
+            // A `ramp.kyc` push tapped while Add Money is on screen: it is already showing the check (and reads it again
+            // as the app comes to the front), so the person stays where they are.
+            if (com.circaso.core.notifications.NotificationRoutes.staysOn(destination, backStack.lastOrNull())) { taps.consumed(destination); return@collect }
             val opening = com.circaso.core.notifications.NotificationRoutes.resolve(destination, notificationLookups)
             // The tab first: the current tab's screens are set aside for it (not lost), the new tab's are not brought
             // back; then what the notification opens, on that tab.
@@ -407,6 +410,7 @@ fun AppNavigation(forceUpdate: Boolean, home: @Composable () -> Unit) {
                             onNotificationPrivacy = youViewModel::onNotificationPrivacy,
                             onMomentsPrivacy = { backStack.add(MomentsPrivacyRoute) },
                             onSharedLinks = { backStack.add(SharedLinksRoute) },
+                            onIdentity = { backStack.add(IdentityRoute()) },
                         ),
                         appVersion = info.appVersion,
                         bottomPadding = bottomPadding,
@@ -706,6 +710,13 @@ fun AppNavigation(forceUpdate: Boolean, home: @Composable () -> Unit) {
             entry<AddMoneyRoute>(metadata = Panes.FullScreen) { route ->
                 com.circaso.feature.ramp.presentation.AddMoneyScreen(
                     koinViewModel<com.circaso.feature.ramp.presentation.AddMoneyViewModel>(key = "add-money-${route.orderId}-${route.network}", parameters = { parametersOf(route.orderId, route.network) }),
+                    onBack = ::pop, onSupport = { backStack.add(HelpRoute) },
+                )
+            }
+            // You › Verification: full screen like Add Money's verify pages, which it shares (Didit's screens rise over it).
+            entry<IdentityRoute>(metadata = Panes.FullScreen) { route ->
+                com.circaso.feature.ramp.presentation.IdentityScreen(
+                    koinViewModel<com.circaso.feature.ramp.presentation.IdentityViewModel>(key = "identity-${route.network}", parameters = { parametersOf(route.network) }),
                     onBack = ::pop, onSupport = { backStack.add(HelpRoute) },
                 )
             }
