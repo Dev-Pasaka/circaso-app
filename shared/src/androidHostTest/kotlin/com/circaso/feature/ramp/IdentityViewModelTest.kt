@@ -247,6 +247,9 @@ class IdentityViewModelTest {
     @Test fun whereItIsNotRequiredItCanStillBeDoneWhenTheServerOffersIt() = with("NONE", canStart = true, required = false) { vm, f ->
         assertEquals(IdentityPage.Intro, vm.page)
         assertTrue(vm.state.value.canVerify)
+        // Offered, not asked for: never said to be the law.
+        assertFalse(vm.look.message.contains("by law"), vm.look.message)
+        assertTrue(vm.look.message.contains("doesn't need it yet"), vm.look.message)
         f.says("VERIFIED", canStart = false)
         vm.onVerify()
         assertEquals(1, f.remote.kycStarts.size)
@@ -544,7 +547,7 @@ class IdentityViewModelTest {
         val (_, shown) = row(f)
         assertEquals(IdentityRowKind.NotVerified, shown.look.kind)
         assertTrue(shown.look.lastKnown)
-        assertEquals("Last known status. Verifying needs a connection.", shown.look.sub)
+        assertEquals("Last known status. Verifying needs a connection.", shown.look.note)
         f.says("VERIFIED", canStart = false)
         online.value = true
         assertEquals(IdentityRowKind.Verified, shown.look.kind)
@@ -603,6 +606,6 @@ class IdentityViewModelTest {
         f.remote.kyc = refusal("service.unavailable", http = 503)
         val (_, shown) = row(f)
         assertEquals(IdentityRowKind.Verified, shown.look.kind)
-        assertEquals("Last known status. Couldn't check just now.", shown.look.sub)
+        assertEquals("Last known status. Couldn't check just now.", shown.look.note)
     }
 }

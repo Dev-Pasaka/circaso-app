@@ -50,6 +50,8 @@ fun ListRow(
     subMaxLines: Int = 2,
     /** What a tap does, for screen readers ("Open verification"); the row's words alone otherwise. */
     onClickLabel: String? = null,
+    /** Under the title and sub line, inside the text column (a status that moves there at large text sizes). */
+    below: (@Composable () -> Unit)? = null,
 ) {
     val c = CircasoTheme.colors
     val t = CircasoTheme.typography
@@ -70,6 +72,7 @@ fun ListRow(
                 titleEnd()
             }
             if (sub != null) BasicText(sub, style = t.subhead.copy(color = c.inkSecondary), maxLines = subMaxLines, overflow = TextOverflow.Ellipsis)
+            below?.invoke()
         }
         if (meta != null) BasicText(meta, style = t.footnote.copy(color = c.inkTertiary))
         trailing?.invoke()

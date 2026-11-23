@@ -282,7 +282,10 @@ private fun stateLook(verify: VerifyUi, now: Long, entry: VerifyEntry): VerifyLo
             KycStatus.None -> when {
                 v.canStart -> VerifyLook(
                     VerifyKind.Intro, null, SheetTone.Neutral, "Verify once, add money any time",
-                    "Sending and receiving on Circaso never needs this. Moving money in or out of Circaso does, by law.", VerifyAction.Start, "Start Verification",
+                    // Where the server doesn't ask for it yet (offered from the profile), never said to be the law.
+                    if (v.required) "Sending and receiving on Circaso never needs this. Moving money in or out of Circaso does, by law."
+                    else "Sending and receiving on Circaso never needs this. Adding money doesn't need it yet either: verify now and it's done when it does.",
+                    VerifyAction.Start, "Start Verification",
                 )
                 // Required, never started, and the server won't start one now: said as it is, never a dead button.
                 v.retryAt != null -> waiting("Today's tries are used up", "Verification can't be started again today.", v.retryAt)
@@ -385,7 +388,7 @@ private val VerifyRowGap = 14.dp
 private val VerifyNoteInset = 14.dp
 private val VerifyNoteGap = 10.dp
 private val VerifyNoteGlyph = 18.dp
-private val VerifyRowGlyph = 20.dp
+internal val VerifyRowGlyph = 20.dp
 
 @Composable
 private fun VerifyRow(icon: CircasoIcon, title: String, sub: String) {
@@ -505,8 +508,8 @@ internal fun VerifyStatePage(
 }
 
 /** Words giving way to other words: a cross-fade, while what holds them eases to the new height. */
-private fun AnimatedContentTransitionScope<*>.easeWords(still: Boolean): ContentTransform =
+internal fun AnimatedContentTransitionScope<*>.easeWords(still: Boolean): ContentTransform =
     (fadeIn(tween(if (still) 0 else CircasoMotion.BaseMs)) togetherWith fadeOut(tween(if (still) 0 else CircasoMotion.QuickMs))) using SizeTransform(clip = false)
 
 /** Between a title and its paragraph, as the sheets have it (the canvas's 6 px). */
-private val VerifyTitleGap = 6.dp
+internal val VerifyTitleGap = 6.dp

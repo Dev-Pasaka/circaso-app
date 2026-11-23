@@ -555,19 +555,25 @@ I should be able to verify it on my own without having to start a transaction to
   canvas means the Circaso team (SP frames), and the status is per network, so a mark on the name would say more than
   is true on Testnet. `identityRow()` (pure, tested) decides it; `IdentityRowModel` keeps it true (asks on the profile
   being opened: each arrival on the tab, the app coming to the front, the connection returning, another network
-  selected); `IdentityRow` draws it, with a skeleton of the row as its first paint and a cross-fade between statuses.
+  selected); `IdentityRow` draws it, with a skeleton of the row (chevron included) as its first paint. Only what
+  changes fades (`AnimatedContent` with `easeWords`, the row easing to its new height); the title never does. On the
+  You tab the row and its divider open and close their room (`AnimatedVisibility`: fade + expand in `BaseMs`, fade
+  `ExitMs` + shrink `QuickMs`, 0 ms under Reduce Motion), so the rows under it never jump. At a font scale of 1.3 or
+  more the badge or action word moves under the status (`ListRow`'s new `below` slot), so the title is never squeezed.
   - Verified: "Your identity is confirmed" · ✓ Verified. Not verified: "Needed to move money in or out of Circaso"
     ("Not verified" where the server doesn't require it) · **Verify**. In progress: "Started. Pick up where you left
     off" · **Continue**. Step asked again: "One more step is needed" · **Continue**. Checking (`submitted`): "We're
     checking your details" · clock Checking. In review: "A reviewer is going over your details" · clock In review.
     Needs another try: "The last check didn't pass" / "The last check ran out of time" / "Your ID has expired" ·
-    **Try again**. Tries used up: "You can try again tomorrow, after 09:05." Couldn't verify (final): "Contact
+    **Try Again** (an expired check: **Verify Again**, the screen's own button words). Tries used up: "Today's tries
+    are used up. You can try again tomorrow, after 09:05". Couldn't verify (final): "Contact
     Support for help" · ! Couldn't verify (critical). Not asked for and can't be started: "Not needed right now".
     A newer server's status with nothing to do: "We're working on your verification" · clock In progress.
-  - Offline, or the read got no answer: the same status from the copy, with the sub line "Last known status.
-    Verifying needs a connection." (when there is something to do) / "Last known status. Updates when you're back
-    online." / "Last known status. Couldn't check just now.", and the action word quietened. Nothing known: "Shows
-    when you're back online" / "Couldn't check just now".
+  - Offline, or the read got no answer: the same status and sub line from the copy, with a footnote line under it
+    (`IdentityRowLook.note`, `inkTertiary`): "Last known status. Verifying needs a connection." (when there is
+    something to do) / "Last known status. Updates when you're back online." / "Last known status. Couldn't check
+    just now.", and the action word quietened. Nothing known: "Shows when you're back online" / "Couldn't check just
+    now".
   - Testnet: every sub line starts "Testnet · ".
   - `ramp.unavailable`: no row at all.
 - **The screen** (`IdentityRoute(network?)`, `IdentityViewModel`, `IdentityScreen.kt`; nav title "Verification",
@@ -581,12 +587,17 @@ I should be able to verify it on my own without having to start a transaction to
   from the copy isn't final (the server's answer replaces it: an ID can expire); one the server gave in this visit
   is (a replayed frame never walks it back). Coming back to the app reads a settled status again.
   - **Verified stays**: the badge, "You're verified", "Your identity is confirmed. There's nothing more to do." (Testnet:
-    "…confirmed for Testnet. This was a practice check."), then three rows: "Add money and cash out / What being
-    verified unlocks on Circaso", "Your documents stay with Didit / Our verification partner holds your ID and selfie.
-    Circaso keeps only the result.", "Counts on Mainnet / Testnet has its own practice check, with sample documents."
-    (Testnet: "Counts on Testnet only / It used sample documents. Mainnet has its own check, with your real ID.").
-    No button; no jump into Add Money; a `Confirm` haptic only when it happened in front of the person after the
-    server had spoken in this visit. **No date**: the contract gives none (see gaps).
+    "…confirmed for Testnet. This was a practice check."), then three rows: "Add money from M-Pesa / What being
+    verified unlocks on Circaso" (never "cash out": E6 isn't built), "Didit ran the check / Our verification partner.
+    Your documents went to them encrypted and are never shown to other people." (E3's own promise; nothing is said
+    about what Circaso keeps, which the guide doesn't state), "Counts on Mainnet / Testnet has its own practice check,
+    with sample documents." (Testnet: "Counts on Testnet only / It used sample documents. Mainnet has its own check,
+    with your real ID."). A secondary **Done** at the foot, as the screen's other end pages have; no jump into Add
+    Money; a `Confirm` haptic only when it happened in front of the person after the server had spoken in this visit.
+    **No date**: the contract gives none (see gaps).
+  - **Offered, not required** (`required: false`, `canStart: true`): E3's paragraph reads "Sending and receiving on
+    Circaso never needs this. Adding money doesn't need it yet either: verify now and it's done when it does." (never
+    "by law", which is only said where the server requires it).
 - **Frames and the push.** `kyc.updated` is filed in the copy (the row follows) and heard by an open screen, for its
   own network only. `ramp.kyc`: a tap opens `IdentityRoute(network)` under the **You** tab
   (`NotificationRoutes.resolve`), unless Add Money is the screen on top (`NotificationRoutes.staysOn`: it hears the
@@ -616,11 +627,18 @@ I should be able to verify it on my own without having to start a transaction to
   status, Testnet, offline, nothing known, hidden).
 - **Contract gaps (told to Pasaka, 2026-11-23):** (1) no "verified at" date anywhere in `verification`, so the screen
   can't say when; (2) until the routes are opened, someone the ramp isn't open to can't verify or see a status
-  (`ramp.unavailable`); (3) "cash out" in "Add money and cash out" is Pasaka's wording for what verifying unlocks,
-  while cash out itself is still MISSING (E6); (4) the push says "a tap opens Add money" in the guide: the app opens
+  (`ramp.unavailable`); (3) the guide doesn't say what Circaso keeps of the documents, so the verified page says only
+  E3's promise (and "Add money", not "cash out": E6 is still MISSING); (4) the push says "a tap opens Add money" in the guide: the app opens
   Verification instead (asked for); (5) whether the server always writes `submitted: false` or leaves it out can't be
   told from the wire, so "the server knows the field" is never assumed: a wait that only this phone believes in is
   kept as before.
+- **Design review (2026-11-23, `design-reviewer`), fixed:** the row popping in and out of the Money group; offline
+  rows losing their status; large text squeezing the title; the whole row cross-fading; "cash out" and an unconfirmed
+  data claim on the verified page; "by law" on an optional check; no Done on the verified page; the skeleton without a
+  chevron; button words differing between the row and the screen; screen-reader progress on the skeletons and the
+  verified heading not folded into its paragraph. **Left as is:** the row and the screen each take the selected network
+  (`networks.followed` / `networks.current()`), the same one on the You tab, so the route isn't given the row's
+  network; "in a moment" on a wait is worded when the row is drawn and redrawn on the next read.
 - **Not verified on a phone:** the SDK run from the profile (same seam as Add Money, which is also still unrun on a
   phone), the push tap on a device, TalkBack/VoiceOver passes.
 

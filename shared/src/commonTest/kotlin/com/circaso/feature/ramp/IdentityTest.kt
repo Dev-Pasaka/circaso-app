@@ -335,7 +335,9 @@ class IdentityRowTest {
 
     @Test fun aDeclineAnotherTryCanFixNeedsAnotherTry() {
         val l = look(v(KycStatus.Declined, canStart = true, reason = KycReasons.FaceMatch))
-        assertEquals(IdentityRowKind.NeedsAnotherTry to "Try again", l.kind to l.action)
+        assertEquals(IdentityRowKind.NeedsAnotherTry to "Try Again", l.kind to l.action)
+        // The screen's own word for its button: an expired check is verified again.
+        assertEquals("Verify Again", look(v(KycStatus.Expired, canStart = true, reason = KycReasons.SessionExpired)).action)
         assertEquals("The last check didn't pass", l.sub)
         assertEquals("The last check ran out of time", look(v(KycStatus.Expired, canStart = true, reason = KycReasons.SessionExpired)).sub)
         assertEquals("Your ID has expired", look(v(KycStatus.Expired, canStart = true, reason = KycReasons.DocumentExpired)).sub)
@@ -356,7 +358,7 @@ class IdentityRowTest {
         for (waiting in listOf(v(KycStatus.Declined, reason = KycReasons.Liveness).copy(retryAt = 10_000), v(KycStatus.Expired).copy(retryAt = 10_000), v(KycStatus.Pending), v(KycStatus.None).copy(retryAt = 10_000))) {
             val l = look(waiting)
             assertEquals(IdentityRowKind.Waiting, l.kind, waiting.toString())
-            assertTrue(l.sub.startsWith("You can try again"), l.sub)
+            assertTrue(l.sub.startsWith("Today's tries are used up. You can try again"), l.sub)
             assertNull(l.action)
             assertNull(l.badge)
         }
@@ -379,7 +381,7 @@ class IdentityRowTest {
     @Test fun onTestnetEveryStatusSaysSo() {
         assertEquals("Testnet · Your identity is confirmed", look(v(KycStatus.Verified), testnet = true).sub)
         assertEquals("Testnet · Needed to move money in or out of Circaso", look(v(KycStatus.None, canStart = true), testnet = true).sub)
-        assertEquals("Testnet · Last known status. Verifying needs a connection.", look(v(KycStatus.None, canStart = true), online = false, testnet = true).sub)
+        assertEquals("Testnet · Needed to move money in or out of Circaso", look(v(KycStatus.None, canStart = true), online = false, testnet = true).sub)
         assertFalse(look(v(KycStatus.Verified)).sub.contains("Testnet"))
     }
 
@@ -388,18 +390,27 @@ class IdentityRowTest {
         assertEquals(IdentityRowKind.Verified, verified.kind)
         assertEquals("Verified", verified.badge?.text)
         assertTrue(verified.lastKnown)
-        assertEquals("Last known status. Updates when you're back online.", verified.sub)
+        // The status still says what it was; the line under it says it is the last known one.
+        assertEquals("Your identity is confirmed", verified.sub)
+        assertEquals("Last known status. Updates when you're back online.", verified.note)
         val open = look(v(KycStatus.None, canStart = true), online = false)
         assertEquals("Verify", open.action)
         assertTrue(open.lastKnown, "the action waits")
-        assertEquals("Last known status. Verifying needs a connection.", open.sub)
-        assertEquals("Last known status. Updates when you're back online.", look(v(KycStatus.InReview, submitted = true), online = false).sub)
+        assertEquals("Needed to move money in or out of Circaso", open.sub)
+        assertEquals("Last known status. Verifying needs a connection.", open.note)
+        val waiting = look(v(KycStatus.Declined, reason = KycReasons.Liveness).copy(retryAt = 10_000), online = false)
+        assertTrue(waiting.sub.startsWith("Today's tries are used up."), "a wait keeps saying what it waits for: ${waiting.sub}")
+        val retry = look(v(KycStatus.Declined, canStart = true, reason = KycReasons.DocumentExpired), online = false)
+        assertEquals("Your ID has expired", retry.sub, "and why another try is needed")
+        assertEquals("Last known status. Updates when you're back online.", look(v(KycStatus.InReview, submitted = true), online = false).note)
+        assertNull(look(v(KycStatus.Verified)).note)
     }
 
     @Test fun aReadThatGotNoAnswerMarksTheStatusAsLastKnown() {
         val l = look(v(KycStatus.Verified), unanswered = true)
         assertTrue(l.lastKnown)
-        assertEquals("Last known status. Couldn't check just now.", l.sub)
+        assertEquals("Your identity is confirmed", l.sub)
+        assertEquals("Last known status. Couldn't check just now.", l.note)
     }
 
     @Test fun withNothingKnownItIsASkeletonWhileAskingAndPlainWordsAfter() {

@@ -249,9 +249,24 @@ fun YouContent(
                 Section("Money") {
                     // Design F2's Verification row, with the money it is for: sending and receiving never need it;
                     // moving money in or out of Circaso does. Left out where the server has no verification to offer.
-                    if (state.identity != com.circaso.feature.ramp.presentation.IdentityRowUi.Hidden) {
-                        com.circaso.feature.ramp.presentation.IdentityRow(state.identity, actions.onIdentity)
-                        RowDivider(Modifier.padding(start = CircasoSpacing.s4))
+                    // It opens and closes the room it needs (arriving after the phone's copy is read, leaving where the
+                    // server says verification isn't open), so the rows under it ease instead of jumping.
+                    val identityShown = state.identity != com.circaso.feature.ramp.presentation.IdentityRowUi.Hidden
+                    val lastIdentity = androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(state.identity) }
+                    if (identityShown) lastIdentity.value = state.identity
+                    val stillRow = CircasoTheme.reduceMotion
+                    androidx.compose.animation.AnimatedVisibility(
+                        identityShown,
+                        enter = androidx.compose.animation.fadeIn(androidx.compose.animation.core.tween(if (stillRow) 0 else com.circaso.designsystem.theme.CircasoMotion.BaseMs)) +
+                            androidx.compose.animation.expandVertically(androidx.compose.animation.core.tween(if (stillRow) 0 else com.circaso.designsystem.theme.CircasoMotion.BaseMs)),
+                        exit = androidx.compose.animation.fadeOut(androidx.compose.animation.core.tween(if (stillRow) 0 else com.circaso.designsystem.theme.CircasoMotion.ExitMs)) +
+                            androidx.compose.animation.shrinkVertically(androidx.compose.animation.core.tween(if (stillRow) 0 else com.circaso.designsystem.theme.CircasoMotion.QuickMs)),
+                    ) {
+                        androidx.compose.foundation.layout.Column {
+                            // While leaving it keeps the last row it showed.
+                            com.circaso.feature.ramp.presentation.IdentityRow(lastIdentity.value, actions.onIdentity)
+                            RowDivider(Modifier.padding(start = CircasoSpacing.s4))
+                        }
                     }
                     ListRow("Currency", sub = "How amounts are shown in your wallet and chats", trailing = { RowChevron() }, onClick = actions.onCurrency)
                     RowDivider(Modifier.padding(start = CircasoSpacing.s4))

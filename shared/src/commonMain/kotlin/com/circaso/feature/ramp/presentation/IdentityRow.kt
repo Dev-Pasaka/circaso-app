@@ -1,8 +1,8 @@
 package com.circaso.feature.ramp.presentation
 
-import androidx.compose.animation.Crossfade
-import androidx.compose.animation.core.tween
+import androidx.compose.animation.AnimatedContent
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.defaultMinSize
@@ -15,7 +15,9 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.semantics.ProgressBarRangeInfo
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.progressBarRangeInfo
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -40,7 +42,6 @@ import com.circaso.designsystem.components.CircasoIconImage
 import com.circaso.designsystem.components.ListRow
 import com.circaso.designsystem.components.RowChevron
 import com.circaso.designsystem.components.SkeletonBlock
-import com.circaso.designsystem.theme.CircasoMotion
 import com.circaso.designsystem.theme.CircasoSpacing
 import com.circaso.designsystem.theme.CircasoTheme
 import com.circaso.feature.ramp.domain.IdentitySnapshot
@@ -91,6 +92,8 @@ data class IdentityRowLook(
     val action: String? = null,
     /** Shown from the phone's copy because the server can't be asked right now: the action waits. */
     val lastKnown: Boolean = false,
+    /** Under the status when it is the last known one: why it may be old, and that verifying waits. */
+    val note: String? = null,
 )
 
 /** The row on the profile: its first paint, not there at all, or a status. */
@@ -126,7 +129,7 @@ fun identityRow(copy: IdentitySnapshot?, asking: Boolean, unanswered: Boolean, o
         v.status == KycStatus.None -> when {
             v.canStart -> IdentityRowLook(IdentityRowKind.NotVerified, if (v.required) "Needed to move money in or out of Circaso" else "Not verified", action = "Verify")
             !v.required -> IdentityRowLook(IdentityRowKind.NotNeeded, "Not needed right now")
-            v.retryAt != null -> IdentityRowLook(IdentityRowKind.Waiting, tryAgain(v.retryAt, now))
+            v.retryAt != null -> IdentityRowLook(IdentityRowKind.Waiting, triesUsed(v.retryAt, now))
             else -> IdentityRowLook(IdentityRowKind.InHand, "Can't be started right now")
         }
         v.status == KycStatus.Declined || v.status == KycStatus.Expired -> when {
@@ -137,27 +140,32 @@ fun identityRow(copy: IdentitySnapshot?, asking: Boolean, unanswered: Boolean, o
                     v.status == KycStatus.Expired -> "The last check ran out of time"
                     else -> "The last check didn't pass"
                 },
-                action = "Try again",
+                // The screen's own words for its button.
+                action = if (v.status == KycStatus.Expired) "Verify Again" else "Try Again",
             )
-            v.retryAt != null -> IdentityRowLook(IdentityRowKind.Waiting, tryAgain(v.retryAt, now))
+            v.retryAt != null -> IdentityRowLook(IdentityRowKind.Waiting, triesUsed(v.retryAt, now))
             else -> IdentityRowLook(IdentityRowKind.CouldNotVerify, "Contact Support for help", IdentityBadge("Couldn't verify", CircasoIcon.Warning, IdentityBadgeTone.Critical))
         }
         // An open check, or a status a newer server sends: `canStart` alone says whether there is something to do.
         !v.canStart && v.status == KycStatus.Unknown -> IdentityRowLook(IdentityRowKind.InHand, "We're working on your verification", IdentityBadge("In progress", CircasoIcon.Clock, clock))
-        !v.canStart -> IdentityRowLook(IdentityRowKind.Waiting, tryAgain(v.retryAt, now))
+        !v.canStart -> IdentityRowLook(IdentityRowKind.Waiting, triesUsed(v.retryAt, now))
         v.reason == KycReasons.ResubmissionRequested -> IdentityRowLook(IdentityRowKind.OneMoreThing, "One more step is needed", action = "Continue")
         else -> IdentityRowLook(IdentityRowKind.InProgress, "Started. Pick up where you left off", action = "Continue")
     }
-    // The server can't be asked right now: the status is the last one known, and says so; verifying waits.
+    // The server can't be asked right now: the status still says what it was, a line under it says it is the last
+    // known one, and verifying waits.
     val known = !online || unanswered
-    val sub = when {
-        !known -> look.sub
+    val note = when {
+        !known -> null
         look.action != null && !online -> "Last known status. Verifying needs a connection."
         !online -> "Last known status. Updates when you're back online."
         else -> "Last known status. Couldn't check just now."
     }
-    return IdentityRowUi.Shown(look.copy(sub = words(sub), lastKnown = known))
+    return IdentityRowUi.Shown(look.copy(sub = words(look.sub), lastKnown = known, note = note))
 }
+
+/** "Today's tries are used up. You can try again tomorrow, after 09:05": the state named, then when it lifts. */
+private fun triesUsed(retryAt: Long?, now: Long) = "Today's tries are used up. " + tryAgain(retryAt, now).removeSuffix(".")
 
 /**
  * The profile's Verification row as it lives: the phone's last known status for the wallet network in use, and the
@@ -222,32 +230,62 @@ const val IdentityRowTitle = "Verification"
 /**
  * The profile's Verification row: a row like its neighbours (title, a sub line, the chevron), with the status at its
  * end as the canvas draws it (F2's `cx-badge`), or the one word for what opening it does. Its first paint is the row's
- * own shape, never a spinner. Whatever it shows, it opens the Verification screen.
+ * own shape, never a spinner. Whatever it shows, it opens the Verification screen. At large text sizes the status
+ * moves under the words, so the title is never squeezed. Only what changes fades; the row eases to its new height.
  */
 @Composable
 fun IdentityRow(ui: IdentityRowUi, onClick: () -> Unit, modifier: Modifier = Modifier) {
-    if (ui == IdentityRowUi.Hidden) return
     val still = CircasoTheme.reduceMotion
-    // The placeholder gives way to the status in place; one status gives way to another the same way.
-    Crossfade(ui, modifier, animationSpec = tween(if (still) 0 else CircasoMotion.QuickMs), label = "identity row") { shown ->
+    // The placeholder gives way to the row in place; after that, only the words inside it change.
+    AnimatedContent(ui, modifier, contentKey = { it is IdentityRowUi.Shown }, transitionSpec = { easeWords(still) }, label = "identity row") { shown ->
         when (shown) {
-            is IdentityRowUi.Shown -> ListRow(
-                // The sub line is the status: never cut, whatever the text size.
-                IdentityRowTitle, sub = shown.look.sub, onClick = onClick, subMaxLines = Int.MAX_VALUE, onClickLabel = "Open verification",
-                trailing = {
-                    Row(horizontalArrangement = Arrangement.spacedBy(CircasoSpacing.s2), verticalAlignment = Alignment.CenterVertically) {
-                        val c = CircasoTheme.colors
-                        shown.look.badge?.let { RowBadge(it) }
-                        // The word for what the row leads to; it waits (quieter) while the server can't be reached.
-                        shown.look.action?.let { BasicText(it, style = CircasoTheme.typography.body.copy(color = if (shown.look.lastKnown) c.inkTertiary else c.action)) }
-                        RowChevron()
-                    }
-                },
-            )
-            else -> IdentityRowSkeleton()
+            is IdentityRowUi.Shown -> IdentityRowShown(shown.look, onClick, still)
+            IdentityRowUi.Loading -> IdentityRowSkeleton()
+            IdentityRowUi.Hidden -> Unit
         }
     }
 }
+
+@Composable
+private fun IdentityRowShown(look: IdentityRowLook, onClick: () -> Unit, still: Boolean) {
+    val c = CircasoTheme.colors
+    val t = CircasoTheme.typography
+    // Past the larger text sizes the end of the row would squeeze the title: the status goes under the words instead.
+    val stacked = LocalDensity.current.fontScale >= StackedFontScale
+    val end = look.badge to look.action
+    ListRow(
+        IdentityRowTitle, onClick = onClick, onClickLabel = "Open verification",
+        below = {
+            AnimatedContent(Triple(look.sub, look.note, if (stacked) end else null), transitionSpec = { easeWords(still) }, label = "identity status") { (sub, note, under) ->
+                Column {
+                    // The status: never cut, whatever the text size.
+                    BasicText(sub, style = t.subhead.copy(color = c.inkSecondary))
+                    note?.let { BasicText(it, style = t.footnote.copy(color = c.inkTertiary)) }
+                    under?.let { RowEnd(it.first, it.second, look.lastKnown, Modifier.padding(top = CircasoSpacing.s1)) }
+                }
+            }
+        },
+        trailing = {
+            Row(horizontalArrangement = Arrangement.spacedBy(CircasoSpacing.s2), verticalAlignment = Alignment.CenterVertically) {
+                if (!stacked) AnimatedContent(end, transitionSpec = { easeWords(still) }, label = "identity end") { (badge, action) -> RowEnd(badge, action, look.lastKnown) }
+                RowChevron()
+            }
+        },
+    )
+}
+
+/** The badge, or the word for what opening the row leads to; the word waits (quieter) while the server can't be reached. */
+@Composable
+private fun RowEnd(badge: IdentityBadge?, action: String?, waiting: Boolean, modifier: Modifier = Modifier) {
+    val c = CircasoTheme.colors
+    Box(modifier) {
+        badge?.let { RowBadge(it) }
+        action?.let { BasicText(it, style = CircasoTheme.typography.body.copy(color = if (waiting) c.inkTertiary else c.action)) }
+    }
+}
+
+/** From here on the row's end goes under its words (the app's large text sizes start at 1.3×). */
+private const val StackedFontScale = 1.3f
 
 /** The canvas's `cx-badge` in a row (F2 "In review"): a 14 px sign and a 13/18 semibold word, in the tone's colour. */
 @Composable
@@ -255,12 +293,10 @@ private fun RowBadge(badge: IdentityBadge) {
     val c = CircasoTheme.colors
     val ink = when (badge.tone) { IdentityBadgeTone.Neutral -> c.inkSecondary; IdentityBadgeTone.Warning -> c.warning; IdentityBadgeTone.Critical -> c.critical }
     Row(horizontalArrangement = Arrangement.spacedBy(CircasoSpacing.s1), verticalAlignment = Alignment.CenterVertically) {
-        CircasoIconImage(badge.icon, ink, Modifier.size(BadgeGlyph), strokeWidth = 2f)
-        BasicText(badge.text, style = CircasoTheme.typography.footnote.copy(color = ink, fontWeight = FontWeight.SemiBold), maxLines = 1)
+        CircasoIconImage(badge.icon, ink, Modifier.size(CopyGlyph), strokeWidth = 2f)
+        BasicText(badge.text, style = CircasoTheme.typography.footnote.copy(color = ink, fontWeight = FontWeight.SemiBold))
     }
 }
-
-private val BadgeGlyph = 14.dp
 
 /** The row before anything is known: a title and a sub line's worth of placeholder, as tall as the row it becomes. */
 @Composable
@@ -269,7 +305,8 @@ private fun IdentityRowSkeleton() {
     val density = LocalDensity.current
     Row(
         Modifier.fillMaxWidth().defaultMinSize(minHeight = 56.dp).padding(horizontal = CircasoSpacing.s4, vertical = CircasoSpacing.s3)
-            .semantics(mergeDescendants = true) { contentDescription = "$IdentityRowTitle. Checking your status" },
+            .semantics(mergeDescendants = true) { contentDescription = "$IdentityRowTitle. Checking your status"; progressBarRangeInfo = ProgressBarRangeInfo.Indeterminate },
+        horizontalArrangement = Arrangement.spacedBy(CircasoSpacing.s3),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Column(Modifier.weight(1f)) {
@@ -281,5 +318,7 @@ private fun IdentityRowSkeleton() {
                 SkeletonBlock(Modifier.padding(vertical = (t.subhead.lineHeight.toDp() - sub) / 2).fillMaxWidth(0.62f).height(sub))
             }
         }
+        // The row's end is already where it will be.
+        RowChevron()
     }
 }

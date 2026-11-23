@@ -31,7 +31,9 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.semantics.ProgressBarRangeInfo
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.progressBarRangeInfo
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.AnnotatedString
@@ -142,7 +144,7 @@ fun IdentityContent(
                 )
                 IdentityPage.Intro -> VerifyIntroPage(s.verifyPage, bottom, onVerify, onBack, onCopy)
                 IdentityPage.State -> VerifyStatePage(s.verifyPage, bottom, onVerify, onSettings, onSupport, onBack, onCopy, lastChecked = lastChecked(s, now))
-                IdentityPage.Verified -> VerifiedPage(s, bottom, lastChecked(s, now))
+                IdentityPage.Verified -> VerifiedPage(s, bottom, lastChecked(s, now), onBack)
             }
         }
     }
@@ -165,11 +167,11 @@ internal fun lastChecked(state: IdentityUiState, now: Long): String? {
 
 /**
  * Verified, and staying that way on screen: the sign, the words, then what it means in three plain rows (what it
- * unlocks, who holds the documents, which network it counts on). Nothing to tap: Back leaves. When it happened in
+ * unlocks, who runs the check, which network it counts on), and Done, as the other end pages have. When it happened in
  * front of the person it is felt once. The contract gives no date for when someone was verified, so none is shown.
  */
 @Composable
-private fun VerifiedPage(state: IdentityUiState, bottomInset: Dp, lastChecked: String?) {
+private fun VerifiedPage(state: IdentityUiState, bottomInset: Dp, lastChecked: String?, onDone: () -> Unit) {
     val c = CircasoTheme.colors
     val t = CircasoTheme.typography
     val haptics = LocalHapticFeedback.current
@@ -178,13 +180,16 @@ private fun VerifiedPage(state: IdentityUiState, bottomInset: Dp, lastChecked: S
         if (state.justVerified && !felt) { felt = true; haptics.performHapticFeedback(HapticFeedbackType.Confirm) }
     }
     val testnet = state.network == WalletNetwork.TESTNET
-    AddMoneyPageFrame(bottomInset) {
-        Column(
-            Modifier.fillMaxWidth().padding(top = CircasoSpacing.s4).semantics(mergeDescendants = true) {},
-            horizontalAlignment = Alignment.CenterHorizontally,
-        ) {
+    AddMoneyPageFrame(
+        bottomInset,
+        footer = {
+            CircasoButton("Done", onDone, style = ButtonStyle.Secondary, size = ButtonSize.Large, block = true)
+            lastChecked?.let { FooterNote(it, Modifier.padding(top = CircasoSpacing.s2)) }
+        },
+    ) {
+        Column(Modifier.fillMaxWidth().padding(top = CircasoSpacing.s4), horizontalAlignment = Alignment.CenterHorizontally) {
             SheetBadge(CircasoIcon.Check)
-            Column(Modifier.fillMaxWidth().padding(top = CircasoSpacing.s4).padding(horizontal = CircasoSpacing.s2), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(TitleGap)) {
+            Column(Modifier.fillMaxWidth().padding(top = CircasoSpacing.s4).padding(horizontal = CircasoSpacing.s2), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(VerifyTitleGap)) {
                 BasicText("You're verified", Modifier.semantics { heading() }, style = t.title2.copy(color = c.ink, textAlign = TextAlign.Center))
                 BasicText(
                     if (testnet) "Your identity is confirmed for Testnet. This was a practice check." else "Your identity is confirmed. There's nothing more to do.",
@@ -193,18 +198,19 @@ private fun VerifiedPage(state: IdentityUiState, bottomInset: Dp, lastChecked: S
             }
         }
         ListGroup {
-            FactRow(CircasoIcon.Money, "Add money and cash out", "What being verified unlocks on Circaso")
+            // Only what is true today: adding money is what verifying opens (cash out isn't built yet), and what is
+            // said about the documents is E3's own promise, nothing more.
+            FactRow(CircasoIcon.Money, "Add money from M-Pesa", "What being verified unlocks on Circaso")
             RowDivider(Modifier.padding(start = FactInset))
-            FactRow(CircasoIcon.Lock, "Your documents stay with Didit", "Our verification partner holds your ID and selfie. Circaso keeps only the result.")
+            FactRow(CircasoIcon.Lock, "Didit ran the check", "Our verification partner. Your documents went to them encrypted and are never shown to other people.")
             RowDivider(Modifier.padding(start = FactInset))
             if (testnet) FactRow(CircasoIcon.Network, "Counts on Testnet only", "It used sample documents. Mainnet has its own check, with your real ID.")
             else FactRow(CircasoIcon.Network, "Counts on Mainnet", "Testnet has its own practice check, with sample documents.")
         }
-        if (lastChecked != null) FooterNote(lastChecked)
     }
 }
 
-/** One thing being verified means: a sign in a quiet disc, a headline and a line under it (E3's own row, in a group). */
+/** One thing being verified means: a sign in a quiet disc, a title and a line under it, as a row in a group. */
 @Composable
 private fun FactRow(icon: CircasoIcon, title: String, sub: String) {
     val c = CircasoTheme.colors
@@ -214,7 +220,7 @@ private fun FactRow(icon: CircasoIcon, title: String, sub: String) {
         horizontalArrangement = Arrangement.spacedBy(CircasoSpacing.s3), verticalAlignment = Alignment.CenterVertically,
     ) {
         Box(Modifier.size(CircasoSizes.avatarMd).clip(CircasoShapes.circle).background(c.fill), contentAlignment = Alignment.Center) {
-            CircasoIconImage(icon, c.ink, Modifier.size(FactGlyph), strokeWidth = 1.8f)
+            CircasoIconImage(icon, c.ink, Modifier.size(VerifyRowGlyph), strokeWidth = 1.8f)
         }
         Column(Modifier.weight(1f)) {
             BasicText(title, style = t.body.copy(color = c.ink))
@@ -223,11 +229,8 @@ private fun FactRow(icon: CircasoIcon, title: String, sub: String) {
     }
 }
 
-private val FactGlyph = 20.dp
 /** A fact row's divider starts under its text: past the inset, the disc and the gap. */
 private val FactInset = CircasoSizes.avatarMd + CircasoSpacing.s3
-/** Between a title and its paragraph, as the sheets have it (the canvas's 6 px). */
-private val TitleGap = 6.dp
 
 /** A whole-page message with nothing to decide: the sign, a title, one paragraph, and Done under it. */
 @Composable
@@ -290,7 +293,7 @@ private fun IdentityLoadFailedPage(state: IdentityUiState, bottomInset: Dp, onRe
 private fun IdentityLoadingPage(bottomInset: Dp) {
     val c = CircasoTheme.colors
     val t = CircasoTheme.typography
-    Box(Modifier.fillMaxSize().semantics(mergeDescendants = true) { contentDescription = "Checking where your verification stands" }) {
+    Box(Modifier.fillMaxSize().semantics(mergeDescendants = true) { contentDescription = "Checking where your verification stands"; progressBarRangeInfo = ProgressBarRangeInfo.Indeterminate }) {
         AddMoneyPageFrame(
             bottomInset,
             footer = { SkeletonBlock(Modifier.fillMaxWidth().height(CircasoSizes.controlLg), CircasoShapes.pill, c.fillStrong) },
