@@ -86,6 +86,8 @@ class KeyBackupRepository(
     private val state = MutableStateFlow(KeyBackupState())
     val status: StateFlow<KeyBackupState> = state
     private var root: ByteArray? = null
+    /** Whose [root] and [state] these are: another person signing in on this phone starts from nothing. */
+    private var owner: String? = null
     @kotlin.concurrent.Volatile private var restoring = false
 
     /**
@@ -96,8 +98,21 @@ class KeyBackupRepository(
 
     /** A copy of the root while this phone holds it (backup on here), for the other backups sealed with it; else null. */
     internal suspend fun rootOnPhone(): ByteArray? = lock.withLock {
-        if (root == null) userId()?.let { root = loadLocal(it) }
+        userId()?.let { ownedBy(it) } ?: run { root = null }
         root?.copyOf()
+    }
+
+    /**
+     * Makes [root] and [state] [person]'s (under [lock]): after a sign-out the root in memory was the last person's,
+     * and the status said what was true for them (2026-11-23, the backup prompts read it right after sign-in).
+     */
+    private suspend fun ownedBy(person: String) {
+        if (owner != person) {
+            owner = person
+            root = null
+            state.value = KeyBackupState()
+        }
+        if (root == null) root = loadLocal(person)
     }
 
     private suspend fun rootReady() {
@@ -109,7 +124,7 @@ class KeyBackupRepository(
     /** Reads this phone's root and asks the server whether backup is on; cheap, call on start and sign-in. */
     suspend fun refresh(): AppResult<KeyBackupState> = lock.withLock {
         val person = userId() ?: return@withLock AppResult.Failure(AppError.Unexpected(401))
-        if (root == null) root = loadLocal(person)
+        ownedBy(person)
         when (val r = remote.root()) {
             is AppResult.Success -> {
                 // The server says it's off (turned off on another phone): this phone stops backing up too.
@@ -132,14 +147,14 @@ class KeyBackupRepository(
     suspend fun onKeyKept(chatId: String, metaVersion: Int, key: ByteArray) {
         if (restoring) return
         val person = userId() ?: return
-        val r = root ?: return
+        val r = root?.takeIf { owner == person } ?: return
         runCatching { remote.putGroupKey(chatId, metaVersion, Base64.encode(sealKey(r, person, chatId, metaVersion, key))) }
     }
 
     /** Sends every group key on this phone (idempotent); after turning on, and once per start while it's on. */
     suspend fun backfill() {
         val person = userId() ?: return
-        val r = root ?: return
+        val r = root?.takeIf { owner == person } ?: return
         for ((chatId, version, key) in runCatching { localKeys() }.getOrDefault(emptyList())) {
             try { remote.putGroupKey(chatId, version, Base64.encode(sealKey(r, person, chatId, version, key))) }
             catch (e: CancellationException) { throw e } catch (e: Exception) { return }
@@ -155,6 +170,7 @@ class KeyBackupRepository(
         val person = userId() ?: return
         val current = (remote.root() as? AppResult.Success)?.value ?: return
         lock.withLock {
+            ownedBy(person)
             when {
                 !current.exists -> createRoot(person, credentialId, secret)
                 // Already on under this passkey: a phone that lacks the root takes it now.
@@ -322,7 +338,7 @@ class KeyBackupRepository(
      */
     private suspend fun reseal(person: String, credentialId: ByteArray, secret: ByteArray, current: BackupRootDto): Boolean {
         if (!current.exists) return false
-        if (root == null) root = loadLocal(person)
+        ownedBy(person)
         val held = root ?: return false
         val page = (remote.groupKeys(null, PageSize) as? AppResult.Success)?.value ?: return false
         val sameRoot = page.items.any { item ->
@@ -347,6 +363,7 @@ class KeyBackupRepository(
     private fun keyAad(person: String, chatId: String, version: Int) = "keybackup/gk/v1|$person|$chatId|$version".encodeToByteArray()
 
     private suspend fun keepLocal(person: String, key: ByteArray) {
+        owner = person
         root = key
         secure.put(LocalRoot, "$person|${Base64.encode(key)}")
         state.value = KeyBackupState(onServer = true, onPhone = true)

@@ -6,100 +6,30 @@ import androidx.compose.animation.core.tween
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
-import androidx.compose.animation.shrinkVertically
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.text.BasicText
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.semantics.LiveRegionMode
-import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import com.circaso.designsystem.chrome.ConfirmSheet
-import com.circaso.designsystem.chrome.glass
 import com.circaso.designsystem.components.ButtonSize
 import com.circaso.designsystem.components.ButtonStyle
 import com.circaso.designsystem.components.CircasoButton
 import com.circaso.designsystem.components.CircasoIcon
-import com.circaso.designsystem.components.CircasoIconImage
 import com.circaso.designsystem.components.ListRow
 import com.circaso.designsystem.components.Section
 import com.circaso.designsystem.theme.CircasoMotion
-import com.circaso.designsystem.theme.CircasoShapes
-import com.circaso.designsystem.theme.CircasoSizes
 import com.circaso.designsystem.theme.CircasoSpacing
 import com.circaso.designsystem.theme.CircasoTheme
-
-/**
- * Chats, after signing in again (2026-11-11): group names this phone can't read yet, and a backup that can bring them
- * back with one passkey answer. After a restore it says plainly what the backup didn't have, then can be closed.
- */
-@Composable
-fun RestoreGroupNamesCard(viewModel: KeyBackupViewModel, unlock: String, floating: Boolean = false) {
-    val s by viewModel.state.collectAsState()
-    val c = CircasoTheme.colors
-    val t = CircasoTheme.typography
-    val reduce = CircasoTheme.reduceMotion
-    val show = s.offerRestore || s.leftAfterRestore > 0
-    AnimatedVisibility(
-        show,
-        enter = if (reduce) fadeIn(snap()) else fadeIn(tween(CircasoMotion.BaseMs)) + expandVertically(tween(CircasoMotion.BaseMs)),
-        exit = if (reduce) fadeOut(snap()) else fadeOut(tween(CircasoMotion.ExitMs)) + shrinkVertically(tween(CircasoMotion.QuickMs)),
-    ) {
-        Column(
-            Modifier.fillMaxWidth().padding(horizontal = CircasoSpacing.s4, vertical = CircasoSpacing.s2)
-                .glass(CircasoShapes.lg, floating = floating).padding(CircasoSpacing.s3),
-            verticalArrangement = Arrangement.spacedBy(CircasoSpacing.s3),
-        ) {
-            Row(Modifier.semantics(mergeDescendants = true) {}, horizontalArrangement = Arrangement.spacedBy(CircasoSpacing.s3), verticalAlignment = Alignment.Top) {
-                Box(Modifier.size(CircasoSizes.iconButton).clip(CircasoShapes.circle).background(c.fill), contentAlignment = Alignment.Center) {
-                    CircasoIconImage(CircasoIcon.Lock, c.inkSecondary, Modifier.size(18.dp))
-                }
-                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(CircasoSpacing.s1)) {
-                    if (s.offerRestore) {
-                        BasicText("Restore your group names", Modifier.semantics { heading() }, style = t.headline.copy(color = c.ink))
-                        BasicText(
-                            (if (s.unreadableGroups == 1) "1 group shows" else "${s.unreadableGroups} groups show") +
-                                " members' names instead of its own. Your backup brings them back.",
-                            style = t.footnote.copy(color = c.inkSecondary),
-                        )
-                    } else {
-                        BasicText("Group names restored", Modifier.semantics { heading() }, style = t.headline.copy(color = c.ink))
-                        BasicText(
-                            (if (s.leftAfterRestore == 1) "1 group wasn't" else "${s.leftAfterRestore} groups weren't") +
-                                " in your backup. Their names come back when a member's phone is online.",
-                            style = t.footnote.copy(color = c.inkSecondary),
-                        )
-                    }
-                }
-            }
-            if (s.offerRestore) {
-                Row(horizontalArrangement = Arrangement.spacedBy(CircasoSpacing.s2)) {
-                    // "Not Now" takes only what it needs, so "Restore With Fingerprint" is never cut off.
-                    CircasoButton("Not Now", viewModel::onNotNow, style = ButtonStyle.Plain, size = ButtonSize.Medium)
-                    CircasoButton("Restore With $unlock", viewModel::onRestore, Modifier.weight(1f), style = ButtonStyle.Secondary, size = ButtonSize.Medium, busy = s.busy, enabled = s.online)
-                }
-                if (!s.online) BasicText("Restoring needs a connection.", Modifier.semantics { liveRegion = LiveRegionMode.Polite }, style = t.footnote.copy(color = c.inkTertiary))
-                PasskeyMissingLines(s, viewModel, more = KeyBackupCopy.PasskeyMissingOnChats)
-            } else {
-                CircasoButton("OK", viewModel::onNotNow, style = ButtonStyle.Plain, size = ButtonSize.Medium, block = true)
-            }
-            ErrorLines(s)
-        }
-    }
-}
 
 /** Security › Chats: the group names backup, on or off; hidden on phones without PRF passkeys. */
 @Composable
@@ -168,17 +98,16 @@ fun GroupBackupSection(viewModel: KeyBackupViewModel, unlock: String) {
 
 /**
  * A restore that couldn't reach the backup's passkey: after backing out, a quiet question; once known (or answered
- * yes), where the passkey may be and what to do. [more] is the surface's own last line (Chats points to Security).
+ * yes), where the passkey may be and what to do.
  */
 @Composable
-private fun PasskeyMissingLines(s: KeyBackupUi, viewModel: KeyBackupViewModel, more: String? = null, ask: Boolean = s.askPasskeyMissing) {
+private fun PasskeyMissingLines(s: KeyBackupUi, viewModel: KeyBackupViewModel, ask: Boolean = s.askPasskeyMissing) {
     val c = CircasoTheme.colors
     val t = CircasoTheme.typography
     if (!s.on) return
     if (s.passkeyMissing) {
         Column(Modifier.semantics { liveRegion = LiveRegionMode.Polite }, verticalArrangement = Arrangement.spacedBy(CircasoSpacing.s1)) {
             BasicText(KeyBackupCopy.PasskeyMissing, style = t.footnote.copy(color = c.inkSecondary))
-            more?.let { BasicText(it, style = t.footnote.copy(color = c.inkSecondary)) }
         }
     } else if (ask) {
         CircasoButton(KeyBackupCopy.AskPasskeyMissing, viewModel::onPasskeyMissing, style = ButtonStyle.Plain, size = ButtonSize.Medium)

@@ -47,4 +47,7 @@ val keyBackupModule = module {
     } bind SavedNames::class
     single { get<SavedNames>().let { s -> PeopleNames(s.names, (s as? SavedNamesRepository)?.loaded ?: kotlinx.coroutines.flow.MutableStateFlow(true)) } }
     viewModel { KeyBackupViewModel(get(), get(), get(), get()) }
+    // The backup set up from the word go (2026-11-23): one sheet after sign-in, "Not Now" remembered on this phone.
+    single<com.circaso.feature.keybackup.data.BackupPromptMemory> { com.circaso.feature.keybackup.data.PrefsBackupPromptMemory(get()) }
+    viewModel { com.circaso.feature.keybackup.presentation.BackupPromptViewModel(get(), get(), get(), get(), get(), userId = { get<AuthManager>().userId }) }
 }

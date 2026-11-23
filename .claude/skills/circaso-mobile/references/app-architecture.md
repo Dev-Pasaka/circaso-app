@@ -1102,7 +1102,7 @@ existed), so:
 - **A passkey that isn't here:** `PrfResult.NoPasskey` (Android `NoCredentialException`) →
   `KeyBackupProblem.PasskeyMissing` / `VaultProblem.NoPasskey`. Android's `NotAllowedError` ("User canceled the
   request", what backing out of "use another device" gives) is `Cancelled`, as on iOS where the two can't be told
-  apart; so after a cancelled restore the card offers "Passkey not on this phone?" instead of claiming it. Copy is in
+  apart; so after a cancelled restore the sheet (since 2026-11-23; Security's row too) offers "Passkey not on this phone?" instead of claiming it. Copy is in
   `KeyBackupCopy` (tested).
 - **Start a New Backup** (Security, behind a confirm sheet; `KeyBackupRepository.startNew`): KB3 then KB2 under the
   passkey this phone can use. Nothing is deleted before a passkey has answered; if the answering passkey opens the old
@@ -1111,3 +1111,48 @@ existed), so:
 - **Not done:** iOS still reports a missing passkey as a cancel (`PasskeyImpl.swift` is untouched). A vault whose own
   passkey is gone has no in-app way out beyond Remove and save again. A phone holding a root from before backup was
   turned off and on elsewhere still uploads keys under it (older gap; `reseal` refuses to make it worse).
+
+## The chat backup from the word go (2026-11-23, branch `feat/backup-from-the-start`)
+
+Pasaka: "everything should be set up from the word go, to reduce the steps". After a reinstall his backup sat under a
+passkey the phone no longer had, restore only offered "another device", and the way out was buried in Security. Now
+one sheet does what this phone needs, right after signing in, with no new server routes.
+
+- **Which sheet** (`BackupPromptViewModel.wanted`, from `KeyBackupRepository.status` after the launch `refresh`):
+  no root on the server → **SetUp**; a root this phone doesn't hold → **Restore**; this phone holds a root under a
+  passkey the vault doesn't use (`needsRepair`) → **Repair**. Unknown (offline at launch, unsupported phone) → none.
+  One sheet at a time; once past its first step or busy it is held whatever the status does (a restore's "done" isn't
+  swept away by `onPhone` turning true), and nothing follows it.
+- **When:** only while `calm` (worked out in `AppNavigation`'s Home entry): Home on top, the Chats tab, no call, no
+  secret input (`SecretsOnScreen`), no Asha bubble, no Meet Asha or invite sheet, no group-join or share sheet, no
+  pending shared link or share. It rises `SettleMillis` (1.2 s) after the screen gets calm and steps aside (keeping
+  its place) when it isn't. Money steps are pushed routes, so they are never under it.
+- **SetUp:** "Back up your chats" / "Turn On With {Face ID|Fingerprint|Screen Lock}" = `turnOn`: the vault's passkey
+  if one exists, else a new one made in the same step (one system sheet); the vault then uses it (`AccountPasskey`).
+  Done: "Your chats are backed up", closes itself after 2.4 s.
+- **Restore:** "Restore your chats" (+ "N groups show members' names…") / "Restore With …" = `restore`.
+  `PasskeyMissing` → in the same sheet "Your passkey isn't on this phone" with **Use Another Device** (the restore
+  again), **Start a New Backup** (→ the confirm step with `KeyBackupCopy.NewBackupTitle/Message`, then `startNew`), and
+  Not Now. `Cancelled` keeps the sheet and adds "Passkey not on this phone?" (Android's back-out of the hybrid sheet and
+  iOS's missing passkey both arrive as a cancel). `TurnedOff` re-reads and shows SetUp. Done: "Your chats are back"
+  (or "N groups weren't in your backup…", 6 s), "Your new backup is on".
+- **Repair:** healed silently the next time the passkey answers (the vault's `onPrfSecret` reseals); until then
+  "Finish securing your backup" / "Repair With …" = `turnOn`. Done: "Your backup is secure".
+- **Offline:** the sheet stays, its button can't be tapped and says "Needs a connection. You can carry on when you're
+  back online."; it is live again once back. A passkey is never asked while the server can't be reached.
+- **Not Now** (and Close, drag, Back before anything is done): quiet for 7 days (`QuietMillis`), kept per account
+  and sheet in `AppPreferences` text `keybackup.quiet.<Sheet>` = "userId|until" (`PrefsBackupPromptMemory`, cleared
+  on sign-out so the next sign-in is asked afresh). A restore put away stays on Chats as the quiet card
+  (`BackupRestoreCard`: "Restore your chats" / "Restore With …", which runs the restore at once inside the sheet; its
+  Not Now hides it for the session). Security's "Group names backup" row stays the place to see and manage it.
+- **Repository fix:** `KeyBackupRepository` now tracks whose root and status it holds (`ownedBy`): after a sign-out the
+  last person's root stayed in memory and `onPhone` stayed true, so a new sign-in on the same run would neither be
+  offered a restore nor back up under its own root.
+- **Previews:** `backup-setup`, `-setup-busy`, `-setup-offline`, `-setup-error`, `-setup-done`, `backup-restore`,
+  `-restore-groups`, `-restore-busy`, `-restore-cancelled`, `-restore-offline`, `-restore-error`, `backup-restored`,
+  `-restored-left`, `backup-not-here`, `-not-here-busy`, `-not-here-offline`, `backup-confirm-new`,
+  `-confirm-new-busy`, `backup-new-done`, `backup-repair`, `-repair-offline`, `backup-repaired`, `backup-card`,
+  `-card-groups`, `-card-offline` (`gallery/BackupPreviews.kt`). Tests: `BackupPromptViewModelTest`.
+- **Not verified:** real passkey sheets (needs a Play-signed build on a phone: the circaso.com asset links only match
+  the Play signing key); whether Android's Credential Manager offers the QR/hybrid option when the backup's passkey
+  isn't on the phone (it may answer `NoCredentialException` at once, which lands on the "not here" step anyway).

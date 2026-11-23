@@ -97,6 +97,7 @@ import com.circaso.feature.messaging.presentation.ChatsOverlay
 import com.circaso.feature.wallet.presentation.WalletOverlay
 import org.koin.compose.viewmodel.koinViewModel
 import org.koin.core.parameter.parametersOf
+import com.circaso.feature.keybackup.presentation.BackupPromptLayer
 
 /**
  * The single navigation host. The first screen is decided by the session, never by the screens themselves:
@@ -357,6 +358,18 @@ fun AppNavigation(forceUpdate: Boolean, home: @Composable () -> Unit) {
                     onDeletePost = momentsViewModel::onDeletePost,
                 )
                 val chatsMoments = remember(momentsViewModel) { com.circaso.feature.messaging.presentation.ChatsMoments(momentsViewModel, momentsActions) }
+                // The chat backup from the word go (2026-11-23): one sheet (set up, restore or repair) when Chats is
+                // calm, and a quiet card while a restore waits. Calm: Chats on top with nothing else open, so it is
+                // never over a money step, a call, a secret, Asha or another sheet.
+                val backupPrompt = koinViewModel<com.circaso.feature.keybackup.presentation.BackupPromptViewModel>()
+                val backupBio: com.circaso.core.platform.Biometrics = koinInject()
+                val backupUnlock = if (backupBio.available()) backupBio.name else "Screen Lock"
+                val chatsNow by chatsViewModel.state.collectAsState()
+                val callForBackup by calls.state.collectAsState()
+                val joinNow by groupJoin.state.collectAsState()
+                val backupCalm = backStack.lastOrNull() == HomeRoute && homeTab == com.circaso.feature.home.presentation.Tab.Chats.ordinal &&
+                    callForBackup == null && !secretsOnScreen.any && !ashaBubble.open && !(chatsNow.meetAsha && chatsNow.loaded) &&
+                    chatsNow.previewing == null && !joinNow.open && !shareUi.sheetOpen && pendingShare == null && pendingLink == null
                 // First time on Home: the contacts prompt once, then the phone book syncs, so New chat isn't empty.
                 val phoneBook: com.circaso.feature.contacts.data.repository.PhoneBookAutoSync = koinInject()
                 androidx.compose.runtime.LaunchedEffect(phoneBook) { phoneBook.onHome() }
@@ -377,8 +390,7 @@ fun AppNavigation(forceUpdate: Boolean, home: @Composable () -> Unit) {
                         ) {
                             ChatsBanner(s)
                             HoldBanner(w.wallet?.holdUntil, onNotMe = { backStack.add(SecurityRoute) }, reason = w.wallet?.holdReason, floating = true)
-                            val bio: com.circaso.core.platform.Biometrics = koinInject()
-                            com.circaso.feature.keybackup.presentation.RestoreGroupNamesCard(koinViewModel(), unlock = if (bio.available()) bio.name else "Screen Lock", floating = true)
+                            com.circaso.feature.keybackup.presentation.BackupRestoreCard(backupPrompt, unlock = backupUnlock, floating = true)
                         }
                     },
                     wallet = { bottomPadding ->
@@ -392,7 +404,10 @@ fun AppNavigation(forceUpdate: Boolean, home: @Composable () -> Unit) {
                         )
                     },
                     walletActions = { WalletTitleActions(walletViewModel, onAddMoney = { backStack.add(AddMoneyRoute()) }) },
-                    chatsOverlay = { ChatsOverlay(chatsViewModel, onAsha = { backStack.add(AshaRoute) }, onVoice = { backStack.add(AshaRoute); backStack.add(VoiceRoute) }) },
+                    chatsOverlay = {
+                        ChatsOverlay(chatsViewModel, onAsha = { backStack.add(AshaRoute) }, onVoice = { backStack.add(AshaRoute); backStack.add(VoiceRoute) })
+                        BackupPromptLayer(backupPrompt, backupUnlock, calm = backupCalm)
+                    },
                     walletOverlay = {
                         WalletOverlay(walletViewModel, walletActions(null, backStack::add), biometrics = koinViewModel(), groupMenu = groupMenuActions())
                     },
