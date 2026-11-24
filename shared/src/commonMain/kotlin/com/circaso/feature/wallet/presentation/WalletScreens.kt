@@ -969,7 +969,7 @@ private fun ReceiveSheetContent(wallet: Wallet?, handle: String?, onClose: () ->
         if (tab == 0 || chains.isEmpty()) {
             val h = handle?.let { "@$it" }
             // Design E4: the code, then the handle and who can use it, then Share and Copy side by side.
-            if (handle != null) com.circaso.designsystem.components.QrCode(com.circaso.core.qr.QrPayload.forHandle(handle), "QR code to pay $h", Modifier.align(Alignment.CenterHorizontally))
+            if (handle != null) com.circaso.designsystem.components.QrCode(com.circaso.core.qr.QrPayload.forHandle(handle), "QR code to pay $h", Modifier.align(Alignment.CenterHorizontally), mark = true)
             Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(CircasoSpacing.s1)) {
                 BasicText(h ?: "Set your @handle first", style = t.title2.copy(color = c.ink, textAlign = TextAlign.Center))
                 BasicText(if (h != null) "Anyone on Circaso can scan this or pay $h" else "People find you by your @handle. Set one from the You tab.", style = t.subhead.copy(color = c.inkSecondary, textAlign = TextAlign.Center))
@@ -986,7 +986,12 @@ private fun ReceiveSheetContent(wallet: Wallet?, handle: String?, onClose: () ->
         } else {
             val chain = chains[chainIndex.coerceIn(0, chains.lastIndex)]
             if (chains.size > 1) SegmentedControl(chains.map { chainName(it.blockchain).substringBefore(" (") }, chainIndex, { chainIndex = it })
-            com.circaso.designsystem.components.QrCode(com.circaso.core.qr.QrPayload.forAddress(chain.address), "QR code of your USDC address on ${chainName(chain.blockchain)}", Modifier.align(Alignment.CenterHorizontally))
+            // A USDC request for this chain (EIP-681 / Solana Pay), so a scanning wallet lands on the right network and
+            // coin; the address shown and copied below stays the plain one.
+            com.circaso.designsystem.components.QrCode(
+                com.circaso.core.qr.QrPayload.forUsdcRequest(chain.blockchain, chain.address, com.circaso.feature.wallet.domain.usdcTokenOf(chain)),
+                "QR code to send USDC on ${chainName(chain.blockchain)} to your address", Modifier.align(Alignment.CenterHorizontally), mark = true,
+            )
             BasicText("USDC on ${chainName(chain.blockchain)}", style = t.headline.copy(color = c.ink))
             BasicText(chain.address, style = t.callout.copy(color = c.ink), modifier = Modifier.fillMaxWidth())
             BasicText("Only send USDC on ${chainName(chain.blockchain)} to this address. Other coins or networks can't be recovered.", style = t.footnote.copy(color = c.warning))

@@ -24,15 +24,38 @@ import io.github.alexzhirkevich.qrose.options.circle
 import io.github.alexzhirkevich.qrose.options.roundCorners
 import io.github.alexzhirkevich.qrose.options.solid
 import io.github.alexzhirkevich.qrose.rememberQrCodePainter
+import circaso.shared.generated.resources.Res
+import circaso.shared.generated.resources.circaso_mark_black
+import org.jetbrains.compose.resources.painterResource
 
 /**
  * The design's QR tile (E4): the code on `surfaceRaised` with an 18 dp inset and a hairline ring. The code itself is
  * always dark on white whatever the theme, because scanners read contrast, not tokens; rounded modules keep it soft.
  */
 @Composable
-fun QrCode(data: String, label: String, modifier: Modifier = Modifier, size: Dp = 196.dp) {
+fun QrCode(
+    data: String,
+    label: String,
+    modifier: Modifier = Modifier,
+    size: Dp = 196.dp,
+    /**
+     * The Circaso mark in the middle (a wallet's receive code, 2026-11-24): the code is then made at error correction
+     * level H, which still reads with up to 30 % of it covered; the mark and its clear ring take about 6 %.
+     */
+    mark: Boolean = false,
+) {
     val c = CircasoTheme.colors
+    val logo = if (mark) painterResource(Res.drawable.circaso_mark_black) else null
     val painter = rememberQrCodePainter(data) {
+        if (logo != null) {
+            errorCorrectionLevel = io.github.alexzhirkevich.qrose.options.QrErrorCorrectionLevel.High
+            logo {
+                this.painter = logo
+                this.size = 0.2f
+                this.padding = io.github.alexzhirkevich.qrose.options.QrLogoPadding.Natural(0.12f)
+                this.shape = io.github.alexzhirkevich.qrose.options.QrLogoShape.circle()
+            }
+        }
         shapes {
             ball = QrBallShape.circle()
             darkPixel = QrPixelShape.roundCorners()

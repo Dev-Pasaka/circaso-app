@@ -59,9 +59,14 @@ fun CircasoTextField(
     selectAllOnStart: Boolean = false,
     /** A field for several lines ([singleLine] false) opens this tall, so it reads as room to write in. */
     minLines: Int = 1,
+    /** Drawn over the body style (an address in a fixed-width face). */
+    textStyle: androidx.compose.ui.text.TextStyle? = null,
+    /** Controls inside the field's box, after the text (design E5's paste and scan). */
+    trailing: (@Composable () -> Unit)? = null,
 ) {
     val c = CircasoTheme.colors
     val t = CircasoTheme.typography
+    val body = if (textStyle != null) t.body.merge(textStyle) else t.body
     // `/asha` summons Asha from any field that is not a secret one; the command text is not kept (AshaLauncher.kt).
     val onChange = ashaAware(value, onValueChange, secret)
     // A password-like field on screen: the screen can't be shown to Asha while it is.
@@ -91,7 +96,7 @@ fun CircasoTextField(
                 // Longer text (a group's description) grows with what is typed up to six lines, then scrolls inside.
                 maxLines = if (singleLine) 1 else maxOf(MultiLineMax, minLines),
                 minLines = if (singleLine) 1 else minLines,
-                textStyle = t.body.copy(color = if (enabled) c.ink else c.inkTertiary),
+                textStyle = body.copy(color = if (enabled) c.ink else c.inkTertiary),
                 cursorBrush = SolidColor(c.ink),
                 // A secret keeps a number pad when one was asked for (PINs); every other secret gets the password keyboard.
                 keyboardOptions = if (secret && !masked) keyboardOptions.copy(autoCorrectEnabled = false)
@@ -110,15 +115,16 @@ fun CircasoTextField(
                             .then(if (singleLine) Modifier.height(CircasoSizes.controlLg) else Modifier.heightIn(min = CircasoSizes.controlLg))
                             .background(c.fill, CircasoShapes.md)
                             .border(2.dp, outline, CircasoShapes.md)
-                            .padding(horizontal = CircasoSpacing.s4, vertical = if (singleLine) 0.dp else CircasoSpacing.s3),
+                            .padding(start = CircasoSpacing.s4, end = if (trailing != null) CircasoSpacing.s2 else CircasoSpacing.s4, top = if (singleLine) 0.dp else CircasoSpacing.s3, bottom = if (singleLine) 0.dp else CircasoSpacing.s3),
                         horizontalArrangement = Arrangement.spacedBy(CircasoSpacing.s2),
-                        verticalAlignment = if (singleLine) Alignment.CenterVertically else Alignment.Top,
+                        verticalAlignment = if (singleLine || trailing != null) Alignment.CenterVertically else Alignment.Top,
                     ) {
                         leading?.invoke()
                         Box(Modifier.weight(1f)) {
-                            if (value.isEmpty()) BasicText(placeholder, style = t.body.copy(color = c.inkTertiary))
+                            if (value.isEmpty()) BasicText(placeholder, style = body.copy(color = c.inkTertiary))
                             inner()
                         }
+                        trailing?.invoke()
                     }
                 },
             )

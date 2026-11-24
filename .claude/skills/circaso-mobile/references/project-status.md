@@ -192,6 +192,24 @@ Media3 1.4.1, multiplatform-markdown-renderer 0.46.0.
 - D-P6 The name is **Circaso** everywhere; never ship "CoinX".
 
 ### Money
+- D-M14 **Send to a Wallet, rebuilt; codes that carry the network** (Pasaka, 2026-11-24: the old E5 screen "was made in
+  a hurry"; branch `feat/send-to-wallet-redesign`). One form became the Add Money / Cash Out family: **recipient**
+  (address in a fixed-width field grouped in fours as it is typed, Paste and Scan inside the field, what kind of
+  address it is, recent outside addresses from this phone's history, the networks that can pay it as rows with their
+  balances), **amount** (the hero number, a "To" chip back to the recipient, Available and **Max**, the note, E5's
+  warning), and one **confirm** page where the payment is the **silver USDC card** (Review → the PIN → Sent →
+  Delivered without leaving it: it rises in on a spring, breathes while the PIN is up, lifts and catches the light with
+  the `Confirm` haptic when it goes and again when the chain confirms; Reduce Motion keeps only the words). The review
+  shows the whole address grouped in fours with the first and last groups in ink. The sent page follows the payment
+  (`transfer.updated`/W5) to "Delivered" with three steps and the explorer link. Max that leaves no room for the fee
+  is lowered to W17's `maxAmountMinor` on review and said. **QR:** the scanner reads EIP-681 (token transfers with
+  chain, contract and `uint256`; native transfers; `pay-`; scientific amounts), Solana Pay (`spl-token`, `amount`) and
+  plain addresses, and fills the address, **preselects the chain** and prefills the amount; a code for the other
+  network, a chain the wallet isn't on, a chain Circaso doesn't offer, a token other than USDC, an ENS name, a non-
+  transfer call or a Solana Pay checkout link fills nothing and says why. Pasting a payment URI does the same. The
+  Receive sheet's address code is now the same EIP-681 / Solana Pay USDC request (Circaso mark in the middle, ECC H; the
+  handle code got the mark too); the address shown and copied stays plain. See `app-architecture.md` → "Send to a
+  Wallet, rebuilt". Previews `-preview=send-wallet[-address|-scanned|-scan-refused|-solana|-loading|-offline|-amount|-amount-over|-review|-signing|-failed|-sent|-delivered|-live]`.
 - D-M13 **Group wallets and networks; the Wallet tab's top row** (Pasaka, 2026-11-19, after testing PR #74 on his
   phone; branch `feat/group-networks`). **The principle:** a group's money is on the network its wallet is on, not on
   whatever the Wallet tab has selected. Existing groups with a Testnet wallet can **also** get a Mainnet wallet (both);

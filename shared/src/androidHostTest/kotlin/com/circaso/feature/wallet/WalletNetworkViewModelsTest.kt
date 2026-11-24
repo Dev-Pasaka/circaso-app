@@ -53,6 +53,7 @@ import com.circaso.feature.wallet.domain.WalletRepository
 import com.circaso.feature.wallet.domain.WalletStatus
 import com.circaso.feature.wallet.presentation.ComingFlow
 import com.circaso.feature.wallet.presentation.ExternalStep
+import com.circaso.feature.wallet.presentation.SendPage
 import com.circaso.feature.wallet.presentation.PayBlock
 import com.circaso.feature.wallet.presentation.PayIntent
 import com.circaso.feature.wallet.presentation.PayStep
@@ -154,6 +155,12 @@ class WalletNetworkViewModelsTest {
     private val asked = mutableListOf<PaymentRequest>()
     private val paid = mutableListOf<PaymentRequest>()
     private var quoteAnswer: AppResult<PaymentQuote?> = AppResult.Success(quote())
+    /** Answers W17 gives first, one per ask, before [quoteAnswer]. */
+    private val quoteQueue = mutableListOf<AppResult<PaymentQuote?>>()
+    private val history = MutableStateFlow<List<Transfer>>(emptyList())
+    private val followed = MutableStateFlow<Transfer?>(null)
+    private var scanned: String? = null
+    private val scanner = object : com.circaso.core.qr.QrScanner { override val available = true; override suspend fun scan() = scanned }
     private var payAnswer: (PaymentRequest) -> AppResult<Transfer> = { r ->
         AppResult.Success(Transfer("t1", TransferDirection.Out, TransferState.Submitted, r.blockchain, "0xme", "mum", "0xmum", Amount("USDC", r.amountMinor, ""), null, null, null, null, "Mum", null, 0, 0))
     }
@@ -167,7 +174,7 @@ class WalletNetworkViewModelsTest {
             "walletOn" -> copies.getValue(args[0] as WalletNetwork)
             "getWallet" -> networks.selected.flatMapLatest { copies.getValue(it) }
             "recipient" -> AppResult.Success(Recipient(args[0] as String, RecipientStatus.CanReceive, emptyList()))
-            "quote" -> { asked += args[0] as PaymentRequest; quoteAnswer }
+            "quote" -> { asked += args[0] as PaymentRequest; quoteQueue.removeFirstOrNull() ?: quoteAnswer }
             "pay" -> { val r = args[0] as PaymentRequest; paid += r; whilePaying(); payAnswer(r) }
             "validateAddress" -> AppResult.Success(args[1] as String)
             "refresh" -> { refreshedOn += networks.current(); copies.getValue(networks.current()).value?.let { AppResult.Success(it) } ?: AppResult.Failure(AppError.Network) }
@@ -188,7 +195,7 @@ class WalletNetworkViewModelsTest {
 
     private fun sendVm() = SendToWalletViewModel(
         ObserveWalletUseCase(walletRepo), ValidateAddressUseCase(walletRepo), PayUseCase(walletRepo), connection,
-        quotePayment = QuotePaymentUseCase(walletRepo), networks = networks,
+        quotePayment = QuotePaymentUseCase(walletRepo), networks = networks, scanner = scanner, history = history, follow = { followed },
     )
 
     private fun walletVm() = WalletViewModel(
@@ -388,6 +395,95 @@ class WalletNetworkViewModelsTest {
         assertEquals(SolanaFeeLine, s.feeText)
         vm.onChain("SOL-DEVNET"); runCurrent()
         assertFalse(vm.state.value.gasShort, "gone once the form changes")
+    }
+
+
+    // ---- Send to a wallet, redesigned (2026-11-24): codes, recents, Max, the sent page
+
+    private val to = "0x7a3f0000000000000000000000000000001e4b00"
+    private val usdcBaseSepolia = "0x036CbD53842c5426634e7929541eC2318f3dCF7e"
+
+    private fun out(address: String, chain: String, at: Long, name: String? = null, toUser: String? = null) =
+        Transfer("t$at", TransferDirection.Out, TransferState.Confirmed, chain, "0xme", toUser, address, Amount("USDC", "1000000", ""), null, null, null, null, name, null, at, at)
+
+    @Test fun aScannedUsdcRequestFillsTheAddressTheNetworkAndTheAmount() = runTest(dispatcher) {
+        val vm = sendVm(); keep(vm); advanceUntilIdle()
+        scanned = "ethereum:$usdcBaseSepolia@84532/transfer?address=$to&uint256=12500000"
+        vm.onScan(); advanceUntilIdle()
+        val s = vm.state.value
+        assertEquals(to, s.address); assertEquals("BASE-SEPOLIA", s.blockchain); assertEquals("12.5", s.amountText)
+        assertNull(s.scanProblem); assertTrue(s.canContinue)
+    }
+
+    @Test fun aCodeForTheOtherNetworkFillsNothingAndSaysWhatToDo() = runTest(dispatcher) {
+        val vm = sendVm(); keep(vm); advanceUntilIdle()
+        scanned = "ethereum:0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913@8453/transfer?address=$to&uint256=1"
+        vm.onScan(); advanceUntilIdle()
+        val s = vm.state.value
+        assertEquals("", s.address); assertEquals("", s.amountText)
+        assertTrue(s.scanProblem!!.contains("switch to Mainnet"), s.scanProblem)
+        vm.onAddress(to); runCurrent()
+        assertNull(vm.state.value.scanProblem, "gone once the address changes")
+    }
+
+    @Test fun aPastedPaymentUriIsReadAsACode() = runTest(dispatcher) {
+        val vm = sendVm(); keep(vm); advanceUntilIdle()
+        vm.onAddress("ethereum:$to@84532?value=5"); runCurrent()
+        val s = vm.state.value
+        assertEquals(to, s.address); assertEquals("BASE-SEPOLIA", s.blockchain)
+        assertTrue(s.notice!!.contains("ETH, not USDC"))
+    }
+
+    @Test fun continueNeedsAWholeAddressAndANetworkThatCanPayIt() = runTest(dispatcher) {
+        val vm = sendVm(); keep(vm); advanceUntilIdle()
+        vm.onAddress("0x7a3f"); runCurrent()
+        assertFalse(vm.state.value.canContinue)
+        vm.onContinue(); runCurrent(); assertEquals(SendPage.Recipient, vm.state.value.page)
+        // A Solana address on a wallet that is only on Base: no network can pay it.
+        vm.onAddress("9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM"); runCurrent()
+        assertTrue(vm.state.value.chains.isEmpty()); assertFalse(vm.state.value.canContinue)
+        vm.onAddress(to); runCurrent()
+        vm.onContinue(); runCurrent()
+        assertEquals(SendPage.Amount, vm.state.value.page)
+        vm.onBackToRecipient(); runCurrent(); assertEquals(SendPage.Recipient, vm.state.value.page)
+    }
+
+    @Test fun recentAddressesAreThisNetworksOutsidePaymentsNewestFirst() = runTest(dispatcher) {
+        history.value = listOf(
+            out(to, "BASE-SEPOLIA", 10, name = "0x7a3f…1e4b00"),
+            out(to.uppercase().replace("0X", "0x"), "BASE-SEPOLIA", 30), // the same address again, newer
+            out("0x51c0000000000000000000000000000000c4a1", "BASE-SEPOLIA", 20),
+            out("0x0000000000000000000000000000000000000001", "BASE", 40), // Mainnet
+            out("0xdeposit00000000000000000000000000000000", "BASE-SEPOLIA", 50, name = "M-Pesa"), // a Cash Out deposit
+            out("0xmum", "BASE-SEPOLIA", 60, toUser = "mum"), // a person
+        )
+        val vm = sendVm(); keep(vm); advanceUntilIdle()
+        val recent = vm.state.value.recent
+        assertEquals(listOf(30L, 20L), recent.map { it.at })
+        vm.onRecent(recent.last()); runCurrent()
+        assertEquals(SendPage.Amount, vm.state.value.page); assertEquals("0x51c0000000000000000000000000000000c4a1", vm.state.value.address)
+    }
+
+    @Test fun maxLeavesRoomForTheFeeOnReview() = runTest(dispatcher) {
+        quoteQueue += AppResult.Success(quote(problem = QuoteProblem.InsufficientFunds).copy(maxAmountMinor = "499750000"))
+        val vm = sendVm(); keep(vm); advanceUntilIdle()
+        vm.onAddress(to); runCurrent(); vm.onContinue(); runCurrent()
+        vm.onMax(); runCurrent()
+        assertEquals("500", vm.state.value.amountText); assertTrue(vm.state.value.maxed)
+        vm.onReview(); advanceUntilIdle()
+        val s = vm.state.value
+        assertEquals(ExternalStep.Review, s.step); assertEquals("499.75", s.amountText)
+        assertEquals(listOf("500000000", "499750000"), asked.map { it.amountMinor })
+        assertTrue(s.notice!!.contains("499.75"))
+    }
+
+    @Test fun theSentPageFollowsThePaymentToTheChain() = runTest(dispatcher) {
+        val vm = sendVm(); keep(vm); advanceUntilIdle()
+        vm.onAddress(to); vm.onAmount("12"); runCurrent(); vm.onReview(); advanceUntilIdle()
+        vm.onConfirm(); advanceUntilIdle()
+        assertEquals(TransferState.Submitted, vm.state.value.result?.state)
+        followed.value = vm.state.value.result!!.copy(state = TransferState.Confirmed, txHash = "0xhash"); advanceUntilIdle()
+        assertEquals(TransferState.Confirmed, vm.state.value.result?.state); assertEquals("0xhash", vm.state.value.result?.txHash)
     }
 
     // ---- The Wallet tab

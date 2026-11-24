@@ -730,7 +730,7 @@ fun AppNavigation(forceUpdate: Boolean, home: @Composable () -> Unit) {
             entry<SendToWalletRoute>(metadata = Panes.FullScreen) { route ->
                 SendToWalletScreen(
                     koinViewModel<SendToWalletViewModel>(key = "send-to-wallet-${route.fromWalletId}", parameters = { parametersOf(route.fromWalletId) }),
-                    onBack = ::pop, onOpenTransfer = { id -> pop(); backStack.add(TransferRoute(id)) },
+                    onBack = ::pop, onOpenTransfer = { id -> pop(); backStack.add(TransferRoute(id)) }, onSupport = { backStack.add(HelpRoute) },
                 )
             }
             // E2: full screen like the other money flows; Back from an order leaves it running (re-entering resumes it).

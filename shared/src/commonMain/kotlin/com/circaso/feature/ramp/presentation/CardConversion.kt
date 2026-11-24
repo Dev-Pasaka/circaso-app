@@ -461,7 +461,7 @@ private fun DrawScope.drawSheen(path: Path, band: Brush, at: Float, alpha: Float
 
 /** Lays its children over each other at one size: the card's shape, or taller when its words need it (large text). */
 @Composable
-private fun CardStack(modifier: Modifier, content: @Composable () -> Unit) {
+internal fun CardStack(modifier: Modifier, content: @Composable () -> Unit) {
     Layout(content, modifier) { measurables, constraints ->
         val width = constraints.maxWidth
         val shape = (width / CardAspect).toInt()

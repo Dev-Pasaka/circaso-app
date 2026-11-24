@@ -246,7 +246,7 @@ A Circle user-controlled wallet: the server makes challenges, the person signs t
     - Simulator builds are arm64 only (`ARCHS=arm64`): the shared Kotlin framework has no x86_64 slice.
     Theme and words in `CirclePWTheme.json` and `CirclePWLocalizable.strings`.
 - **Fiat**: the phone's region currency (`localCurrencyCode()`, Kenya → KES) goes as `?currency=`; USDC = 1 USD at the server's rate. Amount maths is decimal-string only (`MinorUnits`, `usdcToFiat`, `fiatToUsdcMinor`): no float ever touches money. "Rates by Exchange Rate API" is credited under the total.
-- **Screens**: Wallet tab (E1: balance, Add/Send/Receive/Cash Out, Coins per network, Recent from the local table, Networks link; create and setting-up states before a wallet; hide balances), Receive sheet (E4: @handle to share or copy, or the address per network; QR needs a library and is not added), Pay (C4 → the SDK's C5 → C6: pick a contact or arrive from a chat, type in fiat or USDC, note, W9 check with "Remind them" on `NO_WALLET` and a network pick on `NO_WALLET_ON_CHAIN`, W4 then the SDK, then the card into the chat), Send to a wallet (E5: address with paste, network, amount, warning, W11 check, review, sign), Payment (C7: amount, details, status, network, share receipt), Activity (E7, from the local table until W6 ships), Networks (W12: add a chain runs a challenge). Add money (E2) and Cash out (E6) open sheets that say the rails are coming; Cash out offers "Send to an Exchange".
+- **Screens**: Wallet tab (E1: balance, Add/Send/Receive/Cash Out, Coins per network, Recent from the local table, Networks link; create and setting-up states before a wallet; hide balances), Receive sheet (E4: @handle to share or copy, or the address per network; QR needs a library and is not added), Pay (C4 → the SDK's C5 → C6: pick a contact or arrive from a chat, type in fiat or USDC, note, W9 check with "Remind them" on `NO_WALLET` and a network pick on `NO_WALLET_ON_CHAIN`, W4 then the SDK, then the card into the chat), Send to a wallet (E5: address with paste, network, amount, warning, W11 check, review, sign; rebuilt 2026-11-24, see "Send to a Wallet, rebuilt"), Payment (C7: amount, details, status, network, share receipt), Activity (E7, from the local table until W6 ships), Networks (W12: add a chain runs a challenge). Add money (E2) and Cash out (E6) open sheets that say the rails are coming; Cash out offers "Send to an Exchange".
 - **In chats** (superseded 2026-11-04 by "Money in the chat" below: no Pay screen from a chat): a payment is an encrypted `payment` payload (`transferId`, `amountMinor`, `asset`, `blockchain`, the note as `text`) shown as `MoneyCard` on both sides; the receiver reads W5 from the card. The note never reaches the wallet API.
 - **Realtime**: `wallet` joined `KnownModules` (its `seq` is kept); `transfer.updated`, `payment.received`, `wallet.ready` (ends the create/add polling at once) and `setup.requested` (the tab's nudge "Amina wants to send you money") are handled in the repository.
 - **Previews**: `wallet`, `wallet-create`, `wallet-offline`, `transfer`.
@@ -486,6 +486,83 @@ card hardly dims; a landing already heard opens whole, with no settle nudge.
   sound off, never for refund/expiry/cancel/review/failure, coins not silenced, no player, stage mapping, words, badge).
 - **Verified:** Android `assembleDebug`, ramp/wallet/core host tests, iOS simulator build and run (iPhone 18 Pro, iOS
   27.2): conversion recorded twice at ~59–64 fps around the break-up, longest frame gap 47 ms (one dropped frame); frames checked (pieces carry the right words, the label then turns to "Received on M-Pesa"). **Not verified:** on a phone, audio, Android motion.
+
+## Send to a Wallet, rebuilt (2026-11-24, branch `feat/send-to-wallet-redesign`; design E5 and the Add Money family)
+
+Pasaka: the old E5 screen "was made in a hurry"; make it fluid, premium and part of the app. E5 is the only frame;
+everything past it follows Add Money / Cash Out (page frame, pinned footer, step slides, the silver card) and HIG.
+
+- **Pages** (`SendToWalletScreen.kt`, one `AnimatedContent` keyed by `sendPageOf`): `NotOwner` (a group member: the
+  message page), `Recipient`, `Amount`, `Confirm`. The view model's steps are unchanged (`ExternalStep.Form` holds both
+  form pages as `SendPage`; Review, Signing and Done are the confirm page), so the network pinning, W11 → W17 → W4 and
+  the retry/idempotency rules are exactly as before.
+- **Recipient:** `CircasoTextField` (new `textStyle` and `trailing` slots) in monospace with `AddressGrouping` (spaces
+  every four past `0x`, drawn only; the caret maps across them), Paste and Scan inside the field, a line saying what
+  kind of address it is (or that it isn't whole yet), the scan's refusal (red) or notice (calm) under it, **Recent**
+  (outside addresses this wallet paid on this network from `transfers`, newest first, deduplicated, never Cash Out
+  deposits, people or groups; shown while the field is empty; a tap goes straight to the amount) and **Network** as
+  rows of the chains that can pay this kind of address (EVM ↔ 0x, Solana ↔ base58) with each balance. Continue needs a
+  whole address and such a network (`canContinue`).
+- **Amount:** a "To 0x7a3F … 4b00" chip (back to the recipient), the hero entry (Cash Out's), the fiat line or the
+  over-balance line in red, Available and **Max** (`onMax`; on review, if W17 says the fee doesn't fit on top, the
+  amount becomes its `maxAmountMinor`, is priced again, and a notice says so), the note, E5's warning, fee/they-receive
+  rows, Solana's SOL note.
+- **Confirm (`SendCard.kt`):** the silver USDC card (Add Money's `RampBrand`/`SilverBrush`) stays in place from Review
+  through the PIN to Sent; only what is under it changes. Phases (`sendPhaseOf`): Ready, Approving (a slow breath, a
+  pulsing "Approving" mark, "Waiting for your PIN"), Sending ("Sending": lift + one sheen + a light tick, since the
+  chain can still refuse it), Delivered (the same with the `Confirm` haptic, a tick), Failed ("Didn't go through":
+  saturation grey and the ramp cards' veil, a cross). The card is laid out by the ramp's `CardStack` (the card's shape,
+  or taller at large text), its shadow only on light ground, the sheen band made once per size and translated. Everything is `graphicsLayer`/draw-phase on `Animatable`s, interruptible, nothing allocated per
+  frame; Reduce Motion keeps only the words. Review: the whole address (`GroupedAddress`: groups of four, first and
+  last in ink and semibold, tap to copy, spoken as "starting … and ending …"), Paying from, Network, Fee, Total, They
+  receive, Note, the fee line, G2's failure with its reference, the irreversibility warning. The button names the
+  amount ("Send 50.00 USDC"). Sent: title by state (live region), three steps (Approved, On the network, Delivered),
+  To / Network / Fee, "View on Explorer" once there is a hash (else "When the network has it"), Done and View Payment.
+  The view model follows the sent transfer (`follow` = `ObserveTransferUseCase`). The steps' line fills on
+  `CircasoSpring.progress()`; "On the network" is ticked once there is a hash. A failed payment shows its reference
+  (tap to copy) and Contact Support.
+- **Errors:** every message is from `ErrorMessages` by code. W11 saying the address isn't valid sends the person back
+  to the recipient page with it under the field; a W11/W17 failure or a limit stays on the amount page as a red banner
+  with the reference (`problem`); W4 failures stay on Review (G2) as before; going back while the check runs cancels it.
+  Recents exclude Cash Out deposit addresses by `MpesaSales` (and the phone's "M-Pesa" name), so a ramp address is
+  never offered again. The keyboard waits for history to load, so it never covers recents.
+- **Departures from E5:** two pages instead of one form; no "Coin · USDC" row (USDC is on the card and the amount); the
+  form's "Network fee" row shows only on Solana (the fee is priced for exactly this payment on Review, as before).
+- **Codes** (`core/qr/Qr.kt` reads, `feature/wallet/domain/ScanResolve.kt` decides): `QrPayload.Scanned.Address` now
+  carries `chainId`, `token`, `amountUnits` (EIP-681 `uint256`, exact integer, `2.014e6` allowed), `amount` (Solana Pay),
+  `nativeCoin`, `amountUnreadable`; `Scanned.Unsupported(why)` for non-transfer calls, ENS names, Solana Pay
+  transaction requests and transfers without a recipient. `resolveScan(scanned, chains, network, whose)` →
+  `ScanFill.Fill(address, blockchain, amountText, notice)` or `ScanFill.Refuse(message)`. Chain ids (`ChainIds`): 8453
+  BASE, 84532 BASE-SEPOLIA, 137 MATIC, 80002 MATIC-AMOY, 1 ETH, 11155111 ETH-SEPOLIA (plus ARB/AVAX for naming only).
+  USDC contracts (`UsdcContracts`, the backend's `CustodyChainsConfig` table) and the wallet's own W1 `tokenAddress`
+  both count as USDC. Pasting a payment URI into the address field goes through the same path.
+
+  | Code | Result |
+  | --- | --- |
+  | `ethereum:<usdc>@<id>/transfer?address=<to>&uint256=<n>` on a chain the wallet is on | address, chain, amount (n at the asset's decimals) |
+  | the same without `uint256` / without `@id` | address and chain (the contract names the chain) |
+  | `ethereum:<to>@<id>` | address and chain; with `value>0` a notice "asks for ETH/POL, not USDC" |
+  | `ethereum:<to>` or a bare `0x…` | address; the person picks among the EVM chains |
+  | a bare Solana address, `solana:<to>` | address and the wallet's Solana chain; `amount` without `spl-token` → "asks for SOL" notice |
+  | `solana:<to>?spl-token=<USDC mint>&amount=<a>` | address, SOL or SOL-DEVNET by the mint, amount |
+  | chain of the other network | refused: "That code is for USDC on Base Testnet. This is your wallet on Mainnet: switch to Testnet…" |
+  | chain Circaso offers but the wallet isn't on (or still adding) | refused: "…which your wallet isn't on. Add Polygon under Wallet → Networks first." |
+  | chain Circaso doesn't offer / unknown id | refused, naming it ("Arbitrum") or its id |
+  | token other than USDC (or USDC of another chain with this id) | refused: "asks for a coin other than USDC" |
+  | unreadable or too precise amount | the rest filled, "the amount couldn't be read exactly" |
+  | other functions, ENS names, `solana:https…`, `circaso://pay/@h`, anything else | refused with what to do |
+
+- **Tests:** `commonTest/core/qr/QrPayloadTest.kt` (15), `commonTest/feature/wallet/ScanResolveTest.kt` (13), and in
+  `androidHostTest/feature/wallet/WalletNetworkViewModelsTest.kt` the scan fill, the other-network refusal, paste,
+  Continue's rule, recents, Max lowered for the fee, and the sent page following the transfer.
+- **Previews:** `send-wallet`, `-address`, `-scanned`, `-scan-refused`, `-solana`, `-loading`, `-offline`, `-amount`,
+  `-amount-over`, `-review`, `-signing`, `-failed`, `-sent`, `-delivered`, `-live` (the card's motion on a loop); each
+  takes `-dark`, `-hc`, `-dark-hc`, `-still`.
+- **Open question (design review, 2026-11-24):** the Receive code is now an EIP-681 request whose first `0x…` is the
+  USDC contract, as Pasaka asked. Some exchange withdrawal scanners take the first address after `ethereum:` and would
+  send to the contract. If that shows up in testing, go back to the bare address (one line in `ReceiveSheetContent`).
+- **Not done:** EIP-55 checksum checking on the phone (W11 checks the address on the server), ENS, Solana Pay
+  transaction requests; not yet run against the server or on a phone at the time of writing.
 
 ## Cash out: selling USDC for M-Pesa (2026-11-23, guide "Selling USDC for M-Pesa" R1/R2/R7/W4; design E6's place)
 
@@ -1125,7 +1202,11 @@ in `wallet_activity`), so live means reloading those copies when money moves:
 ## QR codes (2026-10-29, design E4/E5)
 
 - Drawing: `qrose` 1.3.1 in shared code (`designsystem/components/QrCode.kt`): always dark on white inside the design's raised tile, so scanners read it in every theme. Approved by Pasaka as "qrose 1.0.x"; 1.3.1 is the release that works with Compose 1.12.
-- Payloads (`core/qr/Qr.kt`): "On Circaso" codes are `circaso://pay/@handle`; wallet codes are the bare address. `QrPayload.read` also accepts EIP-681 / `solana:` URIs and `@handle`.
+- Payloads (`core/qr/Qr.kt`): "On Circaso" codes are `circaso://pay/@handle`; wallet codes are, since 2026-11-24, a USDC
+  request (`QrPayload.forUsdcRequest`: EIP-681 `ethereum:<usdc>@<chainId>/transfer?address=<addr>` on EVM chains,
+  `solana:<addr>?spl-token=<mint>` on Solana; the bare address when the chain or contract isn't known). Both receive
+  codes carry the Circaso mark (`QrCode(mark = true)`, error correction H). `QrPayload.read` parses EIP-681, Solana Pay,
+  plain addresses and `@handle` (see "Send to a Wallet, rebuilt" for what it fills in).
 - Scanning: `QrScanner` → Android `play-services-code-scanner` 16.1.0 (Google's ML Kit UI, no camera permission), iOS VisionKit `DataScannerViewController` through `QrScannerBridge` (`QrScannerImpl.swift`, `NSCameraUsageDescription`). Used by Send to a Wallet (address) and the Pay person picker (a Circaso code → W/handle lookup → pay).
 
 ## Support (2026-10-29, designs SP01–SP06)
