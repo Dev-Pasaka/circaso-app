@@ -57,12 +57,16 @@ interface ContactsDao {
     suspend fun updateVerified(userId: String, verified: Boolean)
 
     /**
-     * Everyone this phone knows to be verified (the verified badge, 2026-11-24): a contact, someone in a chat, or me.
+     * Everyone this phone knows to be verified (the verified badge, 2026-11-24): a contact, someone in a chat, me, or
+     * someone I paid or was paid by (W6 `counterparty.verified`, DB v26: a payee in no contact or chat).
      * What [com.circaso.designsystem.components.LocalVerifiedPeople] is made from.
      */
     @Query(
         "SELECT userId FROM contact WHERE verified = 1 UNION SELECT userId FROM chat_member WHERE verified = 1 " +
-            "UNION SELECT userId FROM profile WHERE verified = 1",
+            "UNION SELECT userId FROM profile WHERE verified = 1 " +
+            "UNION SELECT COALESCE(counterpartUserId, toUserId) FROM transfer " +
+            "WHERE counterpartVerified = 1 AND COALESCE(counterpartUserId, toUserId) IS NOT NULL " +
+            "UNION SELECT counterpartUserId FROM wallet_activity WHERE counterpartVerified = 1 AND counterpartUserId IS NOT NULL",
     )
     fun observeVerified(): Flow<List<String>>
 

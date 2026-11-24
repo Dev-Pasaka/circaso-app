@@ -136,6 +136,12 @@ internal class FakeWalletDao : WalletDao {
     override suspend fun deleteIncoming(id: String) { if (transfers.value[id]?.direction == "In") transfers.value = transfers.value - id }
     override suspend fun clearSnapshot() { snapshots.value = emptyMap() }
     override suspend fun clearTransfers() { transfers.value = emptyMap() }
+    override suspend fun updateTransfersVerified(userId: String, verified: Boolean) {
+        transfers.value = transfers.value.mapValues { (_, t) -> if ((t.counterpartUserId ?: t.toUserId) == userId) t.copy(counterpartVerified = verified) else t }
+    }
+    override suspend fun updateActivityVerified(userId: String, verified: Boolean) {
+        activity.value = activity.value.map { if (it.counterpartUserId == userId) it.copy(counterpartVerified = verified) else it }
+    }
 }
 
 internal class FakeWalletRemote : WalletRemote {

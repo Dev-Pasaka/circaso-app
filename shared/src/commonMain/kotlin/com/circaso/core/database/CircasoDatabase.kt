@@ -66,7 +66,7 @@ import kotlinx.coroutines.Dispatchers
         com.circaso.feature.messaging.data.local.MessageReactionEntity::class, com.circaso.feature.messaging.data.local.MessageRetryEntity::class,
         com.circaso.feature.names.data.SavedNameEntity::class,
     ],
-    version = 25,
+    version = 26,
     autoMigrations = [
         AutoMigration(from = 1, to = 2), AutoMigration(from = 2, to = 3),
         AutoMigration(from = 3, to = 4), AutoMigration(from = 4, to = 5),
@@ -96,6 +96,9 @@ import kotlinx.coroutines.Dispatchers
         // 25: the verified badge (2026-11-24): contact.verified, chat_member.verified, profile.verified and
         // profile.verifiedAt. False until the next refresh says otherwise.
         AutoMigration(from = 24, to = 25),
+        // 26: transfer.counterpartVerified and wallet_activity.counterpartVerified (W6 `counterparty.verified`), so a
+        // payee in no contact or chat shows the seal. False until the next history read says otherwise.
+        AutoMigration(from = 25, to = 26),
     ],
 )
 @ConstructedBy(CircasoDatabaseConstructor::class)

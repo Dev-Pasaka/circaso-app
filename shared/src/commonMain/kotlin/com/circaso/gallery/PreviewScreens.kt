@@ -225,6 +225,30 @@ private val momentMoney = listOf(
 @Composable
 fun PreviewScreens(name: String) {
     when (name) {
+        // The verified badge (2026-11-24): seals from a sample set of verified people instead of Room. Mama Njeri is a
+        // payee in no contact or chat (W6 `counterparty.verified`, Room v26); Achieng and Juma are verified contacts.
+        "activity-verified" -> androidx.compose.runtime.CompositionLocalProvider(
+            com.circaso.designsystem.components.LocalVerifiedPeople provides setOf("u-mum", "u3"),
+        ) {
+            com.circaso.feature.wallet.presentation.ActivityContent(
+                com.circaso.feature.wallet.presentation.ActivityUiState(
+                    transfers = sampleTransfers().map { t ->
+                        when (t.transferId) { "t1" -> t.copy(counterpartUserId = "u-mum"); "t2" -> t.copy(counterpartUserId = "u3"); else -> t }
+                    },
+                    fiat = sampleWallet().fiat, loaded = true,
+                    today = com.circaso.core.platform.localDayIndex(com.circaso.core.sync.nowMillis()),
+                ),
+                {}, {}, {}, {},
+            )
+        }
+        "contacts-verified", "contacts-sheet-verified" -> androidx.compose.runtime.CompositionLocalProvider(
+            com.circaso.designsystem.components.LocalVerifiedPeople provides setOf("2", "4"),
+        ) {
+            ContactsContent(
+                ContactsUiState(contacts = peopleContacts, selected = if (name == "contacts-sheet-verified") peopleContacts[0] else null, loaded = true),
+                ContactsActions(),
+            )
+        }
         // Home's real frame with sample tabs: the floating tab bar, or the left rail on a short or wide window.
         "home", "home-wallet", "home-you" -> com.circaso.feature.home.presentation.HomeScreen(
             initialTab = when (name) { "home-wallet" -> 1; "home-you" -> 2; else -> 0 },

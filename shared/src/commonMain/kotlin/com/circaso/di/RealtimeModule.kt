@@ -63,6 +63,10 @@ val realtimeModule = module {
                     get<com.circaso.feature.messaging.data.local.ChatsDao>().updateMemberProfile(p.userId, p.displayName, p.handle, p.avatarUrl, p.verified)
                     // The verified badge (2026-11-24) comes and goes with this frame too.
                     get<com.circaso.feature.contacts.data.local.ContactsDao>().updateVerified(p.userId, p.verified)
+                    // And on every payment with them (DB v26), so a payee's seal follows too.
+                    val wallet = get<com.circaso.feature.wallet.data.local.WalletDao>()
+                    wallet.updateTransfersVerified(p.userId, p.verified)
+                    wallet.updateActivityVerified(p.userId, p.verified)
                 }
             },
         )

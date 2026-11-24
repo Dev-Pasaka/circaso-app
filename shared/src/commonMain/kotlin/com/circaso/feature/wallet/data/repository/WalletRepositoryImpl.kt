@@ -198,6 +198,21 @@ class WalletRepositoryImpl(
                 )
             }
         }
+        syncVerified(page.transactions)
+    }
+
+    /**
+     * The verified badge (2026-11-24): each person's badge in a fresh W6 page goes onto every payment stored with them,
+     * so a seal taken back leaves the older rows too (a payee in no contact or chat gets no `profile.updated` frame).
+     * Rows are newest first, so the first one per person wins.
+     */
+    private suspend fun syncVerified(rows: List<com.circaso.feature.wallet.data.remote.TransactionDto>) {
+        rows.mapNotNull { row -> row.counterparty?.let { c -> c.userId?.let { it to c.verified } } }
+            .distinctBy { it.first }
+            .forEach { (userId, verified) ->
+                dao.updateTransfersVerified(userId, verified)
+                dao.updateActivityVerified(userId, verified)
+            }
     }
 
     /** One W6 row into the person's own history, merged with what frames already stored. */
@@ -216,6 +231,8 @@ class WalletRepositoryImpl(
             remote.transactions(cursor = cursor, limit = HistoryPage, walletId = walletId).map { page ->
                 if (walletId != null) dao.saveActivity(page.transactions.map { it.toActivity(walletId, network) })
                 else page.transactions.forEach { saveHistoryRow(it) }
+                // The server reads the badge when it answers, so any page's answer is today's.
+                syncVerified(page.transactions)
                 page.nextCursor
             }
         }
@@ -495,7 +512,10 @@ class WalletRepositoryImpl(
     override suspend fun refreshActivity(walletId: String): AppResult<Unit> {
         val network = net()
         return on(network) {
-            remote.transactions(limit = HistoryPage, walletId = walletId).map { page -> dao.saveActivity(page.transactions.map { it.toActivity(walletId, network) }) }
+            remote.transactions(limit = HistoryPage, walletId = walletId).map { page ->
+                dao.saveActivity(page.transactions.map { it.toActivity(walletId, network) })
+                syncVerified(page.transactions)
+            }
         }
     }
 
@@ -739,6 +759,7 @@ internal fun TransactionDto.toActivity(walletId: String, asked: WalletNetwork = 
     counterpartGroupId = counterparty?.groupId ?: (counterparty?.spaceId ?: if (direction == "OUT") toSpaceId else fromSpaceId)?.let { SpacePrefix + it },
     chatId = chatId, txHash = txHash, occurredAt = isoMillis(occurredAt) ?: nowMillis(),
     network = networkOf(network, blockchain, asked),
+    counterpartVerified = counterparty?.userId != null && counterparty.verified,
 )
 
 /** A row's network: what the server said, else what its chain says (chains never overlap), else what was asked for. */
@@ -788,6 +809,7 @@ internal fun TransferResponse.toEntity(existing: TransferEntity?, asked: WalletN
         payoutRequestId = payoutRequestId ?: existing?.payoutRequestId,
         counterpartUserId = existing?.counterpartUserId ?: to.userId.takeIf { direction != "IN" },
         network = networkOf(network, blockchain, asked),
+        counterpartVerified = existing?.counterpartVerified ?: false,
     )
 }
 
@@ -808,6 +830,8 @@ internal fun TransactionDto.toEntity(key: String, existing: TransferEntity?, ask
         walletId = existing?.walletId, fromGroupId = existing?.fromGroupId, toGroupId = party?.groupId ?: existing?.toGroupId, payoutRequestId = existing?.payoutRequestId,
         counterpartUserId = party?.userId ?: existing?.counterpartUserId,
         network = networkOf(network, blockchain, asked),
+        // A person on the other side: the server's answer now. No person named (an address, a group): what was kept.
+        counterpartVerified = if (party?.userId != null) party.verified else existing?.counterpartVerified ?: false,
     )
 }
 

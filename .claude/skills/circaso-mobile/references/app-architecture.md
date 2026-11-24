@@ -83,7 +83,14 @@ Decided while starting integration guide §10 step 11 (plan: `~/.claude/plans/mi
 - **Bridge (`core/crypto/SignalCrypto`):** one stateless interface in `commonMain`. Each call takes the records it needs (own identity, the peer's session, prekeys by id, a sender-key record) and returns the result plus the changed records; the messaging layer stores them sealed in Room in one transaction per operation. Android implements it on the Java API (`AndroidSignalCrypto`); iOS through `SignalBridgeApi`, implemented in `iosApp/iosApp/SignalCryptoImpl.swift` and installed in `iOSApp.swift` (`SignalBridge.shared.api`). Swift failures cross as an `NSError` whose description is libsignal's error case name; both sides map to `SignalException` (`Duplicate`, `NoSession`, `UntrustedIdentity`, `MissingKey`, `Invalid`).
 - **Wire format (`core/crypto/WireFormat`):** the server's `ciphertext` is base64 of `[version 1][type][libsignal bytes]`; types 1 PreKey, 2 Whisper, 3 SenderKey message, 4 SenderKey distribution. Inside is a `ChatPayload` JSON (`v`, `type` text/senderKey/metaKey/control, …) padded to 160-byte buckets.
 - **PQXDH is mandatory.** libsignal 0.106 refuses a prekey bundle without a Kyber (ML-KEM 1024) prekey; X3DH-only sessions no longer exist. The backend gained `kyberPreKey { keyId, publicKey, signature }` (a signed last-resort Kyber prekey, rotated like the signed prekey, required on `PUT /v1/keys`, returned by `GET /v1/keys/{userId}`) on 2026-10-28, on branch `kyber-prekeys` of `circaso-backend` (migration V2; bundles published before it were removed). It reaches the sandbox when that branch is merged to `main`. The guide's "Changed on 2026-10-28, later" note describes it.
-- **iOS build notes:** build the simulator with `ARCHS=arm64` (`generic/platform=iOS Simulator` alone asks for x86_64, which the KMP framework does not have). In `SignalBridgeApi`, every method is `@Throws` and its Swift implementation must be `throws`; `NSData` parameters arrive in Swift as `Data`; method names must not start with an ObjC selector family (`new`, `init`, `copy`, `alloc`, `mutableCopy`) and must not repeat a name from another exported interface with a different signature, or Kotlin/Native mangles them (`doNewIdentity`, `sha256(bytes_:)`). Check `shared/build/xcode-frameworks/.../Shared.h` when Swift says the type does not conform.
+- **iOS build notes:** build the simulator with `ARCHS=arm64` (`generic/platform=iOS Simulator` alone asks for x86_64, which the KMP framework does not have). In `SignalBridgeApi`, every method is `@Throws` and its Swift implementation must be `throws`; `NSData` parameters arrive in Swift as `Data`; method names must not start with an ObjC selector family (`new`, `init`, `copy`, `alloc`, `mutableCopy`) and must not repeat a name from another exported interface with a different signature, or Kotlin/Native mangles them (`doNewIdentity`, `sha256(bytes_:)`). Check `shared/build/xcode-frameworks/.../Shared.h` when Swift says the type does not conform. **`pod install` and onnxruntime (2026-11-24):** `onnxruntime-c` downloads from
+  `https://download.onnxruntime.ai/pod-archive-onnxruntime-c-<v>.zip`, which is a CNAME to Microsoft's retired
+  `onnxruntimepackages.azureedge.net` CDN: the server presents a `*.azureedge.net` certificate (curl: "no alternative
+  certificate subject name matches") and the azureedge host itself answers 404. Not a proxy or local cert problem, and
+  never fixed by turning TLS checks off. Work around it with a copy already on disk: copy a checkout's `iosApp/Pods`
+  (it holds `Pods/onnxruntime-c` 1.30.0) into the new worktree before `pod install`; CocoaPods keeps installed pods
+  whose version is unchanged and downloads only what is new. With no copy anywhere, the pod needs a host that serves
+  the archive under a valid certificate (Microsoft's fix, or a podspec pointing at another source).
 - **Watch `iosApp.xcodeproj/project.pbxproj`:** on 2026-10-28 something (IntelliJ or Android Studio was open) rewrote it once and dropped the libsignal package entries; a copy with them is kept at the scratchpad path noted in the session and the entries are: remote package `signalapp/libsignal` exact `0.106.1` (product `LibSignalClient`) and local package `Packages/LibSignalFfi` (product `LibSignalFfi`), both linked in the app target's Frameworks phase.
 - **Key lifecycle (M2, built 2026-10-28):** `feature/messaging/data/local/SignalLocal.kt` holds the Signal tables (identity, EC and Kyber signed prekeys with a 30-day retired period, one-time prekeys, sessions, peer identities, sender keys, id counters; Room v7). `SealedRecordStore` seals every private record with `LocalSealer` under a `table:id` label. `KeysRepositoryImpl` publishes on first use or after a server reset (`messaging.keys_not_found`), rotates the signed and Kyber prekeys after 7 days, tops up one-time prekeys to 100 when fewer than 20 are left, saves new keys **before** sending so a lost answer never loses private halves, and deletes a batch at once when the server refused it whole. `KeyMaintainer` runs it whenever the session is active and the phone online (launch, after registration, reconnect). `peerBundle()` decodes M3 and keeps the trusted identity per person (trust on first use; a change is reported to the caller). The server does not publish registration ids, so bundles carry 0; libsignal only stores it.
 - **Chats and messages (M3–M6, built 2026-10-28), `feature/messaging/`:**
@@ -1384,8 +1391,17 @@ approvals never count) carries a small seal on their avatar wherever it appears,
   are written from the server (contacts refresh, chat refresh, own profile). `users` / `profile.updated` already reloads
   a peer (`onPeerProfile`: U10, then `ChatsDao.updateMemberProfile` and `ContactsDao.updateVerified`) or my own profile,
   and the server now sends it when a badge comes or goes, so seals change live; otherwise the next fetch does it.
+- **Payees in no contact or chat (2026-11-24, branch `feat/verified-gaps`).** Room v26 (auto 25→26) adds
+  `transfer.counterpartVerified` and `wallet_activity.counterpartVerified` from W6 `counterparty.verified`
+  (`CounterpartyDto.verified`, absent = false). After each W6 page (`syncHistory`, `loadActivityPage`, `refreshActivity`)
+  `syncVerified` writes each person's answer onto **every** stored payment with them (`WalletDao.updateTransfersVerified`
+  keyed on `COALESCE(counterpartUserId, toUserId)`, `updateActivityVerified`), so a seal taken back leaves older rows
+  too; the server reads the badge when it answers, so any page is current. A row naming no person keeps what it had;
+  `transfer.updated` / W5 answers keep it. `onPeerProfile` (`users` / `profile.updated`) also updates both tables. A payee
+  who is no contact gets no frame (the server sends it to the person and their contacts), so for them the next W6 read
+  (every wallet refresh) is what removes it.
 - **Who is verified, for every avatar.** `ContactsDao.observeVerified()` is the union of verified user ids across
-  `contact`, `chat_member` and `profile`; `App.kt` provides it as `LocalVerifiedPeople`. `Avatar(..., userId = …)` draws
+  `contact`, `chat_member`, `profile`, `transfer` and `wallet_activity`; `App.kt` provides it as `LocalVerifiedPeople`. `Avatar(..., userId = …)` draws
   the seal when that id is in the set (or `verified = true/false` overrides). Group avatars, stacks of faces and things
   pass no `userId`. Offline it shows what was last stored.
 - **The seal** (`designsystem/components/Avatar.kt`, `VerifiedSeal`): a twelve-point rosette in the money card's titanium
@@ -1404,6 +1420,5 @@ approvals never count) carries a small seal on their avatar wherever it appears,
   selfie."). The pill fades and expands in (`VerifiedPillReveal`), still under Reduce Motion. My own, when not verified, keeps the Verification row
   (You → Money) as before.
 - **Not done:** gallery previews of the seal across the four themes; the seal's "Verified" is its own screen-reader stop
-  where a name sits beside an unmerged avatar (group sender avatars, the call stage); the wallet's payment rows read the
-  seal from the stored people (a payee who is in no contact or chat shows none yet). The test suite still needs the
+  where a name sits beside an unmerged avatar (group sender avatars, the call stage). The test suite still needs the
   assistant's `*MaintenanceTest` classes left out (they hang, known since 2026-11-22).
