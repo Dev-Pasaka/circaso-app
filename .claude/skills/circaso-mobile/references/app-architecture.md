@@ -654,7 +654,9 @@ never optimistic.
   You receive (strong); To M-Pesa (masked verified number), From your wallet on the chain; the price's clock as Add
   Money's; one button, **Sell**. The number is the account's own (R7 refuses any other): a phone without it asks once,
   checked against the mask, as Add Money does.
-- **Sending the USDC:** after R7, W17 for the transfer to `deposit.address` (exactly `deposit.amountMinor`); no fee →
+- **Sending the USDC:** after R7, W17 for the transfer to `deposit.address` (exactly `deposit.amountMinor`, naming
+  `rampOrderId`); since 2026-11-24 the backend charges **no wallet fee** on it (`RAMP_SALE`: Cash Out is free of the
+  send fee, the network fee covered), so the amount page's "Network fee" row reads "Covered"; no fee →
   the approval comes up at once; a fee → the page shows it ("costs a network fee of 0.05 USDC, so 10.05 USDC leaves
   your wallet") and waits for **Send USDC**; W17 unreachable → nothing is sent unseen. W4 always with **the order id as
   the Idempotency-Key**, so every retry is the same transfer. A cancelled approval: "You didn't approve the transfer, so
@@ -687,8 +689,9 @@ never optimistic.
   `activity-cash-out-states`, `transfer-cash-out`, `transfer-cash-out-refunded`.
 - **Tests:** `androidHostTest/feature/ramp/CashOutViewModelTest.kt` (45), `commonTest/feature/ramp/CashOutTest.kt`
   (`CashOutWireTest` 12 against the guide's JSON, `CashOutRepositoryTest` 10, `CashOutRemoteTest` 1).
-- **Contract gaps (for Pasaka):** (1) W17 needs the deposit address, so the wallet's network fee can only be known after
-  R7: the review says one may follow, and Max can overshoot (handled by "Sell X Instead"); a W17 by chain and amount
+- **Contract gaps (for Pasaka):** (1) Settled 2026-11-24: a sale's funding carries no wallet fee, so nothing follows
+  the review (earlier: W17 needed the deposit address, so the fee could only be known after R7; a fee quoted anyway,
+  e.g. by an older server, is still shown before anything is sent); a W17 by chain and amount
   alone would let the review show it. (2) R7 only takes the account's own number, so the person can't send to another
   Kenyan number (the task asked for "changeable"). (3) Sales made on another phone aren't labelled in this phone's
   history (R5/R4 carry no transfer id or deposit address after funding). (4) Whether Circaso's and the payout fees are
