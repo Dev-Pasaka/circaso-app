@@ -409,7 +409,7 @@ private fun SaleAmountPage(
                 RowDivider()
                 DetailRow("Fees", "Shown before you sell")
                 RowDivider()
-                DetailRow("Network fee", "Before you approve")
+                DetailRow("Network fee", "Covered")
                 if (limits != null) {
                     RowDivider(); FigureRow("At a time", "${limits.minOrder.text} to ${limits.maxOrder.text}")
                     RowDivider(); FigureRow("Daily limit", limits.daily.text)
@@ -511,7 +511,7 @@ private fun SaleReviewPage(state: CashOutUiState, bottomInset: Dp, onPhone: (Str
                 { focusManager.clearFocus(); if (expired) onNewPrice() else onSell() }, size = ButtonSize.Large, block = true,
                 enabled = if (expired) state.online else state.canConfirm || state.placing || state.quoting, busy = state.placing || state.quoting,
             )
-            FooterNote(if (!state.online) CashOutOfflineNote else "Next, you'll approve sending ${quote.pay.text}, plus a network fee if your wallet charges one. You'll see it first.")
+            FooterNote(if (!state.online) CashOutOfflineNote else "Next, you'll approve sending ${quote.pay.text}. There's no wallet fee on a sale: the network fee is covered.")
         },
     ) {
         Column(Modifier.fillMaxWidth().padding(top = CircasoSpacing.s2).semantics(mergeDescendants = true) {}, horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(CircasoSpacing.s1)) {
