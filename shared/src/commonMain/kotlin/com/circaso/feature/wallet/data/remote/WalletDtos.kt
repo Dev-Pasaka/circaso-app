@@ -105,6 +105,8 @@ import kotlinx.serialization.Serializable
     val groupId: String? = null,
     /** The other side is a space's wallet (phase 3): name it from the space on the phone. */
     val spaceId: String? = null,
+    /** The person on the other side is verified (the verified badge, backend PR #144); absent on older servers = false. */
+    val verified: Boolean = false,
 )
 
 @Serializable data class RecipientResponse(val userId: String, val status: String, val canReceive: Boolean, val blockchains: List<String> = emptyList())

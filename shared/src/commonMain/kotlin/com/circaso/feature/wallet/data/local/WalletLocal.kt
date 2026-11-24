@@ -54,6 +54,11 @@ data class TransferEntity(
     @ColumnInfo(defaultValue = "NULL") val counterpartUserId: String? = null,
     /** The wallet network it moved on (DB v24): lists show one network's payments; a card finds its payment by id. */
     @ColumnInfo(defaultValue = LegacyNetwork) val network: String = LegacyNetwork,
+    /**
+     * The other person is verified (W6 `counterparty.verified`, DB v26), so a payee in no contact or chat still shows
+     * the seal offline. Every row of one person carries the newest answer: see [WalletDao.updateTransfersVerified].
+     */
+    @ColumnInfo(defaultValue = "0") val counterpartVerified: Boolean = false,
 )
 
 /** The last W1 answer for a group wallet, one row per wallet; the personal wallet stays in `wallet_snapshot`. */
@@ -89,6 +94,8 @@ data class WalletActivityEntity(
     val txHash: String?,
     val occurredAt: Long,
     @ColumnInfo(defaultValue = LegacyNetwork) val network: String = LegacyNetwork,
+    /** The other person is verified (W6 `counterparty.verified`, DB v26), as on [TransferEntity.counterpartVerified]. */
+    @ColumnInfo(defaultValue = "0") val counterpartVerified: Boolean = false,
 )
 
 /**
@@ -150,6 +157,17 @@ interface WalletDao {
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun saveActivity(rows: List<WalletActivityEntity>)
+
+    /**
+     * The verified badge (2026-11-24): [userId]'s badge as the server says now (a fresh W6 page or their profile read
+     * again), on every payment with them, so an older row can't keep a seal that was taken back.
+     */
+    @Query("UPDATE transfer SET counterpartVerified = :verified WHERE COALESCE(counterpartUserId, toUserId) = :userId")
+    suspend fun updateTransfersVerified(userId: String, verified: Boolean)
+
+    /** As [updateTransfersVerified], for group wallets' history. */
+    @Query("UPDATE wallet_activity SET counterpartVerified = :verified WHERE counterpartUserId = :userId")
+    suspend fun updateActivityVerified(userId: String, verified: Boolean)
 
     @Query("DELETE FROM wallet_snapshot")
     suspend fun clearSnapshot()
