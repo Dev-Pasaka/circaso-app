@@ -234,7 +234,7 @@ private fun Picker(state: MomentsPrivacyUiState, vm: MomentsPrivacyViewModel, on
                 ListRow(
                     contact.person.displayName,
                     Modifier.semantics { role = Role.Checkbox; stateDescription = if (on) "Chosen" else "Not chosen" },
-                    leading = { Avatar(contact.person.displayName, size = CircasoSizes.avatarMd, imageUrl = contact.person.avatarUrl) },
+                    leading = { Avatar(contact.person.displayName, size = CircasoSizes.avatarMd, imageUrl = contact.person.avatarUrl, userId = contact.person.userId) },
                     trailing = { Check(on) },
                     onClick = { vm.toggle(contact.person.userId) },
                 )

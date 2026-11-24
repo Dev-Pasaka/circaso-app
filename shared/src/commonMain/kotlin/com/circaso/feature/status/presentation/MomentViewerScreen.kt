@@ -393,7 +393,7 @@ private fun ViewerBody(state: MomentViewerUiState, vm: MomentViewerActions, onCl
         Column(Modifier.fillMaxWidth().onSizeChanged { headerBottom = it.height.toFloat() }.statusBarsPadding().padding(horizontal = CircasoSpacing.s3, vertical = CircasoSpacing.s2), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Segments(ring.moments, state.index, moment, paused = paused || state.media !is ViewerMedia.Ready && moment.kind != MomentKind.Text, onDone = vm.next)
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                Avatar(ring.name, size = 36.dp, imageUrl = ring.avatarUrl)
+                Avatar(ring.name, size = 36.dp, imageUrl = ring.avatarUrl, userId = ring.posterId, onDarkStage = true)
                 Column(Modifier.weight(1f)) {
                     BasicText(if (moment.mine) "My moment" else ring.name, style = t.subhead.copy(color = c.ink, fontWeight = FontWeight.SemiBold), maxLines = 1)
                     BasicText(ago(moment.postedAt), style = t.footnote.copy(color = c.inkSecondary))

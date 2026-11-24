@@ -318,7 +318,7 @@ private fun Members(state: ChamaUiState, chama: Chama, fiat: FiatValue?) {
             ListRow(
                 title = if (m.userId == state.myUserId) "You" else m.displayName,
                 sub = roles,
-                leading = { Avatar(m.displayName, size = CircasoSizes.avatarMd, imageUrl = m.avatarUrl) },
+                leading = { Avatar(m.displayName, size = CircasoSizes.avatarMd, imageUrl = m.avatarUrl, userId = m.userId) },
                 trailing = { RowAmount(total?.let { amountText(it, fiat) } ?: "—", meta = if (total == null) "nothing yet" else null, incoming = total != null) },
             )
             if (i < members.lastIndex) RowDivider(Modifier.padding(start = 72.dp))

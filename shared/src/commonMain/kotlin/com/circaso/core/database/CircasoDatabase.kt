@@ -66,7 +66,7 @@ import kotlinx.coroutines.Dispatchers
         com.circaso.feature.messaging.data.local.MessageReactionEntity::class, com.circaso.feature.messaging.data.local.MessageRetryEntity::class,
         com.circaso.feature.names.data.SavedNameEntity::class,
     ],
-    version = 24,
+    version = 25,
     autoMigrations = [
         AutoMigration(from = 1, to = 2), AutoMigration(from = 2, to = 3),
         AutoMigration(from = 3, to = 4), AutoMigration(from = 4, to = 5),
@@ -93,6 +93,9 @@ import kotlinx.coroutines.Dispatchers
         // chama_snapshot and group_money add it to their keys, transfer gains the column. Every row from before is
         // Testnet's (the column's default), so nothing is lost and nothing shows under Mainnet.
         AutoMigration(from = 23, to = 24, spec = WalletNetworksMigration::class),
+        // 25: the verified badge (2026-11-24): contact.verified, chat_member.verified, profile.verified and
+        // profile.verifiedAt. False until the next refresh says otherwise.
+        AutoMigration(from = 24, to = 25),
     ],
 )
 @ConstructedBy(CircasoDatabaseConstructor::class)

@@ -250,7 +250,7 @@ private fun ContactRow(contact: Contact, onClick: () -> Unit) {
     ListRow(
         title = p.displayName,
         sub = p.handle?.let { "@$it" } ?: p.about?.takeIf { it.isNotBlank() },
-        leading = { Avatar(p.displayName, imageUrl = p.avatarUrl) },
+        leading = { Avatar(p.displayName, imageUrl = p.avatarUrl, userId = p.userId) },
         trailing = { RowChevron() },
         onClick = onClick,
     )
@@ -281,11 +281,15 @@ private fun androidx.compose.foundation.layout.BoxScope.ContactsSheets(state: Co
         if (selected != null) {
             val p = selected.person
             Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(CircasoSpacing.s1)) {
-                Avatar(p.displayName, size = CircasoSizes.avatarLg + 8.dp, imageUrl = p.avatarUrl)
+                Avatar(p.displayName, size = CircasoSizes.avatarLg + 8.dp, imageUrl = p.avatarUrl, userId = p.userId)
                 BasicText(p.displayName, Modifier.padding(top = CircasoSpacing.s2), style = t.title3.copy(color = c.ink, textAlign = TextAlign.Center))
                 // A name I saved: their own under it, WhatsApp-style.
                 if (p.renamed) ProfileNameLine(p.profileName, t.subhead.copy(color = c.inkSecondary, textAlign = TextAlign.Center))
                 p.handle?.let { BasicText("@$it", style = t.subhead.copy(color = c.inkSecondary)) }
+                // Inside this sheet the meaning is written out rather than opening a second sheet.
+                if (p.userId in com.circaso.designsystem.components.LocalVerifiedPeople.current) {
+                    com.circaso.designsystem.components.VerifiedPill(explainable = false)
+                }
                 p.about?.takeIf { it.isNotBlank() }?.let { BasicText(it, style = t.footnote.copy(color = c.inkSecondary, textAlign = TextAlign.Center)) }
             }
             Box(Modifier.clip(CircasoShapes.lg).background(c.fill)) {
@@ -376,7 +380,7 @@ fun BlockedContent(state: BlockedUiState, onBack: () -> Unit, onUnblock: (Person
                         ListRow(
                             title = person.displayName,
                             sub = person.handle?.let { "@$it" },
-                            leading = { Avatar(person.displayName, imageUrl = person.avatarUrl) },
+                            leading = { Avatar(person.displayName, imageUrl = person.avatarUrl, userId = person.userId) },
                             trailing = { CircasoButton("Unblock", { onUnblock(person) }, style = ButtonStyle.Secondary, size = ButtonSize.Small) },
                         )
                     }

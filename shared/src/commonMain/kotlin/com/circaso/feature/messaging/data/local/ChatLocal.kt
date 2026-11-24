@@ -46,6 +46,8 @@ data class ChatMemberEntity(
     val handle: String?,
     val avatarUrl: String?,
     val joinedAt: String,
+    /** The verified badge (2026-11-24), as the server last said. */
+    @androidx.room.ColumnInfo(defaultValue = "0") val verified: Boolean = false,
 )
 
 /**
@@ -190,8 +192,15 @@ interface ChatsDao {
     suspend fun deleteMember(chatId: String, userId: String)
 
     /** [userId] changed their profile: every chat they're in shows the new name and photo at once. */
-    @Query("UPDATE chat_member SET displayName = :displayName, handle = :handle, avatarUrl = :avatarUrl WHERE userId = :userId")
-    suspend fun updateMemberProfile(userId: String, displayName: String, handle: String?, avatarUrl: String?)
+    /** A chat's members replaced in one go, so nobody watching (the verified seals) sees the chat empty in between. */
+    @androidx.room.Transaction
+    suspend fun replaceMembers(chatId: String, members: List<ChatMemberEntity>) {
+        deleteMembers(chatId)
+        insertMembers(members)
+    }
+
+    @Query("UPDATE chat_member SET displayName = :displayName, handle = :handle, avatarUrl = :avatarUrl, verified = :verified WHERE userId = :userId")
+    suspend fun updateMemberProfile(userId: String, displayName: String, handle: String?, avatarUrl: String?, verified: Boolean)
 
     @Query("SELECT * FROM group_meta_key WHERE chatId = :chatId AND metaVersion = :metaVersion")
     suspend fun metaKey(chatId: String, metaVersion: Int): GroupMetaKeyEntity?

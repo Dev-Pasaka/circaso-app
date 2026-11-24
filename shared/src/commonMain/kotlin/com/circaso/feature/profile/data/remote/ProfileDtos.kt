@@ -18,6 +18,9 @@ data class MyProfileResponse(
     val avatarUrl: String? = null,
     val privacy: PrivacyDto,
     val version: Int,
+    /** The verified badge on my own profile (2026-11-24); absent from an older server. */
+    val verified: Boolean = false,
+    val verifiedAt: String? = null,
 )
 
 @Serializable
@@ -44,4 +47,7 @@ data class PublicProfileDto(
     val handle: String? = null,
     val avatarUrl: String? = null,
     val about: String? = null,
+    /** The verified badge (2026-11-24). */
+    val verified: Boolean = false,
+    val verifiedAt: String? = null,
 )

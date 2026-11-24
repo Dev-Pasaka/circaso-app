@@ -143,6 +143,6 @@ internal fun Person.named(saved: Map<String, String>): Person =
     saved[userId]?.let { copy(displayName = it, profileName = profileName) } ?: this
 private fun PersonDto.toBlocked() = BlockedEntity(userId, displayName, handle, avatarUrl, about)
 private fun com.circaso.feature.contacts.data.remote.ContactDto.toEntity() =
-    ContactEntity(user.userId, user.displayName, user.handle, user.avatarUrl, user.about, source, addedAt)
+    ContactEntity(user.userId, user.displayName, user.handle, user.avatarUrl, user.about, source, addedAt, user.verified)
 private fun ContactEntity.toDomain() = Contact(Person(userId, displayName, handle, avatarUrl, about), source, addedAt)
 private fun BlockedEntity.toDomain() = Person(userId, displayName, handle, avatarUrl, about)

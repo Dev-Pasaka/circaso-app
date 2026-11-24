@@ -100,6 +100,9 @@ import kotlinx.coroutines.delay
  * Calls are drawn on black in every theme (designs H1–H5), like the phone's own call screen: a video picture and white
  * controls read the same in light and dark. These are the call surface's own colours, not theme tokens.
  */
+/** The other person on a one-to-one call (their verified seal); null in a group call. */
+private val CallUi.peerId: String? get() = if (group) null else people.firstOrNull()?.userId
+
 internal object CallColors {
     val Bg = Color(0xFF000000)
     val Ink = Color.White
@@ -310,7 +313,7 @@ private fun BoxScope.Incoming(call: CallUi, actions: CallActions) {
         Spacer(Modifier.height(CircasoSpacing.s10))
         BasicText(if (call.video) "Circaso video call" else "Circaso voice call", style = t.subhead.copy(color = CallColors.InkSoft))
         Spacer(Modifier.height(CircasoSpacing.s5))
-        Pulse { Avatar(call.title, size = 120.dp, imageUrl = call.photoUrl) }
+        Pulse { Avatar(call.title, size = 120.dp, imageUrl = call.photoUrl, userId = call.peerId, onDarkStage = true) }
         Spacer(Modifier.height(CircasoSpacing.s5))
         BasicText(call.title, style = t.largeTitle.copy(color = CallColors.Ink, textAlign = TextAlign.Center), maxLines = 1, overflow = TextOverflow.Ellipsis)
         Handle(call.handle)
@@ -350,7 +353,7 @@ private fun VoiceCall(call: CallUi, actions: CallActions, money: String?, onSend
                 Column(Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally) {
                     SecureLine()
                     Spacer(Modifier.height(CircasoSpacing.s3))
-                    Avatar(call.title, Modifier.graphicsLayer { alpha = faded }, size = 88.dp, imageUrl = call.photoUrl)
+                    Avatar(call.title, Modifier.graphicsLayer { alpha = faded }, size = 88.dp, imageUrl = call.photoUrl, userId = call.peerId, onDarkStage = true)
                     Spacer(Modifier.height(CircasoSpacing.s3))
                     BasicText(call.title, style = t.title1.copy(color = CallColors.Ink, textAlign = TextAlign.Center), maxLines = 1, overflow = TextOverflow.Ellipsis)
                     Handle(call.handle)
@@ -364,7 +367,7 @@ private fun VoiceCall(call: CallUi, actions: CallActions, money: String?, onSend
             Spacer(Modifier.height(CircasoSpacing.s6))
             SecureLine()
             Spacer(Modifier.height(CircasoSpacing.s6))
-            Avatar(call.title, Modifier.graphicsLayer { alpha = faded }, size = 120.dp, imageUrl = call.photoUrl)
+            Avatar(call.title, Modifier.graphicsLayer { alpha = faded }, size = 120.dp, imageUrl = call.photoUrl, userId = call.peerId, onDarkStage = true)
             Spacer(Modifier.height(CircasoSpacing.s4))
             BasicText(call.title, style = t.largeTitle.copy(color = CallColors.Ink, textAlign = TextAlign.Center), maxLines = 1, overflow = TextOverflow.Ellipsis)
             Handle(call.handle)

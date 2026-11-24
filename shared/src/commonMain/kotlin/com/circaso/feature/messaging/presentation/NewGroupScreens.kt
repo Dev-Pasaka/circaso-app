@@ -277,7 +277,7 @@ private fun MembersStep(state: NewGroupUiState, actions: NewGroupActions, paddin
                             ListRow(
                                 title = contact.person.displayName,
                                 sub = contact.person.handle?.let { "@$it" } ?: contact.person.about,
-                                leading = { Avatar(contact.person.displayName, imageUrl = contact.person.avatarUrl) },
+                                leading = { Avatar(contact.person.displayName, imageUrl = contact.person.avatarUrl, userId = contact.person.userId) },
                                 trailing = { SelectionCheck(picked) },
                                 onClick = { toggle(contact.person.userId) },
                                 modifier = Modifier.semantics {
@@ -313,7 +313,7 @@ private fun ChosenStrip(chosen: List<Contact>, onRemove: (String) -> Unit) {
                 horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(4.dp),
             ) {
                 Box {
-                    Avatar(contact.person.displayName, size = 52.dp, imageUrl = contact.person.avatarUrl)
+                    Avatar(contact.person.displayName, size = 52.dp, imageUrl = contact.person.avatarUrl, userId = contact.person.userId)
                     Box(
                         Modifier.align(Alignment.TopEnd).size(20.dp).clip(CircasoShapes.circle).background(c.bg).padding(2.dp)
                             .clip(CircasoShapes.circle).background(c.inkTertiary),

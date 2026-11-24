@@ -22,6 +22,8 @@ internal fun MyProfileResponse.toEntity(pendingSync: Boolean) = ProfileEntity(
     privacyHandleLookup = privacy.handleLookup,
     version = version,
     pendingSync = pendingSync,
+    verified = verified,
+    verifiedAt = verifiedAt,
 )
 
 internal fun ProfileEntity.toDomain() = Profile(
@@ -34,9 +36,11 @@ internal fun ProfileEntity.toDomain() = Profile(
     privacy = Privacy(privacyAvatar, privacyAbout, privacyHandleLookup),
     version = version,
     pendingSync = pendingSync,
+    verified = verified,
+    verifiedAt = verifiedAt,
 )
 
-internal fun PublicProfileDto.toDomain() = PublicProfile(userId, displayName, handle, avatarUrl, about)
+internal fun PublicProfileDto.toDomain() = PublicProfile(userId, displayName, handle, avatarUrl, about, verified)
 
 internal fun HandleAvailabilityResponse.toDomain() = HandleAvailability(
     handle = handle,

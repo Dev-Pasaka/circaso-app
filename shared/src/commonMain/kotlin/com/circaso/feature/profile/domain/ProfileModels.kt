@@ -21,6 +21,9 @@ data class Profile(
     val version: Int,
     /** True while an edit is saved on this phone but not yet confirmed by the server. */
     val pendingSync: Boolean,
+    /** Circaso verified my identity with a government ID and a selfie (the verified badge, 2026-11-24). */
+    val verified: Boolean = false,
+    val verifiedAt: String? = null,
 )
 
 /** Only the fields being changed are set. `about = ""` clears the about line. */
@@ -40,6 +43,8 @@ data class PublicProfile(
     val handle: String?,
     val avatarUrl: String?,
     val about: String?,
+    /** The verified badge (2026-11-24). */
+    val verified: Boolean = false,
 )
 
 enum class HandleStatus { Available, Taken, Invalid, Unknown }

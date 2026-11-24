@@ -43,7 +43,11 @@ data class KeyBundleResponse(
 
 // ---- chats and members (M4–M11)
 
-@Serializable data class ChatProfileDto(val userId: String, val displayName: String, val handle: String? = null, val avatarUrl: String? = null, val about: String? = null)
+@Serializable data class ChatProfileDto(
+    val userId: String, val displayName: String, val handle: String? = null, val avatarUrl: String? = null, val about: String? = null,
+    /** The verified badge (2026-11-24); absent from an older server. */
+    val verified: Boolean = false,
+)
 @Serializable data class ChatMemberDto(val user: ChatProfileDto, val role: String, val joinedAt: String)
 @Serializable data class ChatSettingsDto(val membersCanAdd: Boolean? = null)
 

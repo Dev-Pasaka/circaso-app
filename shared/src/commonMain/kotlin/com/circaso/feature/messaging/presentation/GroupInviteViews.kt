@@ -197,7 +197,7 @@ internal fun BoxScope.InvitePreviewSheet(
                 }
             }
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(CircasoSpacing.s3)) {
-                Avatar(last.invitedBy.displayName, size = CircasoSizes.avatarSm, imageUrl = last.invitedBy.avatarUrl)
+                Avatar(last.invitedBy.displayName, size = CircasoSizes.avatarSm, imageUrl = last.invitedBy.avatarUrl, userId = last.invitedBy.userId)
                 BasicText("${last.invitedBy.displayName} invited you", Modifier.weight(1f), style = t.body.copy(color = c.ink), maxLines = 2, overflow = TextOverflow.Ellipsis)
             }
             BasicText(JoinNote, style = t.footnote.copy(color = c.inkSecondary))

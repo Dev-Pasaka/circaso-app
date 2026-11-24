@@ -237,7 +237,7 @@ fun ColumnScope.ReactorsSheetContent(reactors: List<Reactor>, onRemoveMine: () -
             ListRow(
                 if (r.mine) "You" else r.name,
                 sub = if (r.mine) "Tap to remove" else null,
-                leading = { Avatar(r.name, size = CircasoSizes.avatarSm, imageUrl = r.avatarUrl) },
+                leading = { Avatar(r.name, size = CircasoSizes.avatarSm, imageUrl = r.avatarUrl, userId = r.userId) },
                 trailing = { BasicText(r.emoji, style = t.title3) },
                 onClick = if (r.mine) ({ onRemoveMine(); onClose() }) else null,
             )

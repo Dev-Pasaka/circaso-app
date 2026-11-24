@@ -170,7 +170,7 @@ internal fun AlbumRow(
     val caption = albumCaption(items)
     Row(Modifier.fillMaxWidth(), horizontalArrangement = if (outgoing) Arrangement.End else Arrangement.Start, verticalAlignment = Alignment.Bottom) {
         if (group && !outgoing) {
-            if (firstOfRun) Avatar(head.senderName, Modifier.padding(end = CircasoSpacing.s2, bottom = 18.dp), size = CircasoSizes.avatarSm)
+            if (firstOfRun) Avatar(head.senderName, Modifier.padding(end = CircasoSpacing.s2, bottom = 18.dp), size = CircasoSizes.avatarSm, userId = head.senderId)
             else Spacer(Modifier.width(CircasoSizes.avatarSm + CircasoSpacing.s2))
         }
         MessageColumn(outgoing, Modifier.weight(1f, fill = false)) {

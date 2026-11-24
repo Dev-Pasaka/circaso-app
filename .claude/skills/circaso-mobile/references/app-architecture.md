@@ -1372,3 +1372,38 @@ one sheet does what this phone needs, right after signing in, with no new server
   isn't on the phone (it may answer `NoCredentialException` at once, which lands on the "not here" step anyway).
   The screen-reader check is read once when the layer is composed (turning TalkBack/VoiceOver on mid-session isn't
   seen until Chats is shown again).
+
+## The verified badge (2026-11-24, branch `feat/verified-badge`; backend PR #144)
+
+A person whose identity Circaso verified (an approved check in Didit's **live** environment; the testnet's sandbox
+approvals never count) carries a small seal on their avatar wherever it appears, and their profile says "Verified".
+
+- **Data.** The server sends `verified` (and `verifiedAt` on users' shapes) on `PublicProfileDto`, `MyProfileResponse`,
+  `ChatProfileDto` and `CounterpartyDto`; a server without the field reads as false. Room v25 (auto-migration 24→25)
+  adds `contact.verified`, `chat_member.verified`, `profile.verified` and `profile.verifiedAt`, filled wherever those rows
+  are written from the server (contacts refresh, chat refresh, own profile). `users` / `profile.updated` already reloads
+  a peer (`onPeerProfile`: U10, then `ChatsDao.updateMemberProfile` and `ContactsDao.updateVerified`) or my own profile,
+  and the server now sends it when a badge comes or goes, so seals change live; otherwise the next fetch does it.
+- **Who is verified, for every avatar.** `ContactsDao.observeVerified()` is the union of verified user ids across
+  `contact`, `chat_member` and `profile`; `App.kt` provides it as `LocalVerifiedPeople`. `Avatar(..., userId = …)` draws
+  the seal when that id is in the set (or `verified = true/false` overrides). Group avatars, stacks of faces and things
+  pass no `userId`. Offline it shows what was last stored.
+- **The seal** (`designsystem/components/Avatar.kt`, `VerifiedSeal`): a twelve-point rosette in the money card's titanium
+  (`moneyCard` blended from `moneyCardSheen`, so graphite on light and brushed silver on dark), a check in `onMoney`.
+  The gap around it is a real hole cut out of the picture (`sealCutOut`, `BlendMode.DstOut` on an offscreen layer), not a
+  painted ring, so it reads on any ground (rows, sheets, glass, press states, photos). Black stages (calls, the Moment
+  viewer) pass `onDarkStage = true` for the dark themes' silver whatever the theme. Size `sealSize(avatar)` =
+  avatar × 0.22 + 6 dp within 12–28 dp; its centre sits on the disc's rim at 45° (`sealOffset`), inside the square, so
+  nothing clips it. What must follow the circle (a clip for the round ripple, a shadow, a ring, the You hero's press)
+  goes in `discModifier`. Member lists are replaced in one transaction (`ChatsDao.replaceMembers`) and the set is
+  `distinctUntilChanged`, so seals don't blink during a chat refresh. Screen readers hear "Verified".
+- **Profiles** (`designsystem/components/Verified.kt`, `VerifiedPill`): a quiet capsule (seal + "Verified") under the
+  name on a direct chat's info screen, in the contact sheet (meaning written out under it, no second sheet) and on my
+  own You hero. A tap opens a sheet: "Circaso verified this person's identity with a government ID and a selfie. Only
+  the badge is shown, never their ID or selfie." (my own: "…your identity… People see only the badge, never your ID or
+  selfie."). The pill fades and expands in (`VerifiedPillReveal`), still under Reduce Motion. My own, when not verified, keeps the Verification row
+  (You → Money) as before.
+- **Not done:** gallery previews of the seal across the four themes; the seal's "Verified" is its own screen-reader stop
+  where a name sits beside an unmerged avatar (group sender avatars, the call stage); the wallet's payment rows read the
+  seal from the stored people (a payee who is in no contact or chat shows none yet). The test suite still needs the
+  assistant's `*MaintenanceTest` classes left out (they hang, known since 2026-11-22).

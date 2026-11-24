@@ -204,6 +204,7 @@ fun YouContent(
                     phone = state.maskedPhone?.maskedForDisplay(),
                     photo = state.profile?.avatarUrl,
                     waiting = state.profile?.pendingSync == true,
+                    verified = state.profile?.verified == true,
                     onEdit = actions.onEditProfile,
                     onPhoto = { viewingPhoto = true },
                     onPhotoBounds = { photoBounds = it },
@@ -366,6 +367,8 @@ private fun ProfileHero(
     phone: String?,
     photo: String?,
     waiting: Boolean,
+    /** My verified badge (2026-11-24): the seal on the photo and the pill under the name. */
+    verified: Boolean = false,
     onEdit: () -> Unit,
     onPhoto: () -> Unit,
     onPhotoBounds: (androidx.compose.ui.geometry.Rect) -> Unit,
@@ -405,8 +408,10 @@ private fun ProfileHero(
                     .graphicsLayer {
                         alpha = if (photoHidden) 0f else focus.value.coerceIn(0f, 1f)
                         val z = 0.92f + 0.08f * focus.value; scaleX = z; scaleY = z
-                    }
-                    .shadow(AvatarShadow, CircasoShapes.circle).border(AvatarRing, c.bgGrouped, CircasoShapes.circle)
+                    },
+                verified = verified,
+                // The shadow, the page-coloured ring and the press follow the circle; the seal sits over them, whole.
+                discModifier = Modifier.shadow(AvatarShadow, CircasoShapes.circle).border(AvatarRing, c.bgGrouped, CircasoShapes.circle)
                     .let { m -> if (photo != null) m.pressable(role = androidx.compose.ui.semantics.Role.Image, onClick = onPhoto).semantics { contentDescription = "Your photo. Open it large" } else m },
             )
             Column(
@@ -420,6 +425,7 @@ private fun ProfileHero(
                 }
                 if (waiting) BasicText("Waiting to send", style = t.caption1.copy(color = c.warning))
             }
+            com.circaso.designsystem.components.VerifiedPillReveal(verified, own = true)
             CircasoButton("Edit Profile", onEdit, modifier = Modifier.padding(top = CircasoSpacing.s1).heightIn(min = CircasoSizes.controlMd), style = ButtonStyle.Secondary, size = ButtonSize.Small)
         }
     }
