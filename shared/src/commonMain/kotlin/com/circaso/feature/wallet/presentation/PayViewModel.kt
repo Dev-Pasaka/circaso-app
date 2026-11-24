@@ -836,7 +836,7 @@ class PayViewModel(
                     is AppResult.Failure -> local.update { it.copy(error = ErrorMessages.forError(r.error)) }
                 }
                 is com.circaso.core.qr.QrPayload.Scanned.Address -> local.update { it.copy(error = "That's a wallet address. Use Send to a Wallet for it.") }
-                com.circaso.core.qr.QrPayload.Scanned.Unknown -> local.update { it.copy(error = "That code isn't a Circaso code.") }
+                is com.circaso.core.qr.QrPayload.Scanned.Unsupported, com.circaso.core.qr.QrPayload.Scanned.Unknown -> local.update { it.copy(error = "That code isn't a Circaso code.") }
             }
         }
     }

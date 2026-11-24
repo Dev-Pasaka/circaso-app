@@ -96,6 +96,8 @@ fun CircasoIconButton(
     busy: Boolean = false,
     /** Over a photo or video (the stage): glass instead of `fill` while it isn't emphasised, like the controls beside it. */
     onGlass: Boolean = false,
+    /** Inside a field (design E5's paste and scan): on `surfaceRaised`, so it shows against the field's `fill`. */
+    raised: Boolean = false,
 ) {
     val c = CircasoTheme.colors
     val fg = when { !enabled -> c.inkTertiary; emphasised -> c.onAction; else -> c.ink }
@@ -103,7 +105,7 @@ fun CircasoIconButton(
         modifier
             .size(CircasoSizes.iconButton)
             .clip(CircasoShapes.circle)
-            .then(if (onGlass && !emphasised) Modifier.glass(CircasoShapes.circle, edge = false) else Modifier.background(if (emphasised) c.action else c.fill))
+            .then(if (onGlass && !emphasised) Modifier.glass(CircasoShapes.circle, edge = false) else Modifier.background(if (emphasised) c.action else if (raised) c.surfaceRaised else c.fill))
             .pressable(enabled = enabled && !busy, role = Role.Button, onClick = onClick)
             .semantics { this.contentDescription = if (busy) "$contentDescription, loading" else contentDescription },
         contentAlignment = Alignment.Center,
