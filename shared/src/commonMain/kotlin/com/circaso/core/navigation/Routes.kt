@@ -152,9 +152,12 @@ data class GroupWalletRoute(
 @Serializable
 data class TargetRoute(val chatId: String, val walletReady: Boolean = false, val network: String? = null) : Route
 
-/** Send to an outside wallet address (design E5); from a group wallet its owner signs for ([fromWalletId], 2026-11-06). */
+/**
+ * Send to an outside wallet address (design E5); from a group wallet its owner signs for ([fromWalletId], 2026-11-06).
+ * [prefill]: a pay link opened from outside the app (2026-11-24), read into the form once the wallet is known.
+ */
 @Serializable
-data class SendToWalletRoute(val fromWalletId: String? = null) : Route
+data class SendToWalletRoute(val fromWalletId: String? = null, val prefill: String? = null) : Route
 
 /**
  * Add money: buy USDC with M-Pesa (design E2/E3, guide R0–R6). [orderId] opens on that order's status (a `ramp.order`

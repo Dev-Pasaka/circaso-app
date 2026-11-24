@@ -5,6 +5,9 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 
 /**
+ * Pay links (2026-11-24, `https://<share host>/pay/<address>?chain=…&asset=USDC`, or the page's `circaso://pay/…`) wait
+ * in [pendingPay] and open Send to a Wallet filled in ([com.circaso.core.qr.PayLinks]).
+ *
  * Share links and group join links opened from outside the app: `https://<share host>/s/{code}` (Android App Links,
  * iOS Universal Links) and `circaso://s/{code}` (the page's "Open in Circaso" or "Join group" button). The platform hands every URL here; the code waits in
  * [pending] until someone is signed in, then the navigation opens it once. An object, not a Koin binding, because the
@@ -17,13 +20,23 @@ object IncomingLinks {
     private val _pending = MutableStateFlow<String?>(null)
     val pending: StateFlow<String?> = _pending.asStateFlow()
 
+    private val _pendingPay = MutableStateFlow<String?>(null)
+    val pendingPay: StateFlow<String?> = _pendingPay.asStateFlow()
+
     fun addHost(host: String) {
         val h = host.trim().lowercase()
         if (h.isNotEmpty()) hosts += h
+        // Pay links live on the same host, and this phone's own codes are made on it.
+        com.circaso.core.qr.PayLinks.useHost(h)
     }
 
-    /** True when [url] was a share link and is now pending. */
+    /** True when [url] was a share link or a pay link and is now pending. */
     fun open(url: String): Boolean {
+        if (com.circaso.core.qr.PayLinks.isPayLink(url)) {
+            com.circaso.core.web.InAppBrowser.close()
+            _pendingPay.value = url.trim()
+            return true
+        }
         val code = codeOf(url, hosts) ?: return false
         com.circaso.core.web.InAppBrowser.close() // the shared page opens in view, not under the browser
         _pending.value = code
@@ -32,6 +45,9 @@ object IncomingLinks {
 
     /** Takes the pending code, so it opens once. */
     fun take(): String? = _pending.value.also { _pending.value = null }
+
+    /** Takes the pending pay link, so Send to a Wallet opens once for it. */
+    fun takePay(): String? = _pendingPay.value.also { _pendingPay.value = null }
 
     private val CodePattern = Regex("^[A-Za-z0-9]{8,32}$")
 

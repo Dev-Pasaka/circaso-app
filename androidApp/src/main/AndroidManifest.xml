@@ -74,12 +74,14 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
             <!-- Share links (decision 2026-11-06): https://<share host>/s/{code} opens Circaso when it is installed.
-                 Verified against the host's /.well-known/assetlinks.json, so Android opens the app without asking. -->
+                 Verified against the host's /.well-known/assetlinks.json, so Android opens the app without asking.
+                 Pay links (2026-11-24): https://<share host>/pay/<address>?chain=…&asset=USDC opens Send to a Wallet. -->
             <intent-filter android:autoVerify="true">
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
                 <data android:scheme="https" android:host="${shareHost}" android:pathPrefix="/s/" />
+                <data android:pathPrefix="/pay/" />
             </intent-filter>
             <!-- Links made before links.circaso.com (2026-11-07) keep opening the app. -->
             <intent-filter android:autoVerify="true">
@@ -87,13 +89,15 @@
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
                 <data android:scheme="https" android:host="sandbox.circaso.com" android:pathPrefix="/s/" />
+                <data android:pathPrefix="/pay/" />
             </intent-filter>
-            <!-- The page's "Open in Circaso" button: circaso://s/{code}. -->
+            <!-- The page's "Open in Circaso" button: circaso://s/{code}, and a pay link page's circaso://pay/<address>?…. -->
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
                 <data android:scheme="circaso" android:host="s" />
+                <data android:host="pay" />
             </intent-filter>
             <!-- Photos, videos and files shared from other apps (2026-11-07): one or several, any type; images and videos
                  go to the shared media editor, anything else as a document. -->
