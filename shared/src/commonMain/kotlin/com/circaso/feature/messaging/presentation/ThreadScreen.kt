@@ -1,5 +1,6 @@
 package com.circaso.feature.messaging.presentation
 
+import androidx.compose.ui.draw.drawBehind
 import com.circaso.designsystem.chrome.OverWindow
 
 import androidx.compose.ui.semantics.stateDescription
@@ -10,7 +11,8 @@ import androidx.compose.foundation.gestures.calculateCentroid
 import kotlinx.coroutines.launch
 import androidx.compose.ui.input.pointer.positionChanged
 import androidx.compose.foundation.gestures.calculatePan
-import androidx.compose.foundation.gestures.calculateZoom
+import com.circaso.designsystem.components.zoomGestures
+import com.circaso.designsystem.components.zoomed
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.layout.Arrangement
@@ -177,7 +179,7 @@ fun ThreadScreen(
         media = viewModel.media?.let { m ->
             ThreadMediaActions(
                 canShareLocation = m.canShareLocation, onCompose = onComposeMedia, uploading = m.progress, downloading = m.downloading, onLocation = viewModel::onSendLocation,
-                onVoiceStart = viewModel::onVoiceStart, onVoiceEnd = viewModel::onVoiceEnd, load = { d -> m.load(d) }, openDocument = { d -> m.videoFile(d) }, mapPicture = m::mapPicture,
+                onVoiceStart = viewModel::onVoiceStart, onVoiceEnd = viewModel::onVoiceEnd, load = { d -> m.load(d) }, openDocument = { d -> m.videoFile(d) }, localDocument = { d -> m.localFile(d) }, mapPicture = m::mapPicture,
                 onShareLive = viewModel::onShareLive, onStopLive = viewModel::onStopLive,
                 onPlayVideo = viewModel::onPlayVideo, onCloseVideo = viewModel::onCloseVideo,
                 onPlay = viewModel::onPlay, onRetry = viewModel::onRetryMedia,
@@ -306,6 +308,8 @@ fun ThreadContent(
     // The same for files coming in, by attachment id: the bubble or album tile reads its own (LocalDownloading).
     val downloading = media?.downloading?.collectAsState()
     var viewing by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf<ByteArray?>(null) }
+    // A PDF opened from its bubble (2026-11-24): its pages in Circaso's own viewer.
+    var viewingPdf by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf<PdfViewing?>(null) }
     // An album open full screen (its items and the one tapped), and a failed album's options (all its items).
     var viewingAlbum by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf<Pair<List<Message.Media>, Int>?>(null) }
     var selectedAlbum by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf<List<Message.Media>?>(null) }
@@ -401,7 +405,8 @@ fun ThreadContent(
     val lastOutgoingPayment = state.messages.lastOrNull { it is Message.Payment && it.outgoing }?.localId
 
     // Location tiles draw the server's map picture when there is one (MAP1).
-    androidx.compose.runtime.CompositionLocalProvider(LocalMapPicture provides media?.mapPicture, LocalOpenDocument provides media?.openDocument, LocalDownloading provides downloading) {
+    androidx.compose.runtime.CompositionLocalProvider(LocalMapPicture provides media?.mapPicture, LocalOpenDocument provides media?.openDocument, LocalDownloading provides downloading,
+        LocalLocalDocument provides media?.localDocument, LocalOpenPdf provides { viewingPdf = it }) {
     CircasoScaffold(
         strip = {
             // Someone I chat with but haven't saved: one tap saves them (moments need both sides saved).
@@ -605,6 +610,7 @@ fun ThreadContent(
                 }
             }
             ImageViewer(viewing) { viewing = null }
+            PdfViewer(viewingPdf) { viewingPdf = null }
             AlbumViewer(viewingAlbum, loadMedia, onPlayVideo = { m -> media?.onPlayVideo?.invoke(m) }) { viewingAlbum = null }
             // Fades in and out like the photo viewer; the last path is kept through the fade out.
             var lastVideo by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf<String?>(null) }
@@ -1016,6 +1022,8 @@ class ThreadMediaActions(
     /** A document's decrypted file on disk (downloaded a piece at a time if needed), or why not: opened from its path. */
     val openDocument: suspend (com.circaso.feature.messaging.data.repository.MediaDetails) -> Pair<String?, com.circaso.feature.messaging.data.repository.MediaLoad?> =
         { null to com.circaso.feature.messaging.data.repository.MediaLoad.Failed },
+    /** A document's decrypted file if it is already on this phone (never downloads): a PDF bubble draws its first page from it. */
+    val localDocument: suspend (com.circaso.feature.messaging.data.repository.MediaDetails) -> String? = { null },
     val mapPicture: MapPictureLoader? = null,
     val onShareLive: (durationMs: Long) -> Unit = {},
     val onPlayVideo: (Message.Media) -> Unit = {},
@@ -1077,6 +1085,7 @@ internal fun FailedBadge(modifier: Modifier = Modifier) {
 /**
  * A document in the chat: the page in a tile, its name, its type and size, and a caption under it. Tap to open it with
  * the apps on this phone (it is downloaded and decrypted first); while it goes out, the upload ring turns round the tile.
+ * A PDF (2026-11-24) shows its first page over that, says how many pages it has, and opens in Circaso's own viewer.
  */
 @OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
@@ -1097,6 +1106,10 @@ private fun FileBubble(
     val going = m.state == DeliveryState.Sending || m.state == DeliveryState.Waiting
     // Coming in (this tap, or one before the bubble scrolled away): the ring fills round the tile as it arrives.
     val incoming = downloadProgress(m)
+    val pdf = com.circaso.core.platform.isPdf(name, m.details.mime)
+    val openPdf = LocalOpenPdf.current
+    var pages by androidx.compose.runtime.remember(m.localId, m.details.pages) { androidx.compose.runtime.mutableStateOf(m.details.pages) }
+    val facts = listOfNotNull(pages?.takeIf { pdf }?.let { if (it == 1) "1 page" else "$it pages" }, kind, size).joinToString(" · ")
     Column(
         bubble.pressable(
             role = androidx.compose.ui.semantics.Role.Button, onLongClick = options,
@@ -1108,6 +1121,8 @@ private fun FileBubble(
                     // From its file on disk (downloaded and decrypted a piece at a time): never read into memory.
                     val (path, why) = openDocument(m.details)
                     when {
+                        path != null && pdf && openPdf != null ->
+                            openPdf(PdfViewing(path, name, m.details.mime?.takeIf { it.isNotBlank() } ?: "application/pdf", m.details.size))
                         path != null ->
                             if (!com.circaso.core.platform.openFile(path, name, m.details.mime ?: "application/octet-stream")) problem = "No app here can open this file"
                         why == com.circaso.feature.messaging.data.repository.MediaLoad.Offline -> problem = "Opens when you're back online"
@@ -1119,11 +1134,20 @@ private fun FileBubble(
                 }
             },
         ).semantics(mergeDescendants = true) {
-            contentDescription = "Document $name, $kind" + (size?.let { ", $it" } ?: "") + (m.details.caption?.let { ". $it" } ?: "") +
+            contentDescription = "Document $name, $facts" + (m.details.caption?.let { ". $it" } ?: "") +
                 (incoming?.let { ". " + downloadLabel(it) } ?: if (opening) ". Opening" else "")
-        }.padding(CircasoSpacing.s3),
+        }.then(if (pdf) Modifier.width(MediaBubbleWidth) else Modifier).padding(CircasoSpacing.s3),
         verticalArrangement = Arrangement.spacedBy(CircasoSpacing.s2),
     ) {
+        if (pdf) {
+            // The first page's top, as WhatsApp shows a PDF: what the document is, before it is opened.
+            PdfFirstPage(
+                m.details,
+                Modifier.fillMaxWidth().aspectRatio(PdfPreviewRatio).clip(com.circaso.designsystem.theme.CircasoShapes.sm)
+                    .then(if (m.outgoing) Modifier else Modifier.border(0.5.dp, c.fillStrong, com.circaso.designsystem.theme.CircasoShapes.sm)),
+                onPages = { if (pages == null) pages = it },
+            )
+        }
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(CircasoSpacing.s3)) {
             // A round tile, so the upload ring sits round it as it does on a photo; the same clock and failed badge too.
             Box(Modifier.size(MediaIconSize + 8.dp), contentAlignment = Alignment.Center) {
@@ -1144,7 +1168,7 @@ private fun FileBubble(
             }
             Column(Modifier.weight(1f)) {
                 BasicText(name, style = t.callout.copy(color = ink, fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold), maxLines = 2, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
-                BasicText(problem ?: incoming?.let { p -> m.details.size?.let { "${com.circaso.feature.mediacompose.sizeLabel((it * p).toLong())} of ${com.circaso.feature.mediacompose.sizeLabel(it)}" } } ?: listOfNotNull(kind, size).joinToString(" · "), style = t.footnote.copy(color = inkSoft, fontFeatureSettings = "tnum"))
+                BasicText(problem ?: incoming?.let { p -> m.details.size?.let { "${com.circaso.feature.mediacompose.sizeLabel((it * p).toLong())} of ${com.circaso.feature.mediacompose.sizeLabel(it)}" } } ?: facts, style = t.footnote.copy(color = inkSoft, fontFeatureSettings = "tnum"))
             }
         }
         m.details.caption?.let { BasicText(it, style = t.body.copy(color = ink)) }
@@ -1291,6 +1315,12 @@ private val TerminalMediaErrors = setOf("messaging.attachment_too_large")
 internal val MediaBubbleWidth = 240.dp
 private val MapTileHeight = 120.dp
 private val MediaIconSize = 40.dp
+
+/** The largest side a photo is decoded at for the viewer: sharp when zoomed, bounded in memory. */
+internal const val ZoomDecodePx = 4096
+
+/** A PDF bubble shows the top of its first page, a little wider than tall. */
+private const val PdfPreviewRatio = 1.45f
 
 /** The jump-to-latest disc's lift off the thread. */
 private val JumpShadow = 8.dp
@@ -1680,99 +1710,65 @@ private fun androidx.compose.foundation.layout.BoxScope.FullScreenVideo(path: St
 }
 
 /**
- * A photo full screen, on black, with a close button. Pinch to zoom (up to 4×) and pan while zoomed; double-tap
- * zooms to 2× at the tap or back out; drag down at normal size to dismiss, the backdrop fading as it goes. A tap,
- * back or the close button also close it.
+ * A photo full screen, on black, with a close button. Pinch to zoom (up to 5×, about the fingers) and pan while
+ * zoomed; double-tap zooms in at the tap or back out; on release it springs back inside its limits. Drag down at normal
+ * size to dismiss, the backdrop fading as it goes. A tap, back or the close button also close it. The zoom is
+ * [com.circaso.designsystem.components.ZoomState] (shared with the PDF viewer; its maths tested in `ZoomMathTest`).
  */
 @OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class)
 @Composable
-internal fun androidx.compose.foundation.layout.BoxScope.ImageViewer(bytes: ByteArray?, onClose: () -> Unit) {
+internal fun androidx.compose.foundation.layout.BoxScope.ImageViewer(
+    bytes: ByteArray?,
+    /** Where it opens (fitted; a preview may open it zoomed). */
+    initial: com.circaso.designsystem.components.ZoomTransform = com.circaso.designsystem.components.ZoomTransform.Identity,
+    onClose: () -> Unit,
+) {
     // Over the whole window, even from a chat in the detail pane (iPad Photos and Messages show a photo full screen).
     // Back stays with the chat that opened it, so it is handled in the screen's order, not the window layer's.
     androidx.compose.ui.backhandler.BackHandler(enabled = bytes != null, onBack = onClose)
-    OverWindow { ImageViewerInPlace(bytes, onClose) }
+    OverWindow { ImageViewerInPlace(bytes, initial, onClose) }
 }
 
-@OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class)
 @Composable
-private fun androidx.compose.foundation.layout.BoxScope.ImageViewerInPlace(bytes: ByteArray?, onClose: () -> Unit) {
+private fun androidx.compose.foundation.layout.BoxScope.ImageViewerInPlace(
+    bytes: ByteArray?,
+    initial: com.circaso.designsystem.components.ZoomTransform,
+    onClose: () -> Unit,
+) {
     // Keep the last photo through the fade out (bytes is already null by then).
     var shown by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf<ByteArray?>(null) }
     if (bytes != null) shown = bytes
-    var zoom by androidx.compose.runtime.remember { androidx.compose.runtime.mutableFloatStateOf(1f) }
-    var pan by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(androidx.compose.ui.geometry.Offset.Zero) }
-    var drag by androidx.compose.runtime.remember { androidx.compose.runtime.mutableFloatStateOf(0f) }
-    LaunchedEffect(bytes) { if (bytes != null) { zoom = 1f; pan = androidx.compose.ui.geometry.Offset.Zero; drag = 0f } }
     val scope = androidx.compose.runtime.rememberCoroutineScope()
+    val zoom = androidx.compose.runtime.remember { com.circaso.designsystem.components.ZoomState(scope) }
+    // Read only in drawing (the backdrop's alpha, the photo's layer), so a drag never recomposes the viewer.
+    var drag by androidx.compose.runtime.remember { androidx.compose.runtime.mutableFloatStateOf(0f) }
+    LaunchedEffect(bytes) { if (bytes != null) { zoom.reset(initial); drag = 0f } }
     val dismissAt = with(androidx.compose.ui.platform.LocalDensity.current) { 140.dp.toPx() }
-    fun settle(toZoom: Float, toPan: androidx.compose.ui.geometry.Offset) {
-        val fromZoom = zoom
-        val fromPan = pan
-        scope.launch {
-            androidx.compose.animation.core.animate(0f, 1f, animationSpec = tween(CircasoMotion.BaseMs)) { f, _ ->
-                zoom = fromZoom + (toZoom - fromZoom) * f
-                pan = fromPan + (toPan - fromPan) * f
-            }
-        }
-    }
     AnimatedVisibility(bytes != null, Modifier.matchParentSize(), enter = fadeIn(tween(CircasoMotion.BaseMs)), exit = fadeOut(tween(CircasoMotion.QuickMs))) {
-        val fade = (1f - kotlin.math.abs(drag) / (dismissAt * 3)).coerceIn(0.2f, 1f)
-        Box(Modifier.fillMaxSize().background(androidx.compose.ui.graphics.Color.Black.copy(alpha = fade))) {
+        Box(
+            Modifier.fillMaxSize().drawBehind {
+                drawRect(androidx.compose.ui.graphics.Color.Black.copy(alpha = (1f - kotlin.math.abs(drag) / (dismissAt * 3)).coerceIn(0.2f, 1f)))
+            },
+        ) {
             shown?.let {
                 coil3.compose.AsyncImage(
-                    model = it, contentDescription = "Photo", contentScale = androidx.compose.ui.layout.ContentScale.Fit,
+                    // Decoded up to 4096 px (never stretched from a screen-sized copy), so a zoom stays sharp.
+                    model = coil3.request.ImageRequest.Builder(coil3.compose.LocalPlatformContext.current).data(it)
+                        .size(coil3.size.Size(ZoomDecodePx, ZoomDecodePx)).build(),
+                    contentDescription = "Photo", contentScale = androidx.compose.ui.layout.ContentScale.Fit,
+                    // The photo as fitted on screen, so a pan stops at its own edges, not the screen's.
+                    onSuccess = { s -> zoom.intrinsic = s.painter.intrinsicSize },
                     modifier = Modifier.fillMaxSize()
-                        .pointerInput(Unit) {
-                            detectTapGestures(
-                                onTap = { onClose() },
-                                onDoubleTap = { at ->
-                                    if (zoom > 1.01f) settle(1f, androidx.compose.ui.geometry.Offset.Zero)
-                                    // Zoom towards the tapped spot: it stays under the finger.
-                                    else settle(2f, (androidx.compose.ui.geometry.Offset(size.width / 2f, size.height / 2f) - at))
-                                },
-                            )
-                        }
-                        .pointerInput(Unit) {
-                            awaitEachGesture {
-                                awaitFirstDown(requireUnconsumed = false)
-                                val slop = viewConfiguration.touchSlop
-                                var travelled = 0f
-                                do {
-                                    val event = awaitPointerEvent()
-                                    val change = event.calculateZoom()
-                                    val move = event.calculatePan()
-                                    if (change != 1f || zoom > 1.01f) {
-                                        // Zoom about the fingers, and never let the photo leave the screen.
-                                        val centroid = event.calculateCentroid() - androidx.compose.ui.geometry.Offset(size.width / 2f, size.height / 2f)
-                                        val next = (zoom * change).coerceIn(1f, 4f)
-                                        val grown = if (zoom > 0f) next / zoom else 1f
-                                        val limitX = (next - 1f) * size.width / 2f
-                                        val limitY = (next - 1f) * size.height / 2f
-                                        val raw = (pan - centroid) * grown + centroid + move
-                                        pan = if (next > 1.01f) androidx.compose.ui.geometry.Offset(raw.x.coerceIn(-limitX, limitX), raw.y.coerceIn(-limitY, limitY)) else androidx.compose.ui.geometry.Offset.Zero
-                                        zoom = next
-                                        event.changes.forEach { if (it.positionChanged()) it.consume() }
-                                    } else if (event.changes.size == 1) {
-                                        // A drag to dismiss starts only past the touch slop, so a shaky tap still closes.
-                                        travelled += kotlin.math.abs(move.y)
-                                        if (travelled > slop) {
-                                            drag += move.y
-                                            event.changes.forEach { it.consume() }
-                                        }
-                                    }
-                                } while (event.changes.any { it.pressed })
+                        .zoomGestures(
+                            zoom,
+                            onTap = onClose,
+                            onDrag = { dy -> drag += dy },
+                            onDragEnd = {
                                 if (kotlin.math.abs(drag) > dismissAt) onClose()
-                                else if (drag != 0f) {
-                                    val from = drag
-                                    scope.launch { androidx.compose.animation.core.animate(from, 0f, animationSpec = tween(CircasoMotion.QuickMs)) { v, _ -> drag = v } }
-                                }
-                            }
-                        }
-                        .graphicsLayer {
-                            scaleX = zoom; scaleY = zoom
-                            translationX = pan.x
-                            translationY = pan.y + drag
-                        },
+                                else scope.launch { androidx.compose.animation.core.animate(drag, 0f, animationSpec = com.circaso.designsystem.components.ZoomState.ZoomSpring) { v, _ -> drag = v } }
+                            },
+                        )
+                        .zoomed(zoom) { drag },
                 )
             }
             Box(Modifier.statusBarsPadding().padding(CircasoSpacing.s3).align(Alignment.TopStart)) {

@@ -327,7 +327,8 @@ fun PreviewScreens(name: String) {
         // `you-verified`, `you-unverified`, `you-identity-loading`: the Verification row in the Money group (F2).
         "you", "you-notification-privacy-on", "you-verified", "you-unverified", "you-identity-loading" -> YouContent(
             YouUiState(
-                profile = profile, maskedPhone = "+254 7•• ••• 678",
+                // `you-verified`: my own seal on the hero and the mark after my name (the verified badge).
+                profile = if (name == "you-verified") profile.copy(verified = true) else profile, maskedPhone = "+254 7•• ••• 678",
                 identity = when (name) {
                     "you-identity-loading" -> com.circaso.feature.ramp.presentation.IdentityRowUi.Loading
                     "you-notification-privacy-on" -> com.circaso.feature.ramp.presentation.IdentityRowUi.Hidden
@@ -641,7 +642,7 @@ private fun PreviewScreensC(name: String) {
             }
             com.circaso.feature.wallet.presentation.ActivityContent(state, {}, {}, {}, {})
         }
-        else -> if (!GroupWalletPreview(name) && !ChatMoneyPreview(name) && !MomentsChatsPreview(name) && !AshaPreview(name) && !VaultPreview(name) && !SavedNamesPreview(name) && !GroupLinkPreview(name) && !SecurityCodePreview(name) && !SheetsPreview(name) && !HelpLogPreview(name) && !TicketPreview(name) && !CallPreviews(name) && !AddMoneyPreview(name) && !CashOutPreview(name) && !SendWalletPreview(name) && !IdentityPreview(name) && !BackupPreview(name)) BasicText("Unknown preview: $name")
+        else -> if (!GroupWalletPreview(name) && !ChatMoneyPreview(name) && !MomentsChatsPreview(name) && !AshaPreview(name) && !VaultPreview(name) && !SavedNamesPreview(name) && !GroupLinkPreview(name) && !SecurityCodePreview(name) && !SheetsPreview(name) && !HelpLogPreview(name) && !TicketPreview(name) && !CallPreviews(name) && !AddMoneyPreview(name) && !CashOutPreview(name) && !SendWalletPreview(name) && !IdentityPreview(name) && !BackupPreview(name) && !PolishPreview(name)) BasicText("Unknown preview: $name")
     }
 }
 

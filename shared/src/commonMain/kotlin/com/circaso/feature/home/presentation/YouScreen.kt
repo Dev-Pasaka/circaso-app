@@ -1,5 +1,6 @@
 package com.circaso.feature.home.presentation
 
+import com.circaso.designsystem.components.VerifiedSheet
 import com.circaso.designsystem.chrome.OverWindow
 
 import androidx.compose.foundation.layout.size
@@ -367,7 +368,7 @@ private fun ProfileHero(
     phone: String?,
     photo: String?,
     waiting: Boolean,
-    /** My verified badge (2026-11-24): the seal on the photo and the pill under the name. */
+    /** My verified badge (2026-11-24): the seal on the photo and the mark after my name, each opening what it means. */
     verified: Boolean = false,
     onEdit: () -> Unit,
     onPhoto: () -> Unit,
@@ -377,57 +378,69 @@ private fun ProfileHero(
 ) {
     val c = CircasoTheme.colors
     val t = CircasoTheme.typography
-    Column(
-        modifier.fillMaxWidth().padding(top = CircasoSpacing.s4, bottom = CircasoSpacing.s2),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(CircasoSpacing.s2),
-    ) {
-        if (name == null) {
-            // Loading: shapes only, so "Your profile" never flashes before the real name.
-            Box(Modifier.size(CircasoSizes.avatarHero).clip(CircasoShapes.circle).background(c.fillStrong))
-            Box(Modifier.padding(top = CircasoSpacing.s1).size(160.dp, 24.dp).clip(CircasoShapes.sm).background(c.fill))
-            Box(Modifier.size(120.dp, 16.dp).clip(CircasoShapes.sm).background(c.fill))
-        } else {
-            // The ring in the page colour cuts the photo out of its own glow. On arrival it comes into focus a beat
-            // after the backdrop starts melting: a small spring in scale and a fade, never a bounce in layout.
-            val stillHero = CircasoTheme.reduceMotion
-            val focus = androidx.compose.runtime.remember { androidx.compose.animation.core.Animatable(if (stillHero) 1f else 0f) }
-            val heroArrival = LocalTabArrival.current
-            androidx.compose.runtime.LaunchedEffect(heroArrival) {
-                if (heroArrival < 0) return@LaunchedEffect
-                if (stillHero) focus.snapTo(1f) else {
-                    focus.snapTo(0f)
-                    kotlinx.coroutines.delay(AvatarFocusDelayMs)
-                    focus.animateTo(1f, androidx.compose.animation.core.spring(dampingRatio = 0.8f, stiffness = 260f))
+    val explainer = com.circaso.designsystem.components.rememberVerifiedExplainer()
+    Box(modifier.fillMaxWidth()) {
+        Column(
+            Modifier.fillMaxWidth().padding(top = CircasoSpacing.s4, bottom = CircasoSpacing.s2),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(CircasoSpacing.s2),
+        ) {
+            if (name == null) {
+                // Loading: shapes only, so "Your profile" never flashes before the real name.
+                Box(Modifier.size(CircasoSizes.avatarHero).clip(CircasoShapes.circle).background(c.fillStrong))
+                Box(Modifier.padding(top = CircasoSpacing.s1).size(160.dp, 24.dp).clip(CircasoShapes.sm).background(c.fill))
+                Box(Modifier.size(120.dp, 16.dp).clip(CircasoShapes.sm).background(c.fill))
+            } else {
+                // The ring in the page colour cuts the photo out of its own glow. On arrival it comes into focus a beat
+                // after the backdrop starts melting: a small spring in scale and a fade, never a bounce in layout.
+                val stillHero = CircasoTheme.reduceMotion
+                val focus = androidx.compose.runtime.remember { androidx.compose.animation.core.Animatable(if (stillHero) 1f else 0f) }
+                val heroArrival = LocalTabArrival.current
+                androidx.compose.runtime.LaunchedEffect(heroArrival) {
+                    if (heroArrival < 0) return@LaunchedEffect
+                    if (stillHero) focus.snapTo(1f) else {
+                        focus.snapTo(0f)
+                        kotlinx.coroutines.delay(AvatarFocusDelayMs)
+                        focus.animateTo(1f, androidx.compose.animation.core.spring(dampingRatio = 0.8f, stiffness = 260f))
+                    }
                 }
-            }
-            Avatar(
-                name, size = CircasoSizes.avatarHero, imageUrl = photo,
-                modifier = Modifier.onGloballyPositioned { onPhotoBounds(it.boundsInWindow()) }
-                    // While it is open large, the circle is where it came from: empty, so the photo reads as lifted out.
-                    .graphicsLayer {
-                        alpha = if (photoHidden) 0f else focus.value.coerceIn(0f, 1f)
-                        val z = 0.92f + 0.08f * focus.value; scaleX = z; scaleY = z
-                    },
-                verified = verified,
-                // The shadow, the page-coloured ring and the press follow the circle; the seal sits over them, whole.
-                discModifier = Modifier.shadow(AvatarShadow, CircasoShapes.circle).border(AvatarRing, c.bgGrouped, CircasoShapes.circle)
-                    .let { m -> if (photo != null) m.pressable(role = androidx.compose.ui.semantics.Role.Image, onClick = onPhoto).semantics { contentDescription = "Your photo. Open it large" } else m },
-            )
-            Column(
-                Modifier.padding(top = CircasoSpacing.s1).semantics(mergeDescendants = true) {},
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(CircasoSpacing.s1),
-            ) {
-                BasicText(name, style = t.title2.copy(color = c.ink, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center), maxLines = 2, overflow = TextOverflow.Ellipsis)
-                listOfNotNull(handle?.let { "@$it" }, phone).joinToString("  ·  ").takeIf { it.isNotEmpty() }?.let {
-                    BasicText(it, style = t.subhead.copy(color = c.inkSecondary, textAlign = TextAlign.Center))
+                Avatar(
+                    name, size = CircasoSizes.avatarHero, imageUrl = photo,
+                    modifier = Modifier.onGloballyPositioned { onPhotoBounds(it.boundsInWindow()) }
+                        // While it is open large, the circle is where it came from: empty, so the photo reads as lifted out.
+                        .graphicsLayer {
+                            alpha = if (photoHidden) 0f else focus.value.coerceIn(0f, 1f)
+                        // Faded without an offscreen layer of the avatar's size, which would clip the seal that
+                        // reaches just past the square.
+                        compositingStrategy = androidx.compose.ui.graphics.CompositingStrategy.ModulateAlpha
+                            val z = 0.92f + 0.08f * focus.value; scaleX = z; scaleY = z
+                        },
+                    verified = verified,
+                    onSealClick = { explainer.open = true },
+                // The seal sits in the hero's own page-coloured ring, not in a hole onto the glow behind it.
+                sealRing = c.bgGrouped,
+                    // The shadow, the page-coloured ring and the press follow the circle; the seal sits over them, whole.
+                    discModifier = Modifier.shadow(AvatarShadow, CircasoShapes.circle).border(AvatarRing, c.bgGrouped, CircasoShapes.circle)
+                        .let { m -> if (photo != null) m.pressable(role = androidx.compose.ui.semantics.Role.Image, onClick = onPhoto).semantics { contentDescription = "Your photo. Open it large" } else m },
+                )
+                Column(
+                    Modifier.padding(top = CircasoSpacing.s1).semantics(mergeDescendants = true) {},
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(CircasoSpacing.s1),
+                ) {
+                    com.circaso.designsystem.components.VerifiedName(
+                        name, verified, t.title2.copy(color = c.ink, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center),
+                        Modifier.padding(horizontal = CircasoSpacing.s6), onMarkClick = { explainer.open = true },
+                    )
+                    listOfNotNull(handle?.let { "@$it" }, phone).joinToString("  ·  ").takeIf { it.isNotEmpty() }?.let {
+                        BasicText(it, style = t.subhead.copy(color = c.inkSecondary, textAlign = TextAlign.Center))
+                    }
+                    if (waiting) BasicText("Waiting to send", style = t.caption1.copy(color = c.warning))
                 }
-                if (waiting) BasicText("Waiting to send", style = t.caption1.copy(color = c.warning))
+                CircasoButton("Edit Profile", onEdit, modifier = Modifier.padding(top = CircasoSpacing.s1).heightIn(min = CircasoSizes.controlMd), style = ButtonStyle.Secondary, size = ButtonSize.Small)
             }
-            com.circaso.designsystem.components.VerifiedPillReveal(verified, own = true)
-            CircasoButton("Edit Profile", onEdit, modifier = Modifier.padding(top = CircasoSpacing.s1).heightIn(min = CircasoSizes.controlMd), style = ButtonStyle.Secondary, size = ButtonSize.Small)
         }
+        VerifiedSheet(explainer, own = true)
     }
 }
 

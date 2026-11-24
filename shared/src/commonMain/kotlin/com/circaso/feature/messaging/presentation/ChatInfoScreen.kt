@@ -1,5 +1,6 @@
 package com.circaso.feature.messaging.presentation
 
+import com.circaso.designsystem.components.VerifiedSheet
 import com.circaso.feature.names.presentation.EditName
 import com.circaso.feature.names.presentation.EditNameSheet
 import com.circaso.feature.names.presentation.ProfileNameLine
@@ -281,29 +282,37 @@ fun ChatInfoScreen(
     ) { padding ->
         LazyColumn(Modifier.fillMaxSize(), state = list, contentPadding = PaddingValues(bottom = padding.calculateBottomPadding() + CircasoSpacing.s6)) {
             item {
-                Column(Modifier.fillMaxWidth().padding(vertical = CircasoSpacing.s6), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(CircasoSpacing.s2)) {
-                    if (state.isGroup && state.amAdmin && state.photosAvailable) {
-                        // M8: admins change the group's photo from here (the profile photo's sheet and camera).
-                        GroupPhotoButton(
-                            name = chat?.title ?: "", bytes = state.pendingPhoto, imageUrl = chat?.avatarUrl, busy = state.photoBusy,
-                            enabled = state.canChangePhoto, onClick = { viewModel.photos?.open() }, size = CircasoSizes.avatarXl,
-                            available = state.canChangePhoto || state.hasGroupPhoto,
+                // The verified badge (2026-11-24): the mark after the name, and the seal on the photo, open what it means.
+                val verifiedPeer = !state.isGroup && chat?.peerId != null && chat.peerId in com.circaso.designsystem.components.LocalVerifiedPeople.current
+                val explainer = com.circaso.designsystem.components.rememberVerifiedExplainer()
+                Box {
+                    Column(Modifier.fillMaxWidth().padding(vertical = CircasoSpacing.s6), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(CircasoSpacing.s2)) {
+                        if (state.isGroup && state.amAdmin && state.photosAvailable) {
+                            // M8: admins change the group's photo from here (the profile photo's sheet and camera).
+                            GroupPhotoButton(
+                                name = chat?.title ?: "", bytes = state.pendingPhoto, imageUrl = chat?.avatarUrl, busy = state.photoBusy,
+                                enabled = state.canChangePhoto, onClick = { viewModel.photos?.open() }, size = CircasoSizes.avatarXl,
+                                available = state.canChangePhoto || state.hasGroupPhoto,
+                            )
+                        } else {
+                            Avatar(
+                                chat?.title ?: "", size = CircasoSizes.avatarXl, imageUrl = chat?.avatarUrl, userId = chat?.peerId,
+                                onSealClick = { explainer.open = true },
+                            )
+                        }
+                        com.circaso.designsystem.components.VerifiedName(
+                            chat?.title ?: "", verifiedPeer, t.title1.copy(color = c.ink, textAlign = TextAlign.Center),
+                            Modifier.padding(horizontal = CircasoSpacing.s6), onMarkClick = { explainer.open = true },
                         )
-                    } else {
-                        Avatar(chat?.title ?: "", size = CircasoSizes.avatarXl, imageUrl = chat?.avatarUrl, userId = chat?.peerId)
+                        if (state.isGroup) BasicText("${chat?.members?.size ?: 0} members" + if (state.money.enabled && state.money.money?.hasWallet == true) " · Group wallet" else "", style = t.subhead.copy(color = c.inkSecondary))
+                        else PeerNameLines(chat?.members?.firstOrNull { it.userId == chat.peerId })
+                        // The group's description (2026-11-14), under its name: what the group is for, in the admins' words.
+                        if (state.isGroup) chat?.description?.let { GroupDescription(it, Modifier.padding(horizontal = CircasoSpacing.s6, vertical = CircasoSpacing.s1)) }
+                        if (state.isGroup && state.amAdmin && state.photosAvailable && !state.online) {
+                            BasicText("Changing the group photo needs a connection.", style = t.footnote.copy(color = c.inkTertiary, textAlign = TextAlign.Center))
+                        }
                     }
-                    BasicText(chat?.title ?: "", style = t.title1.copy(color = c.ink, textAlign = TextAlign.Center))
-                    if (state.isGroup) BasicText("${chat?.members?.size ?: 0} members" + if (state.money.enabled && state.money.money?.hasWallet == true) " · Group wallet" else "", style = t.subhead.copy(color = c.inkSecondary))
-                    else PeerNameLines(chat?.members?.firstOrNull { it.userId == chat.peerId })
-                    // The verified badge (2026-11-24): what the seal on their photo means, one tap away.
-                    com.circaso.designsystem.components.VerifiedPillReveal(
-                        !state.isGroup && chat?.peerId != null && chat.peerId in com.circaso.designsystem.components.LocalVerifiedPeople.current,
-                    )
-                    // The group's description (2026-11-14), under its name: what the group is for, in the admins' words.
-                    if (state.isGroup) chat?.description?.let { GroupDescription(it, Modifier.padding(horizontal = CircasoSpacing.s6, vertical = CircasoSpacing.s1)) }
-                    if (state.isGroup && state.amAdmin && state.photosAvailable && !state.online) {
-                        BasicText("Changing the group photo needs a connection.", style = t.footnote.copy(color = c.inkTertiary, textAlign = TextAlign.Center))
-                    }
+                    VerifiedSheet(explainer)
                 }
             }
             if (!state.isGroup && chat != null) {

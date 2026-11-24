@@ -119,8 +119,13 @@ data class ChatPayload(
     val liveId: String? = null,
     val liveUntil: Long? = null,
     val liveAt: Long? = null,
-    /** A video's first frame (type [Video]): a small base64 JPEG, so the bubble shows before the file loads. */
+    /**
+     * A video's first frame (type [Video]), or a PDF's first page (type [File], 2026-11-24): a small base64 JPEG, so the
+     * bubble shows before the file loads.
+     */
     val thumb: String? = null,
+    /** A PDF's page count (type [File], 2026-11-24). An older app ignores it and [thumb] on a file. */
+    val pages: Int? = null,
     /**
      * Photos and videos sent together (2026-11-07): the same random id on each, so the receiver shows them as one album.
      * Optional: an older app ignores it and shows each on its own; each item is still its own message and attachment.

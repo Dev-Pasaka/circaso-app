@@ -282,13 +282,22 @@ private fun androidx.compose.foundation.layout.BoxScope.ContactsSheets(state: Co
             val p = selected.person
             Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(CircasoSpacing.s1)) {
                 Avatar(p.displayName, size = CircasoSizes.avatarLg + 8.dp, imageUrl = p.avatarUrl, userId = p.userId)
-                BasicText(p.displayName, Modifier.padding(top = CircasoSpacing.s2), style = t.title3.copy(color = c.ink, textAlign = TextAlign.Center))
+                val verified = p.userId in com.circaso.designsystem.components.LocalVerifiedPeople.current
+                // The verified badge: the mark after the name, X-style; inside this sheet its meaning is written out
+                // under the name rather than opening a second sheet.
+                com.circaso.designsystem.components.VerifiedName(
+                    p.displayName, verified, t.title3.copy(color = c.ink, textAlign = TextAlign.Center),
+                    Modifier.padding(top = CircasoSpacing.s2, start = CircasoSpacing.s4, end = CircasoSpacing.s4),
+                )
                 // A name I saved: their own under it, WhatsApp-style.
                 if (p.renamed) ProfileNameLine(p.profileName, t.subhead.copy(color = c.inkSecondary, textAlign = TextAlign.Center))
                 p.handle?.let { BasicText("@$it", style = t.subhead.copy(color = c.inkSecondary)) }
-                // Inside this sheet the meaning is written out rather than opening a second sheet.
-                if (p.userId in com.circaso.designsystem.components.LocalVerifiedPeople.current) {
-                    com.circaso.designsystem.components.VerifiedPill(explainable = false)
+                if (verified) {
+                    BasicText(
+                        com.circaso.designsystem.components.VerifiedCopy.Person,
+                        Modifier.padding(horizontal = CircasoSpacing.s4),
+                        style = t.footnote.copy(color = c.inkSecondary, textAlign = TextAlign.Center),
+                    )
                 }
                 p.about?.takeIf { it.isNotBlank() }?.let { BasicText(it, style = t.footnote.copy(color = c.inkSecondary, textAlign = TextAlign.Center)) }
             }

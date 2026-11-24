@@ -1,5 +1,6 @@
 package com.circaso.feature.status.presentation
 
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
@@ -272,7 +273,7 @@ private fun MyMomentRow(state: MomentsUiState, actions: MomentsActions, now: Lon
         onClick = if (ring == MyRing.Seen) actions.onOpenMine else actions.onCompose,
         leading = {
             Box(Modifier.size(MomentAvatar)) {
-                Avatar(state.myName.ifBlank { "Me" }, Modifier.momentRing(if (ring == MyRing.Seen) state.myMoments.sortedBy { it.postedAt }.map { true } else emptyList(), c), size = MomentAvatar, imageUrl = state.myAvatarUrl)
+                Avatar(state.myName.ifBlank { "Me" }, size = MomentAvatar, imageUrl = state.myAvatarUrl, discModifier = Modifier.momentRing(if (ring == MyRing.Seen) state.myMoments.sortedBy { it.postedAt }.map { true } else emptyList(), c))
                 when (ring) {
                     // The shared upload ring (MediaComposeUi), drawn just outside the avatar as the moment ring is.
                     MyRing.Posting -> com.circaso.feature.mediacompose.UploadRing(
@@ -309,7 +310,8 @@ private fun RingRow(ring: MomentRing, style: RingStyle, now: Long, modifier: Mod
         modifier,
         label = "${ring.name}, $what, $time" + (if (count > 1) ", $count moments" else "") + if (ring.waiting > 0) ", ${ring.waiting} more on the way" else "",
         onClick = onClick,
-        leading = { Avatar(ring.name, Modifier.momentRing(ring.arcs(), c).alpha(if (dimmed) 0.5f else 1f), size = MomentAvatar, imageUrl = ring.avatarUrl, userId = ring.posterId) },
+        leading = { // The ring follows the circle (discModifier), so the verified seal's gap cuts it cleanly too.
+            Avatar(ring.name, Modifier.dimmedAvatar(dimmed), size = MomentAvatar, imageUrl = ring.avatarUrl, userId = ring.posterId, discModifier = Modifier.momentRing(ring.arcs(), c)) },
     ) {
         BasicText(ring.name, style = t.body.copy(color = if (dimmed) c.inkSecondary else c.ink), maxLines = 1, overflow = TextOverflow.Ellipsis)
         BasicText(sub, style = t.subhead.copy(color = c.inkSecondary), maxLines = 2, overflow = TextOverflow.Ellipsis)
@@ -340,7 +342,7 @@ internal fun LockedRingRow(ring: MomentRing, modifier: Modifier, online: Boolean
             onClick = { open = !open },
             leading = {
                 Box(Modifier.size(MomentAvatar).alpha(if (dimmed) 0.5f else 1f)) {
-                    Avatar(ring.name, Modifier.momentRing(ring.locked.map { true }, c), size = MomentAvatar, imageUrl = ring.avatarUrl, verified = false)
+                    Avatar(ring.name, size = MomentAvatar, imageUrl = ring.avatarUrl, verified = false, discModifier = Modifier.momentRing(ring.locked.map { true }, c))
                     Badge(c.fillStrong) { CircasoIconImage(if (waiting) CircasoIcon.Clock else CircasoIcon.Lock, c.ink, Modifier.size(BadgeGlyph)) }
                 }
             },
@@ -528,4 +530,10 @@ private fun CheckFailed(requestId: String?, busy: Boolean, onRetry: () -> Unit, 
         }
         requestId?.let { BasicText("Ref $it", style = t.caption2.copy(color = c.inkTertiary)) }
     }
+}
+
+/** A muted row's photo at half strength, faded per drawing (no offscreen layer the size of the avatar to clip its seal). */
+private fun Modifier.dimmedAvatar(dimmed: Boolean): Modifier = if (!dimmed) this else graphicsLayer {
+    alpha = 0.5f
+    compositingStrategy = androidx.compose.ui.graphics.CompositingStrategy.ModulateAlpha
 }

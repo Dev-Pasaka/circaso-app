@@ -1,5 +1,7 @@
 package com.circaso.feature.messaging.presentation
 
+import com.circaso.designsystem.components.zoomGestures
+import com.circaso.designsystem.components.zoomed
 import com.circaso.designsystem.chrome.OverWindow
 
 import androidx.compose.animation.AnimatedVisibility
@@ -314,11 +316,29 @@ private fun BoxScope.AlbumViewerInPlace(
         // Dark in every theme: the status bar's icons go light while it is open.
         com.circaso.core.platform.StatusBarIcons(light = true)
         Box(Modifier.fillMaxSize().background(DarkColors.bg)) {
-            androidx.compose.foundation.pager.HorizontalPager(pager, Modifier.fillMaxSize(), key = { items[it].localId }) { page ->
+            // A zoomed photo keeps the swipes for itself; fitted, a swipe goes to the next item.
+            var zoomedIn by remember { mutableStateOf(false) }
+            androidx.compose.foundation.pager.HorizontalPager(pager, Modifier.fillMaxSize(), key = { items[it].localId }, userScrollEnabled = !zoomedIn) { page ->
                 val m = items[page]
                 val picture = rememberPicture(m, load)
+                // Pinch and double-tap zoom on a photo, as in the single photo viewer (one ZoomState each).
+                val scope = androidx.compose.runtime.rememberCoroutineScope()
+                val zoom = remember { com.circaso.designsystem.components.ZoomState(scope) }
+                if (page == pager.currentPage) androidx.compose.runtime.LaunchedEffect(zoom.zoomed) { zoomedIn = zoom.zoomed }
                 Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    picture?.let { coil3.compose.AsyncImage(it, if (m.isVideo) "Video" else m.details.caption ?: "Photo", Modifier.fillMaxSize(), contentScale = androidx.compose.ui.layout.ContentScale.Fit) }
+                    picture?.let {
+                        coil3.compose.AsyncImage(
+                            // A photo decoded up to 4096 px so a zoom stays sharp; a video's poster as it is.
+                            if (m.isImage) coil3.request.ImageRequest.Builder(coil3.compose.LocalPlatformContext.current).data(it)
+                                .size(coil3.size.Size(ZoomDecodePx, ZoomDecodePx)).build() else it,
+                            if (m.isVideo) "Video" else m.details.caption ?: "Photo",
+                            Modifier.fillMaxSize().then(
+                                if (m.isImage) Modifier.zoomGestures(zoom).zoomed(zoom) else Modifier,
+                            ),
+                            contentScale = androidx.compose.ui.layout.ContentScale.Fit,
+                            onSuccess = { s -> zoom.intrinsic = s.painter.intrinsicSize },
+                        )
+                    }
                     if (picture == null && m.isImage) com.circaso.designsystem.components.Spinner(DarkColors.ink)
                     if (m.isVideo) {
                         val incoming = downloadProgress(m)
