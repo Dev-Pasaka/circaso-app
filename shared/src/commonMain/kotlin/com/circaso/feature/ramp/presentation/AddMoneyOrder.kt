@@ -275,7 +275,8 @@ internal fun OrderPage(
                 RowDivider()
                 FigureRow("Rate", rateLine(order.rate))
                 RowDivider()
-                FigureRow("Fee", feeText(order.fee.amountMinor, order.fee.text))
+                FigureRow(if (order.providerFee != null) "Circaso fee" else "Fee", feeText(order.fee.amountMinor, order.fee.text, named = order.providerFee != null))
+                mpesaFeeText(order.providerFee)?.let { RowDivider(); FigureRow("M-Pesa fee", it) }
                 RowDivider()
                 DetailRow("Network", chainName(order.blockchain))
                 if (!look.needsReference) { RowDivider(); ReferenceRow(order.orderId, onCopy) }

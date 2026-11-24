@@ -46,7 +46,7 @@ data class QuoteResponse(
     val rate: String,
     val fee: RampAmountDto,
     val expiresAt: String,
-    /** Selling: the payout provider's charge, paid by you. */
+    /** M-Pesa's own charge, paid by you: PayHero's fee inside `pay` when buying (2026-11-24), the payout fee when selling. */
     val providerFee: RampAmountDto? = null,
     /** Selling: what the USDC is worth at the rate, before any fee. */
     val worth: RampAmountDto? = null,

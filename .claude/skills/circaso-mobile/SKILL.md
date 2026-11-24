@@ -63,6 +63,9 @@ The design canvas is ahead of the backend, and in one place it disagrees.
   `LocalVerifiedPeople`, made from Room), and a "Verified" pill with an explanation sheet on profiles. See
   `app-architecture.md` → "The verified badge". Since branch `feat/verified-gaps` (Room v26) a payee in no contact or
   chat shows it too, from W6 `counterparty.verified` kept on the stored payments.
+- **M-Pesa's fee on Add Money (2026-11-24, branch `feat/provider-fees`, backend PR #153):** PayHero's per-prompt fee
+  is passed to the buyer, inside `pay`; the review and the order show "Circaso fee" and "M-Pesa fee". See
+  `app-architecture.md` → "Add money: M-Pesa's fee, passed on".
 - **Pay links (2026-11-24, branch `feat/pay-links`, backend PR #148):** the Receive QR and the merchant portal's
   top-up QR are `https://links.circaso.com/pay/<address>?chain=…&asset=USDC`, whose only address is the recipient
   (exchanges that take the first `0x…` can't take the USDC contract). The app reads them (scan, paste, App Links /

@@ -40,15 +40,16 @@ import com.circaso.feature.ramp.presentation.VerifyUi
 import com.circaso.feature.wallet.domain.WalletNetwork
 
 private fun kes(whole: String) = RampAmount("KES", whole + "00", whole)
-private val usdc = RampAmount("USDC", "15310000", "15.31")
+// KES 2,000 prompted: PayHero's KES 20 for that band, the KES 1,980 left with Circaso's KES 30 inside it.
+private val usdc = RampAmount("USDC", "15150000", "15.15")
 private const val Masked = "+254 7•• ••• 678"
 private val status = RampStatus(
     canTrade = true, network = WalletNetwork.TESTNET, kyc = RampKyc.NotRequired, accountActive = true, blockchains = listOf("BASE-SEPOLIA"),
     merchantOnline = true, openOrderId = null, limits = RampLimits("KES", kes("100"), kes("150000"), kes("300000")), feePercent = "1.5",
 )
-private val quote = RampQuote("q1", "BASE-SEPOLIA", kes("2000"), usdc, "128.7", kes("30"), null)
+private val quote = RampQuote("q1", "BASE-SEPOLIA", kes("2000"), usdc, "128.7", kes("30"), null, providerFee = kes("20"))
 private fun order(state: RampOrderState, reason: String? = null) =
-    RampOrder(OrderId, state, WalletNetwork.TESTNET, "BASE-SEPOLIA", kes("2000"), usdc, "128.7", kes("30"), Masked, null, reason, null, null)
+    RampOrder(OrderId, state, WalletNetwork.TESTNET, "BASE-SEPOLIA", kes("2000"), usdc, "128.7", kes("30"), Masked, null, reason, null, null, providerFee = kes("20"))
 
 /**
  * Add money (design E2/E3, the ramp), `-preview=`: every step and every state the backend has, from sample data.

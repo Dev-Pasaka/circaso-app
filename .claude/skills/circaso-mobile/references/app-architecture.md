@@ -613,6 +613,16 @@ Nothing but the recipient is in the path; nothing about the person in the query.
 - **Not done:** not yet tried with a real exchange scanner or a phone camera; nginx on the server needs the `/pay/`
   location from the backend repo for its designed 404/400 pages.
 
+### Add money: M-Pesa's fee, passed on (2026-11-24, branch `feat/provider-fees`; backend PR #153)
+
+The backend now charges PayHero's per-prompt fee to the buyer: `pay` is the total M-Pesa asks for, with
+`providerFee` (PayHero's fee) and Circaso's `fee` inside it. Asked in KES the typed amount is the total; asked in USDC
+the fee is added on top. The review (`QuoteDetails`) and the order's figures show "Circaso fee" and **"M-Pesa fee"**
+("KES 6, included", "None" at zero; no row when an older server sends no field, and the fee row keeps its old "Fee"
+label then). The review's footnote names the amount M-Pesa will ask for (`mpesaAskNote`). The amount page's details
+say "M-Pesa fee: By amount, shown before you pay" (the band depends on the amount, so there is no figure before a
+price). Cash Out already showed "M-Pesa payout fee" (FinoQ's, on top) and is unchanged. Tests: `AddMoneyFeesTest`.
+
 ## Cash out: selling USDC for M-Pesa (2026-11-23, guide "Selling USDC for M-Pesa" R1/R2/R7/W4; design E6's place)
 
 A person sells USDC from their own wallet and the shillings go to **their own verified M-Pesa number**; Circaso's engine
