@@ -31,6 +31,7 @@ import com.circaso.testing.FakeOutboxDao
 import com.circaso.testing.runSuspending
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.first
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -46,6 +47,8 @@ private class FakeContactsDao : ContactsDao {
     override suspend fun deleteContactsNotIn(keep: List<String>) { contacts.value = contacts.value.filter { it.userId in keep } }
     override suspend fun clearContacts() { contacts.value = emptyList() }
     override suspend fun deleteContact(userId: String) { contacts.value = contacts.value.filter { it.userId != userId } }
+    override suspend fun updateVerified(userId: String, verified: Boolean) { contacts.value = contacts.value.map { if (it.userId == userId) it.copy(verified = verified) else it } }
+    override fun observeVerified() = contacts.map { rows -> rows.filter { it.verified }.map { it.userId } }
     override fun observeBlocked(): Flow<List<BlockedEntity>> = blocked
     override suspend fun upsertBlocked(items: List<BlockedEntity>) { blocked.value = (blocked.value.filter { b -> items.none { it.userId == b.userId } } + items) }
     override suspend fun deleteBlockedNotIn(keep: List<String>) { blocked.value = blocked.value.filter { it.userId in keep } }
@@ -102,6 +105,18 @@ class ContactsRepositoryTest {
     private suspend fun ids() = repo.contacts.first().map { it.person.userId }.sorted()
 
     // ---- reading
+
+    @Test fun theVerifiedBadgeIsStoredWithTheContactAndAnOlderServerMeansNotVerified() = runSuspending {
+        remote.pages = listOf(ContactsResponse(listOf(ContactDto(person("1").copy(verified = true), "sync", "2026-10-25T10:00:00Z"), contact("2")), null))
+        repo.refreshContacts()
+        assertEquals(listOf("1"), dao.observeVerified().first())
+        val old = kotlinx.serialization.json.Json { ignoreUnknownKeys = true }
+            .decodeFromString(PersonDto.serializer(), """{"userId":"3","displayName":"Old server"}""")
+        assertEquals(false, old.verified)
+        // The badge goes when the server says so (a reviewer took the verification back).
+        dao.updateVerified("1", false)
+        assertEquals(emptyList(), dao.observeVerified().first())
+    }
 
     @Test fun refreshStoresEveryPageAndPassesTheCursorBackUnchanged() = runSuspending {
         remote.pages = listOf(ContactsResponse(listOf(contact("1")), "1"), ContactsResponse(listOf(contact("2")), null))

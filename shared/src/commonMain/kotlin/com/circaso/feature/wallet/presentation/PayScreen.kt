@@ -197,7 +197,7 @@ private fun PickPerson(state: PayUiState, padding: PaddingValues, onQuery: (Stri
         if (members.isNotEmpty()) {
             item(key = "members-head") { PickHeader("In ${state.walletName}") }
             items(members, key = { "member:" + it.userId }) { person ->
-                ListRow(person.displayName, sub = person.handle?.let { "@$it" }, leading = { Avatar(person.displayName, size = CircasoSizes.avatarMd, imageUrl = person.avatarUrl) }, onClick = { onPick(person) })
+                ListRow(person.displayName, sub = person.handle?.let { "@$it" }, leading = { Avatar(person.displayName, size = CircasoSizes.avatarMd, imageUrl = person.avatarUrl, userId = person.userId) }, onClick = { onPick(person) })
                 RowDivider(Modifier.padding(start = 72.dp))
             }
         }
@@ -205,7 +205,7 @@ private fun PickPerson(state: PayUiState, padding: PaddingValues, onQuery: (Stri
         if (members.isNotEmpty() && people.isNotEmpty()) item(key = "contacts-head") { PickHeader("Contacts") }
         if (people.isEmpty() && members.isEmpty()) item { BasicText(if (state.contacts.isEmpty()) "Connect with people from the You tab to pay them." else "Nobody matches.", style = t.footnote.copy(color = c.inkSecondary), modifier = Modifier.padding(CircasoSpacing.s4)) }
         items(people, key = { it.userId }) { person ->
-            ListRow(person.displayName, sub = person.handle?.let { "@$it" }, leading = { Avatar(person.displayName, size = CircasoSizes.avatarMd, imageUrl = person.avatarUrl) }, onClick = { onPick(person) })
+            ListRow(person.displayName, sub = person.handle?.let { "@$it" }, leading = { Avatar(person.displayName, size = CircasoSizes.avatarMd, imageUrl = person.avatarUrl, userId = person.userId) }, onClick = { onPick(person) })
             RowDivider(Modifier.padding(start = 72.dp))
         }
     }
@@ -246,7 +246,7 @@ private fun AmountStep(state: PayUiState, padding: PaddingValues, onAmount: (Str
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).imePadding().padding(horizontal = CircasoSpacing.s4).padding(bottom = padding.calculateBottomPadding() + CircasoSpacing.s4), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(CircasoSpacing.s4)) {
         if (payee != null) {
             Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(CircasoSpacing.s2), modifier = Modifier.padding(top = CircasoSpacing.s2)) {
-                if (state.toGroup) WalletAvatar(payee.displayName, payee.avatarUrl, group = true) else Avatar(payee.displayName, size = CircasoSizes.avatarLg, imageUrl = payee.avatarUrl)
+                if (state.toGroup) WalletAvatar(payee.displayName, payee.avatarUrl, group = true) else Avatar(payee.displayName, size = CircasoSizes.avatarLg, imageUrl = payee.avatarUrl, userId = payee.userId)
                 BasicText(if (state.toSelf && state.directPayout) "You" else payee.displayName, style = t.headline.copy(color = c.ink))
                 // A name I saved for them: who the money really goes to, under it (and their @username).
                 if (!state.toGroup && !state.toSelf && payee.renamed) {

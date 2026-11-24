@@ -18,6 +18,8 @@ import com.circaso.core.web.InAppBrowser
 import com.circaso.core.web.InAppBrowserHost
 import com.circaso.core.platform.openUrl
 import androidx.compose.runtime.CompositionLocalProvider
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.distinctUntilChanged
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.platform.UriHandler
 import androidx.compose.ui.semantics.clearAndSetSemantics
@@ -91,7 +93,16 @@ fun App() {
             // Test money on screen (the selected wallet network is Testnet): every money screen marks itself from this.
             val walletNetworks: com.circaso.feature.wallet.domain.WalletNetworks = koinInject()
             val networkState by walletNetworks.state.collectAsState()
-            CompositionLocalProvider(LocalUriHandler provides CircasoUriHandler, com.circaso.feature.wallet.presentation.LocalTestnet provides networkState.testnet) {
+            // The verified badge (2026-11-24): who is verified, from what this phone stored, so every avatar can tell.
+            val contactsDao: com.circaso.feature.contacts.data.local.ContactsDao = koinInject()
+            val verifiedPeople by androidx.compose.runtime.remember(contactsDao) {
+                contactsDao.observeVerified().map { it.toSet() }.distinctUntilChanged()
+            }.collectAsState(emptySet())
+            CompositionLocalProvider(
+                LocalUriHandler provides CircasoUriHandler,
+                com.circaso.feature.wallet.presentation.LocalTestnet provides networkState.testnet,
+                com.circaso.designsystem.components.LocalVerifiedPeople provides verifiedPeople,
+            ) {
                 val browsing by InAppBrowser.page.collectAsState()
                 Box(Modifier.fillMaxSize()) {
                     // While a page is open, screen readers stay in the browser, not in the app underneath it.

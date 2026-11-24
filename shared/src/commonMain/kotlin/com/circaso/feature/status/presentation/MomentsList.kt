@@ -309,7 +309,7 @@ private fun RingRow(ring: MomentRing, style: RingStyle, now: Long, modifier: Mod
         modifier,
         label = "${ring.name}, $what, $time" + (if (count > 1) ", $count moments" else "") + if (ring.waiting > 0) ", ${ring.waiting} more on the way" else "",
         onClick = onClick,
-        leading = { Avatar(ring.name, Modifier.momentRing(ring.arcs(), c).alpha(if (dimmed) 0.5f else 1f), size = MomentAvatar, imageUrl = ring.avatarUrl) },
+        leading = { Avatar(ring.name, Modifier.momentRing(ring.arcs(), c).alpha(if (dimmed) 0.5f else 1f), size = MomentAvatar, imageUrl = ring.avatarUrl, userId = ring.posterId) },
     ) {
         BasicText(ring.name, style = t.body.copy(color = if (dimmed) c.inkSecondary else c.ink), maxLines = 1, overflow = TextOverflow.Ellipsis)
         BasicText(sub, style = t.subhead.copy(color = c.inkSecondary), maxLines = 2, overflow = TextOverflow.Ellipsis)
@@ -340,7 +340,7 @@ internal fun LockedRingRow(ring: MomentRing, modifier: Modifier, online: Boolean
             onClick = { open = !open },
             leading = {
                 Box(Modifier.size(MomentAvatar).alpha(if (dimmed) 0.5f else 1f)) {
-                    Avatar(ring.name, Modifier.momentRing(ring.locked.map { true }, c), size = MomentAvatar, imageUrl = ring.avatarUrl)
+                    Avatar(ring.name, Modifier.momentRing(ring.locked.map { true }, c), size = MomentAvatar, imageUrl = ring.avatarUrl, verified = false)
                     Badge(c.fillStrong) { CircasoIconImage(if (waiting) CircasoIcon.Clock else CircasoIcon.Lock, c.ink, Modifier.size(BadgeGlyph)) }
                 }
             },

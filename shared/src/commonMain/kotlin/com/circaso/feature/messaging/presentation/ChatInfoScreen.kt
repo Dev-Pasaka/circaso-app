@@ -269,7 +269,7 @@ fun ChatInfoScreen(
                 state.addable.take(30).forEach { contact ->
                     ListRow(
                         contact.person.displayName, sub = contact.person.handle?.let { "@$it" },
-                        leading = { Avatar(contact.person.displayName, imageUrl = contact.person.avatarUrl) },
+                        leading = { Avatar(contact.person.displayName, imageUrl = contact.person.avatarUrl, userId = contact.person.userId) },
                         trailing = { if (contact.person.userId in state.toAdd) CircasoIconImage(CircasoIcon.Check, c.action, Modifier.size(20.dp)) },
                         onClick = { viewModel.onToggleAdd(contact.person.userId) },
                     )
@@ -290,11 +290,15 @@ fun ChatInfoScreen(
                             available = state.canChangePhoto || state.hasGroupPhoto,
                         )
                     } else {
-                        Avatar(chat?.title ?: "", size = CircasoSizes.avatarXl, imageUrl = chat?.avatarUrl)
+                        Avatar(chat?.title ?: "", size = CircasoSizes.avatarXl, imageUrl = chat?.avatarUrl, userId = chat?.peerId)
                     }
                     BasicText(chat?.title ?: "", style = t.title1.copy(color = c.ink, textAlign = TextAlign.Center))
                     if (state.isGroup) BasicText("${chat?.members?.size ?: 0} members" + if (state.money.enabled && state.money.money?.hasWallet == true) " · Group wallet" else "", style = t.subhead.copy(color = c.inkSecondary))
                     else PeerNameLines(chat?.members?.firstOrNull { it.userId == chat.peerId })
+                    // The verified badge (2026-11-24): what the seal on their photo means, one tap away.
+                    com.circaso.designsystem.components.VerifiedPillReveal(
+                        !state.isGroup && chat?.peerId != null && chat.peerId in com.circaso.designsystem.components.LocalVerifiedPeople.current,
+                    )
                     // The group's description (2026-11-14), under its name: what the group is for, in the admins' words.
                     if (state.isGroup) chat?.description?.let { GroupDescription(it, Modifier.padding(horizontal = CircasoSpacing.s6, vertical = CircasoSpacing.s1)) }
                     if (state.isGroup && state.amAdmin && state.photosAvailable && !state.online) {
@@ -362,7 +366,7 @@ fun ChatInfoScreen(
                         title = member.displayName,
                         sub = member.handle?.let { "@$it" },
                         meta = when (member.role) { MemberRole.Owner -> "Owner"; MemberRole.Admin -> "Admin"; MemberRole.Member -> null },
-                        leading = { Avatar(member.displayName, imageUrl = member.avatarUrl) },
+                        leading = { Avatar(member.displayName, imageUrl = member.avatarUrl, userId = member.userId) },
                         // Anyone but me opens their sheet: Edit name for everyone, roles for admins.
                         onClick = if (member.userId != state.myUserId && ((names != null && EditName.allowedFor(member.userId)) || (state.amAdmin && member.role != MemberRole.Owner))) ({ viewModel.onSelect(member) }) else null,
                     )
@@ -376,7 +380,7 @@ fun ChatInfoScreen(
                         ListRow(
                             title = invite.person.displayName,
                             sub = if (mine) "Invited by you" else "Invited by ${invite.invitedBy.displayName}",
-                            leading = { Avatar(invite.person.displayName, imageUrl = invite.person.avatarUrl) },
+                            leading = { Avatar(invite.person.displayName, imageUrl = invite.person.avatarUrl, userId = invite.person.userId) },
                             // Online-only like every change here: offline the row rests and the banner says why.
                             onClick = if (state.mayCancel(invite) && state.canChange) ({ viewModel.onCancelInvite(invite) }) else null,
                         )

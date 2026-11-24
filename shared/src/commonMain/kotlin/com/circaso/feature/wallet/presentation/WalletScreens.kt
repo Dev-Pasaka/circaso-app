@@ -938,7 +938,7 @@ fun TransferRow(
     }
     ListRow(
         title = name, sub = sub,
-        leading = { if (transfer.counterpartName != null) Avatar(transfer.counterpartName, size = CircasoSizes.avatarMd, imageUrl = transfer.counterpartAvatar) else LetterDisc(if (incoming) "IN" else "OUT") },
+        leading = { if (transfer.counterpartName != null) Avatar(transfer.counterpartName, size = CircasoSizes.avatarMd, imageUrl = transfer.counterpartAvatar, userId = transfer.counterpartUserId) else LetterDisc(if (incoming) "IN" else "OUT") },
         trailing = { RowAmount(if (hidden) "••••" else amountLine(transfer, fiat), meta, incoming = incoming && transfer.state == TransferState.Confirmed) },
         onClick = onClick,
     )

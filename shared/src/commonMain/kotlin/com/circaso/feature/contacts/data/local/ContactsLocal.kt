@@ -18,6 +18,8 @@ data class ContactEntity(
     val about: String?,
     val source: String,
     val addedAt: String,
+    /** The verified badge (2026-11-24), as the server last said. */
+    @androidx.room.ColumnInfo(defaultValue = "0") val verified: Boolean = false,
 )
 
 @Entity(tableName = "blocked")
@@ -49,6 +51,20 @@ interface ContactsDao {
 
     @Query("DELETE FROM contact WHERE userId = :userId")
     suspend fun deleteContact(userId: String)
+
+    /** [userId]'s profile was read again: their badge as the server says now. */
+    @Query("UPDATE contact SET verified = :verified WHERE userId = :userId")
+    suspend fun updateVerified(userId: String, verified: Boolean)
+
+    /**
+     * Everyone this phone knows to be verified (the verified badge, 2026-11-24): a contact, someone in a chat, or me.
+     * What [com.circaso.designsystem.components.LocalVerifiedPeople] is made from.
+     */
+    @Query(
+        "SELECT userId FROM contact WHERE verified = 1 UNION SELECT userId FROM chat_member WHERE verified = 1 " +
+            "UNION SELECT userId FROM profile WHERE verified = 1",
+    )
+    fun observeVerified(): Flow<List<String>>
 
     @Query("SELECT * FROM blocked ORDER BY displayName COLLATE NOCASE")
     fun observeBlocked(): Flow<List<BlockedEntity>>

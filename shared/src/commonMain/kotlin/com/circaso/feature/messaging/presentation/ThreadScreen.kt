@@ -477,7 +477,7 @@ fun ThreadContent(
                 subtitle = state.subtitle,
                 onBack = onBack,
                 avatar = {
-                    Avatar(state.chat?.avatarLabel ?: "", size = CircasoSizes.avatarMd, imageUrl = state.chat?.avatarUrl)
+                    Avatar(state.chat?.avatarLabel ?: "", size = CircasoSizes.avatarMd, imageUrl = state.chat?.avatarUrl, userId = state.chat?.peerId)
                 },
                 // WhatsApp's header: back, who it is (tap for their profile, with video call and Send money), and Call.
                 onTitle = onInfo,
@@ -785,7 +785,7 @@ private fun TextMessage(m: Message.Text, group: Boolean, firstOfRun: Boolean, pe
     Row(Modifier.fillMaxWidth(), horizontalArrangement = if (m.outgoing) Arrangement.End else Arrangement.Start, verticalAlignment = Alignment.Bottom) {
         // In a group, who said it: their avatar beside the first bubble of a run (design `.cx-msg`), an indent after.
         if (group && !m.outgoing) {
-            if (firstOfRun) Avatar(m.senderName, Modifier.padding(end = CircasoSpacing.s2, bottom = 18.dp), size = CircasoSizes.avatarSm)
+            if (firstOfRun) Avatar(m.senderName, Modifier.padding(end = CircasoSpacing.s2, bottom = 18.dp), size = CircasoSizes.avatarSm, userId = m.senderId)
             else Spacer(Modifier.width(CircasoSizes.avatarSm + CircasoSpacing.s2))
         }
         MessageColumn(m.outgoing, Modifier.weight(1f, fill = false)) {
@@ -1399,7 +1399,7 @@ private fun MediaRow(
     val inkSoft = if (m.outgoing) c.onAction.copy(alpha = 0.75f) else c.inkSecondary
     Row(Modifier.fillMaxWidth(), horizontalArrangement = if (m.outgoing) Arrangement.End else Arrangement.Start, verticalAlignment = Alignment.Bottom) {
         if (group && !m.outgoing) {
-            if (firstOfRun) Avatar(m.senderName, Modifier.padding(end = CircasoSpacing.s2, bottom = 18.dp), size = CircasoSizes.avatarSm)
+            if (firstOfRun) Avatar(m.senderName, Modifier.padding(end = CircasoSpacing.s2, bottom = 18.dp), size = CircasoSizes.avatarSm, userId = m.senderId)
             else Spacer(Modifier.width(CircasoSizes.avatarSm + CircasoSpacing.s2))
         }
         MessageColumn(m.outgoing, Modifier.weight(1f, fill = false)) {

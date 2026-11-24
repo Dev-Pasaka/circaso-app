@@ -440,9 +440,8 @@ class ChatsRepositoryImpl(
             description = description,
         )
         dao.upsertChat(entity)
-        val members = dto.members.map { ChatMemberEntity(dto.chatId, it.user.userId, it.role, it.user.displayName, it.user.handle, it.user.avatarUrl, it.joinedAt) }
-        dao.deleteMembers(dto.chatId)
-        dao.insertMembers(members)
+        val members = dto.members.map { ChatMemberEntity(dto.chatId, it.user.userId, it.role, it.user.displayName, it.user.handle, it.user.avatarUrl, it.joinedAt, it.user.verified) }
+        dao.replaceMembers(dto.chatId, members)
         return entity.toDomain(members, ownUserId(), groupPhoto(entity), saved = names.saved.value)
     }
 

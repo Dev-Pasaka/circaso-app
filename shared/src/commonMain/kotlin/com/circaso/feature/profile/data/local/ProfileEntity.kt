@@ -22,6 +22,9 @@ data class ProfileEntity(
     val version: Int,
     /** An edit is saved here but not yet confirmed by the server. */
     val pendingSync: Boolean,
+    /** My verified badge (2026-11-24), and when; kept so it shows offline. */
+    @androidx.room.ColumnInfo(defaultValue = "0") val verified: Boolean = false,
+    @androidx.room.ColumnInfo(defaultValue = "NULL") val verifiedAt: String? = null,
 )
 
 @Dao

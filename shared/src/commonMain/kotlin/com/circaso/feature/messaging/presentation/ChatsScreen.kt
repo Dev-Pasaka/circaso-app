@@ -3,6 +3,7 @@ package com.circaso.feature.messaging.presentation
 import androidx.compose.foundation.layout.statusBarsPadding
 import com.circaso.feature.status.presentation.arcs
 import com.circaso.designsystem.motion.pressable
+import com.circaso.designsystem.motion.pressIndication
 import com.circaso.feature.status.presentation.momentRing
 import com.circaso.feature.status.presentation.momentsList
 import androidx.compose.runtime.setValue
@@ -360,16 +361,22 @@ private fun ChatRow(
                 Avatar(summary.chat.avatarLabel, imageUrl = summary.chat.avatarUrl)
                 GroupNameBadge(summary.chat.nameState)
             }
-            else if (onAvatar == null) Avatar(summary.chat.title, imageUrl = summary.chat.avatarUrl)
-            else Avatar(
-                summary.chat.title,
-                // Round press feedback, and the ring drawn inside the pressable so it moves with the photo on iOS.
-                Modifier.clip(com.circaso.designsystem.theme.CircasoShapes.circle)
-                    .pressable(role = androidx.compose.ui.semantics.Role.Button, onClick = onAvatar)
-                    .momentRing(ringArcs ?: listOf(false), c)
-                    .semantics { contentDescription = "View ${summary.chat.title}'s moment" },
-                imageUrl = summary.chat.avatarUrl,
-            )
+            else if (onAvatar == null) Avatar(summary.chat.title, imageUrl = summary.chat.avatarUrl, userId = summary.chat.peerId)
+            else {
+                val press = androidx.compose.runtime.remember { androidx.compose.foundation.interaction.MutableInteractionSource() }
+                Avatar(
+                    summary.chat.title,
+                    // The press on the whole avatar, so photo, ring and seal move together; the ring drawn inside it.
+                    Modifier.pressable(role = androidx.compose.ui.semantics.Role.Button, interactionSource = press, onClick = onAvatar)
+                        .semantics { contentDescription = "View ${summary.chat.title}'s moment" }
+                        .momentRing(ringArcs ?: listOf(false), c),
+                    imageUrl = summary.chat.avatarUrl,
+                    userId = summary.chat.peerId,
+                    // Android's ripple stays round on the photo; the seal is outside the clip, whole.
+                    discModifier = Modifier.clip(com.circaso.designsystem.theme.CircasoShapes.circle)
+                        .pressIndication(press),
+                )
+            }
         },
         trailing = {
             Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(4.dp)) {

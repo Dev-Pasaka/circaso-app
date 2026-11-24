@@ -174,7 +174,7 @@ fun NewChatContent(state: NewChatUiState, actions: NewChatActions, onMessageShow
                             Column(Modifier.animateItem(fadeInSpec = tween(CircasoMotion.BaseMs), fadeOutSpec = tween(CircasoMotion.QuickMs), placementSpec = if (CircasoTheme.reduceMotion) null else tween(CircasoMotion.BaseMs))) {
                                 ListRow(
                                     title = person.name, sub = person.sub,
-                                    leading = { Avatar(person.name, imageUrl = person.avatarUrl) },
+                                    leading = { Avatar(person.name, imageUrl = person.avatarUrl, userId = person.userId) },
                                     trailing = { if (state.opening == person.userId) Spinner(c.inkSecondary, Modifier.size(18.dp)) },
                                     onClick = if (state.opening == null) ({ actions.onPick(person.userId) }) else null,
                                 )
@@ -256,7 +256,7 @@ private fun RecentStrip(recent: List<PersonRow>, opening: String?, online: Boole
                 horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(6.dp),
             ) {
                 Box(contentAlignment = Alignment.Center) {
-                    Avatar(p.name, size = CircasoSizes.avatarLg - 8.dp, imageUrl = p.avatarUrl)
+                    Avatar(p.name, size = CircasoSizes.avatarLg - 8.dp, imageUrl = p.avatarUrl, userId = p.userId)
                     if (opening == p.userId) {
                         Box(Modifier.size(CircasoSizes.avatarLg - 8.dp).clip(CircasoShapes.circle).background(c.scrim), contentAlignment = Alignment.Center) {
                             Spinner(c.onAction, Modifier.size(18.dp))

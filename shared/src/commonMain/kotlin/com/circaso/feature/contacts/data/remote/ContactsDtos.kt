@@ -5,7 +5,11 @@ import kotlinx.serialization.Serializable
 // Named like the schemas in the integration guide (section 11). `PublicProfileDto2` there is the same shape as `PublicProfileDto`.
 
 @Serializable
-data class PersonDto(val userId: String, val displayName: String, val handle: String? = null, val avatarUrl: String? = null, val about: String? = null)
+data class PersonDto(
+    val userId: String, val displayName: String, val handle: String? = null, val avatarUrl: String? = null, val about: String? = null,
+    /** The verified badge (2026-11-24): absent from an older server, so false. */
+    val verified: Boolean = false,
+)
 
 @Serializable data class SyncRequest(val syncId: String, val batch: Int? = null, val final: Boolean? = null, val phones: List<String>)
 @Serializable data class SyncMatchDto(val phone: String, val user: PersonDto)
