@@ -102,26 +102,71 @@ class QrPayloadTest {
         assertEquals(Scanned.Unknown, QrPayload.read("bitcoin:bc1qxyz"))
     }
 
-    @Test fun theReceiveCodeIsAUsdcRequest() {
-        assertEquals("ethereum:$usdcBase@8453/transfer?address=$evm", QrPayload.forUsdcRequest("BASE", evm, usdcBase))
-        assertEquals("ethereum:$usdcBaseSepolia@84532/transfer?address=$evm", QrPayload.forUsdcRequest("BASE-SEPOLIA", evm, usdcBaseSepolia))
-        assertEquals("solana:$sol?spl-token=$usdcMint", QrPayload.forUsdcRequest("SOL", sol, usdcMint))
-        // Without a known chain or contract: the bare address, which every wallet reads.
-        assertEquals(evm, QrPayload.forUsdcRequest("BASE", evm, null))
-        assertEquals(evm, QrPayload.forUsdcRequest("ARC-TESTNET", evm, usdcBase))
+    @Test fun theReceiveCodeIsAPayLinkWhoseOnlyAddressIsTheRecipient() {
+        assertEquals("https://links.circaso.com/pay/$evm?chain=BASE&asset=USDC", QrPayload.forReceive("BASE", evm))
+        assertEquals("https://links.circaso.com/pay/$sol?chain=SOL-DEVNET&asset=USDC", QrPayload.forReceive("sol-devnet", sol))
+        // Never the USDC contract, so an exchange taking the first 0x… from the code gets the recipient.
+        assertEquals(listOf(evm), Regex("0x[0-9a-fA-F]{40}").findAll(QrPayload.forReceive("BASE", evm)).map { it.value }.toList())
+        // A chain Circaso doesn't offer, or an address that doesn't check out: the bare address, never a link.
+        assertEquals(evm, QrPayload.forReceive("ARC-TESTNET", evm))
+        assertEquals(sol, QrPayload.forReceive("BASE", sol))
+        assertEquals(evm, QrPayload.forReceive("SOL", evm))
     }
 
     @Test fun theReceiveCodeReadsBackToTheSameWallet() {
-        val r = QrPayload.read(QrPayload.forUsdcRequest("MATIC-AMOY", evm, "0x41E94Eb019C0762f9Bfcf9Fb1E58725BfB0e7582")) as Scanned.Address
-        assertEquals(evm, r.address); assertEquals("MATIC-AMOY", r.blockchain); assertEquals("0x41E94Eb019C0762f9Bfcf9Fb1E58725BfB0e7582", r.token)
-        val s = QrPayload.read(QrPayload.forUsdcRequest("SOL", sol, usdcMint)) as Scanned.Address
-        assertEquals(sol, s.address); assertEquals(usdcMint, s.token)
+        assertEquals(Scanned.Address(evm, family = Family.Evm, chainName = "MATIC-AMOY", asset = "USDC"), QrPayload.read(QrPayload.forReceive("MATIC-AMOY", evm)))
+        assertEquals(Scanned.Address(sol, family = Family.Solana, chainName = "SOL", asset = "USDC"), QrPayload.read(QrPayload.forReceive("SOL", sol)))
+    }
+
+    @Test fun payLinksAreReadOnCircasosHostsAndScheme() {
+        assertEquals(Scanned.Address(evm, family = Family.Evm, chainName = "BASE", asset = "USDC", amount = "12.5"), QrPayload.read("https://links.circaso.com/pay/$evm?chain=base&asset=usdc&amount=12.50"))
+        assertEquals(Scanned.Address(evm, family = Family.Evm, chainName = "BASE-SEPOLIA", asset = "USDC"), QrPayload.read("circaso://pay/$evm?chain=BASE-SEPOLIA&asset=USDC"))
+        assertEquals(Scanned.Address(evm, family = Family.Evm, chainName = "BASE"), QrPayload.read("HTTPS://Links.Circaso.com/pay/$evm/?chain=BASE"))
+        // No chain said: an address the person picks a network for, as a plain one.
+        assertEquals(Scanned.Address(evm, family = Family.Evm), QrPayload.read("https://links.circaso.com/pay/$evm"))
+        // Another host's /pay/ is not Circaso's: nothing read from it.
+        assertEquals(Scanned.Unknown, QrPayload.read("https://evil.example/pay/$evm?chain=BASE&asset=USDC"))
+        // The handle code stays the handle code.
+        assertEquals(Scanned.Handle("pasaka"), QrPayload.read("circaso://pay/@pasaka"))
+        // Amounts: too precise is kept for the resolver to say; junk is unreadable; zero is none.
+        val junk = QrPayload.read("https://links.circaso.com/pay/$evm?chain=BASE&amount=1e3") as Scanned.Address
+        assertNull(junk.amount); assertTrue(junk.amountUnreadable)
+        val zero = QrPayload.read("https://links.circaso.com/pay/$evm?chain=BASE&amount=0") as Scanned.Address
+        assertNull(zero.amount); assertFalse(zero.amountUnreadable)
+        assertEquals(Scanned.Unknown, QrPayload.read("https://links.circaso.com/pay/$evm?chain=%3Cb%3E"))
+    }
+
+    @Test fun payLinksWithAnAddressThatDoesntCheckOutAreRefused() {
+        val typo = "0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAeD"
+        assertEquals(Scanned.Unsupported(Why.BadAddress), QrPayload.read("https://links.circaso.com/pay/$typo?chain=BASE&asset=USDC"))
+        assertEquals(Scanned.Unsupported(Why.BadAddress), QrPayload.read("https://links.circaso.com/pay/$sol?chain=BASE&asset=USDC"))
+        assertEquals(Scanned.Unsupported(Why.BadAddress), QrPayload.read("https://links.circaso.com/pay/$evm?chain=SOL&asset=USDC"))
+        assertEquals(Scanned.Unknown, QrPayload.read("https://links.circaso.com/pay/0x1234?chain=BASE"))
+    }
+
+    @Test fun checksumsAndSolanaKeys() {
+        listOf(
+            "0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAed", "0xfB6916095ca1df60bB79Ce92cE3Ea74c37c5d359",
+            "0xdbF03B407c01E7cD3CBea99509d93f8DDDC8C6FB", "0xD1220A0cf47c7B9Be7A2E6BA89F429762e7b9aDb", usdcBase, usdcBaseSepolia,
+        ).forEach { assertEquals(it, Addresses.checksummed(it.substring(2).lowercase())); assertTrue(Addresses.isValidEvm(it), it) }
+        assertEquals("c5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470", Keccak256.hash(ByteArray(0)).joinToString("") { (it.toInt() and 0xff).toString(16).padStart(2, '0') })
+        assertFalse(Addresses.isValidEvm("0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAeD"))
+        assertFalse(Addresses.isValidEvm("0x" + "0".repeat(40)))
+        assertTrue(Addresses.isValidEvm(evm.uppercase().replace("0X", "0x")))
+        assertTrue(Addresses.isValidSolana(sol)); assertTrue(Addresses.isValidSolana(usdcMint))
+        assertFalse(Addresses.isValidSolana("1".repeat(34)))
+        // Everywhere else codes are read, a mistyped address is refused too.
+        assertEquals(Scanned.Unsupported(Why.BadAddress), QrPayload.read("0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAeD"))
+        assertEquals(Scanned.Unsupported(Why.BadAddress), QrPayload.read("ethereum:$usdcBase@8453/transfer?address=0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAeD"))
+        assertEquals(Scanned.Unsupported(Why.BadAddress), QrPayload.read("solana:${"1".repeat(34)}"))
     }
 
     @Test fun paymentUrisAreRecognisedForPaste() {
         assertTrue(QrPayload.isPaymentUri("ethereum:$evm"))
         assertTrue(QrPayload.isPaymentUri(" Solana:$sol"))
         assertFalse(QrPayload.isPaymentUri(evm))
+        assertTrue(QrPayload.isPaymentUri("https://links.circaso.com/pay/$evm?chain=BASE&asset=USDC"))
+        assertFalse(QrPayload.isPaymentUri("https://links.circaso.com/s/abcdefgh1234"))
     }
 
     @Test fun numbers() {

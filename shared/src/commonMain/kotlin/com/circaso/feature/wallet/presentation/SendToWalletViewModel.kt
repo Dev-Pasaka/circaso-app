@@ -29,6 +29,7 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
@@ -163,6 +164,8 @@ class SendToWalletViewModel(
     private val follow: ((String) -> Flow<Transfer?>)? = null,
     /** Cash Out's sales on this phone: their deposit addresses are never offered as recent addresses. */
     private val sales: Flow<com.circaso.feature.ramp.domain.MpesaSales>? = null,
+    /** A pay link opened from outside the app (2026-11-24): read into the form as a scan would be, once. */
+    private val prefill: String? = null,
 ) : ViewModel() {
     /** The address check and fee quote under way, cancelled when the person goes back or the network moves. */
     private var reviewJob: kotlinx.coroutines.Job? = null
@@ -232,6 +235,17 @@ class SendToWalletViewModel(
                 .collect { (on, signing) -> if (!signing && on != pinned) moveTo(on) }
         }
         if (fromWalletId != null) wallets?.let { w -> viewModelScope.launch { onPin { w.refresh(fromWalletId, null) } } }
+        // A pay link fills in only against the wallet's chains (which network, whether the wallet is on it), so it
+        // waits for the wallet, then goes through the same rules as a scan.
+        if (prefill != null) viewModelScope.launch {
+            val ready = kotlinx.coroutines.withTimeoutOrNull(PrefillWaitMs) { state.first { it.wallet != null } }
+            when {
+                // Never over what the person has typed meanwhile (or a restored screen they already filled).
+                local.value.address.isNotEmpty() -> Unit
+                ready == null -> local.update { it.copy(scanProblem = "Your wallet isn't ready yet, so the link couldn't be filled in. Try opening it again in a moment.") }
+                else -> apply(com.circaso.core.qr.QrPayload.read(prefill))
+            }
+        }
     }
 
     private fun moveTo(on: com.circaso.feature.wallet.domain.WalletNetwork) {
@@ -452,6 +466,8 @@ class SendToWalletViewModel(
 
     private companion object {
         const val RecentCount = 5
+        /** How long an opened pay link waits for the wallet before saying it couldn't be filled in. */
+        const val PrefillWaitMs = 10_000L
 
         /** W4 refusals that prepared nothing (the same as Pay's): the same key would replay the refusal. */
         val Refused = setOf(

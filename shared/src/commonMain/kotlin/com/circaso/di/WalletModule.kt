@@ -145,7 +145,7 @@ val walletModule = module {
             get(), get(), get(), get(), get(), get(), get(), get(), get(),
         )
     }
-    viewModel { (fromWalletId: String?) -> SendToWalletViewModel(get(), get(), get(), get(), scanner = get(), fromWalletId = fromWalletId, wallets = get(), quotePayment = get(), sendCard = get(), networks = get(), groupNetworks = get(),
+    viewModel { (fromWalletId: String?, prefill: String?) -> SendToWalletViewModel(get(), get(), get(), get(), scanner = get(), fromWalletId = fromWalletId, prefill = prefill, wallets = get(), quotePayment = get(), sendCard = get(), networks = get(), groupNetworks = get(),
         history = get<com.circaso.feature.wallet.domain.ObserveTransfersUseCase>()(), follow = get<com.circaso.feature.wallet.domain.ObserveTransferUseCase>().let { observe -> { id: String -> observe(id) } },
         sales = getOrNull<com.circaso.feature.ramp.domain.ObserveSalesUseCase>()?.invoke()) }
 }

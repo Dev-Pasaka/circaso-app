@@ -434,6 +434,30 @@ class WalletNetworkViewModelsTest {
         assertTrue(s.notice!!.contains("ETH, not USDC"))
     }
 
+    @Test fun aScannedOrPastedPayLinkFillsTheAddressTheNetworkAndTheAmount() = runTest(dispatcher) {
+        val vm = sendVm(); keep(vm); advanceUntilIdle()
+        scanned = "https://links.circaso.com/pay/$to?chain=BASE-SEPOLIA&asset=USDC&amount=7.5"
+        vm.onScan(); advanceUntilIdle()
+        val s = vm.state.value
+        assertEquals(to, s.address); assertEquals("BASE-SEPOLIA", s.blockchain); assertEquals("7.5", s.amountText)
+        assertNull(s.scanProblem); assertTrue(s.canContinue)
+        val pasted = sendVm(); keep(pasted); advanceUntilIdle()
+        pasted.onAddress("https://links.circaso.com/pay/$to?chain=BASE&asset=USDC"); runCurrent()
+        assertEquals("", pasted.state.value.address)
+        assertTrue(pasted.state.value.scanProblem!!.contains("switch to Mainnet"), pasted.state.value.scanProblem)
+    }
+
+    @Test fun aPayLinkOpenedFromOutsideFillsTheFormOnceTheWalletIsKnown() = runTest(dispatcher) {
+        val vm = SendToWalletViewModel(
+            ObserveWalletUseCase(walletRepo), ValidateAddressUseCase(walletRepo), PayUseCase(walletRepo), connection,
+            quotePayment = QuotePaymentUseCase(walletRepo), networks = networks, scanner = scanner, history = history, follow = { followed },
+            prefill = "https://links.circaso.com/pay/$to?chain=BASE-SEPOLIA&asset=USDC&amount=3",
+        )
+        keep(vm); advanceUntilIdle()
+        val s = vm.state.value
+        assertEquals(to, s.address); assertEquals("BASE-SEPOLIA", s.blockchain); assertEquals("3", s.amountText)
+    }
+
     @Test fun continueNeedsAWholeAddressAndANetworkThatCanPayIt() = runTest(dispatcher) {
         val vm = sendVm(); keep(vm); advanceUntilIdle()
         vm.onAddress("0x7a3f"); runCurrent()

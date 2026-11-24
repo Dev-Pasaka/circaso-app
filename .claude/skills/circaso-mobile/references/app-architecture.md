@@ -542,10 +542,18 @@ everything past it follows Add Money / Cash Out (page frame, pinned footer, step
   `ScanFill.Fill(address, blockchain, amountText, notice)` or `ScanFill.Refuse(message)`. Chain ids (`ChainIds`): 8453
   BASE, 84532 BASE-SEPOLIA, 137 MATIC, 80002 MATIC-AMOY, 1 ETH, 11155111 ETH-SEPOLIA (plus ARB/AVAX for naming only).
   USDC contracts (`UsdcContracts`, the backend's `CustodyChainsConfig` table) and the wallet's own W1 `tokenAddress`
-  both count as USDC. Pasting a payment URI into the address field goes through the same path.
+  both count as USDC. Pasting a payment URI or a pay link into the address field goes through the same path.
+  **Pay links (2026-11-24, see "Pay links" below)** are the preferred form and are read first (`PayLinks.read`):
+  `Scanned.Address` gains `chainName` and `asset`, and `resolveScan` takes the chain from `chainName` before
+  `chainId`/token, so the same rules apply. **Every** EVM address read from a code is EIP-55 checked when mixed case
+  (and never the zero address), and every Solana address must decode to a 32-byte key: otherwise
+  `Unsupported(Why.BadAddress)`, "That code's address doesn't check out…".
 
   | Code | Result |
   | --- | --- |
+  | `https://links.circaso.com/pay/<to>?chain=<BASE…>&asset=USDC[&amount=12.5]` (or `circaso://pay/<to>?…`) on a chain the wallet is on | address, chain, amount |
+  | a pay link without `chain` | address; the person picks among the chains of its kind |
+  | a pay link on another host | not read (Unknown) |
   | `ethereum:<usdc>@<id>/transfer?address=<to>&uint256=<n>` on a chain the wallet is on | address, chain, amount (n at the asset's decimals) |
   | the same without `uint256` / without `@id` | address and chain (the contract names the chain) |
   | `ethereum:<to>@<id>` | address and chain; with `value>0` a notice "asks for ETH/POL, not USDC" |
@@ -565,11 +573,45 @@ everything past it follows Add Money / Cash Out (page frame, pinned footer, step
 - **Previews:** `send-wallet`, `-address`, `-scanned`, `-scan-refused`, `-solana`, `-loading`, `-offline`, `-amount`,
   `-amount-over`, `-review`, `-signing`, `-failed`, `-sent`, `-delivered`, `-live` (the card's motion on a loop); each
   takes `-dark`, `-hc`, `-dark-hc`, `-still`.
-- **Open question (design review, 2026-11-24):** the Receive code is now an EIP-681 request whose first `0x…` is the
-  USDC contract, as Pasaka asked. Some exchange withdrawal scanners take the first address after `ethereum:` and would
-  send to the contract. If that shows up in testing, go back to the bare address (one line in `ReceiveSheetContent`).
-- **Not done:** EIP-55 checksum checking on the phone (W11 checks the address on the server), ENS, Solana Pay
-  transaction requests; not yet run against the server or on a phone at the time of writing.
+- **Settled (2026-11-24, Pay links):** the Receive code was an EIP-681 request whose first `0x…` is the USDC
+  contract; exchange scanners that take the first address would send there. It is now a pay link whose only address
+  is the recipient.
+- **Not done:** ENS, Solana Pay transaction requests.
+
+## Pay links (2026-11-24, branch `feat/pay-links`; backend PR #148, merchant portal)
+
+Approved by Pasaka: Circaso's payment QR codes are safe for exchanges and other wallets, and Circaso still prefills
+everything. One format everywhere (the app's Receive code, the merchant portal's top-up code):
+`https://links.circaso.com/pay/<address>?chain=<BASE|BASE-SEPOLIA|MATIC|MATIC-AMOY|ETH|ETH-SEPOLIA|SOL|SOL-DEVNET>&asset=USDC[&amount=<decimal>]`.
+Nothing but the recipient is in the path; nothing about the person in the query.
+
+- **Why:** the only `0x…` is the recipient. A naive scanner gets the right address, a strict one refuses the code and
+  the person copies the address; nobody can take the token contract.
+- **Making codes** (`core/qr/PayLinks.kt`): `PayLinks.of(blockchain, address, amount?)` → the link, or null when the
+  chain isn't one Circaso offers or the address doesn't check out (`Addresses`: EIP-55 via a plain-Kotlin
+  `Keccak256`, base58 → 32 bytes). `QrPayload.forReceive` falls back to the bare address then. The host is the build's
+  share host (`IncomingLinks.addHost` → `PayLinks.useHost`; `links.circaso.com` by default).
+- **Receive (E4):** the code is the pay link; under it, centred as the handle tab, "USDC on Base" (a heading) and "Most
+  wallets and exchanges can scan this. If one can't, copy the address below. In Circaso, the network and coin fill in
+  too." ("Wallets on this test network can scan this…" on testnets: never "any", per the design review); the address is
+  `GroupedAddress(spokenInFull = true)` (every group read out, so it can be dictated) with the warning under it.
+- **Opened link, wallet not ready:** the view model waits up to 10 s for the wallet, then says "Your wallet isn't ready
+  yet…" under the field; it never fills over an address already in the field (a restored screen).
+- **Reading:** scan, paste and links from outside all go through `QrPayload.read` → `resolveScan` (table above).
+  EIP-681, Solana Pay and plain addresses from other wallets are still read.
+- **Opening from outside:** Android App Links on the share host now cover `/pay/` (manifest; `circaso://pay` too, the
+  page's Open button), iOS Universal Links through the backend's AASA (`/pay/*` added; the entitlement is domain-wide)
+  and the registered `circaso` scheme. `IncomingLinks.open` keeps a pay link in `pendingPay`; once signed in,
+  `AppNavigation` opens `SendToWalletRoute(prefill = link)`, and the view model applies it as a scan once the wallet
+  has loaded (it needs the chains). `circaso://pay/@handle` stays the "On Circaso" code.
+- **Without the app:** the backend's page at `/pay/<address>` (share module): the network in the heading, the address
+  in fours with Copy, the warning, Get Circaso / Open in Circaso. Strict: a link whose address doesn't check out, whose
+  chain isn't offered or whose coin isn't USDC never shows an address.
+- **Tests:** `QrPayloadTest` (pay links, checksums, Solana keys, the receive code's only address), `ScanResolveTest`
+  (a pay link's fills and refusals, same rules as EIP-681), `IncomingLinksTest` (pending pay link), and in
+  `WalletNetworkViewModelsTest` scan/paste of a pay link and a prefilled send.
+- **Not done:** not yet tried with a real exchange scanner or a phone camera; nginx on the server needs the `/pay/`
+  location from the backend repo for its designed 404/400 pages.
 
 ## Cash out: selling USDC for M-Pesa (2026-11-23, guide "Selling USDC for M-Pesa" R1/R2/R7/W4; design E6's place)
 
@@ -1209,11 +1251,11 @@ in `wallet_activity`), so live means reloading those copies when money moves:
 ## QR codes (2026-10-29, design E4/E5)
 
 - Drawing: `qrose` 1.3.1 in shared code (`designsystem/components/QrCode.kt`): always dark on white inside the design's raised tile, so scanners read it in every theme. Approved by Pasaka as "qrose 1.0.x"; 1.3.1 is the release that works with Compose 1.12.
-- Payloads (`core/qr/Qr.kt`): "On Circaso" codes are `circaso://pay/@handle`; wallet codes are, since 2026-11-24, a USDC
-  request (`QrPayload.forUsdcRequest`: EIP-681 `ethereum:<usdc>@<chainId>/transfer?address=<addr>` on EVM chains,
-  `solana:<addr>?spl-token=<mint>` on Solana; the bare address when the chain or contract isn't known). Both receive
-  codes carry the Circaso mark (`QrCode(mark = true)`, error correction H). `QrPayload.read` parses EIP-681, Solana Pay,
-  plain addresses and `@handle` (see "Send to a Wallet, rebuilt" for what it fills in).
+- Payloads (`core/qr/Qr.kt`): "On Circaso" codes are `circaso://pay/@handle`; wallet codes are, since 2026-11-24, a
+  Circaso pay link (`QrPayload.forReceive` → `PayLinks.of`; the bare address when the chain isn't offered or the
+  address doesn't check out; see "Pay links"). Both receive codes carry the Circaso mark (`QrCode(mark = true)`, error
+  correction H). `QrPayload.read` parses pay links, EIP-681, Solana Pay, plain addresses and `@handle` (see "Send to a
+  Wallet, rebuilt" for what it fills in).
 - Scanning: `QrScanner` → Android `play-services-code-scanner` 16.1.0 (Google's ML Kit UI, no camera permission), iOS VisionKit `DataScannerViewController` through `QrScannerBridge` (`QrScannerImpl.swift`, `NSCameraUsageDescription`). Used by Send to a Wallet (address) and the Pay person picker (a Circaso code → W/handle lookup → pay).
 
 ## Support (2026-10-29, designs SP01–SP06)

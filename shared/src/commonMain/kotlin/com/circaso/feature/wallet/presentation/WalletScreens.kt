@@ -986,15 +986,28 @@ private fun ReceiveSheetContent(wallet: Wallet?, handle: String?, onClose: () ->
         } else {
             val chain = chains[chainIndex.coerceIn(0, chains.lastIndex)]
             if (chains.size > 1) SegmentedControl(chains.map { chainName(it.blockchain).substringBefore(" (") }, chainIndex, { chainIndex = it })
-            // A USDC request for this chain (EIP-681 / Solana Pay), so a scanning wallet lands on the right network and
-            // coin; the address shown and copied below stays the plain one.
+            // A Circaso pay link (2026-11-24): its only address is this one, so an exchange that takes the first 0x…
+            // from a code can't take the USDC contract; Circaso reads it and fills in USDC on this network. The address
+            // shown and copied below stays the plain one.
             com.circaso.designsystem.components.QrCode(
-                com.circaso.core.qr.QrPayload.forUsdcRequest(chain.blockchain, chain.address, com.circaso.feature.wallet.domain.usdcTokenOf(chain)),
+                com.circaso.core.qr.QrPayload.forReceive(chain.blockchain, chain.address),
                 "QR code to send USDC on ${chainName(chain.blockchain)} to your address", Modifier.align(Alignment.CenterHorizontally), mark = true,
             )
-            BasicText("USDC on ${chainName(chain.blockchain)}", style = t.headline.copy(color = c.ink))
-            BasicText(chain.address, style = t.callout.copy(color = c.ink), modifier = Modifier.fillMaxWidth())
-            BasicText("Only send USDC on ${chainName(chain.blockchain)} to this address. Other coins or networks can't be recovered.", style = t.footnote.copy(color = c.warning))
+            // As the handle tab: what it is, then who can use it (design E4's pattern), centred under the code.
+            Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(CircasoSpacing.s1)) {
+                BasicText("USDC on ${chainName(chain.blockchain)}", style = t.headline.copy(color = c.ink, textAlign = TextAlign.Center), modifier = Modifier.semantics { heading() })
+                BasicText(
+                    // Never "any": a scanner that wants a bare address may refuse a link, and exchanges don't pay on test networks.
+                    (if (com.circaso.feature.wallet.domain.isTestnetChain(chain.blockchain)) "Wallets on this test network can scan this." else "Most wallets and exchanges can scan this.") +
+                        " If one can't, copy the address below. In Circaso, the network and coin fill in too.",
+                    style = t.subhead.copy(color = c.inkSecondary, textAlign = TextAlign.Center),
+                )
+            }
+            Column(verticalArrangement = Arrangement.spacedBy(CircasoSpacing.s1)) {
+                // Your own address, heard in full (group by group) so it can be read out to someone.
+                GroupedAddress(chain.address, Modifier.fillMaxWidth(), spokenInFull = true)
+                BasicText("Only send USDC on ${chainName(chain.blockchain)} to this address. Other coins or networks can't be recovered.", style = t.footnote.copy(color = c.warning))
+            }
             CircasoButton("Copy Address", { clipboard.setText(AnnotatedString(chain.address)) }, size = ButtonSize.Large, block = true)
             CircasoButton("Share", { onClose(); shareLinks?.share(com.circaso.feature.share.domain.ShareTarget.Address(chain.blockchain, "Your USDC address on ${chainName(chain.blockchain)}, with a warning to send only USDC on that network")) }, style = ButtonStyle.Secondary, size = ButtonSize.Large, block = true)
         }

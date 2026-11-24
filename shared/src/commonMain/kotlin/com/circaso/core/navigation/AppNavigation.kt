@@ -259,6 +259,15 @@ fun AppNavigation(forceUpdate: Boolean, home: @Composable () -> Unit) {
             }
         }
     }
+    // A pay link opened from outside (a phone camera on a Circaso payment code, 2026-11-24) waits the same way, then
+    // opens Send to a Wallet filled in from it.
+    val pendingPay by com.circaso.feature.share.domain.IncomingLinks.pendingPay.collectAsState()
+    LaunchedEffect(state, pendingPay, forceUpdate) {
+        if (state == AuthState.Active && !forceUpdate && pendingPay != null) {
+            androidx.compose.runtime.snapshotFlow { backStack.firstOrNull() }.first { it == HomeRoute }
+            com.circaso.feature.share.domain.IncomingLinks.takePay()?.let { link -> backStack.add(SendToWalletRoute(prefill = link)) }
+        }
+    }
     // Something shared in from another app waits the same way (kept through sign-in), then opens where it goes.
     val pendingShare by com.circaso.feature.mediacompose.IncomingShares.pending.collectAsState()
     LaunchedEffect(state, pendingShare, forceUpdate) {
@@ -729,7 +738,7 @@ fun AppNavigation(forceUpdate: Boolean, home: @Composable () -> Unit) {
             }
             entry<SendToWalletRoute>(metadata = Panes.FullScreen) { route ->
                 SendToWalletScreen(
-                    koinViewModel<SendToWalletViewModel>(key = "send-to-wallet-${route.fromWalletId}", parameters = { parametersOf(route.fromWalletId) }),
+                    koinViewModel<SendToWalletViewModel>(key = "send-to-wallet-${route.fromWalletId}-${route.prefill}", parameters = { parametersOf(route.fromWalletId, route.prefill) }),
                     onBack = ::pop, onOpenTransfer = { id -> pop(); backStack.add(TransferRoute(id)) }, onSupport = { backStack.add(HelpRoute) },
                 )
             }

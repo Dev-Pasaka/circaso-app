@@ -117,6 +117,39 @@ class ScanResolveTest {
         assertTrue(refusal(to, chains = listOf(chain("SOL-DEVNET", usdcSolDevnet))).contains("only on Solana"))
     }
 
+    private fun link(chain: String?, address: String = to, asset: String? = "USDC", amount: String? = null) =
+        "https://links.circaso.com/pay/$address" + listOfNotNull(chain?.let { "chain=$it" }, asset?.let { "asset=$it" }, amount?.let { "amount=$it" }).joinToString("&", prefix = "?")
+
+    @Test fun aPayLinkPreselectsEverything() {
+        assertEquals(ScanFill.Fill(to, "BASE-SEPOLIA"), resolve(link("BASE-SEPOLIA")))
+        assertEquals(ScanFill.Fill(to, "MATIC-AMOY", "12.5"), resolve(link("MATIC-AMOY", amount = "12.50")))
+        assertEquals(ScanFill.Fill(to, "BASE", "25"), resolve(link("BASE", amount = "25"), mainnet, WalletNetwork.MAINNET))
+        assertEquals(ScanFill.Fill(sol, "SOL-DEVNET"), resolve(link("SOL-DEVNET", sol)))
+        // No chain: the person picks among the EVM chains, as for a plain address.
+        assertEquals(ScanFill.Fill(to, null), resolve(link(null)))
+    }
+
+    @Test fun aPayLinkFollowsTheSameRulesAsEip681() {
+        assertEquals(
+            "That code is for USDC on Base Testnet. This is your wallet on Mainnet: switch to Testnet on the Wallet tab to pay it.",
+            refusal(link("BASE-SEPOLIA"), mainnet, WalletNetwork.MAINNET),
+        )
+        assertEquals(
+            "That code is for USDC on Ethereum (testnet), which your wallet isn't on. Add Ethereum under Wallet → Networks first.",
+            refusal(link("ETH-SEPOLIA")),
+        )
+        assertTrue(refusal(link("BASE-SEPOLIA", asset = "USDT")).contains("other than USDC"))
+        assertTrue(refusal(link("ARB")).contains("Arbitrum, which Circaso doesn't support"))
+        assertTrue(refusal(link("FOO")).contains("Foo, which Circaso doesn't support"))
+        val precise = assertIs<ScanFill.Fill>(resolve(link("BASE-SEPOLIA", amount = "1.1234567")))
+        assertNull(precise.amountText); assertTrue(precise.notice!!.contains("couldn't be read"))
+    }
+
+    @Test fun aPayLinkWithABadAddressFillsNothing() {
+        assertTrue(refusal(link("BASE-SEPOLIA", "0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAeD")).contains("This address doesn't check out"))
+        assertTrue(refusal(link("SOL-DEVNET", to)).contains("This address doesn't check out"))
+    }
+
     @Test fun unitsAsTyped() {
         assertEquals("0", unitsToText("0", 6))
         assertEquals("1", unitsToText("1000000", 6))

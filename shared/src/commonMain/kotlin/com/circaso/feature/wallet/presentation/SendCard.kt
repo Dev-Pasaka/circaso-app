@@ -257,11 +257,13 @@ private fun String.spaced() = toCharArray().joinToString(" ")
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-internal fun GroupedAddress(address: String, modifier: Modifier = Modifier, style: TextStyle = CircasoTheme.typography.callout) {
+internal fun GroupedAddress(address: String, modifier: Modifier = Modifier, style: TextStyle = CircasoTheme.typography.callout, spokenInFull: Boolean = false) {
     val c = CircasoTheme.colors
     val groups = addressGroups(address)
     FlowRow(
-        modifier.clearAndSetSemantics { contentDescription = spokenAddress(address) },
+        // [spokenInFull] (your own address, on Receive): every group, spelled out, so it can be dictated; else the
+        // first and last, which are what's checked when paying.
+        modifier.clearAndSetSemantics { contentDescription = if (spokenInFull) groups.joinToString(", ") { it.spaced() } else spokenAddress(address) },
         horizontalArrangement = Arrangement.spacedBy(CircasoSpacing.s2), verticalArrangement = Arrangement.spacedBy(2.dp),
     ) {
         groups.forEachIndexed { i, g ->

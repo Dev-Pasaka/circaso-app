@@ -68,6 +68,21 @@ class IncomingLinksTest {
         assertFalse(IncomingLinks.open("https://example.com/s/Ab3dEf7hJk9m"))
         assertNull(IncomingLinks.pending.value)
     }
+
+    @Test fun anOpenedPayLinkWaitsForSendToAWallet() {
+        IncomingLinks.takePay()
+        val link = "https://links.circaso.com/pay/0x7a3f0000000000000000000000000000001e4b00?chain=BASE&asset=USDC"
+        assertTrue(IncomingLinks.open(link))
+        assertNull(IncomingLinks.pending.value, "not a share link")
+        assertEquals(link, IncomingLinks.takePay())
+        assertNull(IncomingLinks.takePay())
+        assertTrue(IncomingLinks.open("circaso://pay/0x7a3f0000000000000000000000000000001e4b00?chain=BASE&asset=USDC"))
+        IncomingLinks.takePay()
+        // The handle code and other hosts aren't pay links.
+        assertFalse(IncomingLinks.open("circaso://pay/@pasaka"))
+        assertFalse(IncomingLinks.open("https://example.com/pay/0x7a3f0000000000000000000000000000001e4b00?chain=BASE"))
+        assertNull(IncomingLinks.pendingPay.value)
+    }
 }
 
 class ShareRequestTest {

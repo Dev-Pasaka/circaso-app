@@ -64,6 +64,7 @@ fun resolveScan(scanned: Scanned, chains: List<WalletChain>, network: WalletNetw
                 QrPayload.Why.Name -> "That code has a wallet name, not an address. Ask for the 0x… address instead."
                 QrPayload.Why.TransactionRequest -> "That's a Solana Pay checkout link. Circaso can't pay those yet: ask for the wallet address instead."
                 QrPayload.Why.NoRecipient -> "That code doesn't say which wallet to pay."
+                QrPayload.Why.BadAddress -> "This address doesn't check out. It may have a typo or be for another kind of network. Nothing was filled in, so ask for the address again."
             },
         )
         Scanned.Unknown -> ScanFill.Refuse("That code isn't a wallet address.")
@@ -73,8 +74,12 @@ fun resolveScan(scanned: Scanned, chains: List<WalletChain>, network: WalletNetw
 
 private fun resolveAddress(s: Scanned.Address, active: List<WalletChain>, network: WalletNetwork, whose: String): ScanFill {
     val token = s.token
-    // Which chain the code is for: the one it names, else the one its USDC contract or mint belongs to.
+    // A pay link names its coin by symbol: anything but USDC is refused before anything is filled in.
+    if (s.asset != null && !s.asset.equals("USDC", ignoreCase = true)) return notUsdc()
+    // Which chain the code is for: the one it names (a pay link by name, EIP-681 by id), else the one its USDC
+    // contract or mint belongs to.
     val named: String? = when {
+        s.chainName != null -> s.chainName
         s.chainId != null -> s.blockchain ?: return ScanFill.Refuse("That code is for a network Circaso doesn't support (chain ${s.chainId}). Nothing was filled in.")
         token != null -> active.firstOrNull { c -> isUsdcOn(c, token) }?.blockchain
             ?: UsdcContracts.chainOf(token)
