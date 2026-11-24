@@ -200,7 +200,9 @@ data class SaleDeposit(val address: String, val blockchain: String, val asset: S
 }
 
 /**
- * R2: a price that holds until [expiresAt] and reserves nothing. Buying: the [fee] is inside [pay]. Selling
+ * R2: a price that holds until [expiresAt] and reserves nothing. Buying: [pay] is the M-Pesa request, with the [fee]
+ * and M-Pesa's own [providerFee] inside it (since 2026-11-24); asked in shillings it is the amount typed, asked in USDC
+ * the fee is added on top. Selling
  * ([direction] [RampDirection.OffRamp]): [pay] is the USDC sent, [worth] is that at the [rate], and [receive] is
  * `worth - fee - providerFee`, rounded down to the shilling.
  */
@@ -215,7 +217,10 @@ data class RampQuote(
     /** Server time (epoch ms); null when it couldn't be read, and the quote is then held for [QuoteSeconds]. */
     val expiresAt: Long?,
     val direction: RampDirection = RampDirection.OnRamp,
-    /** Selling: the payout provider's charge for sending the shillings to M-Pesa, paid by the person. */
+    /**
+     * M-Pesa's own charge, passed to the person (2026-11-24). Buying: PayHero's fee for the request, inside [pay].
+     * Selling: the payout provider's charge for sending the shillings to M-Pesa. Null from an older server (buying).
+     */
     val providerFee: RampAmount? = null,
     /** Selling: what the USDC is worth at the rate, before any fee. */
     val worth: RampAmount? = null,
@@ -280,7 +285,7 @@ data class RampOrder(
     val expiresAt: Long?,
     val createdAt: Long?,
     val direction: RampDirection = RampDirection.OnRamp,
-    /** A sale: the payout provider's charge, paid by the person. */
+    /** M-Pesa's own charge, paid by the person: PayHero's fee inside [pay] (buying, 2026-11-24), the payout fee (a sale). */
     val providerFee: RampAmount? = null,
     /** A sale waiting for its USDC: where and what to send (only while [RampOrderState.AwaitingTransfer]). */
     val deposit: SaleDeposit? = null,

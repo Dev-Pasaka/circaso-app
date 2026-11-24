@@ -86,6 +86,7 @@ import com.circaso.designsystem.theme.CircasoMotion
 import com.circaso.designsystem.theme.CircasoShapes
 import com.circaso.designsystem.theme.CircasoSpacing
 import com.circaso.designsystem.theme.CircasoTheme
+import com.circaso.feature.ramp.domain.RampAmount
 import com.circaso.feature.ramp.domain.RampMoney
 import com.circaso.feature.ramp.domain.RampQuote
 import com.circaso.feature.wallet.domain.MinorUnits
@@ -165,7 +166,9 @@ internal fun AmountPage(state: AddMoneyUiState, bottomInset: Dp, onAmount: (Stri
             ListGroup {
                 DetailRow("You get", RampMoney.Coin + (state.blockchain?.let { " on " + chainName(it) } ?: ""))
                 RowDivider()
-                DetailRow("Fee", state.status?.feePercent?.let { feeLine(it) } ?: "Shown before you pay")
+                DetailRow("Circaso fee", state.status?.feePercent?.let { feeLine(it) } ?: "Shown before you pay")
+                RowDivider()
+                DetailRow("M-Pesa fee", MpesaFeeLine)
                 if (limits != null) { RowDivider(); FigureRow("Daily limit", limits.daily.text) }
             }
             FailureNote(state.failure, onCopy)
@@ -254,6 +257,12 @@ internal val GroupedDigits = VisualTransformation { text ->
     )
 }
 
+/**
+ * The amount page's line for M-Pesa's own fee: it depends on the amount, so it is shown with the price. An older server
+ * sends no `providerFee` and the review then shows no such row; drop this fallback once every server passes it on.
+ */
+internal const val MpesaFeeLine = "Depends on the amount, shown before you pay"
+
 /** "1.5%, inside what you pay"; "No fee" at zero. */
 internal fun feeLine(percent: String): String = if (percent.trim().trimEnd('0').trimEnd('.').let { it.isEmpty() || it == "0" }) "No fee" else "$percent%, inside what you pay"
 
@@ -268,7 +277,16 @@ internal fun rateLine(rate: String): String {
 internal fun clock(seconds: Int): String = "${seconds / 60}:${(seconds % 60).toString().padStart(2, '0')}"
 
 /** "KES 30, included"; "No fee" at zero. */
-internal fun feeText(feeMinor: String, text: String): String = if (MinorUnits.isZero(feeMinor)) "No fee" else "$text, included"
+internal fun feeText(feeMinor: String, text: String, named: Boolean = false): String = if (MinorUnits.isZero(feeMinor)) (if (named) "None" else "No fee") else "$text, included"
+
+/**
+ * M-Pesa's own fee for the request (PayHero's, passed on since 2026-11-24): "KES 6, included" (it is inside what you
+ * pay), "None" at zero, null when the server didn't say (an older server: no row).
+ */
+internal fun mpesaFeeText(fee: RampAmount?): String? = fee?.let { if (MinorUnits.isZero(it.amountMinor)) "None" else it.text + ", included" }
+
+/** The review's footnote: the amount M-Pesa will ask for, which is "You pay" to the shilling. */
+internal fun mpesaAskNote(pay: RampAmount): String = "M-Pesa will ask for ${pay.text}. Confirm with your M-Pesa PIN."
 
 /**
  * The price, once it is known (E2's Rate / Fee / You pay, with "Continue to M-Pesa"): what leaves M-Pesa first and
@@ -298,7 +316,8 @@ internal fun ReviewPage(state: AddMoneyUiState, bottomInset: Dp, onPhone: (Strin
                 // Busy keeps the button's own colours: it is working, not unavailable.
                 enabled = if (expired) state.online else state.canConfirm || state.placing || state.quoting, busy = state.placing || state.quoting,
             )
-            FooterNote(if (!state.online) OfflineNote else "You'll confirm with your M-Pesa PIN on your phone.")
+            // Once the price has run out, the amount it named is no longer the request: say only how it is confirmed.
+            FooterNote(when { !state.online -> OfflineNote; expired -> "You'll confirm with your M-Pesa PIN on your phone."; else -> mpesaAskNote(quote.pay) })
         },
     ) {
         Column(Modifier.fillMaxWidth().padding(top = CircasoSpacing.s2), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(CircasoSpacing.s1)) {
@@ -339,7 +358,9 @@ private fun QuoteDetails(quote: RampQuote, maskedPhone: String?) {
             RowDivider()
             FigureRow("Rate", rateLine(quote.rate))
             RowDivider()
-            FigureRow("Fee", feeText(quote.fee.amountMinor, quote.fee.text))
+            FigureRow(if (quote.providerFee != null) "Circaso fee" else "Fee", feeText(quote.fee.amountMinor, quote.fee.text, named = quote.providerFee != null))
+            // M-Pesa's own fee, passed on: inside "You pay", so the request is exactly that amount.
+            mpesaFeeText(quote.providerFee)?.let { RowDivider(); FigureRow("M-Pesa fee", it) }
         }
         ListGroup {
             DetailRow("To", "Your wallet on " + chainName(quote.blockchain))
