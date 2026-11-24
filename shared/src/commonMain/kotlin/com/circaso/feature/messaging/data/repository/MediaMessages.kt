@@ -64,8 +64,13 @@ data class MediaDetails(
     val liveEnded: Boolean? = null,
     /** This phone's own share only: false while the others haven't been told it ended (offline at Stop). Never sent. */
     val liveStopSent: Boolean? = null,
-    /** A video's first frame, a small base64 JPEG carried in the message so the bubble shows before the file loads. */
+    /**
+     * A video's first frame, or a PDF's first page (2026-11-24), a small base64 JPEG carried in the message so the
+     * bubble shows before the file loads.
+     */
     val thumb: String? = null,
+    /** A PDF's page count, carried in the message with its first page (2026-11-24). */
+    val pages: Int? = null,
     /** Sent together with other photos and videos: their shared album id (ChatPayload.albumId). */
     val album: String? = null,
     /** How far this phone's upload of the file got, so a send cut off by the process dying resumes it. Never sent. */
@@ -110,7 +115,7 @@ internal fun MediaDetails.toPayload(sentAt: String): ChatPayload = ChatPayload(
     attachmentId = attachmentId, mediaKey = key.takeIf { chunked != true }, digest = digest.takeIf { chunked != true },
     chunkedKey = key.takeIf { chunked == true }, size = size, mime = mime, width = width, height = height, durationMs = durationMs,
     latitude = latitude, longitude = longitude, accuracy = accuracy, label = label,
-    liveId = liveId, liveUntil = liveUntil, liveAt = liveAt, thumb = thumb,
+    liveId = liveId, liveUntil = liveUntil, liveAt = liveAt, thumb = thumb, pages = pages.takeIf { kind == MediaDetails.File },
     albumId = album?.takeIf { kind == MediaDetails.Image || kind == MediaDetails.Video },
 )
 
@@ -123,12 +128,18 @@ internal fun ChatPayload.toMediaDetails(): MediaDetails? = when (type) {
     ChatPayload.Image, ChatPayload.Voice, ChatPayload.Video, ChatPayload.File -> if (attachmentId != null && (chunkedKey != null || (mediaKey != null && digest != null))) MediaDetails(
         when (type) { ChatPayload.Image -> MediaDetails.Image; ChatPayload.Video -> MediaDetails.Video; ChatPayload.File -> MediaDetails.File; else -> MediaDetails.Voice },
         attachmentId = attachmentId, key = chunkedKey ?: mediaKey, digest = digest.takeIf { chunkedKey == null }, chunked = true.takeIf { chunkedKey != null }, size = size, mime = mime, width = width, height = height, durationMs = durationMs, caption = text,
-        thumb = thumb?.takeIf { type == ChatPayload.Video },
+        // A PDF's first page too (2026-11-24); a sender can put anything here, so only a poster's size is kept.
+        thumb = thumb?.takeIf { (type == ChatPayload.Video || type == ChatPayload.File) && it.length <= MaxThumbChars },
+        pages = pages?.takeIf { type == ChatPayload.File && it in 1..MaxPdfPages },
         label = label?.takeIf { type == ChatPayload.File }?.let(::safeFileName),
         album = albumId?.takeIf { (type == ChatPayload.Image || type == ChatPayload.Video) && it.length in 1..64 },
     ) else null
     else -> null
 }
+
+/** A poster or first page in a message: base64 of at most about 24 KB (ours are under 14 KB). */
+private const val MaxThumbChars = 32_768
+private const val MaxPdfPages = 100_000
 
 internal fun mediaRowKind(details: MediaDetails) = when (details.kind) {
     MediaDetails.Image -> MessageKind.Image; MediaDetails.Voice -> MessageKind.Voice; MediaDetails.Video -> MessageKind.Video; MediaDetails.File -> MessageKind.File
@@ -200,6 +211,8 @@ class MediaMessages(
     private val uploads: com.circaso.core.platform.BackgroundUploads = com.circaso.core.platform.NoBackgroundUploads,
     /** The app's scope: downloads run there, so one keeps going when its bubble scrolls away (AttachmentDownloads). */
     downloadScope: kotlinx.coroutines.CoroutineScope? = null,
+    /** A PDF's first page and page count for its message ([com.circaso.core.platform.pdfPreview] on the phones). */
+    private val pdfPreview: suspend (path: String) -> com.circaso.core.platform.PdfPreview? = { com.circaso.core.platform.pdfPreview(it) },
 ) {
     private val resumable = com.circaso.core.platform.ResumableUpload(crypto, files, uploads, storage, now)
     private val downloads = AttachmentDownloads(crypto, files, attachments, storage, downloadScope)
@@ -270,7 +283,9 @@ class MediaMessages(
     private suspend fun sendFile(chatId: String, bytes: ByteArray, base: MediaDetails): AppResult<Unit> {
         val file = "out-" + newClientMessageId()
         files.write(file, bytes)
-        val localId = insert(chatId, base.copy(file = file)) ?: return AppResult.Failure(AppError.Unexpected(null))
+        val details = base.copy(file = file)
+        val localId = insert(chatId, details) ?: return AppResult.Failure(AppError.Unexpected(null))
+        addPdfPreview(localId, details)
         enqueue(localId)
         return AppResult.Success(Unit)
     }
@@ -283,7 +298,9 @@ class MediaMessages(
             files.delete(file)
             return AppResult.Failure(AppError.Api("messaging.attachment_too_large", 400, null, null, emptyMap()))
         }
-        val localId = insert(chatId, base.copy(file = file, size = size)) ?: return AppResult.Failure(AppError.Unexpected(null)).also { files.delete(file) }
+        val details = base.copy(file = file, size = size)
+        val localId = insert(chatId, details) ?: return AppResult.Failure(AppError.Unexpected(null)).also { files.delete(file) }
+        addPdfPreview(localId, details)
         enqueue(localId)
         return AppResult.Success(Unit)
     }
@@ -359,6 +376,10 @@ class MediaMessages(
         return path to (if (path == null) MediaLoad.Failed else null)
     }
 
+    /** This phone's decrypted copy of the file, only if it is already here (never downloads); a PDF's page is drawn from it. */
+    suspend fun localPath(details: MediaDetails): String? =
+        listOfNotNull(details.file, details.attachmentId).firstNotNullOfOrNull { name -> files.size(name)?.let { files.path(name) } }
+
     /**
      * The file's bytes, from this phone or downloaded and decrypted (AT3), with why not when it can't be had: offline,
      * gone from the server (past 30 days, or this person left the chat), or damaged (the blob doesn't match what the
@@ -371,6 +392,18 @@ class MediaMessages(
         val size = files.size(name) ?: return MediaLoad.Failed
         if (size > InMemoryMaxBytes) return MediaLoad.Failed
         return files.read(name)?.let { MediaLoad.Loaded(it) } ?: MediaLoad.Failed
+    }
+
+    /**
+     * A PDF goes with its first page and page count (2026-11-24), so the other phone shows the page before downloading
+     * the file. The bubble is already on screen (the row is in); this adds them to it before the outbox sends it.
+     * Without them (unreadable, a password) it goes as any document.
+     */
+    private suspend fun addPdfPreview(localId: Long, details: MediaDetails) {
+        if (details.kind != MediaDetails.File || !com.circaso.core.platform.isPdf(details.label, details.mime)) return
+        val path = details.file?.let { files.path(it) } ?: return
+        val preview = try { pdfPreview(path) } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Throwable) { null } ?: return
+        dao.setText(localId, MediaDetails.write(details.copy(thumb = Base64.encode(preview.thumb), pages = preview.pages)))
     }
 
     private suspend fun insert(chatId: String, details: MediaDetails): Long? {

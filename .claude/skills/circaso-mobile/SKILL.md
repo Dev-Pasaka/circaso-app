@@ -60,9 +60,14 @@ The design canvas is ahead of the backend, and in one place it disagrees.
 - **Identity verification is also in the profile since 2026-11-23** (branch `feat/kyc-in-profile`): You → Money → **Verification** (design F2's row) shows where the check stands on the wallet network in use, from a copy kept on the phone (so it shows offline, marked as last known), and opens a Verification screen where the same check runs without a top-up and "You're verified" stays. The check is one shared piece (`IdentityCheck`) under both entries; `submitted` (backend `fix/ramp-kyc-submitted`) is read before `canStart` everywhere; the `ramp.kyc` push opens Verification unless Add Money is on screen. A server that hasn't opened the verification routes answers `ramp.unavailable`: no row, and "Verification isn't available yet". See `app-architecture.md` → "Identity verification in the profile".
 - **The verified badge (2026-11-24, branch `feat/verified-badge`, backend PR #144):** a seal on the avatar of anyone
   whose identity was verified in Didit's live environment, everywhere avatars appear (`Avatar(userId = …)` reads
-  `LocalVerifiedPeople`, made from Room), and a "Verified" pill with an explanation sheet on profiles. See
+  `LocalVerifiedPeople`, made from Room), and a mark after the name with an explanation sheet on profiles. See
   `app-architecture.md` → "The verified badge". Since branch `feat/verified-gaps` (Room v26) a payee in no contact or
   chat shows it too, from W6 `counterparty.verified` kept on the stored payments.
+- **Polish (2026-11-24, branch `feat/badge-zoom-pdf`):** the verified seal redrawn X-style (scalloped titanium rosette,
+  ~30 % of the avatar, half on the rim at 45°, a true ground-coloured ring) and an inline mark after profile names in
+  place of the pill; the blank-photo-after-pinch bug fixed with a shared, tested zoom (`Zoom.kt`); PDFs in chats show
+  their first page and page count and open in Circaso's own viewer. See `app-architecture.md` → "The verified badge"
+  and "Photo zoom and PDFs in chats".
 - **M-Pesa's fee on Add Money (2026-11-24, branch `feat/provider-fees`, backend PR #153):** PayHero's per-prompt fee
   is passed to the buyer, inside `pay`; the review and the order show "Circaso fee" and "M-Pesa fee". See
   `app-architecture.md` → "Add money: M-Pesa's fee, passed on".

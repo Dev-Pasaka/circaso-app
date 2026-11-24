@@ -1,37 +1,43 @@
 package com.circaso.designsystem.components
 
-import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.heightIn
-import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.BoxScope
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.text.BasicText
+import androidx.compose.foundation.text.InlineTextContent
+import androidx.compose.foundation.text.appendInlineContent
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.Stable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawWithCache
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.role
-import androidx.compose.ui.semantics.semantics
-import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.Placeholder
+import androidx.compose.ui.text.PlaceholderVerticalAlign
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.em
 import com.circaso.designsystem.chrome.CircasoSheet
 import com.circaso.designsystem.chrome.SheetActions
 import com.circaso.designsystem.chrome.SheetMessage
 import com.circaso.designsystem.motion.pressable
-import com.circaso.designsystem.theme.CircasoShapes
-import com.circaso.designsystem.theme.CircasoSizes
-import com.circaso.designsystem.theme.CircasoSpacing
+import com.circaso.designsystem.theme.CircasoMotion
 import com.circaso.designsystem.theme.CircasoTheme
+import kotlin.math.round
 
 /** What the badge means, said the same way everywhere (the verified badge, 2026-11-24). */
 object VerifiedCopy {
@@ -42,82 +48,101 @@ object VerifiedCopy {
     const val PrivateOwn = "People see only the badge, never your ID or selfie."
 }
 
-/**
- * The "Verified" pill under a person's name on their profile (and on my own): the seal and the word, in a quiet
- * capsule. A tap opens a short sheet saying what it means. [own] words it for my own profile. With [explainable] false
- * (inside another sheet, where a second sheet would stack) the meaning is written under the pill instead.
- */
+/** Whether the "what this means" sheet is open: shared by a profile's name mark and the seal on its large photo. */
+@Stable
+class VerifiedExplainer internal constructor(open: Boolean) {
+    var open by mutableStateOf(open)
+}
+
+/** Kept across rotation and process death, like the sheet it opens. */
 @Composable
-fun VerifiedPill(modifier: Modifier = Modifier, own: Boolean = false, explainable: Boolean = true) {
-    val c = CircasoTheme.colors
-    val t = CircasoTheme.typography
-    var open by rememberSaveable { mutableStateOf(false) }
-    val meaning = if (own) VerifiedCopy.Own else VerifiedCopy.Person
-    Box(modifier) {
-        Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(CircasoSpacing.s1)) {
-            Row(
-                Modifier
-                    // A 44 dp touch target around a capsule that looks smaller.
-                    .heightIn(min = CircasoSizes.controlMd)
-                    .then(
-                        if (explainable) {
-                            Modifier.pressable(role = Role.Button, onClickLabel = "What this means") { open = true }
-                        } else {
-                            Modifier
-                        },
-                    )
-                    .clearAndSetSemantics {
-                        contentDescription = if (explainable) VerifiedCopy.Title else "${VerifiedCopy.Title}. $meaning"
-                        if (explainable) role = Role.Button
-                    },
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Row(
-                    Modifier.clip(CircasoShapes.pill).background(c.fill).padding(start = CircasoSpacing.s1, end = CircasoSpacing.s3, top = CircasoSpacing.s1, bottom = CircasoSpacing.s1),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                ) {
-                    VerifiedSeal(18.dp)
-                    BasicText(VerifiedCopy.Title, style = t.footnote.copy(color = c.ink, fontWeight = FontWeight.SemiBold))
-                }
-            }
-            if (!explainable) {
-                BasicText(
-                    meaning,
-                    Modifier.padding(horizontal = CircasoSpacing.s4).clearAndSetSemantics {},
-                    style = t.footnote.copy(color = c.inkSecondary, textAlign = TextAlign.Center),
-                )
-            }
-        }
-        if (explainable) {
-            CircasoSheet(open, { open = false }, label = VerifiedCopy.Title) {
-                SheetMessage(
-                    title = VerifiedCopy.Title,
-                    message = "$meaning ${if (own) VerifiedCopy.PrivateOwn else VerifiedCopy.Private}",
-                    icon = null,
-                    face = { VerifiedSeal(56.dp, Modifier.clearAndSetSemantics {}) },
-                )
-                SheetActions("OK", { open = false }, secondaryLabel = null)
-            }
-        }
+fun rememberVerifiedExplainer(): VerifiedExplainer {
+    var saved by rememberSaveable { mutableStateOf(false) }
+    val explainer = remember { VerifiedExplainer(saved) }
+    LaunchedEffect(explainer.open) { saved = explainer.open }
+    return explainer
+}
+
+/** The sheet that says what the badge means. [own] words it for my own profile. */
+@Composable
+fun BoxScope.VerifiedSheet(explainer: VerifiedExplainer, own: Boolean = false) {
+    CircasoSheet(explainer.open, { explainer.open = false }, label = VerifiedCopy.Title) {
+        SheetMessage(
+            title = VerifiedCopy.Title,
+            message = "${if (own) VerifiedCopy.Own else VerifiedCopy.Person} ${if (own) VerifiedCopy.PrivateOwn else VerifiedCopy.Private}",
+            icon = null,
+            face = { VerifiedSeal(com.circaso.designsystem.theme.CircasoSizes.sheetBadge, Modifier.clearAndSetSemantics {}) },
+        )
+        SheetActions("OK", { explainer.open = false }, secondaryLabel = null)
     }
 }
 
 /**
- * [VerifiedPill] when [shown], coming in with a fade and the room it needs (and going the same way) rather than
- * pushing what is under it the moment the profile arrives. Still under Reduce Motion.
+ * A person's name with the verified mark after it, as X puts its check after a name: the seal at the text's own size,
+ * sitting on the line like a letter (its middle at the capitals' middle, a hair under the baseline), wrapping with
+ * the last word and growing with Dynamic Type. [verified] false shows the name alone.
+ *
+ * A tap on the mark calls [onMarkClick] (open the explanation: [VerifiedSheet]); null leaves it a plain mark (inside
+ * another sheet, where a second sheet would stack). Screen readers hear "<name>, Verified".
  */
 @Composable
-fun VerifiedPillReveal(shown: Boolean, modifier: Modifier = Modifier, own: Boolean = false) {
-    val still = CircasoTheme.reduceMotion
-    androidx.compose.animation.AnimatedVisibility(
-        shown,
-        modifier,
-        enter = if (still) androidx.compose.animation.EnterTransition.None else
-            androidx.compose.animation.fadeIn(androidx.compose.animation.core.tween(com.circaso.designsystem.theme.CircasoMotion.BaseMs)) +
-                androidx.compose.animation.expandVertically(androidx.compose.animation.core.tween(com.circaso.designsystem.theme.CircasoMotion.BaseMs)),
-        exit = if (still) androidx.compose.animation.ExitTransition.None else
-            androidx.compose.animation.fadeOut(androidx.compose.animation.core.tween(com.circaso.designsystem.theme.CircasoMotion.QuickMs)) +
-                androidx.compose.animation.shrinkVertically(androidx.compose.animation.core.tween(com.circaso.designsystem.theme.CircasoMotion.QuickMs)),
-    ) { VerifiedPill(own = own) }
+fun VerifiedName(
+    name: String,
+    verified: Boolean,
+    style: TextStyle,
+    modifier: Modifier = Modifier,
+    maxLines: Int = 2,
+    onMarkClick: (() -> Unit)? = null,
+) {
+    if (!verified) {
+        BasicText(name, modifier, style = style, maxLines = maxLines, overflow = TextOverflow.Ellipsis)
+        return
+    }
+    val text = remember(name) {
+        buildAnnotatedString {
+            append(name)
+            // A word joiner: the mark never starts a line on its own, it goes with the last word.
+            append('\u2060')
+            appendInlineContent(VerifiedMarkId, ", ${VerifiedCopy.Title}")
+        }
+    }
+    val inline = remember {
+        mapOf(
+            VerifiedMarkId to InlineTextContent(
+                // The mark's box: a little space, then the seal; its bottom on the baseline.
+                Placeholder(width = VerifiedMarkWidth.em, height = 1.em, placeholderVerticalAlign = PlaceholderVerticalAlign.AboveBaseline),
+            ) { VerifiedMark() },
+        )
+    }
+    // Tappable, the whole name is the button (a target as large as the name, said once: "<name>, Verified, button").
+    val whole = if (onMarkClick != null) {
+        Modifier.pressable(role = Role.Button, onClickLabel = "What this means", pressedScale = 0.98f, onClick = onMarkClick)
+    } else {
+        Modifier
+    }
+    BasicText(text, modifier.then(whole), style = style, maxLines = maxLines, overflow = TextOverflow.Ellipsis, inlineContent = inline)
 }
+
+/** The mark in its placeholder (1 em high, its bottom on the baseline). The name's text says "Verified" for it. */
+@Composable
+private fun VerifiedMark() {
+    val colors = sealColors()
+    Box(
+        Modifier.fillMaxSize().clearAndSetSemantics {}
+            .drawWithCache {
+                val em = size.height
+                // Even pixels across, on a whole-pixel centre: the check stays sharp at text sizes.
+                val diameter = round(em * VerifiedMarkSeal / 2f) * 2f
+                val x = round(size.width - diameter / 2f)
+                // The capitals' middle: a cap height is about 0.7 em above the baseline in Inter and SF.
+                val y = round(em - em * 0.35f)
+                val shape = sealShapeFor(diameter, Offset(x, y))
+                onDrawBehind { drawSealShape(shape, colors) }
+            },
+    )
+}
+
+private const val VerifiedMarkId = "verified"
+/** The seal is 0.88 em across, after 0.24 em of space. */
+private const val VerifiedMarkSeal = 0.88f
+private const val VerifiedMarkWidth = 1.12f

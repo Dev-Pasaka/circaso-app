@@ -368,12 +368,12 @@ private fun ChatRow(
                     summary.chat.title,
                     // The press on the whole avatar, so photo, ring and seal move together; the ring drawn inside it.
                     Modifier.pressable(role = androidx.compose.ui.semantics.Role.Button, interactionSource = press, onClick = onAvatar)
-                        .semantics { contentDescription = "View ${summary.chat.title}'s moment" }
-                        .momentRing(ringArcs ?: listOf(false), c),
+                        .semantics { contentDescription = "View ${summary.chat.title}'s moment" },
                     imageUrl = summary.chat.avatarUrl,
                     userId = summary.chat.peerId,
                     // Android's ripple stays round on the photo; the seal is outside the clip, whole.
-                    discModifier = Modifier.clip(com.circaso.designsystem.theme.CircasoShapes.circle)
+                    // The ring follows the circle too, so the verified seal's gap cuts it cleanly.
+                    discModifier = Modifier.momentRing(ringArcs ?: listOf(false), c).clip(com.circaso.designsystem.theme.CircasoShapes.circle)
                         .pressIndication(press),
                 )
             }

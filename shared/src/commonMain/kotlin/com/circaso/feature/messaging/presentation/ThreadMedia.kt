@@ -33,6 +33,9 @@ class ThreadMedia(
      * null with why when it can't be had.
      */
     suspend fun videoFile(details: MediaDetails) = media.file(details)
+
+    /** The decrypted file if it is already on this phone (never downloads): a PDF's first page is drawn from it. */
+    suspend fun localFile(details: MediaDetails): String? = media.localPath(details)
     val canShareLocation get() = location.available
 
     /** Where the phone is now (asked only when the person taps Location); null = refused or no fix. */

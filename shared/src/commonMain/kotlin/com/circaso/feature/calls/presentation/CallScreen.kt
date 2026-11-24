@@ -353,7 +353,7 @@ private fun VoiceCall(call: CallUi, actions: CallActions, money: String?, onSend
                 Column(Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally) {
                     SecureLine()
                     Spacer(Modifier.height(CircasoSpacing.s3))
-                    Avatar(call.title, Modifier.graphicsLayer { alpha = faded }, size = 88.dp, imageUrl = call.photoUrl, userId = call.peerId, onDarkStage = true)
+                    Avatar(call.title, Modifier.graphicsLayer { alpha = faded; compositingStrategy = androidx.compose.ui.graphics.CompositingStrategy.ModulateAlpha }, size = 88.dp, imageUrl = call.photoUrl, userId = call.peerId, onDarkStage = true)
                     Spacer(Modifier.height(CircasoSpacing.s3))
                     BasicText(call.title, style = t.title1.copy(color = CallColors.Ink, textAlign = TextAlign.Center), maxLines = 1, overflow = TextOverflow.Ellipsis)
                     Handle(call.handle)
@@ -367,7 +367,7 @@ private fun VoiceCall(call: CallUi, actions: CallActions, money: String?, onSend
             Spacer(Modifier.height(CircasoSpacing.s6))
             SecureLine()
             Spacer(Modifier.height(CircasoSpacing.s6))
-            Avatar(call.title, Modifier.graphicsLayer { alpha = faded }, size = 120.dp, imageUrl = call.photoUrl, userId = call.peerId, onDarkStage = true)
+            Avatar(call.title, Modifier.graphicsLayer { alpha = faded; compositingStrategy = androidx.compose.ui.graphics.CompositingStrategy.ModulateAlpha }, size = 120.dp, imageUrl = call.photoUrl, userId = call.peerId, onDarkStage = true)
             Spacer(Modifier.height(CircasoSpacing.s4))
             BasicText(call.title, style = t.largeTitle.copy(color = CallColors.Ink, textAlign = TextAlign.Center), maxLines = 1, overflow = TextOverflow.Ellipsis)
             Handle(call.handle)
@@ -463,7 +463,7 @@ private fun DuoStage(call: CallUi, them: CallPerson?, mine: Boolean, meBig: Bool
                         // A shared screen is shown whole; a face fills the picture.
                         CallVideo(VideoSource.Remote(theirMid), Modifier.fillMaxSize(), fill = !them.screen)
                     } else {
-                        Avatar(call.title, Modifier.graphicsLayer { alpha = faded }, size = if (maxWidth < 200.dp) CircasoSizes.avatarLg else 120.dp, imageUrl = them?.photoUrl ?: call.photoUrl)
+                        Avatar(call.title, Modifier.graphicsLayer { alpha = faded; compositingStrategy = androidx.compose.ui.graphics.CompositingStrategy.ModulateAlpha }, size = if (maxWidth < 200.dp) CircasoSizes.avatarLg else 120.dp, imageUrl = them?.photoUrl ?: call.photoUrl)
                     }
                 } }
             }

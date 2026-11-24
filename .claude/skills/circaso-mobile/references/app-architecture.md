@@ -1459,21 +1459,69 @@ approvals never count) carries a small seal on their avatar wherever it appears,
   `contact`, `chat_member`, `profile`, `transfer` and `wallet_activity`; `App.kt` provides it as `LocalVerifiedPeople`. `Avatar(..., userId = …)` draws
   the seal when that id is in the set (or `verified = true/false` overrides). Group avatars, stacks of faces and things
   pass no `userId`. Offline it shows what was last stored.
-- **The seal** (`designsystem/components/Avatar.kt`, `VerifiedSeal`): a twelve-point rosette in the money card's titanium
-  (`moneyCard` blended from `moneyCardSheen`, so graphite on light and brushed silver on dark), a check in `onMoney`.
-  The gap around it is a real hole cut out of the picture (`sealCutOut`, `BlendMode.DstOut` on an offscreen layer), not a
-  painted ring, so it reads on any ground (rows, sheets, glass, press states, photos). Black stages (calls, the Moment
-  viewer) pass `onDarkStage = true` for the dark themes' silver whatever the theme. Size `sealSize(avatar)` =
-  avatar × 0.22 + 6 dp within 12–28 dp; its centre sits on the disc's rim at 45° (`sealOffset`), inside the square, so
-  nothing clips it. What must follow the circle (a clip for the round ripple, a shadow, a ring, the You hero's press)
-  goes in `discModifier`. Member lists are replaced in one transaction (`ChatsDao.replaceMembers`) and the set is
-  `distinctUntilChanged`, so seals don't blink during a chat refresh. Screen readers hear "Verified".
-- **Profiles** (`designsystem/components/Verified.kt`, `VerifiedPill`): a quiet capsule (seal + "Verified") under the
-  name on a direct chat's info screen, in the contact sheet (meaning written out under it, no second sheet) and on my
-  own You hero. A tap opens a sheet: "Circaso verified this person's identity with a government ID and a selfie. Only
-  the badge is shown, never their ID or selfie." (my own: "…your identity… People see only the badge, never your ID or
-  selfie."). The pill fades and expands in (`VerifiedPillReveal`), still under Reduce Motion. My own, when not verified, keeps the Verification row
-  (You → Money) as before.
-- **Not done:** gallery previews of the seal across the four themes; the seal's "Verified" is its own screen-reader stop
+- **The seal, redrawn 2026-11-24 (branch `feat/badge-zoom-pdf`, after Pasaka: "looks shady, like done by a junior
+  dev; make it like X's")** (`designsystem/components/Avatar.kt`): X's scalloped rosette (eight soft lobes,
+  `SealLobes`/`SealNotchDepth`/`SealLobeRoundness`) in the money card's titanium (a soft vertical gradient from
+  `moneyCardSheen` to `moneyCard`; flat `moneyCard` in high contrast) with a bold rounded check in `onMoney`, placed a
+  little left and low for the eye. Size `sealSize(avatar)` = avatar × 0.26 + 3 dp within 12–32 dp (28–33 % from 44 to
+  96 dp; 12 dp on 28–32 dp rows; 32 dp on a 112–120 dp hero). Its centre is **on the circle at 45° bottom-right**
+  (`sealCenter`), half over the photo, half off it. The ring between seal and photo (`sealGap`, a tenth of the seal,
+  1.5–3 dp) is a concentric circle **cleared** out of one offscreen layer holding the disc *and* whatever follows its
+  circle (`discModifier`: shadow, the You hero's ring, the press), so it is exactly the colour of whatever the avatar
+  sits on (rows, sheets, glass, the call stage) with no halo; the old cut was inside the disc only, so the hero's ring
+  and shadow crossed the hole (the "bite"). The layer reaches 16 dp past the avatar so nothing is clipped. Pixel-snapped:
+  even diameter on a whole-pixel centre. The seal is drawn by the layer; a transparent `Spacer` at its place carries
+  "Verified" for screen readers, or, with `onSealClick` (profiles), a 44 dp tap target that opens the explanation and
+  stays silent (the name's mark says it once). Black stages pass `onDarkStage = true`. A ring that follows the circle
+  (the Moments ring, `momentRing`) must go in `discModifier`, so the gap cuts it too. An avatar that wears its own
+  page-coloured ring over a busy ground (the You hero over its glow) passes `sealRing = c.bgGrouped`: the seal's ring
+  is then painted in that colour and joins the hero's ring instead of opening a hole onto the glow. Tests: `ZoomMathTest.theSealIsAboutAThirdOfTheAvatarAndHalfOnTheRim`.
+- **Profiles: the mark after the name, X-style** (`designsystem/components/Verified.kt`, `VerifiedName`): the pill is
+  gone. The name is one `BasicText` with the seal as inline content (0.88 em, after 0.24 em, its middle at the capitals'
+  middle, a hair under the baseline), joined to the last word by a U+2060 word joiner and growing with Dynamic Type. On
+  Contact Info and my own You hero the whole name is the button (or the big photo's seal) that opens `VerifiedSheet`
+  (shared `rememberVerifiedExplainer()`); in the contact sheet the mark is plain and the meaning is written under the
+  name (no second sheet). Screen readers hear "<name>, Verified" once.
+- **Previews:** `verified-badge` (28–120 dp on page, sheet, initials and a black stage, and the mark at every text
+  style), `chat-info-verified`, `chat-info-verified-sheet` (`gallery/PolishPreviews.kt`), with `you-verified`,
+  `contacts-verified`, `contacts-sheet-verified`, `activity-verified`.
+- **Not done:** the seal's "Verified" is its own screen-reader stop
   where a name sits beside an unmerged avatar (group sender avatars, the call stage). The test suite still needs the
   assistant's `*MaintenanceTest` classes left out (they hang, known since 2026-11-22).
+
+## Photo zoom and PDFs in chats (2026-11-24, branch `feat/badge-zoom-pdf`)
+
+- **The blank photo after a pinch (bug, fixed).** `ImageViewer` zoomed "about the fingers" on every pointer event,
+  including the one that lifts the last finger. On that event no pointer is down and down before, so
+  `calculateCentroid()` is `Offset.Unspecified` (NaN); `(pan - centroid) * grown + centroid` was NaN, `coerceIn` keeps
+  NaN, and a NaN `translationX/Y` draws nothing, for good (every later settle interpolated from NaN). Only while zoomed,
+  because unzoomed the branch wasn't taken. Now the zoom is one piece, `designsystem/components/Zoom.kt`: `ZoomMath`
+  (pure, every answer finite, tested in `ZoomMathTest`), `ZoomState` (spring settle `ZoomSpring`), `Modifier.zoomGestures`
+  (only fingers down now and before count; a missing focus zooms about the centre) and `Modifier.zoomed`. Scale 1–5,
+  15 % overshoot while the fingers are down and resistance past the edges, a spring back inside on release; double-tap
+  2.5× at the tap or back out; pans stop at the photo's own fitted edges (`ZoomState.intrinsic`); swipe down to close
+  when fitted. Used by the chat photo viewer (also Contact Info's) and now the album viewer's photos (the pager stops
+  while one is zoomed). Previews: `photo-viewer`, `photo-viewer-zoomed`.
+- **PDF preview.** Files already travel end to end encrypted (`ChatPayload.File`, AT1–AT3); no backend change. A PDF's
+  message now also carries its first page as a small JPEG (`thumb`, under 14 KB, 420→240 px wide) and `pages`
+  (`ChatPayload.pages`, `MediaDetails.pages`; older apps ignore both), made by the sender's phone after the row is in
+  (the bubble shows at once) and before the outbox sends it (`MediaMessages.addPdfPreview` → `pdfPreview`). The bubble (`FileBubble`, `PdfFirstPage`) shows the top of the first
+  page over the name and "3 pages · PDF · 248 KB": drawn sharp from the file when it is on this phone
+  (`MediaMessages.localPath`, never downloads), else the sender's page. A tap downloads/decrypts as before, then opens
+  `PdfViewer` (`feature/messaging/presentation/PdfViewer.kt`, over the window): all pages on `bgGrouped`, white paper,
+  fling scrolling; pinch about the fingers and double-tap zoom up to 5× by laying the pages out wider (not stretching a
+  picture), sideways drag when zoomed, pages redrawn at 1× or 2× once a zoom rests, never over about 8 million pixels a page
+  (`drawWidth`) (the old drawing stays until the new
+  one is ready); "3 of 12" floats while scrolling; Share (`shareFile`: Android `ACTION_SEND` through the FileProvider,
+  iPhone's share sheet with Save to Files); password-protected or unreadable files say so with Open in Another App.
+  Platform (`core/platform/Pdf.kt`): Android `PdfRenderer` on one IO thread behind a mutex; iPhone PDFKit
+  (`PDFDocument`, `PDFPage.thumbnailOfSize`, into exact pixels with CoreGraphics, then Skia) on one background thread.
+  Drawn pages live in a 96 MB LRU while the viewer is open; first pages in a 24-entry LRU. Documents are closed when
+  the viewer or a bubble goes, even mid-open. A page that won't draw says so with Try again; Share and Open in Another
+  App say "No app here can open this file" when nothing takes it. Tests: `PdfPreviewTest`.
+- **Not done (next pass):** tiled rendering of the visible region above 2× (text softens towards 5×); pan momentum
+  after a zoomed drag; the PDF pinch re-lays out the pages each frame (a graphicsLayer scale during the gesture, then
+  one layout, would be smoother); opening reads every page's size up front (slow on very long PDFs); a crossfade from
+  the sender's first page to the sharp local one. Decrypted files stay in the
+  app's private media folder; Share copies to the cache folder the FileProvider serves. Previews: `chat-pdf`,
+  `pdf-viewer` (sample `composeResources/files/demo-docs/lease.pdf`).
